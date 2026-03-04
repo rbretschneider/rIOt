@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -91,36 +92,7 @@ export default function DeviceDetail() {
 
       {/* Network */}
       {tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
-        <Section title="Network Interfaces">
-          <div className="max-h-64 overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Name</th>
-                  <th className="text-left py-2">State</th>
-                  <th className="text-left py-2">IPv4</th>
-                  <th className="text-left py-2">MAC</th>
-                  <th className="text-right py-2">TX / RX</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {tel.network.interfaces.map((iface) => (
-                  <tr key={iface.name}>
-                    <td className="py-2 font-mono">{iface.name}</td>
-                    <td className="py-2">
-                      <span className={iface.state === 'UP' ? 'text-emerald-400' : 'text-gray-500'}>{iface.state}</span>
-                    </td>
-                    <td className="py-2 font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
-                    <td className="py-2 font-mono text-gray-500">{iface.mac || '-'}</td>
-                    <td className="py-2 text-right font-mono text-gray-400">
-                      {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
+        <NetworkSection interfaces={tel.network.interfaces} />
       )}
 
       {/* Filesystems */}
@@ -277,6 +249,71 @@ export default function DeviceDetail() {
         </Section>
       )}
     </div>
+  )
+}
+
+const VIRTUAL_PREFIXES = ['veth', 'br-', 'docker', 'cni', 'flannel', 'cali', 'tunl', 'vxlan']
+
+function isVirtualInterface(name: string) {
+  return VIRTUAL_PREFIXES.some(p => name.startsWith(p))
+}
+
+function NicTable({ interfaces }: { interfaces: import('../types/models').NetworkInterface[] }) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-gray-500 text-xs uppercase">
+          <th className="text-left py-2">Name</th>
+          <th className="text-left py-2">State</th>
+          <th className="text-left py-2">IPv4</th>
+          <th className="text-left py-2">MAC</th>
+          <th className="text-right py-2">TX / RX</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-800/50">
+        {interfaces.map((iface) => (
+          <tr key={iface.name}>
+            <td className="py-2 font-mono">{iface.name}</td>
+            <td className="py-2">
+              <span className={iface.state === 'UP' ? 'text-emerald-400' : 'text-gray-500'}>{iface.state}</span>
+            </td>
+            <td className="py-2 font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
+            <td className="py-2 font-mono text-gray-500">{iface.mac || '-'}</td>
+            <td className="py-2 text-right font-mono text-gray-400">
+              {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function NetworkSection({ interfaces }: { interfaces: import('../types/models').NetworkInterface[] }) {
+  const physical = interfaces.filter(i => !isVirtualInterface(i.name))
+  const virtual = interfaces.filter(i => isVirtualInterface(i.name))
+  const [showVirtual, setShowVirtual] = useState(false)
+
+  return (
+    <Section title="Network Interfaces">
+      <NicTable interfaces={physical} />
+      {virtual.length > 0 && (
+        <div className="mt-3">
+          <button
+            onClick={() => setShowVirtual(!showVirtual)}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            {showVirtual ? 'Hide' : 'Show'} {virtual.length} virtual interface{virtual.length !== 1 ? 's' : ''}
+            {showVirtual ? ' \u25B2' : ' \u25BC'}
+          </button>
+          {showVirtual && (
+            <div className="mt-2 max-h-48 overflow-y-auto">
+              <NicTable interfaces={virtual} />
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
   )
 }
 
