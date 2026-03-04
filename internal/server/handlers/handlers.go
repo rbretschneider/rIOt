@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -339,13 +340,22 @@ func extractPrimaryIP(data *models.FullTelemetryData) string {
 		return ""
 	}
 	for _, iface := range data.Network.Interfaces {
-		if iface.State != "UP" {
+		if iface.State != "UP" || iface.Name == "lo" {
 			continue
 		}
 		for _, ip := range iface.IPv4 {
-			if ip != "" && ip != "127.0.0.1" {
-				return ip
+			if ip == "" {
+				continue
 			}
+			// Strip CIDR suffix for comparison and storage
+			bare := ip
+			if idx := strings.Index(ip, "/"); idx != -1 {
+				bare = ip[:idx]
+			}
+			if bare == "127.0.0.1" {
+				continue
+			}
+			return bare
 		}
 	}
 	return ""
