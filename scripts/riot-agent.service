@@ -1,0 +1,23 @@
+[Unit]
+Description=rIOt Agent - Infrastructure Monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/riot-agent -config /etc/riot/agent.yaml
+Restart=always
+RestartSec=5
+User=riot
+Group=riot
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/riot /etc/riot
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

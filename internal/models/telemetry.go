@@ -1,0 +1,217 @@
+package models
+
+import "time"
+
+// HeartbeatData is the lightweight ping payload.
+type HeartbeatData struct {
+	Uptime          uint64  `json:"uptime"`
+	CPUPercent      float64 `json:"cpu_percent"`
+	MemPercent      float64 `json:"mem_percent"`
+	LoadAvg1m       float64 `json:"load_avg_1m"`
+	DiskRootPercent float64 `json:"disk_root_percent"`
+}
+
+// Heartbeat wraps a heartbeat with metadata.
+type Heartbeat struct {
+	ID        int64         `json:"id,omitempty"`
+	DeviceID  string        `json:"device_id"`
+	Timestamp time.Time     `json:"timestamp"`
+	Data      HeartbeatData `json:"data"`
+}
+
+// FullTelemetryData contains all collected system information.
+type FullTelemetryData struct {
+	System   *SystemInfo   `json:"system,omitempty"`
+	OS       *OSInfo       `json:"os,omitempty"`
+	CPU      *CPUInfo      `json:"cpu,omitempty"`
+	Memory   *MemoryInfo   `json:"memory,omitempty"`
+	Disks    *DiskInfo     `json:"disks,omitempty"`
+	Network  *NetworkInfo  `json:"network,omitempty"`
+	Updates  *UpdateInfo   `json:"updates,omitempty"`
+	Services []ServiceInfo `json:"services,omitempty"`
+	Procs    *ProcessInfo  `json:"processes,omitempty"`
+	Docker   *DockerInfo   `json:"docker,omitempty"`
+	Security *SecurityInfo `json:"security,omitempty"`
+}
+
+// TelemetrySnapshot wraps full telemetry with metadata.
+type TelemetrySnapshot struct {
+	ID        int64             `json:"id,omitempty"`
+	DeviceID  string            `json:"device_id"`
+	Timestamp time.Time         `json:"timestamp"`
+	Data      FullTelemetryData `json:"data"`
+}
+
+// SystemInfo holds hardware identity info.
+type SystemInfo struct {
+	Hostname       string `json:"hostname"`
+	DeviceUUID     string `json:"device_uuid"`
+	Arch           string `json:"arch"`
+	CPUModel       string `json:"cpu_model"`
+	CPUCores       int    `json:"cpu_cores"`
+	CPUThreads     int    `json:"cpu_threads"`
+	TotalRAMMB     int64  `json:"total_ram_mb"`
+	BoardModel     string `json:"board_model,omitempty"`
+	SerialNumber   string `json:"serial_number,omitempty"`
+	BIOSVersion    string `json:"bios_version,omitempty"`
+	BIOSDate       string `json:"bios_date,omitempty"`
+	Virtualization string `json:"virtualization,omitempty"`
+}
+
+// OSInfo holds operating system details.
+type OSInfo struct {
+	Name         string `json:"name"`
+	ID           string `json:"id"`
+	Version      string `json:"version"`
+	Codename     string `json:"codename,omitempty"`
+	Kernel       string `json:"kernel"`
+	KernelArch   string `json:"kernel_arch"`
+	InitSystem   string `json:"init_system,omitempty"`
+	BootTime     int64  `json:"boot_time"`
+	Uptime       uint64 `json:"uptime"`
+	Timezone     string `json:"timezone,omitempty"`
+	Locale       string `json:"locale,omitempty"`
+}
+
+// CPUInfo holds CPU metrics.
+type CPUInfo struct {
+	UsagePercent  float64   `json:"usage_percent"`
+	PerCore       []float64 `json:"per_core,omitempty"`
+	LoadAvg1m     float64   `json:"load_avg_1m"`
+	LoadAvg5m     float64   `json:"load_avg_5m"`
+	LoadAvg15m    float64   `json:"load_avg_15m"`
+	Temperature   *float64  `json:"temperature,omitempty"`
+	FreqCurrent   *float64  `json:"freq_current,omitempty"`
+	FreqMax       *float64  `json:"freq_max,omitempty"`
+}
+
+// MemoryInfo holds RAM/swap metrics.
+type MemoryInfo struct {
+	TotalMB      int64   `json:"total_mb"`
+	UsedMB       int64   `json:"used_mb"`
+	FreeMB       int64   `json:"free_mb"`
+	CachedMB     int64   `json:"cached_mb"`
+	BuffersMB    int64   `json:"buffers_mb"`
+	SwapTotalMB  int64   `json:"swap_total_mb"`
+	SwapUsedMB   int64   `json:"swap_used_mb"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
+// DiskInfo holds block device and filesystem info.
+type DiskInfo struct {
+	BlockDevices []BlockDevice `json:"block_devices,omitempty"`
+	Filesystems  []Filesystem  `json:"filesystems,omitempty"`
+}
+
+type BlockDevice struct {
+	Name        string `json:"name"`
+	Model       string `json:"model,omitempty"`
+	SizeGB      float64 `json:"size_gb"`
+	Type        string `json:"type,omitempty"` // HDD, SSD, NVMe, SD
+	SmartStatus string `json:"smart_status,omitempty"`
+}
+
+type Filesystem struct {
+	MountPoint     string  `json:"mount_point"`
+	Device         string  `json:"device"`
+	FSType         string  `json:"fs_type"`
+	TotalGB        float64 `json:"total_gb"`
+	UsedGB         float64 `json:"used_gb"`
+	FreeGB         float64 `json:"free_gb"`
+	UsagePercent   float64 `json:"usage_percent"`
+	MountOptions   string  `json:"mount_options,omitempty"`
+	IsNetworkMount bool    `json:"is_network_mount"`
+}
+
+// NetworkInfo holds network interface details.
+type NetworkInfo struct {
+	Interfaces     []NetworkInterface `json:"interfaces,omitempty"`
+	DefaultGateway string             `json:"default_gateway,omitempty"`
+	DNSServers     []string           `json:"dns_servers,omitempty"`
+	FQDN           string             `json:"fqdn,omitempty"`
+}
+
+type NetworkInterface struct {
+	Name      string   `json:"name"`
+	MAC       string   `json:"mac,omitempty"`
+	IPv4      []string `json:"ipv4,omitempty"`
+	IPv6      []string `json:"ipv6,omitempty"`
+	State     string   `json:"state"`
+	SpeedMbps *int     `json:"speed_mbps,omitempty"`
+	BytesSent uint64   `json:"bytes_sent"`
+	BytesRecv uint64   `json:"bytes_recv"`
+}
+
+// UpdateInfo holds package manager and update details.
+type UpdateInfo struct {
+	PackageManager       string          `json:"package_manager,omitempty"`
+	TotalInstalled       int             `json:"total_installed"`
+	PendingUpdates       int             `json:"pending_updates"`
+	PendingSecurityCount int             `json:"pending_security_count"`
+	PendingKernelUpdate  bool            `json:"pending_kernel_update"`
+	PendingKernelVersion string          `json:"pending_kernel_version,omitempty"`
+	Updates              []PendingUpdate `json:"updates,omitempty"`
+	LastCheckTime        *time.Time      `json:"last_check_time,omitempty"`
+	UnattendedUpgrades   bool            `json:"unattended_upgrades"`
+}
+
+type PendingUpdate struct {
+	Name       string `json:"name"`
+	CurrentVer string `json:"current_ver"`
+	NewVer     string `json:"new_ver"`
+	IsSecurity bool   `json:"is_security"`
+}
+
+// ServiceInfo holds systemd service details.
+type ServiceInfo struct {
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Enabled   bool   `json:"enabled"`
+	PID       int    `json:"pid,omitempty"`
+	MemoryMB  float64 `json:"memory_mb,omitempty"`
+}
+
+// ProcessInfo holds top processes.
+type ProcessInfo struct {
+	TopByCPU    []ProcessEntry `json:"top_by_cpu,omitempty"`
+	TopByMemory []ProcessEntry `json:"top_by_memory,omitempty"`
+}
+
+type ProcessEntry struct {
+	PID     int32   `json:"pid"`
+	Name    string  `json:"name"`
+	CPU     float64 `json:"cpu_percent"`
+	MemPct  float64 `json:"mem_percent"`
+	MemMB   float64 `json:"mem_mb"`
+	User    string  `json:"user"`
+	Command string  `json:"command,omitempty"`
+}
+
+// DockerInfo holds Docker container details.
+type DockerInfo struct {
+	Version        string            `json:"version,omitempty"`
+	TotalContainers int              `json:"total_containers"`
+	Running        int               `json:"running"`
+	Stopped        int               `json:"stopped"`
+	Containers     []ContainerInfo   `json:"containers,omitempty"`
+}
+
+type ContainerInfo struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Image  string  `json:"image"`
+	Status string  `json:"status"`
+	CPU    float64 `json:"cpu_percent"`
+	MemMB  float64 `json:"mem_mb"`
+	Ports  string  `json:"ports,omitempty"`
+}
+
+// SecurityInfo holds security-related info.
+type SecurityInfo struct {
+	SELinux        string `json:"selinux,omitempty"`
+	AppArmor       string `json:"apparmor,omitempty"`
+	FirewallStatus string `json:"firewall_status,omitempty"`
+	FailedLogins24h int   `json:"failed_logins_24h"`
+	LoggedInUsers  int    `json:"logged_in_users"`
+	OpenPorts      []int  `json:"open_ports,omitempty"`
+}
