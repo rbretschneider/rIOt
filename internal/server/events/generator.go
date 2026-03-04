@@ -103,3 +103,42 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 		})
 	}
 }
+
+// CheckDockerEvent creates an event from a Docker container state change.
+func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *models.DockerEvent) {
+	now := time.Now().UTC()
+	switch evt.Action {
+	case "start":
+		g.createEvent(ctx, &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventContainerStart,
+			Severity:  models.SeverityInfo,
+			Message:   fmt.Sprintf("Container %s started (%s)", evt.ContainerName, evt.Image),
+			CreatedAt: now,
+		})
+	case "stop":
+		g.createEvent(ctx, &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventContainerStop,
+			Severity:  models.SeverityInfo,
+			Message:   fmt.Sprintf("Container %s stopped", evt.ContainerName),
+			CreatedAt: now,
+		})
+	case "die":
+		g.createEvent(ctx, &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventContainerDied,
+			Severity:  models.SeverityWarning,
+			Message:   fmt.Sprintf("Container %s died", evt.ContainerName),
+			CreatedAt: now,
+		})
+	case "oom":
+		g.createEvent(ctx, &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventContainerOOM,
+			Severity:  models.SeverityCrit,
+			Message:   fmt.Sprintf("Container %s OOM killed", evt.ContainerName),
+			CreatedAt: now,
+		})
+	}
+}

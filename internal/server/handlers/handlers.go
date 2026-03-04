@@ -300,6 +300,61 @@ func (h *Handlers) WebSocket(w http.ResponseWriter, r *http.Request) {
 	h.hub.HandleWS(w, r)
 }
 
+// GetDeviceContainers returns Docker containers from the latest telemetry.
+func (h *Handlers) GetDeviceContainers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	latest, err := h.telemetry.GetLatestSnapshot(r.Context(), id)
+	if err != nil || latest == nil {
+		writeJSON(w, http.StatusOK, []models.ContainerInfo{})
+		return
+	}
+	if latest.Data.Docker == nil || !latest.Data.Docker.Available {
+		writeJSON(w, http.StatusOK, []models.ContainerInfo{})
+		return
+	}
+	containers := latest.Data.Docker.Containers
+	if containers == nil {
+		containers = []models.ContainerInfo{}
+	}
+	writeJSON(w, http.StatusOK, containers)
+}
+
+// GetContainerDetail returns a single container from the latest telemetry.
+func (h *Handlers) GetContainerDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	cid := chi.URLParam(r, "cid")
+	latest, err := h.telemetry.GetLatestSnapshot(r.Context(), id)
+	if err != nil || latest == nil || latest.Data.Docker == nil {
+		http.Error(w, `{"error":"container not found"}`, http.StatusNotFound)
+		return
+	}
+	for _, c := range latest.Data.Docker.Containers {
+		if c.ID == cid || c.ShortID == cid {
+			writeJSON(w, http.StatusOK, c)
+			return
+		}
+	}
+	http.Error(w, `{"error":"container not found"}`, http.StatusNotFound)
+}
+
+// ReceiveDockerEvent handles Docker events pushed from agents.
+func (h *Handlers) ReceiveDockerEvent(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	var dockerEvt models.DockerEvent
+	if err := json.NewDecoder(r.Body).Decode(&dockerEvt); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Generate appropriate event
+	h.eventGen.CheckDockerEvent(r.Context(), deviceID, &dockerEvt)
+
+	// Broadcast docker update via WebSocket so dashboards refresh
+	h.hub.BroadcastDockerUpdate(deviceID, &dockerEvt)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

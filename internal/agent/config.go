@@ -11,6 +11,15 @@ type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Agent     AgentConfig     `yaml:"agent"`
 	Collector CollectorConfig `yaml:"collectors"`
+	Docker    DockerConfig    `yaml:"docker"`
+}
+
+// DockerConfig controls Docker collection behavior.
+type DockerConfig struct {
+	Enabled         string `yaml:"enabled"`          // "auto" (default), "true", "false"
+	SocketPath      string `yaml:"socket_path"`      // override auto-detection
+	CollectStats    bool   `yaml:"collect_stats"`    // CPU/mem per container
+	TerminalEnabled bool   `yaml:"terminal_enabled"` // opt-in for remote exec
 }
 
 type ServerConfig struct {
@@ -47,6 +56,10 @@ func DefaultConfig() *Config {
 				"os_info", "updates", "services", "processes",
 				"docker", "security",
 			},
+		},
+		Docker: DockerConfig{
+			Enabled:      "auto",
+			CollectStats: true,
 		},
 	}
 }

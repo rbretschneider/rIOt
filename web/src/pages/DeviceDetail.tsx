@@ -1,9 +1,14 @@
+import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
+import ContainerGroup from '../components/ContainerGroup'
+import ContainerDetail from '../components/ContainerDetail'
+import type { ContainerInfo } from '../types/models'
+import { groupContainers, displayName } from '../utils/docker'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -21,6 +26,9 @@ export default function DeviceDetail() {
     queryFn: () => api.getEvents(50, 0),
     refetchInterval: wsConnected ? false : 30_000,
   })
+
+  const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
+  const [containerSearch, setContainerSearch] = useState('')
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
@@ -213,32 +221,23 @@ export default function DeviceDetail() {
         </Section>
       )}
 
-      {/* Docker */}
-      {tel?.docker && tel.docker.total_containers > 0 && (
-        <Section title={`Docker (${tel.docker.running} running / ${tel.docker.total_containers} total)`}>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-2">Name</th>
-                <th className="text-left py-2">Image</th>
-                <th className="text-left py-2">Status</th>
-                <th className="text-left py-2">Ports</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {tel.docker.containers?.map((c) => (
-                <tr key={c.id}>
-                  <td className="py-1.5 font-mono">{c.name}</td>
-                  <td className="py-1.5 text-gray-400">{c.image}</td>
-                  <td className="py-1.5">
-                    <span className={c.status.startsWith('Up') ? 'text-emerald-400' : 'text-gray-500'}>{c.status}</span>
-                  </td>
-                  <td className="py-1.5 font-mono text-xs text-gray-500">{c.ports || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Section>
+      {/* Docker Containers */}
+      {tel?.docker?.available && tel.docker.total_containers > 0 && (
+        <DockerSection
+          tel={tel}
+          containerSearch={containerSearch}
+          setContainerSearch={setContainerSearch}
+          onContainerClick={setSelectedContainer}
+        />
+      )}
+
+      {/* Container Detail Panel */}
+      {selectedContainer && (
+        <ContainerDetail
+          container={selectedContainer}
+          onClose={() => setSelectedContainer(null)}
+          deviceId={id}
+        />
       )}
 
       {/* Updates */}
@@ -284,6 +283,62 @@ export default function DeviceDetail() {
         </Section>
       )}
     </div>
+  )
+}
+
+function DockerSection({
+  tel,
+  containerSearch,
+  setContainerSearch,
+  onContainerClick,
+}: {
+  tel: NonNullable<typeof undefined | import('../types/models').FullTelemetryData>
+  containerSearch: string
+  setContainerSearch: (s: string) => void
+  onContainerClick: (c: ContainerInfo) => void
+}) {
+  const docker = tel.docker!
+  const filtered = useMemo(() => {
+    let containers = docker.containers ?? []
+    if (containerSearch) {
+      const q = containerSearch.toLowerCase()
+      containers = containers.filter(c => {
+        const name = displayName(c.riot, c.name).toLowerCase()
+        return (
+          name.includes(q) ||
+          c.image.toLowerCase().includes(q) ||
+          c.state.includes(q) ||
+          (c.riot?.group?.toLowerCase().includes(q)) ||
+          (c.riot?.tags?.some(t => t.toLowerCase().includes(q)))
+        )
+      })
+    }
+    return containers
+  }, [docker.containers, containerSearch])
+
+  const groups = useMemo(() => groupContainers(filtered), [filtered])
+
+  return (
+    <Section title={`Docker (${docker.running} running / ${docker.total_containers} total${docker.paused ? ` / ${docker.paused} paused` : ''})`}>
+      <div className="mb-4">
+        <input
+          type="text"
+          value={containerSearch}
+          onChange={e => setContainerSearch(e.target.value)}
+          placeholder="Search containers..."
+          className="w-full md:w-64 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+        />
+      </div>
+      {groups.length === 0 ? (
+        <p className="text-sm text-gray-500">No containers match your search.</p>
+      ) : (
+        <div className="space-y-6">
+          {groups.map(g => (
+            <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} />
+          ))}
+        </div>
+      )}
+    </Section>
   )
 }
 

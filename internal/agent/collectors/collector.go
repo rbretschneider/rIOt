@@ -25,7 +25,17 @@ func (r *Registry) Register(c Collector) {
 	r.ordered = append(r.ordered, c)
 }
 
+// DockerOptions configures the Docker collector.
+type DockerOptions struct {
+	CollectStats bool
+	SocketPath   string
+}
+
 func (r *Registry) RegisterDefaults() {
+	r.RegisterDefaultsWithDocker(DockerOptions{CollectStats: true})
+}
+
+func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 	r.Register(&SystemCollector{})
 	r.Register(&CPUCollector{})
 	r.Register(&MemoryCollector{})
@@ -35,7 +45,10 @@ func (r *Registry) RegisterDefaults() {
 	r.Register(&UpdatesCollector{})
 	r.Register(&ServicesCollector{})
 	r.Register(&ProcessesCollector{})
-	r.Register(&DockerCollector{})
+	r.Register(&DockerCollector{
+		CollectStats: opts.CollectStats,
+		SocketPath:   opts.SocketPath,
+	})
 	r.Register(&SecurityCollector{})
 }
 

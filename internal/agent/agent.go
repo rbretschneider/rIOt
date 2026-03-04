@@ -19,6 +19,7 @@ type Agent struct {
 	registry   *collectors.Registry
 	buffer     *Buffer
 	client     *HTTPClient
+	wsClient   *agentWSClient
 }
 
 func New(configPath, version string) (*Agent, error) {
@@ -28,7 +29,10 @@ func New(configPath, version string) (*Agent, error) {
 	}
 
 	registry := collectors.NewRegistry()
-	registry.RegisterDefaults()
+	registry.RegisterDefaultsWithDocker(collectors.DockerOptions{
+		CollectStats: cfg.Docker.CollectStats,
+		SocketPath:   cfg.Docker.SocketPath,
+	})
 
 	return &Agent{
 		config:     cfg,
@@ -85,6 +89,27 @@ func (a *Agent) Run() error {
 		defer wg.Done()
 		a.updateCheckLoop(ctx)
 	}()
+
+	// Start Docker event watcher if Docker is available
+	if shouldEnableDocker(a.config.Docker) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slog.Info("starting Docker event watcher")
+			a.dockerEventLoop(ctx)
+		}()
+
+		// Start agent WebSocket client for terminal relay if terminal is enabled
+		if a.config.Docker.TerminalEnabled {
+			a.wsClient = newAgentWSClient(a)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				slog.Info("starting agent WebSocket client for terminal relay")
+				a.wsClient.run(ctx)
+			}()
+		}
+	}
 
 	// Graceful shutdown
 	done := make(chan os.Signal, 1)

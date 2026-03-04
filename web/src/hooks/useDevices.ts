@@ -58,6 +58,9 @@ export function useDevices() {
           latest_telemetry: { device_id: msg.device_id, timestamp: new Date().toISOString(), data: msg.data },
         }
       })
+    } else if (msg.type === 'docker_update' && msg.device_id) {
+      // Docker container state changed — invalidate device detail to trigger refetch
+      queryClient.invalidateQueries({ queryKey: ['device', msg.device_id] })
     } else if (msg.type === 'event') {
       // Prepend new event into events cache
       queryClient.setQueryData(['events'], (old: any) => {

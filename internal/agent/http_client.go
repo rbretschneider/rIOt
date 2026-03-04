@@ -117,6 +117,29 @@ func (c *HTTPClient) CheckForUpdate(ctx context.Context, version, goos, goarch, 
 	return &result, nil
 }
 
+func (c *HTTPClient) SendDockerEvent(ctx context.Context, deviceID string, evt *models.DockerEvent) error {
+	body, _ := json.Marshal(evt)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/v1/devices/%s/docker-events", c.baseURL, deviceID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-rIOt-Key", c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("docker event push failed: %s", string(b))
+	}
+	return nil
+}
+
 func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *models.TelemetrySnapshot) error {
 	body, _ := json.Marshal(snap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

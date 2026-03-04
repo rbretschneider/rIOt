@@ -6,12 +6,24 @@ type EventType string
 type EventSeverity string
 
 const (
-	EventDeviceOnline  EventType = "device_online"
-	EventDeviceOffline EventType = "device_offline"
-	EventDiskHigh      EventType = "disk_high"
-	EventMemHigh       EventType = "mem_high"
-	EventUpdateAvail   EventType = "update_available"
+	EventDeviceOnline    EventType = "device_online"
+	EventDeviceOffline   EventType = "device_offline"
+	EventDiskHigh        EventType = "disk_high"
+	EventMemHigh         EventType = "mem_high"
+	EventUpdateAvail     EventType = "update_available"
+	EventContainerStart  EventType = "container_started"
+	EventContainerStop   EventType = "container_stopped"
+	EventContainerDied   EventType = "container_died"
+	EventContainerOOM    EventType = "container_oom_killed"
 )
+
+// DockerEvent is the payload agents push for Docker container state changes.
+type DockerEvent struct {
+	ContainerID   string `json:"container_id"`
+	ContainerName string `json:"container_name"`
+	Action        string `json:"action"` // start, stop, die, create, destroy, oom
+	Image         string `json:"image,omitempty"`
+}
 
 const (
 	SeverityInfo    EventSeverity = "info"

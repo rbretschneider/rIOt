@@ -192,21 +192,84 @@ export interface ProcessEntry {
 }
 
 export interface DockerInfo {
+  available: boolean
   version?: string
+  api_version?: string
   total_containers: number
   running: number
   stopped: number
+  paused: number
+  images_total: number
+  storage_driver?: string
+  docker_root_dir?: string
   containers?: ContainerInfo[]
 }
 
 export interface ContainerInfo {
   id: string
+  short_id: string
   name: string
   image: string
+  state: string
   status: string
+  created: number
+  ports?: PortMapping[]
+  labels?: Record<string, string>
   cpu_percent: number
-  mem_mb: number
-  ports?: string
+  mem_usage: number
+  mem_limit: number
+  restart_policy?: string
+  restart_count?: number
+  mounts?: MountInfo[]
+  networks?: NetworkAttach[]
+  env?: EnvVar[]
+  health_status?: string
+  repo_url?: string
+  riot?: RiotLabels
+}
+
+export interface PortMapping {
+  container_port: string
+  host_port?: string
+  protocol: string
+  host_ip?: string
+}
+
+export interface MountInfo {
+  type: string
+  source: string
+  destination: string
+  read_only: boolean
+}
+
+export interface NetworkAttach {
+  name: string
+  ip_address?: string
+  gateway?: string
+  mac_addr?: string
+}
+
+export interface EnvVar {
+  key: string
+  value: string
+}
+
+export interface RiotLabels {
+  group?: string
+  name?: string
+  icon?: string
+  description?: string
+  url?: string
+  priority: number
+  hide?: boolean
+  tags?: string[]
+}
+
+export interface DockerEvent {
+  container_id: string
+  container_name: string
+  action: string
+  image?: string
 }
 
 export interface SecurityInfo {

@@ -113,3 +113,7 @@ func (h *Hub) BroadcastEvent(event *models.Event) {
 func (h *Hub) BroadcastDeviceRemoved(deviceID string) {
 	h.broadcastMsg(WSMessage{Type: "device_removed", DeviceID: deviceID})
 }
+
+func (h *Hub) BroadcastDockerUpdate(deviceID string, data interface{}) {
+	h.broadcastMsg(WSMessage{Type: "docker_update", DeviceID: deviceID, Data: data})
+}

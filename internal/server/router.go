@@ -25,6 +25,8 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// WebSocket
 	r.Get("/ws", h.WebSocket)
+	r.Get("/ws/agent", h.HandleAgentWS)
+	r.Get("/ws/terminal/{deviceId}/{containerId}", h.HandleTerminalWS)
 
 	// API v1
 	r.Route("/api/v1", func(r chi.Router) {
@@ -36,12 +38,15 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Use(middleware.DeviceAuth(s.DeviceRepo))
 			r.Post("/heartbeat", h.Heartbeat)
 			r.Post("/telemetry", h.Telemetry)
+			r.Post("/docker-events", h.ReceiveDockerEvent)
 		})
 
 		// Dashboard/read endpoints (no auth in Phase 1 for dashboard)
 		r.Get("/devices", h.ListDevices)
 		r.Get("/devices/{id}", h.GetDevice)
 		r.Get("/devices/{id}/history", h.GetDeviceHistory)
+		r.Get("/devices/{id}/containers", h.GetDeviceContainers)
+		r.Get("/devices/{id}/containers/{cid}", h.GetContainerDetail)
 		r.Delete("/devices/{id}", h.DeleteDevice)
 		r.Get("/summary", h.Summary)
 		r.Get("/events", h.ListEvents)

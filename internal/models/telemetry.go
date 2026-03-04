@@ -187,23 +187,85 @@ type ProcessEntry struct {
 	Command string  `json:"command,omitempty"`
 }
 
-// DockerInfo holds Docker container details.
+// DockerInfo holds Docker daemon and container details.
 type DockerInfo struct {
-	Version        string            `json:"version,omitempty"`
-	TotalContainers int              `json:"total_containers"`
-	Running        int               `json:"running"`
-	Stopped        int               `json:"stopped"`
-	Containers     []ContainerInfo   `json:"containers,omitempty"`
+	Available       bool            `json:"available"`
+	Version         string          `json:"version,omitempty"`
+	APIVersion      string          `json:"api_version,omitempty"`
+	TotalContainers int             `json:"total_containers"`
+	Running         int             `json:"running"`
+	Stopped         int             `json:"stopped"`
+	Paused          int             `json:"paused"`
+	ImagesTotal     int             `json:"images_total"`
+	StorageDriver   string          `json:"storage_driver,omitempty"`
+	DockerRootDir   string          `json:"docker_root_dir,omitempty"`
+	Containers      []ContainerInfo `json:"containers,omitempty"`
 }
 
+// ContainerInfo holds rich per-container data.
 type ContainerInfo struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Image  string  `json:"image"`
-	Status string  `json:"status"`
-	CPU    float64 `json:"cpu_percent"`
-	MemMB  float64 `json:"mem_mb"`
-	Ports  string  `json:"ports,omitempty"`
+	ID            string            `json:"id"`
+	ShortID       string            `json:"short_id"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	State         string            `json:"state"`
+	Status        string            `json:"status"`
+	Created       int64             `json:"created"`
+	Ports         []PortMapping     `json:"ports,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	CPUPercent    float64           `json:"cpu_percent"`
+	MemUsage      int64             `json:"mem_usage"`
+	MemLimit      int64             `json:"mem_limit"`
+	RestartPolicy string            `json:"restart_policy,omitempty"`
+	RestartCount  int               `json:"restart_count,omitempty"`
+	Mounts        []MountInfo       `json:"mounts,omitempty"`
+	Networks      []NetworkAttach   `json:"networks,omitempty"`
+	Env           []EnvVar          `json:"env,omitempty"`
+	HealthStatus  string            `json:"health_status,omitempty"`
+	RepoURL       string            `json:"repo_url,omitempty"`
+	Riot          *RiotLabels       `json:"riot,omitempty"`
+}
+
+// PortMapping represents a container port binding.
+type PortMapping struct {
+	ContainerPort string `json:"container_port"`
+	HostPort      string `json:"host_port,omitempty"`
+	Protocol      string `json:"protocol"`
+	HostIP        string `json:"host_ip,omitempty"`
+}
+
+// MountInfo describes a container volume or bind mount.
+type MountInfo struct {
+	Type        string `json:"type"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	ReadOnly    bool   `json:"read_only"`
+}
+
+// NetworkAttach describes a container's connection to a Docker network.
+type NetworkAttach struct {
+	Name      string `json:"name"`
+	IPAddress string `json:"ip_address,omitempty"`
+	Gateway   string `json:"gateway,omitempty"`
+	MacAddr   string `json:"mac_addr,omitempty"`
+}
+
+// EnvVar holds a parsed KEY=VALUE environment variable.
+type EnvVar struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// RiotLabels holds parsed riot.* label values.
+type RiotLabels struct {
+	Group       string   `json:"group,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Icon        string   `json:"icon,omitempty"`
+	Description string   `json:"description,omitempty"`
+	URL         string   `json:"url,omitempty"`
+	Priority    int      `json:"priority"`
+	Hide        bool     `json:"hide,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
 }
 
 // SecurityInfo holds security-related info.
