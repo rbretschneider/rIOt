@@ -110,6 +110,12 @@ if [ "$OS" = "linux" ]; then
     chown "$RIOT_USER:$RIOT_USER" "$RIOT_DATA_DIR"
 fi
 
+# ── Stop existing agent if running ────────────────────────────────────
+if [ "$OS" = "linux" ] && systemctl is-active riot-agent >/dev/null 2>&1; then
+    echo "==> Stopping running agent"
+    systemctl stop riot-agent
+fi
+
 # ── Download binary ──────────────────────────────────────────────────
 echo "==> Downloading agent binary"
 if command -v curl >/dev/null 2>&1; then
@@ -208,7 +214,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable riot-agent
-    systemctl start riot-agent
+    systemctl restart riot-agent
 
     echo ""
     echo "==> rIOt agent installed and running!"
