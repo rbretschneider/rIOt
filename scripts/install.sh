@@ -22,6 +22,32 @@ RIOT_BIN="/usr/local/bin/riot-agent"
 
 echo "==> rIOt Agent Installer"
 
+# ── Detect if server URL points to this machine, use 127.0.0.1 ──────
+resolve_server_url() {
+    local url="$1"
+    # Extract host from URL (strip protocol and port/path)
+    local host
+    host=$(echo "$url" | sed -E 's|https?://||; s|[:/].*||')
+
+    # Skip if already localhost/127.x
+    case "$host" in
+        localhost|127.*) return ;;
+    esac
+
+    # Check if this host's IP matches the server URL
+    local local_ips
+    local_ips=$(hostname -I 2>/dev/null || ip -4 addr show 2>/dev/null | grep -oP 'inet \K[\d.]+' || true)
+
+    for ip in $local_ips; do
+        if [ "$ip" = "$host" ]; then
+            RIOT_SERVER=$(echo "$url" | sed "s|${host}|127.0.0.1|")
+            echo "==> Detected local server, using 127.0.0.1 instead of ${host}"
+            return
+        fi
+    done
+}
+resolve_server_url "$RIOT_SERVER"
+
 # ── Detect architecture ──────────────────────────────────────────────
 ARCH=$(uname -m)
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -67,6 +93,14 @@ if [ "$OS" = "linux" ]; then
         echo "==> Creating system user: $RIOT_USER"
         useradd --system --no-create-home --shell /usr/sbin/nologin "$RIOT_USER"
     fi
+
+    # Add riot user to docker group if Docker is installed
+    if getent group docker >/dev/null 2>&1; then
+        if ! id -nG "$RIOT_USER" | grep -qw docker; then
+            echo "==> Adding $RIOT_USER to docker group (for container monitoring)"
+            usermod -aG docker "$RIOT_USER"
+        fi
+    fi
 fi
 
 # ── Create directories ───────────────────────────────────────────────
@@ -89,6 +123,18 @@ fi
 chmod +x "$RIOT_BIN"
 
 echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
+
+# ── Detect Docker for config ─────────────────────────────────────────
+DOCKER_ENABLED="auto"
+DOCKER_SECTION=""
+if command -v docker >/dev/null 2>&1; then
+    echo "==> Docker detected, enabling container monitoring"
+    DOCKER_SECTION="
+docker:
+  enabled: auto
+  collect_stats: true
+  terminal_enabled: false"
+fi
 
 # ── Write config (skip if already exists) ─────────────────────────────
 if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
@@ -116,6 +162,7 @@ collectors:
     - processes
     - docker
     - security
+${DOCKER_SECTION}
 EOF
     if [ "$OS" = "linux" ]; then
         chown "$RIOT_USER:$RIOT_USER" "$RIOT_CONFIG_DIR/agent.yaml"
@@ -123,6 +170,12 @@ EOF
     chmod 600 "$RIOT_CONFIG_DIR/agent.yaml"
 else
     echo "==> Config already exists, skipping (${RIOT_CONFIG_DIR}/agent.yaml)"
+fi
+
+# ── Build supplementary groups for systemd ────────────────────────────
+SUPPLEMENTARY_GROUPS=""
+if getent group docker >/dev/null 2>&1; then
+    SUPPLEMENTARY_GROUPS="SupplementaryGroups=docker"
 fi
 
 # ── Install systemd service (Linux only) ──────────────────────────────
@@ -141,9 +194,10 @@ Restart=always
 RestartSec=5
 User=${RIOT_USER}
 Group=${RIOT_USER}
+${SUPPLEMENTARY_GROUPS}
 LimitNOFILE=65536
 NoNewPrivileges=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=true
 ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR}
 PrivateTmp=true
