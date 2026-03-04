@@ -2,7 +2,7 @@
 
 BINARY_SERVER=riot-server
 BINARY_AGENT=riot-agent
-VERSION?=0.1.0
+VERSION?=1.0.0
 LDFLAGS=-ldflags "-s -w -X main.version=$(VERSION)"
 DB_URL?=postgres://riot:riot@localhost:5432/riot?sslmode=disable
 
@@ -37,7 +37,7 @@ build-web:
 
 # Build Docker image
 docker:
-	docker build -t riot-server:$(VERSION) .
+	docker build --build-arg VERSION=$(VERSION) -t riot-server:$(VERSION) .
 
 # Run database migrations
 migrate-up:

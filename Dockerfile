@@ -8,6 +8,7 @@ RUN npm run build
 
 # Stage 2: Build Go binary
 FROM golang:1.24-alpine AS builder
+ARG VERSION=dev
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -15,7 +16,7 @@ RUN go mod download
 COPY . .
 # Copy built frontend into cmd/riot-server for embedding
 COPY --from=frontend /app/web/dist ./cmd/riot-server/dist
-RUN CGO_ENABLED=0 go build -tags embed_frontend -ldflags "-s -w" -o /riot-server ./cmd/riot-server
+RUN CGO_ENABLED=0 go build -tags embed_frontend -ldflags "-s -w -X main.version=${VERSION}" -o /riot-server ./cmd/riot-server
 
 # Stage 3: Minimal runtime
 FROM alpine:3.19

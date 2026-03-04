@@ -1,6 +1,9 @@
 services:
   riot-server:
-    build: .
+    build:
+      context: .
+      args:
+        VERSION: "1.0.0"
     container_name: riot-server
     ports:
       - "7331:7331"
