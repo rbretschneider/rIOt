@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -11,14 +12,49 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 )
 
+// Cooldown durations — suppress duplicate events within these windows.
+var eventCooldowns = map[models.EventType]time.Duration{
+	models.EventUpdateAvail: 24 * time.Hour,
+	models.EventDiskHigh:    1 * time.Hour,
+	models.EventMemHigh:     1 * time.Hour,
+}
+
+const defaultCooldown = 15 * time.Minute
+
 // Generator creates and stores events based on telemetry data.
 type Generator struct {
 	repo *db.EventRepo
 	hub  *websocket.Hub
+
+	mu       sync.Mutex
+	lastSent map[string]time.Time // key: "deviceID:eventType"
 }
 
 func NewGenerator(repo *db.EventRepo, hub *websocket.Hub) *Generator {
-	return &Generator{repo: repo, hub: hub}
+	return &Generator{
+		repo:     repo,
+		hub:      hub,
+		lastSent: make(map[string]time.Time),
+	}
+}
+
+// onCooldown returns true if an event of this type for this device was
+// created recently enough that we should suppress the duplicate.
+func (g *Generator) onCooldown(deviceID string, eventType models.EventType) bool {
+	cd, ok := eventCooldowns[eventType]
+	if !ok {
+		cd = defaultCooldown
+	}
+	key := deviceID + ":" + string(eventType)
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if last, exists := g.lastSent[key]; exists && time.Since(last) < cd {
+		return true
+	}
+	g.lastSent[key] = time.Now()
+	return false
 }
 
 func (g *Generator) createEvent(ctx context.Context, e *models.Event) {
@@ -50,7 +86,7 @@ func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string
 }
 
 func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID string, data *models.HeartbeatData) {
-	if data.MemPercent > 90 {
+	if data.MemPercent > 90 && !g.onCooldown(deviceID, models.EventMemHigh) {
 		g.createEvent(ctx, &models.Event{
 			DeviceID:  deviceID,
 			Type:      models.EventMemHigh,
@@ -59,7 +95,7 @@ func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID strin
 			CreatedAt: time.Now().UTC(),
 		})
 	}
-	if data.DiskRootPercent > 90 {
+	if data.DiskRootPercent > 90 && !g.onCooldown(deviceID, models.EventDiskHigh) {
 		g.createEvent(ctx, &models.Event{
 			DeviceID:  deviceID,
 			Type:      models.EventDiskHigh,
@@ -71,7 +107,7 @@ func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID strin
 }
 
 func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
-	if data.Memory != nil && data.Memory.UsagePercent > 90 {
+	if data.Memory != nil && data.Memory.UsagePercent > 90 && !g.onCooldown(deviceID, models.EventMemHigh) {
 		g.createEvent(ctx, &models.Event{
 			DeviceID:  deviceID,
 			Type:      models.EventMemHigh,
@@ -82,7 +118,7 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 	}
 	if data.Disks != nil {
 		for _, fs := range data.Disks.Filesystems {
-			if fs.UsagePercent > 90 {
+			if fs.UsagePercent > 90 && !g.onCooldown(deviceID, models.EventDiskHigh) {
 				g.createEvent(ctx, &models.Event{
 					DeviceID:  deviceID,
 					Type:      models.EventDiskHigh,
@@ -93,7 +129,7 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 			}
 		}
 	}
-	if data.Updates != nil && data.Updates.PendingUpdates > 0 {
+	if data.Updates != nil && data.Updates.PendingUpdates > 0 && !g.onCooldown(deviceID, models.EventUpdateAvail) {
 		g.createEvent(ctx, &models.Event{
 			DeviceID:  deviceID,
 			Type:      models.EventUpdateAvail,
