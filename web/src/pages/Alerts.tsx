@@ -2,18 +2,17 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
+import { useDevices } from '../hooks/useDevices'
 import SeverityBadge from '../components/SeverityBadge'
 
 export default function Alerts() {
   const [filter, setFilter] = useState<string>('')
+  // useDevices sets up WS that pushes new events into the ['events'] cache
+  const { data: devices, wsConnected } = useDevices()
   const { data: events, isLoading } = useQuery({
     queryKey: ['events'],
     queryFn: () => api.getEvents(200, 0),
-    refetchInterval: 15_000,
-  })
-  const { data: devices } = useQuery({
-    queryKey: ['devices'],
-    queryFn: api.getDevices,
+    refetchInterval: wsConnected ? false : 15_000, // Only poll when WS is down
   })
 
   const deviceMap = new Map(devices?.map(d => [d.id, d]))

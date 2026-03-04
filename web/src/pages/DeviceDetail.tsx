@@ -1,21 +1,25 @@
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
+  // useDevices sets up the WS listener that pushes heartbeat/telemetry/events
+  // directly into the ['device', id] and ['events'] query caches
+  const { wsConnected } = useDevices()
   const { data, isLoading } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
-    refetchInterval: 15_000,
+    refetchInterval: wsConnected ? false : 15_000, // Only poll when WS is down
     enabled: !!id,
   })
   const { data: events } = useQuery({
-    queryKey: ['events', id],
-    queryFn: () => api.getEvents(20, 0),
-    refetchInterval: 30_000,
+    queryKey: ['events'],
+    queryFn: () => api.getEvents(50, 0),
+    refetchInterval: wsConnected ? false : 30_000,
   })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>

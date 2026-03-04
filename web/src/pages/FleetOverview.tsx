@@ -1,7 +1,5 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 
@@ -9,8 +7,18 @@ type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id'
 type SortDir = 'asc' | 'desc'
 
 export default function FleetOverview() {
-  const { data: devices, isLoading } = useDevices()
-  const { data: summary } = useQuery({ queryKey: ['summary'], queryFn: api.getSummary, refetchInterval: 15_000 })
+  const { data: devices, isLoading, wsConnected } = useDevices()
+
+  // Derive summary from live device data — no separate polling needed
+  const summary = useMemo(() => {
+    if (!devices) return null
+    return {
+      total_devices: devices.length,
+      online_count: devices.filter(d => d.status === 'online').length,
+      offline_count: devices.filter(d => d.status === 'offline').length,
+      warning_count: devices.filter(d => d.status === 'warning').length,
+    }
+  }, [devices])
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
