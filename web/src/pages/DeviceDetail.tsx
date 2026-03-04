@@ -1,14 +1,9 @@
-import { useState, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
-import ContainerGroup from '../components/ContainerGroup'
-import ContainerDetail from '../components/ContainerDetail'
-import type { ContainerInfo } from '../types/models'
-import { groupContainers, displayName } from '../utils/docker'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -26,9 +21,6 @@ export default function DeviceDetail() {
     queryFn: () => api.getEvents(50, 0),
     refetchInterval: wsConnected ? false : 30_000,
   })
-
-  const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
-  const [containerSearch, setContainerSearch] = useState('')
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
@@ -100,66 +92,70 @@ export default function DeviceDetail() {
       {/* Network */}
       {tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
         <Section title="Network Interfaces">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-2">Name</th>
-                <th className="text-left py-2">State</th>
-                <th className="text-left py-2">IPv4</th>
-                <th className="text-left py-2">MAC</th>
-                <th className="text-right py-2">TX / RX</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {tel.network.interfaces.map((iface) => (
-                <tr key={iface.name}>
-                  <td className="py-2 font-mono">{iface.name}</td>
-                  <td className="py-2">
-                    <span className={iface.state === 'UP' ? 'text-emerald-400' : 'text-gray-500'}>{iface.state}</span>
-                  </td>
-                  <td className="py-2 font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
-                  <td className="py-2 font-mono text-gray-500">{iface.mac || '-'}</td>
-                  <td className="py-2 text-right font-mono text-gray-400">
-                    {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
-                  </td>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2">Name</th>
+                  <th className="text-left py-2">State</th>
+                  <th className="text-left py-2">IPv4</th>
+                  <th className="text-left py-2">MAC</th>
+                  <th className="text-right py-2">TX / RX</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {tel.network.interfaces.map((iface) => (
+                  <tr key={iface.name}>
+                    <td className="py-2 font-mono">{iface.name}</td>
+                    <td className="py-2">
+                      <span className={iface.state === 'UP' ? 'text-emerald-400' : 'text-gray-500'}>{iface.state}</span>
+                    </td>
+                    <td className="py-2 font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
+                    <td className="py-2 font-mono text-gray-500">{iface.mac || '-'}</td>
+                    <td className="py-2 text-right font-mono text-gray-400">
+                      {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Section>
       )}
 
       {/* Filesystems */}
       {tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
         <Section title="Filesystems">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-2">Mount</th>
-                <th className="text-left py-2">Device</th>
-                <th className="text-left py-2">Type</th>
-                <th className="text-right py-2">Used</th>
-                <th className="text-right py-2">Total</th>
-                <th className="text-right py-2">Usage</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {tel.disks.filesystems.map((fs) => (
-                <tr key={fs.mount_point}>
-                  <td className="py-2 font-mono">{fs.mount_point}</td>
-                  <td className="py-2 font-mono text-gray-400">{fs.device}</td>
-                  <td className="py-2 text-gray-400">{fs.fs_type}</td>
-                  <td className="py-2 text-right font-mono">{fs.used_gb.toFixed(1)} GB</td>
-                  <td className="py-2 text-right font-mono text-gray-400">{fs.total_gb.toFixed(1)} GB</td>
-                  <td className="py-2 text-right">
-                    <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
-                      {fs.usage_percent.toFixed(1)}%
-                    </span>
-                  </td>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2">Mount</th>
+                  <th className="text-left py-2">Device</th>
+                  <th className="text-left py-2">Type</th>
+                  <th className="text-right py-2">Used</th>
+                  <th className="text-right py-2">Total</th>
+                  <th className="text-right py-2">Usage</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {tel.disks.filesystems.map((fs) => (
+                  <tr key={fs.mount_point}>
+                    <td className="py-2 font-mono">{fs.mount_point}</td>
+                    <td className="py-2 font-mono text-gray-400">{fs.device}</td>
+                    <td className="py-2 text-gray-400">{fs.fs_type}</td>
+                    <td className="py-2 text-right font-mono">{fs.used_gb.toFixed(1)} GB</td>
+                    <td className="py-2 text-right font-mono text-gray-400">{fs.total_gb.toFixed(1)} GB</td>
+                    <td className="py-2 text-right">
+                      <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
+                        {fs.usage_percent.toFixed(1)}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Section>
       )}
 
@@ -221,23 +217,21 @@ export default function DeviceDetail() {
         </Section>
       )}
 
-      {/* Docker Containers */}
+      {/* Docker Summary */}
       {tel?.docker?.available && tel.docker.total_containers > 0 && (
-        <DockerSection
-          tel={tel}
-          containerSearch={containerSearch}
-          setContainerSearch={setContainerSearch}
-          onContainerClick={setSelectedContainer}
-        />
-      )}
-
-      {/* Container Detail Panel */}
-      {selectedContainer && (
-        <ContainerDetail
-          container={selectedContainer}
-          onClose={() => setSelectedContainer(null)}
-          deviceId={id}
-        />
+        <Section title="Docker">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-300">
+              {tel.docker.total_containers} containers ({tel.docker.running} running)
+            </p>
+            <Link
+              to={`/devices/${id}/containers`}
+              className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              View Containers &rarr;
+            </Link>
+          </div>
+        </Section>
       )}
 
       {/* Updates */}
@@ -283,62 +277,6 @@ export default function DeviceDetail() {
         </Section>
       )}
     </div>
-  )
-}
-
-function DockerSection({
-  tel,
-  containerSearch,
-  setContainerSearch,
-  onContainerClick,
-}: {
-  tel: NonNullable<typeof undefined | import('../types/models').FullTelemetryData>
-  containerSearch: string
-  setContainerSearch: (s: string) => void
-  onContainerClick: (c: ContainerInfo) => void
-}) {
-  const docker = tel.docker!
-  const filtered = useMemo(() => {
-    let containers = docker.containers ?? []
-    if (containerSearch) {
-      const q = containerSearch.toLowerCase()
-      containers = containers.filter(c => {
-        const name = displayName(c.riot, c.name).toLowerCase()
-        return (
-          name.includes(q) ||
-          c.image.toLowerCase().includes(q) ||
-          c.state.includes(q) ||
-          (c.riot?.group?.toLowerCase().includes(q)) ||
-          (c.riot?.tags?.some(t => t.toLowerCase().includes(q)))
-        )
-      })
-    }
-    return containers
-  }, [docker.containers, containerSearch])
-
-  const groups = useMemo(() => groupContainers(filtered), [filtered])
-
-  return (
-    <Section title={`Docker (${docker.running} running / ${docker.total_containers} total${docker.paused ? ` / ${docker.paused} paused` : ''})`}>
-      <div className="mb-4">
-        <input
-          type="text"
-          value={containerSearch}
-          onChange={e => setContainerSearch(e.target.value)}
-          placeholder="Search containers..."
-          className="w-full md:w-64 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500"
-        />
-      </div>
-      {groups.length === 0 ? (
-        <p className="text-sm text-gray-500">No containers match your search.</p>
-      ) : (
-        <div className="space-y-6">
-          {groups.map(g => (
-            <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} />
-          ))}
-        </div>
-      )}
-    </Section>
   )
 }
 

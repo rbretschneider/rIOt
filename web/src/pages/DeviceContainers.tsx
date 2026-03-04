@@ -1,0 +1,128 @@
+import { useState, useMemo } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
+import { useDevices } from '../hooks/useDevices'
+import ContainerGroup from '../components/ContainerGroup'
+import ContainerDetail from '../components/ContainerDetail'
+import type { ContainerInfo } from '../types/models'
+import { groupContainers, displayName } from '../utils/docker'
+
+export default function DeviceContainers() {
+  const { id } = useParams<{ id: string }>()
+  const { wsConnected } = useDevices()
+  const { data, isLoading } = useQuery({
+    queryKey: ['device', id],
+    queryFn: () => api.getDevice(id!),
+    refetchInterval: wsConnected ? false : 15_000,
+    enabled: !!id,
+  })
+
+  const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
+  const [containerSearch, setContainerSearch] = useState('')
+
+  if (isLoading) return <div className="text-gray-500">Loading...</div>
+  if (!data) return <div className="text-gray-500">Device not found</div>
+
+  const { device, latest_telemetry } = data
+  const tel = latest_telemetry?.data
+  const docker = tel?.docker
+
+  if (!docker?.available) {
+    return (
+      <div className="space-y-4">
+        <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
+          &larr; Back to {device.hostname}
+        </Link>
+        <p className="text-gray-500">Docker is not available on this device.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
+          &larr; Back to {device.hostname}
+        </Link>
+        <h1 className="text-2xl font-bold text-white mt-2">
+          Docker Containers
+        </h1>
+        <p className="text-sm text-gray-500">
+          {docker.running} running / {docker.total_containers} total
+          {docker.paused ? ` / ${docker.paused} paused` : ''}
+        </p>
+      </div>
+
+      {/* Search */}
+      <div>
+        <input
+          type="text"
+          value={containerSearch}
+          onChange={e => setContainerSearch(e.target.value)}
+          placeholder="Search containers..."
+          className="w-full md:w-64 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500"
+        />
+      </div>
+
+      {/* Container Groups */}
+      <ContainerList
+        docker={docker}
+        search={containerSearch}
+        onContainerClick={setSelectedContainer}
+      />
+
+      {/* Container Detail Panel */}
+      {selectedContainer && (
+        <ContainerDetail
+          container={selectedContainer}
+          onClose={() => setSelectedContainer(null)}
+          deviceId={id}
+        />
+      )}
+    </div>
+  )
+}
+
+function ContainerList({
+  docker,
+  search,
+  onContainerClick,
+}: {
+  docker: NonNullable<import('../types/models').FullTelemetryData['docker']>
+  search: string
+  onContainerClick: (c: ContainerInfo) => void
+}) {
+  const filtered = useMemo(() => {
+    let containers = docker.containers ?? []
+    if (search) {
+      const q = search.toLowerCase()
+      containers = containers.filter(c => {
+        const name = displayName(c.riot, c.name).toLowerCase()
+        return (
+          name.includes(q) ||
+          c.image.toLowerCase().includes(q) ||
+          c.state.includes(q) ||
+          (c.riot?.group?.toLowerCase().includes(q)) ||
+          (c.riot?.tags?.some(t => t.toLowerCase().includes(q)))
+        )
+      })
+    }
+    return containers
+  }, [docker.containers, search])
+
+  const groups = useMemo(() => groupContainers(filtered), [filtered])
+
+  if (groups.length === 0) {
+    return <p className="text-sm text-gray-500">No containers match your search.</p>
+  }
+
+  return (
+    <div className="space-y-6">
+      {groups.map(g => (
+        <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} />
+      ))}
+    </div>
+  )
+}

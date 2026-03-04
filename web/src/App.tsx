@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from './api/client'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
+import DeviceContainers from './pages/DeviceContainers'
 import Alerts from './pages/Alerts'
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
@@ -120,6 +121,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<FleetOverview />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
+          <Route path="/devices/:id/containers" element={<DeviceContainers />} />
           <Route path="/alerts" element={<Alerts />} />
         </Routes>
       </main>

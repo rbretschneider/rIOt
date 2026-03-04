@@ -6,6 +6,7 @@ Self-hosted infrastructure monitoring for homelab environments. Deploy a lightwe
 
 - **Lightweight agent** — single static binary, < 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status
+- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable
 - **Simple deployment** — one `docker compose up` for the server, one-liner install for agents
@@ -99,6 +100,7 @@ docker run -d --name riot-server \
 | `RIOT_PORT` | `7331` | HTTP listen port |
 | `RIOT_API_KEY` | `changeme` | Master API key for agent registration |
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
+| `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
 
 ---
 
@@ -161,6 +163,11 @@ This will:
        - processes
        - docker
        - security
+
+   docker:
+     enabled: "auto"               # "auto" (detect), "true", or "false"
+     collect_stats: true            # per-container CPU/memory stats
+     terminal_enabled: false        # set to true to allow remote exec from dashboard
    ```
 
 4. Run the agent:
@@ -185,6 +192,10 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
 | `collectors.enabled` | all | List of collectors to run |
+| `docker.enabled` | `auto` | Docker collection mode: `auto` (detect), `true`, `false` |
+| `docker.socket_path` | auto-detect | Override the Docker socket path |
+| `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
+| `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 
 ### Available Collectors
 
@@ -199,7 +210,7 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `updates` | Package manager, pending updates, security updates |
 | `services` | systemd services — name, state, enabled |
 | `processes` | Top 15 by CPU, top 15 by memory |
-| `docker` | Docker containers — name, image, status, ports |
+| `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events |
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins |
 
 ---
@@ -213,14 +224,21 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/register` | Master key | Register a new device |
 | `POST` | `/api/v1/devices/:id/heartbeat` | Device key | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Device key | Full telemetry push |
+| `POST` | `/api/v1/devices/:id/docker-events` | Device key | Real-time Docker container events |
 | `GET` | `/api/v1/devices` | — | List all devices |
 | `GET` | `/api/v1/devices/:id` | — | Device detail + latest telemetry |
 | `GET` | `/api/v1/devices/:id/history` | — | Paginated telemetry history |
+| `GET` | `/api/v1/devices/:id/containers` | — | List containers for a device |
+| `GET` | `/api/v1/devices/:id/containers/:cid` | — | Container detail |
 | `DELETE` | `/api/v1/devices/:id` | — | Remove a device |
 | `GET` | `/api/v1/summary` | — | Fleet summary stats |
 | `GET` | `/api/v1/events` | — | Event/alert list |
+| `GET` | `/api/v1/update/check` | — | Agent update check |
+| `GET` | `/api/v1/update/server` | — | Server update check |
 | `GET` | `/health` | — | Server health check |
 | `GET` | `/ws` | — | WebSocket (live updates for dashboard) |
+| `GET` | `/ws/agent` | — | Agent WebSocket (terminal relay) |
+| `GET` | `/ws/terminal/:deviceId/:containerId` | — | Browser-to-container terminal |
 
 ---
 
@@ -257,6 +275,60 @@ make dev
 | Device registry | Forever (until manually deleted) |
 
 A background worker runs hourly to purge expired data.
+
+---
+
+## Docker Container Management
+
+Devices running Docker get a dedicated container dashboard at `/devices/:id/containers` in the web UI, with search, filtering, and grouped container cards.
+
+### `riot.*` Labels
+
+Add Docker labels to your containers to control how they appear in the dashboard:
+
+| Label | Description |
+|---|---|
+| `riot.group` | Group name — containers with the same group are displayed together |
+| `riot.name` | Display name override (default: container name) |
+| `riot.icon` | Emoji or icon shown next to the container |
+| `riot.description` | Human-readable description |
+| `riot.url` | Link to the service (shown as a clickable link in the UI) |
+| `riot.priority` | Sort order within group (default: `50`, lower = higher) |
+| `riot.hide` | Set to `true` to hide the container from the dashboard |
+| `riot.tags` | Comma-separated tags for filtering |
+
+Example in a `docker-compose.yml`:
+
+```yaml
+services:
+  jellyfin:
+    image: jellyfin/jellyfin
+    labels:
+      riot.group: "Media"
+      riot.name: "Jellyfin"
+      riot.icon: "🎬"
+      riot.description: "Media server"
+      riot.url: "http://jellyfin.local:8096"
+      riot.priority: "10"
+      riot.tags: "media,streaming"
+```
+
+### Remote Terminal
+
+The agent can optionally allow remote `docker exec` from the dashboard, providing a browser-based terminal into running containers. This is disabled by default for security.
+
+To enable, set `docker.terminal_enabled: true` in the agent config (`/etc/riot/agent.yaml`):
+
+```yaml
+docker:
+  terminal_enabled: true
+```
+
+The terminal uses a WebSocket relay: browser connects to the server, which proxies to the agent's persistent WebSocket connection, which attaches to a `docker exec` session on the target container.
+
+### Real-time Container Events
+
+When Docker is available, the agent watches the Docker event stream and forwards container lifecycle events (start, stop, die, OOM, pause, unpause, create, destroy) to the server in real-time. These appear in the dashboard event feed and trigger alerts for OOM kills.
 
 ---
 
