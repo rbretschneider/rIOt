@@ -9,6 +9,7 @@ type HeartbeatData struct {
 	MemPercent      float64 `json:"mem_percent"`
 	LoadAvg1m       float64 `json:"load_avg_1m"`
 	DiskRootPercent float64 `json:"disk_root_percent"`
+	AgentVersion    string  `json:"agent_version,omitempty"`
 }
 
 // Heartbeat wraps a heartbeat with metadata.

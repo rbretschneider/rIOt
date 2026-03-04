@@ -166,7 +166,7 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to store heartbeat"}`, http.StatusInternalServerError)
 		return
 	}
-	h.devices.UpdateHeartbeatTime(r.Context(), deviceID)
+	h.devices.UpdateHeartbeatTime(r.Context(), deviceID, hb.Data.AgentVersion)
 
 	// Check thresholds and generate events
 	h.eventGen.CheckHeartbeatThresholds(r.Context(), deviceID, &hb.Data)

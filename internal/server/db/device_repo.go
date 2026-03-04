@@ -98,7 +98,12 @@ func (r *DeviceRepo) SetStatus(ctx context.Context, id string, status models.Dev
 	return err
 }
 
-func (r *DeviceRepo) UpdateHeartbeatTime(ctx context.Context, id string) error {
+func (r *DeviceRepo) UpdateHeartbeatTime(ctx context.Context, id string, agentVersion string) error {
+	if agentVersion != "" {
+		_, err := r.db.Pool.Exec(ctx,
+			`UPDATE devices SET last_heartbeat=NOW(), status='online', agent_version=$2, updated_at=NOW() WHERE id=$1`, id, agentVersion)
+		return err
+	}
 	_, err := r.db.Pool.Exec(ctx,
 		`UPDATE devices SET last_heartbeat=NOW(), status='online', updated_at=NOW() WHERE id=$1`, id)
 	return err

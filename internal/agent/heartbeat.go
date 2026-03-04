@@ -14,7 +14,9 @@ import (
 )
 
 func (a *Agent) sendHeartbeat(ctx context.Context) {
-	data := models.HeartbeatData{}
+	data := models.HeartbeatData{
+		AgentVersion: a.version,
+	}
 
 	// CPU usage
 	if percents, err := cpu.PercentWithContext(ctx, time.Second, false); err == nil && len(percents) > 0 {
