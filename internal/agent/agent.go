@@ -15,12 +15,13 @@ import (
 type Agent struct {
 	config     *Config
 	configPath string
+	version    string
 	registry   *collectors.Registry
 	buffer     *Buffer
 	client     *HTTPClient
 }
 
-func New(configPath string) (*Agent, error) {
+func New(configPath, version string) (*Agent, error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -32,6 +33,7 @@ func New(configPath string) (*Agent, error) {
 	return &Agent{
 		config:     cfg,
 		configPath: configPath,
+		version:    version,
 		registry:   registry,
 	}, nil
 }
@@ -76,6 +78,12 @@ func (a *Agent) Run() error {
 	go func() {
 		defer wg.Done()
 		a.telemetryLoop(ctx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		a.updateCheckLoop(ctx)
 	}()
 
 	// Graceful shutdown

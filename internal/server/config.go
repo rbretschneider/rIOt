@@ -10,6 +10,7 @@ type Config struct {
 	DBUrl         string
 	MasterAPIKey  string
 	RetentionDays int
+	GitHubRepo    string
 }
 
 func LoadConfig() *Config {
@@ -18,6 +19,7 @@ func LoadConfig() *Config {
 		DBUrl:         "postgres://riot:riot@localhost:5432/riot?sslmode=disable",
 		MasterAPIKey:  "changeme",
 		RetentionDays: 30,
+		GitHubRepo:    "rbretschneider/rIOt",
 	}
 
 	if v := os.Getenv("RIOT_PORT"); v != "" {
@@ -35,6 +37,9 @@ func LoadConfig() *Config {
 		if d, err := strconv.Atoi(v); err == nil {
 			cfg.RetentionDays = d
 		}
+	}
+	if v := os.Getenv("RIOT_GITHUB_REPO"); v != "" {
+		cfg.GitHubRepo = v
 	}
 	return cfg
 }

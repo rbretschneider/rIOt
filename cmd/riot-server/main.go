@@ -19,6 +19,7 @@ var version = "dev"
 func main() {
 	cfg := server.LoadConfig()
 	srv := server.New(cfg)
+	srv.Version = version
 
 	// Set up migrations FS
 	mFS, err := fs.Sub(migrationsFS, "migrations")

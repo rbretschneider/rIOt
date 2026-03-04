@@ -79,6 +79,44 @@ func (c *HTTPClient) SendHeartbeat(ctx context.Context, deviceID string, hb *mod
 	return nil
 }
 
+// UpdateCheckResponse mirrors the server's update info response.
+type UpdateCheckResponse struct {
+	CurrentVersion string            `json:"current_version"`
+	LatestVersion  string            `json:"latest_version"`
+	UpdateAvail    bool              `json:"update_available"`
+	ReleaseURL     string            `json:"release_url,omitempty"`
+	Assets         map[string]string `json:"assets,omitempty"`
+	ChecksumURL    string            `json:"checksum_url,omitempty"`
+}
+
+func (c *HTTPClient) CheckForUpdate(ctx context.Context, version, goos, goarch, goarm string) (*UpdateCheckResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/update/check?version=%s&os=%s&arch=%s", c.baseURL, version, goos, goarch)
+	if goarm != "" {
+		url += "&arm=" + goarm
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-rIOt-Key", c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("update check failed: status %d", resp.StatusCode)
+	}
+
+	var result UpdateCheckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *models.TelemetrySnapshot) error {
 	body, _ := json.Marshal(snap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

@@ -52,6 +52,7 @@ func (a *Agent) register(ctx context.Context) error {
 	reg := &models.DeviceRegistration{
 		Hostname:        hostname,
 		Arch:            sysCollector.GetArch(),
+		AgentVersion:    a.version,
 		Tags:            a.config.Agent.Tags,
 		DeviceID:        deviceID,
 		HardwareProfile: hwProfile,

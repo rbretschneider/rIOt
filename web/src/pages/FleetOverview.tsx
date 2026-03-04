@@ -1,13 +1,22 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 
-type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id'
+type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
 type SortDir = 'asc' | 'desc'
 
 export default function FleetOverview() {
   const { data: devices, isLoading, wsConnected } = useDevices()
+  const { data: serverUpdate } = useQuery({
+    queryKey: ['server-update'],
+    queryFn: api.getServerUpdate,
+    staleTime: 60 * 60 * 1000,
+  })
+
+  const latestVersion = serverUpdate?.latest_version
 
   // Derive summary from live device data — no separate polling needed
   const summary = useMemo(() => {
@@ -68,13 +77,9 @@ export default function FleetOverview() {
     return `${Math.floor(diff / 86400_000)}d ago`
   }
 
-  function formatUptime(seconds?: number) {
-    if (!seconds) return '-'
-    const d = Math.floor(seconds / 86400)
-    const h = Math.floor((seconds % 86400) / 3600)
-    if (d > 0) return `${d}d ${h}h`
-    const m = Math.floor((seconds % 3600) / 60)
-    return `${h}h ${m}m`
+  function isAgentOutdated(version?: string) {
+    if (!version || !latestVersion || version === 'dev') return false
+    return version !== latestVersion
   }
 
   return (
@@ -109,6 +114,7 @@ export default function FleetOverview() {
                 <SortHeader k="short_id">ID</SortHeader>
                 <SortHeader k="status">Status</SortHeader>
                 <SortHeader k="arch">Arch</SortHeader>
+                <SortHeader k="agent_version">Version</SortHeader>
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
@@ -125,8 +131,20 @@ export default function FleetOverview() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
                   <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                   <td className="px-4 py-3 text-sm text-gray-400">{d.arch}</td>
+                  <td className="px-4 py-3 text-sm font-mono">
+                    {d.agent_version ? (
+                      <span className={isAgentOutdated(d.agent_version) ? 'text-amber-400' : 'text-gray-400'}>
+                        {d.agent_version}
+                        {isAgentOutdated(d.agent_version) && (
+                          <span className="ml-1 text-xs" title={`Latest: ${latestVersion}`}>*</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
-                  <td className="px-4 py-3 text-sm text-gray-400 font-mono">-</td>
+                  <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
                       {d.tags?.map(t => (
@@ -138,7 +156,7 @@ export default function FleetOverview() {
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
                     {search ? 'No devices match your search' : 'No devices registered yet'}
                   </td>
                 </tr>

@@ -15,6 +15,8 @@ type Device struct {
 	ShortID         string            `json:"short_id"`
 	Hostname        string            `json:"hostname"`
 	Arch            string            `json:"arch"`
+	AgentVersion    string            `json:"agent_version,omitempty"`
+	PrimaryIP       string            `json:"primary_ip,omitempty"`
 	Status          DeviceStatus      `json:"status"`
 	Tags            []string          `json:"tags"`
 	HardwareProfile *HardwareProfile  `json:"hardware_profile,omitempty"`
@@ -39,6 +41,7 @@ type HardwareProfile struct {
 type DeviceRegistration struct {
 	Hostname        string           `json:"hostname"`
 	Arch            string           `json:"arch"`
+	AgentVersion    string           `json:"agent_version,omitempty"`
 	Tags            []string         `json:"tags,omitempty"`
 	DeviceID        string           `json:"device_id,omitempty"` // Set on re-registration
 	HardwareProfile *HardwareProfile `json:"hardware_profile"`

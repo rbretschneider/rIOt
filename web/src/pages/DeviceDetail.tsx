@@ -34,7 +34,10 @@ export default function DeviceDetail() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">{device.hostname}</h1>
-          <p className="text-sm text-gray-500 font-mono">{device.short_id} &middot; {device.arch}</p>
+          <p className="text-sm text-gray-500 font-mono">
+            {device.short_id} &middot; {device.arch}
+            {device.agent_version && <> &middot; v{device.agent_version}</>}
+          </p>
         </div>
         <StatusBadge status={device.status} />
       </div>

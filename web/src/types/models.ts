@@ -3,6 +3,8 @@ export interface Device {
   short_id: string
   hostname: string
   arch: string
+  agent_version?: string
+  primary_ip?: string
   status: 'online' | 'offline' | 'warning'
   tags: string[]
   hardware_profile?: HardwareProfile
@@ -236,6 +238,14 @@ export interface FleetSummary {
 export interface DeviceDetailResponse {
   device: Device
   latest_telemetry?: TelemetrySnapshot
+}
+
+export interface UpdateInfo {
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  release_url?: string
+  published_at?: string
 }
 
 export interface WSMessage {

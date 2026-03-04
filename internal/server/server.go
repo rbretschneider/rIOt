@@ -13,20 +13,23 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 )
 
 type Server struct {
-	Config        *Config
-	MigrationsFS  fs.FS
-	FrontendFS    fs.FS
-	DB            *db.DB
-	DeviceRepo    *db.DeviceRepo
-	TelemetryRepo *db.TelemetryRepo
-	EventRepo     *db.EventRepo
-	Hub           *websocket.Hub
-	EventGen      *events.Generator
-	httpServer    *http.Server
+	Config         *Config
+	Version        string
+	MigrationsFS   fs.FS
+	FrontendFS     fs.FS
+	DB             *db.DB
+	DeviceRepo     *db.DeviceRepo
+	TelemetryRepo  *db.TelemetryRepo
+	EventRepo      *db.EventRepo
+	Hub            *websocket.Hub
+	EventGen       *events.Generator
+	UpdateChecker  *updates.Checker
+	httpServer     *http.Server
 }
 
 func New(cfg *Config) *Server {
@@ -65,6 +68,10 @@ func (s *Server) Start() error {
 
 	// Initialize event generator
 	s.EventGen = events.NewGenerator(s.EventRepo, s.Hub)
+
+	// Initialize update checker
+	s.UpdateChecker = updates.NewChecker(s.Config.GitHubRepo, s.Version)
+	go s.UpdateChecker.Start(ctx)
 
 	// Start retention worker
 	go s.retentionWorker(ctx)

@@ -1,4 +1,4 @@
-import type { Device, DeviceDetailResponse, Event, FleetSummary, TelemetrySnapshot } from '../types/models'
+import type { Device, DeviceDetailResponse, Event, FleetSummary, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -29,4 +29,6 @@ export const api = {
     fetchJSON<Event[]>(`${BASE}/events?limit=${limit}&offset=${offset}`),
 
   getHealth: () => fetchJSON<{ status: string; database: boolean }>('/health'),
+
+  getServerUpdate: () => fetchJSON<UpdateInfo>(`${BASE}/update/server`),
 }

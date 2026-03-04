@@ -12,28 +12,31 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 type Handlers struct {
-	devices      *db.DeviceRepo
-	telemetry    *db.TelemetryRepo
-	events       *db.EventRepo
-	hub          *websocket.Hub
-	eventGen     *events.Generator
-	masterAPIKey string
+	devices        *db.DeviceRepo
+	telemetry      *db.TelemetryRepo
+	events         *db.EventRepo
+	hub            *websocket.Hub
+	eventGen       *events.Generator
+	updateChecker  *updates.Checker
+	masterAPIKey   string
 }
 
-func New(devices *db.DeviceRepo, telemetry *db.TelemetryRepo, events *db.EventRepo, hub *websocket.Hub, eventGen *events.Generator, masterKey string) *Handlers {
+func New(devices *db.DeviceRepo, telemetry *db.TelemetryRepo, events *db.EventRepo, hub *websocket.Hub, eventGen *events.Generator, updateChecker *updates.Checker, masterKey string) *Handlers {
 	return &Handlers{
-		devices:      devices,
-		telemetry:    telemetry,
-		events:       events,
-		hub:          hub,
-		eventGen:     eventGen,
-		masterAPIKey: masterKey,
+		devices:       devices,
+		telemetry:     telemetry,
+		events:        events,
+		hub:           hub,
+		eventGen:      eventGen,
+		updateChecker: updateChecker,
+		masterAPIKey:  masterKey,
 	}
 }
 
@@ -76,6 +79,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			// Update existing device
 			existing.Hostname = reg.Hostname
 			existing.Arch = reg.Arch
+			existing.AgentVersion = reg.AgentVersion
 			existing.HardwareProfile = reg.HardwareProfile
 			existing.Status = models.DeviceStatusOnline
 			if reg.Tags != nil {
@@ -110,6 +114,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		ShortID:         shortID,
 		Hostname:        reg.Hostname,
 		Arch:            reg.Arch,
+		AgentVersion:    reg.AgentVersion,
 		Status:          models.DeviceStatusOnline,
 		Tags:            reg.Tags,
 		HardwareProfile: reg.HardwareProfile,
@@ -190,6 +195,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.devices.UpdateTelemetryTime(r.Context(), deviceID)
+
+	// Extract and store primary IP from network telemetry
+	if ip := extractPrimaryIP(&snap.Data); ip != "" {
+		h.devices.UpdatePrimaryIP(r.Context(), deviceID, ip)
+	}
 
 	// Check thresholds
 	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, &snap.Data)
@@ -293,6 +303,52 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// AgentUpdateCheck returns update info for an agent.
+// Query params: version, os, arch, arm (optional).
+func (h *Handlers) AgentUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	agentVer := r.URL.Query().Get("version")
+	goos := r.URL.Query().Get("os")
+	goarch := r.URL.Query().Get("arch")
+	goarm := r.URL.Query().Get("arm")
+
+	if agentVer == "" {
+		agentVer = "unknown"
+	}
+	if goos == "" {
+		goos = "linux"
+	}
+	if goarch == "" {
+		goarch = "amd64"
+	}
+
+	info := h.updateChecker.AgentUpdateInfo(agentVer, goos, goarch, goarm)
+	writeJSON(w, http.StatusOK, info)
+}
+
+// ServerUpdateCheck returns update info for the server (dashboard use).
+func (h *Handlers) ServerUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	info := h.updateChecker.ServerUpdateInfo()
+	writeJSON(w, http.StatusOK, info)
+}
+
+// extractPrimaryIP finds the first non-loopback IPv4 address from telemetry.
+func extractPrimaryIP(data *models.FullTelemetryData) string {
+	if data.Network == nil {
+		return ""
+	}
+	for _, iface := range data.Network.Interfaces {
+		if iface.State != "UP" {
+			continue
+		}
+		for _, ip := range iface.IPv4 {
+			if ip != "" && ip != "127.0.0.1" {
+				return ip
+			}
+		}
+	}
+	return ""
 }
 
 func generateAPIKey() string {

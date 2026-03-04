@@ -15,7 +15,7 @@ func main() {
 
 	log.Printf("rIOt agent %s starting", version)
 
-	a, err := agent.New(*configPath)
+	a, err := agent.New(*configPath, version)
 	if err != nil {
 		log.Fatalf("failed to create agent: %v", err)
 	}

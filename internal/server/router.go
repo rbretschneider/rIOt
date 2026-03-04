@@ -18,7 +18,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS)
 
-	h := handlers.New(s.DeviceRepo, s.TelemetryRepo, s.EventRepo, s.Hub, s.EventGen, s.Config.MasterAPIKey)
+	h := handlers.New(s.DeviceRepo, s.TelemetryRepo, s.EventRepo, s.Hub, s.EventGen, s.UpdateChecker, s.Config.MasterAPIKey)
 
 	// Health check
 	r.Get("/health", h.Health(s.DB))
@@ -45,6 +45,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Delete("/devices/{id}", h.DeleteDevice)
 		r.Get("/summary", h.Summary)
 		r.Get("/events", h.ListEvents)
+
+		// Update check endpoints
+		r.Get("/update/check", h.AgentUpdateCheck)
+		r.Get("/update/server", h.ServerUpdateCheck)
 	})
 
 	// Serve embedded frontend
