@@ -14,8 +14,30 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/riot-server
 
 jobs:
+  # Run tests before releasing
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Go tests
+        run: go test -race -count=1 ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Frontend tests
+        working-directory: web
+        run: npm ci && npx tsc --noEmit && npm run test:run
+
   # Build and publish the server Docker image to GHCR
   docker:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +78,7 @@ jobs:
 
   # Cross-compile agent binaries and create a GitHub Release
   agent-binaries:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
