@@ -48,30 +48,40 @@ export default function DeviceDetail() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {device.status === 'online' && (
-            <div className="flex gap-2">
+          <div className="flex gap-2">
+            {tel?.docker?.available && tel.docker.total_containers > 0 && (
               <Link
-                to={`/devices/${id}/terminal`}
-                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
+                to={`/devices/${id}/containers`}
+                className="px-3 py-1.5 text-xs text-blue-400 hover:text-blue-300 border border-blue-800/50 rounded-md transition-colors"
               >
-                Terminal
+                Docker ({tel.docker.total_containers})
               </Link>
-              <button
-                onClick={() => setConfirmAction('agent_update')}
-                disabled={commandMutation.isPending}
-                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
-              >
-                Update Agent
-              </button>
-              <button
-                onClick={() => setConfirmAction('reboot')}
-                disabled={commandMutation.isPending}
-                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors disabled:opacity-50"
-              >
-                Reboot
-              </button>
-            </div>
-          )}
+            )}
+            {device.status === 'online' && (
+              <>
+                <Link
+                  to={`/devices/${id}/terminal`}
+                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
+                >
+                  Terminal
+                </Link>
+                <button
+                  onClick={() => setConfirmAction('agent_update')}
+                  disabled={commandMutation.isPending}
+                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
+                >
+                  Update Agent
+                </button>
+                <button
+                  onClick={() => setConfirmAction('reboot')}
+                  disabled={commandMutation.isPending}
+                  className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors disabled:opacity-50"
+                >
+                  Reboot
+                </button>
+              </>
+            )}
+          </div>
           <StatusBadge status={device.status} />
         </div>
       </div>
@@ -250,23 +260,6 @@ export default function DeviceDetail() {
               ))}
             </tbody>
           </table>
-        </Section>
-      )}
-
-      {/* Docker Summary */}
-      {tel?.docker?.available && tel.docker.total_containers > 0 && (
-        <Section title="Docker">
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-300">
-              {tel.docker.total_containers} containers ({tel.docker.running} running)
-            </p>
-            <Link
-              to={`/devices/${id}/containers`}
-              className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              View Containers &rarr;
-            </Link>
-          </div>
         </Section>
       )}
 

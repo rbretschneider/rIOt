@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -113,8 +114,8 @@ export default function Security() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right text-gray-400">{d.logged_in_users}</td>
-                <td className="px-4 py-3 text-right font-mono text-xs text-gray-500">
-                  {d.open_ports.length > 0 ? d.open_ports.join(', ') : '-'}
+                <td className="px-4 py-3 text-right">
+                  <PortsList ports={d.open_ports} />
                 </td>
               </tr>
             ))}
@@ -128,6 +129,48 @@ export default function Security() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+const PORT_DISPLAY_LIMIT = 10
+
+function PortsList({ ports }: { ports: number[] }) {
+  const [open, setOpen] = useState(false)
+  if (!ports || ports.length === 0) return <span className="text-gray-600">-</span>
+
+  const sorted = [...ports].sort((a, b) => a - b)
+
+  if (sorted.length <= PORT_DISPLAY_LIMIT) {
+    return <span className="font-mono text-xs text-gray-500">{sorted.join(', ')}</span>
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        onClick={() => setOpen(!open)}
+        className="font-mono text-xs text-blue-400 hover:text-blue-300 transition-colors"
+      >
+        {sorted.length} ports
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-1 z-50 w-72 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-400 font-medium">{sorted.length} open ports</span>
+              <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-white text-xs">&times;</button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {sorted.map(p => (
+                <span key={p} className="font-mono text-xs text-gray-300 bg-gray-700/50 px-1.5 py-0.5 rounded">
+                  {p}
+                </span>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
