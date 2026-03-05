@@ -1,9 +1,13 @@
-import type { ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
 async function fetchJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+  const res = await fetch(url, { credentials: 'same-origin' })
+  if (res.status === 401) {
+    window.location.reload()
+    throw new Error('Unauthorized')
+  }
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`)
   }
@@ -19,7 +23,11 @@ export const api = {
     fetchJSON<TelemetrySnapshot[]>(`${BASE}/devices/${id}/history?limit=${limit}&offset=${offset}`),
 
   deleteDevice: async (id: string) => {
-    const res = await fetch(`${BASE}/devices/${id}`, { method: 'DELETE' })
+    const res = await fetch(`${BASE}/devices/${id}`, { method: 'DELETE', credentials: 'same-origin' })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
   },
 
@@ -37,4 +45,137 @@ export const api = {
 
   getContainerDetail: (id: string, cid: string) =>
     fetchJSON<ContainerInfo>(`${BASE}/devices/${id}/containers/${cid}`),
+
+  sendCommand: async (deviceId: string, action: string, params: Record<string, unknown> = {}): Promise<Command> => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/commands`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, params }),
+    })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    return res.json()
+  },
+
+  getDeviceCommands: (id: string, limit = 50) =>
+    fetchJSON<Command[]>(`${BASE}/devices/${id}/commands?limit=${limit}`),
+
+  // Probes
+  getProbes: () => fetchJSON<ProbeWithResult[]>(`${BASE}/probes`),
+
+  createProbe: async (probe: Partial<Probe>): Promise<Probe> => {
+    const res = await fetch(`${BASE}/probes`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(probe),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  updateProbe: async (id: number, probe: Partial<Probe>): Promise<Probe> => {
+    const res = await fetch(`${BASE}/probes/${id}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(probe),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  deleteProbe: async (id: number) => {
+    const res = await fetch(`${BASE}/probes/${id}`, { method: 'DELETE', credentials: 'same-origin' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  },
+
+  runProbe: async (id: number): Promise<ProbeResult> => {
+    const res = await fetch(`${BASE}/probes/${id}/run`, { method: 'POST', credentials: 'same-origin' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  getProbeResults: (id: number, limit = 100) =>
+    fetchJSON<ProbeResult[]>(`${BASE}/probes/${id}/results?limit=${limit}`),
+
+  // Fleet
+  getAgentVersions: () =>
+    fetchJSON<{ version: string; count: number }[]>(`${BASE}/fleet/agent-versions`),
+
+  getSecurityOverview: () =>
+    fetchJSON<{
+      total_devices: number
+      devices_reporting: number
+      total_failed_logins: number
+      total_logged_in: number
+      firewall_active: number
+      firewall_inactive: number
+      selinux_enforcing: number
+      apparmor_enabled: number
+    }>(`${BASE}/security/overview`),
+
+  getSecurityDevices: () =>
+    fetchJSON<{
+      device_id: string
+      hostname: string
+      status: string
+      selinux: string
+      apparmor: string
+      firewall_status: string
+      failed_logins_24h: number
+      logged_in_users: number
+      open_ports: number[]
+    }[]>(`${BASE}/security/devices`),
+
+  bulkUpdateAgents: async (version: string): Promise<{ sent: number; skipped: number; total: number }> => {
+    const res = await fetch(`${BASE}/fleet/bulk-update`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version }),
+    })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+}
+
+export const authApi = {
+  login: async (password: string): Promise<boolean> => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ password }),
+    })
+    return res.ok
+  },
+
+  logout: async (): Promise<void> => {
+    await fetch(`${BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => {})
+  },
+
+  check: async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`${BASE}/auth/check`, { credentials: 'same-origin' })
+      const data = await res.json()
+      return data.authenticated === true
+    } catch {
+      return false
+    }
+  },
 }

@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { api } from '../api/client'
 import type { ContainerInfo } from '../types/models'
 import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, statusColor } from '../utils/docker'
 import ContainerStatusBadge from './ContainerStatusBadge'
+import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
 
 interface Props {
@@ -15,7 +18,13 @@ type Tab = 'general' | 'network' | 'volumes' | 'terminal'
 
 export default function ContainerDetail({ container: c, onClose, terminalEnabled, deviceId }: Props) {
   const [tab, setTab] = useState<Tab>('general')
+  const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const name = displayName(c.riot, c.name)
+
+  const commandMutation = useMutation({
+    mutationFn: ({ action, params }: { action: string; params: Record<string, unknown> }) =>
+      api.sendCommand(deviceId!, action, params),
+  })
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'general', label: 'General', show: true },
@@ -42,9 +51,21 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
               <p className="text-xs text-gray-500 font-mono mt-1">{c.image}</p>
               <p className="text-xs text-gray-600 font-mono">{c.short_id}</p>
             </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0">
               <ContainerStatusBadge state={c.state} />
-              <button onClick={onClose} className="text-gray-500 hover:text-white text-xl">&times;</button>
+              {deviceId && (
+                <div className="flex gap-1 ml-2">
+                  {c.state === 'running' ? (
+                    <>
+                      <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
+                      <ActionBtn label="Stop" variant="danger" onClick={() => setConfirmAction('docker_stop')} pending={commandMutation.isPending} />
+                    </>
+                  ) : (
+                    <ActionBtn label="Start" onClick={() => setConfirmAction('docker_start')} pending={commandMutation.isPending} />
+                  )}
+                </div>
+              )}
+              <button onClick={onClose} className="text-gray-500 hover:text-white text-xl ml-1">&times;</button>
             </div>
           </div>
 
@@ -65,6 +86,33 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
             ))}
           </div>
         </div>
+
+        {/* Command feedback */}
+        {commandMutation.isSuccess && (
+          <div className="mx-5 mt-3 px-3 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
+            Command sent ({commandMutation.data?.status})
+          </div>
+        )}
+        {commandMutation.isError && (
+          <div className="mx-5 mt-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
+            {(commandMutation.error as Error).message}
+          </div>
+        )}
+
+        {/* Confirm modal */}
+        {confirmAction && (
+          <ConfirmModal
+            title={`${confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())} Container`}
+            message={`Are you sure you want to ${confirmAction.replace('docker_', '')} "${name}"?`}
+            confirmLabel={confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())}
+            confirmVariant={confirmAction === 'docker_stop' ? 'danger' : 'primary'}
+            onConfirm={() => {
+              commandMutation.mutate({ action: confirmAction, params: { container_id: c.id } })
+              setConfirmAction(null)
+            }}
+            onCancel={() => setConfirmAction(null)}
+          />
+        )}
 
         {/* Content */}
         <div className="p-5 space-y-5">
@@ -261,5 +309,21 @@ function DetailItem({ label, value, valueClass }: { label: string; value: string
       <p className="text-xs text-gray-500">{label}</p>
       <p className={`text-sm ${valueClass || 'text-gray-200'}`}>{value}</p>
     </div>
+  )
+}
+
+function ActionBtn({ label, onClick, variant = 'default', pending }: { label: string; onClick: () => void; variant?: 'default' | 'danger'; pending: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={pending}
+      className={`px-2 py-1 text-xs rounded transition-colors disabled:opacity-50 ${
+        variant === 'danger'
+          ? 'text-red-400 hover:bg-red-900/30 border border-red-800/50'
+          : 'text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800'
+      }`}
+    >
+      {pending ? '...' : label}
+    </button>
   )
 }

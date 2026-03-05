@@ -50,6 +50,29 @@ func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) 
 	return snap, nil
 }
 
+// GetAllLatestSnapshots returns the most recent telemetry for every device.
+func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.TelemetrySnapshot, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT DISTINCT ON (device_id) id, device_id, timestamp, data
+		 FROM telemetry_snapshots ORDER BY device_id, timestamp DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var snapshots []models.TelemetrySnapshot
+	for rows.Next() {
+		var s models.TelemetrySnapshot
+		var dataJSON []byte
+		if err := rows.Scan(&s.ID, &s.DeviceID, &s.Timestamp, &dataJSON); err != nil {
+			return nil, err
+		}
+		json.Unmarshal(dataJSON, &s.Data)
+		snapshots = append(snapshots, s)
+	}
+	return snapshots, nil
+}
+
 // GetHistory returns paginated telemetry snapshots for a device.
 func (r *TelemetryRepo) GetHistory(ctx context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error) {
 	if limit <= 0 {

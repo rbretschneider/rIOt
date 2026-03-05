@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/auth"
 )
 
 // DeviceRepo handles device database operations.
@@ -138,21 +139,84 @@ func (r *DeviceRepo) Summary(ctx context.Context) (*models.FleetSummary, error) 
 	return s, nil
 }
 
-// StoreAPIKey stores a device API key.
-func (r *DeviceRepo) StoreAPIKey(ctx context.Context, key, deviceID string) error {
+// AgentVersionCount represents a version and its device count.
+type AgentVersionCount struct {
+	Version string `json:"version"`
+	Count   int    `json:"count"`
+}
+
+// AgentVersionSummary returns device counts grouped by agent_version.
+func (r *DeviceRepo) AgentVersionSummary(ctx context.Context) ([]AgentVersionCount, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT COALESCE(agent_version, 'unknown') AS version, COUNT(*) AS count
+		 FROM devices GROUP BY COALESCE(agent_version, 'unknown') ORDER BY count DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []AgentVersionCount
+	for rows.Next() {
+		var v AgentVersionCount
+		if err := rows.Scan(&v.Version, &v.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, v)
+	}
+	return result, nil
+}
+
+// ListByVersion returns devices with a specific agent_version.
+func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]models.Device, error) {
+	query := `SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, tags, hardware_profile,
+		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices WHERE COALESCE(agent_version, 'unknown') = $1 ORDER BY hostname`
+	rows, err := r.db.Pool.Query(ctx, query, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var devices []models.Device
+	for rows.Next() {
+		var d models.Device
+		var tagsJSON, hwJSON []byte
+		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &tagsJSON, &hwJSON,
+			&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal(tagsJSON, &d.Tags)
+		if len(hwJSON) > 0 {
+			d.HardwareProfile = &models.HardwareProfile{}
+			json.Unmarshal(hwJSON, d.HardwareProfile)
+		}
+		devices = append(devices, d)
+	}
+	return devices, nil
+}
+
+// StoreAPIKey hashes the key and stores only the hash.
+func (r *DeviceRepo) StoreAPIKey(ctx context.Context, plaintextKey, deviceID string) error {
+	hash := auth.HashAPIKey(plaintextKey)
 	_, err := r.db.Pool.Exec(ctx,
-		`INSERT INTO api_keys (key, device_id, created_at) VALUES ($1, $2, NOW())`, key, deviceID)
+		`INSERT INTO api_keys (key_hash, device_id, created_at) VALUES ($1, $2, NOW())`, hash, deviceID)
 	return err
 }
 
-// LookupAPIKey returns the device_id for a given API key.
-func (r *DeviceRepo) LookupAPIKey(ctx context.Context, key string) (string, error) {
+// LookupAPIKey hashes the incoming key and looks up by hash.
+func (r *DeviceRepo) LookupAPIKey(ctx context.Context, plaintextKey string) (string, error) {
+	hash := auth.HashAPIKey(plaintextKey)
 	var deviceID string
-	err := r.db.Pool.QueryRow(ctx, `SELECT device_id FROM api_keys WHERE key=$1`, key).Scan(&deviceID)
+	err := r.db.Pool.QueryRow(ctx, `SELECT device_id FROM api_keys WHERE key_hash=$1`, hash).Scan(&deviceID)
 	if err != nil {
 		return "", fmt.Errorf("invalid api key")
 	}
 	return deviceID, nil
+}
+
+// DeleteAPIKeysByDevice removes all API keys for a device (for key rotation).
+func (r *DeviceRepo) DeleteAPIKeysByDevice(ctx context.Context, deviceID string) error {
+	_, err := r.db.Pool.Exec(ctx, `DELETE FROM api_keys WHERE device_id=$1`, deviceID)
+	return err
 }
 
 // FindByDeviceUUID finds a device by its existing UUID (for re-registration).

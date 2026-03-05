@@ -1,11 +1,23 @@
 import { useState, useRef, useEffect } from 'react'
-import { Routes, Route, Link, useLocation } from 'react-router-dom'
+import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api/client'
+import { useAuth } from './hooks/useAuth'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
 import DeviceContainers from './pages/DeviceContainers'
 import Alerts from './pages/Alerts'
+import Login from './pages/Login'
+import DeviceTerminal from './pages/DeviceTerminal'
+import SettingsLayout from './pages/SettingsLayout'
+import AlertRuleSettings from './pages/settings/AlertRuleSettings'
+import NotificationSettings from './pages/settings/NotificationSettings'
+import GeneralSettings from './pages/settings/GeneralSettings'
+import ProbeSettings from './pages/settings/ProbeSettings'
+import AgentManagement from './pages/settings/AgentManagement'
+import Security from './pages/Security'
+import Probes from './pages/Probes'
+import ProbeDetail from './pages/ProbeDetail'
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation()
@@ -99,6 +111,20 @@ function UpdateBell() {
 }
 
 export default function App() {
+  const { authenticated, loading, login, logout } = useAuth()
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="text-gray-400">Loading...</div>
+      </div>
+    )
+  }
+
+  if (!authenticated) {
+    return <Login onLogin={login} />
+  }
+
   return (
     <div className="min-h-screen bg-gray-950">
       <nav className="bg-gray-900 border-b border-gray-800">
@@ -111,9 +137,21 @@ export default function App() {
               <div className="flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
                 <NavLink to="/alerts">Alerts</NavLink>
+                <NavLink to="/probes">Probes</NavLink>
+                <NavLink to="/security">Security</NavLink>
+                <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
-            <UpdateBell />
+            <div className="flex items-center gap-2">
+              <UpdateBell />
+              <button
+                onClick={logout}
+                className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
+                title="Sign out"
+              >
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </nav>
@@ -122,7 +160,19 @@ export default function App() {
           <Route path="/" element={<FleetOverview />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/devices/:id/containers" element={<DeviceContainers />} />
+          <Route path="/devices/:id/terminal" element={<DeviceTerminal />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/probes" element={<Probes />} />
+          <Route path="/probes/:id" element={<ProbeDetail />} />
+          <Route path="/security" element={<Security />} />
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route index element={<Navigate to="/settings/alert-rules" replace />} />
+            <Route path="alert-rules" element={<AlertRuleSettings />} />
+            <Route path="notifications" element={<NotificationSettings />} />
+            <Route path="probes" element={<ProbeSettings />} />
+            <Route path="agents" element={<AgentManagement />} />
+            <Route path="general" element={<GeneralSettings />} />
+          </Route>
         </Routes>
       </main>
     </div>

@@ -32,14 +32,20 @@ type terminalResizeMsg struct {
 }
 
 func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn, msg AgentWSMessage) {
-	if !a.config.Docker.TerminalEnabled {
-		slog.Warn("terminal: request denied, terminal not enabled")
-		return
-	}
-
 	sessionID := msg.SessionID
 	containerID := msg.ContainerID
 	if sessionID == "" || containerID == "" {
+		return
+	}
+
+	// Host terminal: delegate to PTY-based handler
+	if containerID == "_host" {
+		a.handleHostTerminalStart(ctx, wsConn, msg)
+		return
+	}
+
+	if !a.config.Docker.TerminalEnabled {
+		slog.Warn("terminal: request denied, terminal not enabled")
 		return
 	}
 
@@ -128,45 +134,49 @@ func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn,
 }
 
 func (a *Agent) handleTerminalInput(msg AgentWSMessage) {
+	// Try Docker sessions first, then host sessions
 	terminalSessions.Lock()
 	sess := terminalSessions.m[msg.SessionID]
 	terminalSessions.Unlock()
-	if sess == nil {
+	if sess != nil {
+		var input string
+		if err := json.Unmarshal(msg.Data, &input); err != nil {
+			return
+		}
+		sess.conn.Write([]byte(input))
 		return
 	}
-
-	var input string
-	if err := json.Unmarshal(msg.Data, &input); err != nil {
-		return
-	}
-	sess.conn.Write([]byte(input))
+	// Fall through to host terminal
+	a.handleHostTerminalInput(msg)
 }
 
 func (a *Agent) handleTerminalResize(msg AgentWSMessage) {
 	terminalSessions.Lock()
 	sess := terminalSessions.m[msg.SessionID]
 	terminalSessions.Unlock()
-	if sess == nil {
+	if sess != nil {
+		var resize terminalResizeMsg
+		if err := json.Unmarshal(msg.Data, &resize); err != nil {
+			return
+		}
+		sess.dockerCli.ContainerExecResize(context.Background(), sess.execID, container.ResizeOptions{
+			Height: resize.Rows,
+			Width:  resize.Cols,
+		})
 		return
 	}
-
-	var resize terminalResizeMsg
-	if err := json.Unmarshal(msg.Data, &resize); err != nil {
-		return
-	}
-
-	sess.dockerCli.ContainerExecResize(context.Background(), sess.execID, container.ResizeOptions{
-		Height: resize.Rows,
-		Width:  resize.Cols,
-	})
+	// Fall through to host terminal
+	a.handleHostTerminalResize(msg)
 }
 
 func (a *Agent) handleTerminalClose(msg AgentWSMessage) {
 	terminalSessions.Lock()
 	sess := terminalSessions.m[msg.SessionID]
 	terminalSessions.Unlock()
-	if sess == nil {
+	if sess != nil {
+		sess.cancel()
 		return
 	}
-	sess.cancel()
+	// Fall through to host terminal
+	a.handleHostTerminalClose(msg)
 }

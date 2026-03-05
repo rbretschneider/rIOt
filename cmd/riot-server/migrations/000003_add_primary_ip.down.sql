@@ -1,1 +1,0 @@
-ALTER TABLE devices DROP COLUMN IF EXISTS primary_ip;

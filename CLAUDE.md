@@ -45,9 +45,35 @@ make dev                # Run server in dev mode
 
 ## Testing
 ```bash
-go test ./...           # Run all Go tests
-cd web && npm test      # Run frontend tests
+make test               # Run all tests (Go + frontend)
+make test-go            # Go tests only (uses -race on Linux)
+make test-web           # Frontend tests only (vitest)
+make coverage           # Go coverage report → coverage.html
+go test ./...           # Go tests (no -race, works on Windows)
+cd web && npm run test:run  # Frontend tests directly
 ```
+
+CI runs automatically on push to main and PRs via `.github/workflows/ci.yml`.
+
+## Releasing
+
+Version comes from git tags — there is no version file to edit.
+
+```bash
+# 1. Ensure tests pass
+make test
+
+# 2. Tag the commit
+git tag -a v1.2.0 -m "v1.2.0"
+
+# 3. Push with tags — triggers release workflow
+git push origin main --tags
+```
+
+The `v*` tag triggers `.github/workflows/release.yml` which:
+- Builds + pushes Docker image to GHCR (`ghcr.io/rbretschneider/riot-server`)
+- Cross-compiles 8 agent binaries with checksums
+- Creates a GitHub Release with auto-generated notes
 
 ## Database
 - PostgreSQL 16, connection via `RIOT_DB_URL` env var

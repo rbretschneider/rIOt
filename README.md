@@ -10,8 +10,15 @@ Self-hosted infrastructure monitoring for homelab environments. Deploy a lightwe
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable
 - **Simple deployment** — one `docker compose up` for the server, one-liner install for agents
-- **Per-device API keys** — generated at registration, individually revocable
-- **Automatic alerting** — device online/offline, disk > 90%, RAM > 90%, available updates
+- **Admin authentication** — password-protected dashboard with JWT session cookies
+- **Configurable alert rules** — threshold-based alerts on any telemetry metric with cooldown deduplication and device filtering
+- **Notification channels** — alert delivery via ntfy and webhooks, with test-send support and delivery logging
+- **Uptime probes** — scheduled HTTP and DNS probes with history and status tracking
+- **Fleet management** — agent version overview and bulk update across devices
+- **Remote commands** — send commands (e.g., Docker restart) to agents from the dashboard
+- **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
+- **Per-device API keys** — generated at registration, individually revocable and rotatable
+- **TLS support** — Let's Encrypt autocert or manual cert/key files
 
 ## Architecture
 
@@ -41,6 +48,7 @@ services:
       - RIOT_DB_URL=postgres://riot:riot@riot-db:5432/riot?sslmode=disable
       - RIOT_PORT=7331
       - RIOT_API_KEY=changeme        # Master key used for agent registration
+      - RIOT_ADMIN_PASSWORD=changeme # Dashboard login password
       - RIOT_RETENTION_DAYS=30
     depends_on:
       riot-db:
@@ -89,6 +97,7 @@ docker run -d --name riot-server \
   --link riot-db \
   -e RIOT_DB_URL=postgres://riot:riot@riot-db:5432/riot?sslmode=disable \
   -e RIOT_API_KEY=changeme \
+  -e RIOT_ADMIN_PASSWORD=changeme \
   ghcr.io/rbretschneider/riot-server:latest
 ```
 
@@ -99,8 +108,16 @@ docker run -d --name riot-server \
 | `RIOT_DB_URL` | `postgres://riot:riot@localhost:5432/riot?sslmode=disable` | PostgreSQL connection string |
 | `RIOT_PORT` | `7331` | HTTP listen port |
 | `RIOT_API_KEY` | `changeme` | Master API key for agent registration |
+| `RIOT_ADMIN_PASSWORD` | — | Dashboard login password (bcrypt-hashed at startup) |
+| `RIOT_JWT_SECRET` | auto-generated | Secret for JWT session tokens (auto-generated if omitted; set for stable sessions across restarts) |
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
 | `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
+| `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins |
+| `RIOT_TLS_ENABLED` | `false` | Enable TLS (`true` or `1`) |
+| `RIOT_TLS_DOMAIN` | — | Let's Encrypt autocert domain (implies TLS enabled) |
+| `RIOT_TLS_CERT_DIR` | — | Autocert cache directory |
+| `RIOT_TLS_CERT_FILE` | — | Manual TLS certificate file path |
+| `RIOT_TLS_KEY_FILE` | — | Manual TLS key file path |
 
 ---
 
@@ -217,34 +234,68 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 
 ## API
 
-All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header.
+All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. Dashboard endpoints require admin authentication (JWT cookie).
 
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| `POST` | `/api/v1/devices/register` | Master key | Register a new device |
-| `POST` | `/api/v1/devices/:id/heartbeat` | Device key | Lightweight heartbeat |
-| `POST` | `/api/v1/devices/:id/telemetry` | Device key | Full telemetry push |
-| `POST` | `/api/v1/devices/:id/docker-events` | Device key | Real-time Docker container events |
-| `GET` | `/api/v1/devices` | — | List all devices |
-| `GET` | `/api/v1/devices/:id` | — | Device detail + latest telemetry |
-| `GET` | `/api/v1/devices/:id/history` | — | Paginated telemetry history |
-| `GET` | `/api/v1/devices/:id/containers` | — | List containers for a device |
-| `GET` | `/api/v1/devices/:id/containers/:cid` | — | Container detail |
-| `DELETE` | `/api/v1/devices/:id` | — | Remove a device |
-| `GET` | `/api/v1/summary` | — | Fleet summary stats |
-| `GET` | `/api/v1/events` | — | Event/alert list |
-| `GET` | `/api/v1/update/check` | — | Agent update check |
-| `GET` | `/api/v1/update/server` | — | Server update check |
-| `GET` | `/health` | — | Server health check |
-| `GET` | `/ws` | — | WebSocket (live updates for dashboard) |
-| `GET` | `/ws/agent` | — | Agent WebSocket (terminal relay) |
-| `GET` | `/ws/terminal/:deviceId/:containerId` | — | Browser-to-container terminal |
+### Public
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Server health check |
+| `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
+| `POST` | `/api/v1/auth/logout` | Clear session cookie |
+| `GET` | `/api/v1/auth/check` | Check authentication status |
+
+### Agent (device key auth)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/devices/register` | Register a new device (master key) |
+| `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
+| `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
+| `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
+| `GET` | `/api/v1/update/check` | Agent update check |
+
+### Dashboard (admin auth)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/devices` | List all devices |
+| `GET` | `/api/v1/devices/:id` | Device detail + latest telemetry |
+| `GET` | `/api/v1/devices/:id/history` | Paginated telemetry history |
+| `GET` | `/api/v1/devices/:id/containers` | List containers for a device |
+| `GET` | `/api/v1/devices/:id/containers/:cid` | Container detail |
+| `DELETE` | `/api/v1/devices/:id` | Remove a device |
+| `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
+| `POST` | `/api/v1/devices/:id/commands` | Send command to agent |
+| `GET` | `/api/v1/devices/:id/commands` | List device command history |
+| `GET` | `/api/v1/summary` | Fleet summary stats |
+| `GET` | `/api/v1/events` | Event/alert list |
+| `GET` | `/api/v1/update/server` | Server update check |
+| `GET/POST/PUT/DELETE` | `/api/v1/settings/alert-rules[/:id]` | Alert rule CRUD |
+| `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD |
+| `POST` | `/api/v1/settings/notification-channels/:id/test` | Test notification channel |
+| `GET` | `/api/v1/settings/notifications/log` | Notification delivery log |
+| `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
+| `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
+| `GET` | `/api/v1/security/overview` | Security overview |
+| `GET` | `/api/v1/security/devices` | Per-device security details |
+| `GET/POST/PUT/DELETE` | `/api/v1/probes[/:id]` | Uptime probe CRUD |
+| `POST` | `/api/v1/probes/:id/run` | Run probe on demand |
+| `GET` | `/api/v1/probes/:id/results` | Probe result history |
+
+### WebSocket
+
+| Endpoint | Description |
+|---|---|
+| `/ws` | Live dashboard updates (admin auth) |
+| `/ws/agent` | Agent WebSocket (terminal relay) |
+| `/ws/terminal/:deviceId/:containerId` | Browser-to-container terminal (admin auth) |
 
 ---
 
 ## Building from Source
 
-Requires Go 1.22+ and Node.js 20+.
+Requires Go 1.24+ and Node.js 20+.
 
 ```bash
 # Build server with embedded frontend
@@ -262,6 +313,48 @@ make docker
 # Run server in dev mode (no embedded frontend)
 make dev
 ```
+
+---
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Go tests only
+make test-go
+
+# Frontend tests only
+make test-web
+
+# Go coverage report
+make coverage
+```
+
+CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+
+---
+
+## Releasing
+
+Version is derived from git tags — there is no version file to edit.
+
+```bash
+# 1. Ensure all tests pass
+make test
+
+# 2. Tag the commit
+git tag -a v1.2.0 -m "v1.2.0"
+
+# 3. Push with tags — triggers the release workflow
+git push origin main --tags
+```
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
+- Builds and pushes the server Docker image to `ghcr.io/rbretschneider/riot-server` (tagged `1.2.0`, `1.2`, `latest`)
+- Cross-compiles 8 agent binaries with SHA-256 checksums
+- Creates a GitHub Release with auto-generated release notes
 
 ---
 

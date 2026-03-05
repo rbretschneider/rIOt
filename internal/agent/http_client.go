@@ -3,10 +3,14 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -24,6 +28,39 @@ func NewHTTPClient(baseURL, apiKey string) *HTTPClient {
 		apiKey:  apiKey,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+		},
+	}
+}
+
+// NewHTTPClientWithTLS creates an HTTP client with custom TLS settings.
+func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
+	transport := &http.Transport{}
+	tlsCfg := &tls.Config{}
+
+	if !serverCfg.TLSVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+
+	if serverCfg.CACertFile != "" {
+		caCert, err := os.ReadFile(serverCfg.CACertFile)
+		if err != nil {
+			slog.Error("failed to read CA cert file", "path", serverCfg.CACertFile, "error", err)
+		} else {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caCert)
+			tlsCfg.RootCAs = pool
+			slog.Info("loaded custom CA certificate", "path", serverCfg.CACertFile)
+		}
+	}
+
+	transport.TLSClientConfig = tlsCfg
+
+	return &HTTPClient{
+		baseURL: serverCfg.URL,
+		apiKey:  serverCfg.APIKey,
+		client: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
 		},
 	}
 }

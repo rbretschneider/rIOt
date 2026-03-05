@@ -50,7 +50,11 @@ func (a *Agent) Run() error {
 	slog.SetDefault(logger)
 
 	// Initialize HTTP client
-	a.client = NewHTTPClient(a.config.Server.URL, a.config.Server.APIKey)
+	if a.config.Server.CACertFile != "" || !a.config.Server.TLSVerify {
+		a.client = NewHTTPClientWithTLS(a.config.Server)
+	} else {
+		a.client = NewHTTPClient(a.config.Server.URL, a.config.Server.APIKey)
+	}
 
 	// Initialize offline buffer
 	buf, err := NewBuffer(BufferPath())
@@ -98,18 +102,16 @@ func (a *Agent) Run() error {
 			slog.Info("starting Docker event watcher")
 			a.dockerEventLoop(ctx)
 		}()
-
-		// Start agent WebSocket client for terminal relay if terminal is enabled
-		if a.config.Docker.TerminalEnabled {
-			a.wsClient = newAgentWSClient(a)
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				slog.Info("starting agent WebSocket client for terminal relay")
-				a.wsClient.run(ctx)
-			}()
-		}
 	}
+
+	// Always start agent WebSocket client (for commands + terminal relay)
+	a.wsClient = newAgentWSClient(a)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		slog.Info("starting agent WebSocket client")
+		a.wsClient.run(ctx)
+	}()
 
 	// Graceful shutdown
 	done := make(chan os.Signal, 1)

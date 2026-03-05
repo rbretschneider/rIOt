@@ -13,31 +13,74 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/notify"
+	"github.com/DesyncTheThird/rIOt/internal/server/probes"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
-type Handlers struct {
-	devices        *db.DeviceRepo
-	telemetry      *db.TelemetryRepo
-	events         *db.EventRepo
-	hub            *websocket.Hub
-	eventGen       *events.Generator
-	updateChecker  *updates.Checker
-	masterAPIKey   string
+// HandlerDeps bundles all dependencies for the Handlers constructor.
+type HandlerDeps struct {
+	Devices           db.DeviceRepository
+	Telemetry         db.TelemetryRepository
+	Events            db.EventRepository
+	Hub               *websocket.Hub
+	EventGen          *events.Generator
+	UpdateChecker     *updates.Checker
+	MasterAPIKey      string
+	AdminRepo         db.AdminRepository
+	TerminalRepo      db.TerminalRepository
+	AlertRuleRepo     db.AlertRuleRepository
+	NotifyRepo        db.NotifyRepository
+	Dispatcher        *notify.Dispatcher
+	CommandRepo       db.CommandRepository
+	ProbeRepo         db.ProbeRepository
+	ProbeRunner       *probes.Runner
+	JWTSecret         []byte
+	AdminPasswordHash string
 }
 
-func New(devices *db.DeviceRepo, telemetry *db.TelemetryRepo, events *db.EventRepo, hub *websocket.Hub, eventGen *events.Generator, updateChecker *updates.Checker, masterKey string) *Handlers {
+type Handlers struct {
+	devices            db.DeviceRepository
+	telemetry          db.TelemetryRepository
+	events             db.EventRepository
+	hub                *websocket.Hub
+	eventGen           *events.Generator
+	updateChecker      *updates.Checker
+	masterAPIKey       string
+	adminRepo          db.AdminRepository
+	terminalRepo       db.TerminalRepository
+	alertRuleRepo      db.AlertRuleRepository
+	notifyRepo         db.NotifyRepository
+	dispatcher         *notify.Dispatcher
+	commandRepo        db.CommandRepository
+	probeRepo          db.ProbeRepository
+	probeRunner        *probes.Runner
+	jwtSecret          []byte
+	adminPasswordHash  string
+}
+
+func New(deps HandlerDeps) *Handlers {
 	return &Handlers{
-		devices:       devices,
-		telemetry:     telemetry,
-		events:        events,
-		hub:           hub,
-		eventGen:      eventGen,
-		updateChecker: updateChecker,
-		masterAPIKey:  masterKey,
+		devices:           deps.Devices,
+		telemetry:         deps.Telemetry,
+		events:            deps.Events,
+		hub:               deps.Hub,
+		eventGen:          deps.EventGen,
+		updateChecker:     deps.UpdateChecker,
+		masterAPIKey:      deps.MasterAPIKey,
+		adminRepo:         deps.AdminRepo,
+		terminalRepo:      deps.TerminalRepo,
+		alertRuleRepo:     deps.AlertRuleRepo,
+		notifyRepo:        deps.NotifyRepo,
+		dispatcher:        deps.Dispatcher,
+		commandRepo:       deps.CommandRepo,
+		probeRepo:         deps.ProbeRepo,
+		probeRunner:       deps.ProbeRunner,
+		jwtSecret:         deps.JWTSecret,
+		adminPasswordHash: deps.AdminPasswordHash,
 	}
 }
 
@@ -414,6 +457,37 @@ func extractPrimaryIP(data *models.FullTelemetryData) string {
 		}
 	}
 	return ""
+}
+
+// RotateKey handles POST /api/v1/devices/{id}/rotate-key.
+func (h *Handlers) RotateKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	device, err := h.devices.GetByID(r.Context(), id)
+	if err != nil || device == nil {
+		http.Error(w, `{"error":"device not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Delete old keys
+	if err := h.devices.DeleteAPIKeysByDevice(r.Context(), id); err != nil {
+		slog.Error("rotate key: delete old keys", "error", err)
+		http.Error(w, `{"error":"failed to rotate key"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Generate and store new key
+	newKey := generateAPIKey()
+	if err := h.devices.StoreAPIKey(r.Context(), newKey, id); err != nil {
+		slog.Error("rotate key: store new key", "error", err)
+		http.Error(w, `{"error":"failed to store new key"}`, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("api key rotated", "device", id)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"api_key":   newKey,
+		"device_id": id,
+	})
 }
 
 func generateAPIKey() string {

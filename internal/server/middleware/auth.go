@@ -13,7 +13,7 @@ type contextKey string
 const DeviceIDKey contextKey = "device_id"
 
 // DeviceAuth validates the X-rIOt-Key header and ensures it matches the device in the URL.
-func DeviceAuth(repo *db.DeviceRepo) func(http.Handler) http.Handler {
+func DeviceAuth(repo db.DeviceRepository) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			apiKey := r.Header.Get("X-rIOt-Key")

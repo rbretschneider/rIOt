@@ -1,4 +1,4 @@
-.PHONY: build-server build-agent build-agent-all build-web docker migrate-up migrate-down dev clean
+.PHONY: build-server build-agent build-agent-all build-web docker migrate-up migrate-down dev clean test test-go test-web coverage
 
 BINARY_SERVER=riot-server
 BINARY_AGENT=riot-agent
@@ -50,6 +50,22 @@ migrate-down:
 dev:
 	RIOT_DB_URL="$(DB_URL)" go run ./cmd/riot-server
 
+# Run all tests
+test: test-go test-web
+
+# Run Go tests
+test-go:
+	go test -race -count=1 ./...
+
+# Run frontend tests
+test-web:
+	cd web && npm run test:run
+
+# Generate coverage report
+coverage:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
 # Clean build artifacts
 clean:
-	rm -rf bin/ web/dist cmd/riot-server/dist
+	rm -rf bin/ web/dist cmd/riot-server/dist coverage.out coverage.html

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 	ws "github.com/gorilla/websocket"
 )
@@ -48,7 +51,7 @@ var terminalBrowserConns = struct {
 var terminalUpgrader = ws.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin:     middleware.CheckWSOrigin,
 }
 
 // HandleAgentWS accepts WebSocket connections from agents.
@@ -56,6 +59,13 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.Header.Get("X-rIOt-Device")
 	apiKey := r.Header.Get("X-rIOt-Key")
 	if deviceID == "" || apiKey == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Validate the API key against the database
+	keyDeviceID, err := h.devices.LookupAPIKey(r.Context(), apiKey)
+	if err != nil || keyDeviceID != deviceID {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -113,8 +123,28 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 				delete(terminalBrowserConns.m, msg.SessionID)
 				terminalBrowserConns.Unlock()
 			}
+
+		case "command_result":
+			h.handleCommandResult(r.Context(), msg)
 		}
 	}
+}
+
+// handleCommandResult processes a command result from an agent.
+func (h *Handlers) handleCommandResult(ctx context.Context, msg agentWSMessage) {
+	var result models.CommandResult
+	if err := json.Unmarshal(msg.Data, &result); err != nil {
+		slog.Warn("terminal: invalid command_result", "error", err)
+		return
+	}
+	if h.commandRepo != nil {
+		if err := h.commandRepo.UpdateStatus(ctx, result.CommandID, result.Status, result.Message); err != nil {
+			slog.Error("terminal: update command status", "error", err)
+		}
+	}
+	// Broadcast to dashboard clients
+	h.hub.BroadcastCommandResult(result.CommandID, &result)
+	slog.Info("command result", "id", result.CommandID, "status", result.Status)
 }
 
 // HandleTerminalWS bridges browser ↔ server ↔ agent for terminal sessions.
@@ -143,11 +173,25 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	terminalBrowserConns.m[sessionID] = conn
 	terminalBrowserConns.Unlock()
 
+	// Audit log: record terminal session start
+	if h.terminalRepo != nil {
+		if err := h.terminalRepo.LogSessionStart(r.Context(), deviceID, containerID, sessionID, r.RemoteAddr); err != nil {
+			slog.Error("terminal: failed to log session start", "error", err)
+		}
+	}
+
 	defer func() {
 		terminalBrowserConns.Lock()
 		delete(terminalBrowserConns.m, sessionID)
 		terminalBrowserConns.Unlock()
 		conn.Close()
+
+		// Audit log: record terminal session end
+		if h.terminalRepo != nil {
+			if err := h.terminalRepo.LogSessionEnd(r.Context(), sessionID); err != nil {
+				slog.Error("terminal: failed to log session end", "error", err)
+			}
+		}
 
 		ac.Send(agentWSMessage{
 			Type:      "terminal_close",

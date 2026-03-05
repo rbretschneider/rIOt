@@ -16,24 +16,45 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(chimw.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(chimw.Recoverer)
-	r.Use(middleware.CORS)
+	r.Use(middleware.CORS(s.Config.AllowedOrigins))
 
-	h := handlers.New(s.DeviceRepo, s.TelemetryRepo, s.EventRepo, s.Hub, s.EventGen, s.UpdateChecker, s.Config.MasterAPIKey)
+	h := handlers.New(handlers.HandlerDeps{
+		Devices:           s.DeviceRepo,
+		Telemetry:         s.TelemetryRepo,
+		Events:            s.EventRepo,
+		Hub:               s.Hub,
+		EventGen:          s.EventGen,
+		UpdateChecker:     s.UpdateChecker,
+		MasterAPIKey:      s.Config.MasterAPIKey,
+		AdminRepo:         s.AdminRepo,
+		TerminalRepo:      s.TerminalRepo,
+		AlertRuleRepo:     s.AlertRuleRepo,
+		NotifyRepo:        s.NotifyRepo,
+		Dispatcher:        s.Dispatcher,
+		CommandRepo:       s.CommandRepo,
+		ProbeRepo:         s.ProbeRepo,
+		ProbeRunner:       s.ProbeRunner,
+		JWTSecret:         s.JWTSecret,
+		AdminPasswordHash: s.Config.AdminPasswordHash,
+	})
 
-	// Health check
+	// Rate limiters
+	loginLimiter := middleware.NewRateLimiter(5, 5)     // 5/min
+	registerLimiter := middleware.NewRateLimiter(10, 10) // 10/min
+
+	// === PUBLIC routes (no auth) ===
 	r.Get("/health", h.Health(s.DB))
 
-	// WebSocket
-	r.Get("/ws", h.WebSocket)
-	r.Get("/ws/agent", h.HandleAgentWS)
-	r.Get("/ws/terminal/{deviceId}/{containerId}", h.HandleTerminalWS)
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.With(loginLimiter.Middleware()).Post("/login", h.Login)
+		r.Post("/logout", h.Logout)
+		r.Get("/check", h.AuthCheck)
+	})
 
-	// API v1
+	// === AGENT routes (device key auth via X-rIOt-Key) ===
 	r.Route("/api/v1", func(r chi.Router) {
-		// Registration uses master API key
-		r.Post("/devices/register", h.RegisterDevice)
+		r.With(registerLimiter.Middleware()).Post("/devices/register", h.RegisterDevice)
 
-		// Device-specific endpoints require device auth
 		r.Route("/devices/{id}", func(r chi.Router) {
 			r.Use(middleware.DeviceAuth(s.DeviceRepo))
 			r.Post("/heartbeat", h.Heartbeat)
@@ -41,22 +62,75 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/docker-events", h.ReceiveDockerEvent)
 		})
 
-		// Dashboard/read endpoints (no auth in Phase 1 for dashboard)
-		r.Get("/devices", h.ListDevices)
-		r.Get("/devices/{id}", h.GetDevice)
-		r.Get("/devices/{id}/history", h.GetDeviceHistory)
-		r.Get("/devices/{id}/containers", h.GetDeviceContainers)
-		r.Get("/devices/{id}/containers/{cid}", h.GetContainerDetail)
-		r.Delete("/devices/{id}", h.DeleteDevice)
-		r.Get("/summary", h.Summary)
-		r.Get("/events", h.ListEvents)
-
-		// Update check endpoints
 		r.Get("/update/check", h.AgentUpdateCheck)
-		r.Get("/update/server", h.ServerUpdateCheck)
 	})
 
-	// Serve embedded frontend
+	r.Get("/ws/agent", h.HandleAgentWS)
+
+	// === ADMIN routes (JWT cookie auth) ===
+	adminAuth := middleware.AdminAuth(s.JWTSecret)
+
+	r.Group(func(r chi.Router) {
+		r.Use(adminAuth)
+
+		r.Get("/ws", h.WebSocket)
+		r.Get("/ws/terminal/{deviceId}/{containerId}", h.HandleTerminalWS)
+
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Get("/devices", h.ListDevices)
+			r.Get("/devices/{id}", h.GetDevice)
+			r.Get("/devices/{id}/history", h.GetDeviceHistory)
+			r.Get("/devices/{id}/containers", h.GetDeviceContainers)
+			r.Get("/devices/{id}/containers/{cid}", h.GetContainerDetail)
+			r.Delete("/devices/{id}", h.DeleteDevice)
+			r.Post("/devices/{id}/rotate-key", h.RotateKey)
+			r.Post("/devices/{id}/commands", h.SendCommand)
+			r.Get("/devices/{id}/commands", h.ListDeviceCommands)
+			r.Get("/summary", h.Summary)
+			r.Get("/events", h.ListEvents)
+			r.Get("/update/server", h.ServerUpdateCheck)
+
+			// Settings: alert rules
+			r.Route("/settings/alert-rules", func(r chi.Router) {
+				r.Get("/", h.ListAlertRules)
+				r.Post("/", h.CreateAlertRule)
+				r.Put("/{id}", h.UpdateAlertRule)
+				r.Delete("/{id}", h.DeleteAlertRule)
+			})
+
+			// Settings: notification channels
+			r.Route("/settings/notification-channels", func(r chi.Router) {
+				r.Get("/", h.ListNotificationChannels)
+				r.Post("/", h.CreateNotificationChannel)
+				r.Put("/{id}", h.UpdateNotificationChannel)
+				r.Delete("/{id}", h.DeleteNotificationChannel)
+				r.Post("/{id}/test", h.TestNotificationChannel)
+			})
+
+			// Settings: notification log
+			r.Get("/settings/notifications/log", h.ListNotificationLog)
+
+			// Fleet management
+			r.Get("/fleet/agent-versions", h.AgentVersionSummary)
+			r.Post("/fleet/bulk-update", h.BulkUpdateAgents)
+
+			// Security
+			r.Get("/security/overview", h.SecurityOverview)
+			r.Get("/security/devices", h.SecurityDevices)
+
+			// Probes
+			r.Route("/probes", func(r chi.Router) {
+				r.Get("/", h.ListProbes)
+				r.Post("/", h.CreateProbe)
+				r.Put("/{id}", h.UpdateProbe)
+				r.Delete("/{id}", h.DeleteProbe)
+				r.Post("/{id}/run", h.RunProbe)
+				r.Get("/{id}/results", h.GetProbeResults)
+			})
+		})
+	})
+
+	// Serve embedded frontend (must come last as catch-all)
 	if s.FrontendFS != nil {
 		s.serveFrontend(r)
 	}

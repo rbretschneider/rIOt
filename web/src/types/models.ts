@@ -316,3 +316,85 @@ export interface WSMessage {
   device_id?: string
   data?: unknown
 }
+
+// Alert Rules & Notifications
+export interface AlertRule {
+  id: number
+  name: string
+  enabled: boolean
+  metric: string
+  operator: string
+  threshold: number
+  severity: string
+  device_filter: string
+  cooldown_seconds: number
+  notify: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface NotificationChannel {
+  id: number
+  name: string
+  type: string
+  enabled: boolean
+  config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface NotificationLog {
+  id: number
+  channel_id?: number
+  event_id?: number
+  alert_rule_id?: number
+  status: string
+  error_msg: string
+  created_at: string
+}
+
+// Commands
+export interface Command {
+  id: string
+  device_id: string
+  action: string
+  params: Record<string, unknown>
+  status: string
+  result_msg: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CommandResult {
+  command_id: string
+  status: string
+  message: string
+}
+
+// Probes
+export interface Probe {
+  id: number
+  name: string
+  type: string
+  enabled: boolean
+  config: Record<string, unknown>
+  interval_seconds: number
+  timeout_seconds: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ProbeWithResult extends Probe {
+  latest_result?: ProbeResult
+}
+
+export interface ProbeResult {
+  id: number
+  probe_id: number
+  success: boolean
+  latency_ms: number
+  status_code?: number
+  error_msg: string
+  metadata: Record<string, unknown>
+  created_at: string
+}

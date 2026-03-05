@@ -23,8 +23,13 @@ export function useWebSocket(onMessage: (msg: WSMessage) => void) {
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnected(false)
+      // 1008 = policy violation (auth failure) — don't reconnect
+      if (event.code === 1008) {
+        window.location.reload()
+        return
+      }
       reconnectTimeout.current = setTimeout(connect, 3000)
     }
 

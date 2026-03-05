@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
+import ConfirmModal from '../components/ConfirmModal'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -21,6 +22,12 @@ export default function DeviceDetail() {
     queryKey: ['events'],
     queryFn: () => api.getEvents(50, 0),
     refetchInterval: wsConnected ? false : 30_000,
+  })
+
+  const [confirmAction, setConfirmAction] = useState<string | null>(null)
+  const commandMutation = useMutation({
+    mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
+      api.sendCommand(id!, action, params || {}),
   })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
@@ -40,8 +47,65 @@ export default function DeviceDetail() {
             {device.agent_version && <> &middot; v{device.agent_version}</>}
           </p>
         </div>
-        <StatusBadge status={device.status} />
+        <div className="flex items-center gap-3">
+          {device.status === 'online' && (
+            <div className="flex gap-2">
+              <Link
+                to={`/devices/${id}/terminal`}
+                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
+              >
+                Terminal
+              </Link>
+              <button
+                onClick={() => setConfirmAction('agent_update')}
+                disabled={commandMutation.isPending}
+                className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
+              >
+                Update Agent
+              </button>
+              <button
+                onClick={() => setConfirmAction('reboot')}
+                disabled={commandMutation.isPending}
+                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors disabled:opacity-50"
+              >
+                Reboot
+              </button>
+            </div>
+          )}
+          <StatusBadge status={device.status} />
+        </div>
       </div>
+
+      {/* Command feedback */}
+      {commandMutation.isSuccess && (
+        <div className="px-4 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
+          Command sent: {commandMutation.data?.action} ({commandMutation.data?.status})
+        </div>
+      )}
+      {commandMutation.isError && (
+        <div className="px-4 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
+          {(commandMutation.error as Error).message}
+        </div>
+      )}
+
+      {/* Confirm modal */}
+      {confirmAction && (
+        <ConfirmModal
+          title={confirmAction === 'reboot' ? 'Reboot Device' : 'Update Agent'}
+          message={
+            confirmAction === 'reboot'
+              ? `Are you sure you want to reboot "${device.hostname}"? This will temporarily take the device offline.`
+              : `Trigger an agent update check on "${device.hostname}"?`
+          }
+          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : 'Update'}
+          confirmVariant={confirmAction === 'reboot' ? 'danger' : 'primary'}
+          onConfirm={() => {
+            commandMutation.mutate({ action: confirmAction })
+            setConfirmAction(null)
+          }}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
 
       {/* Hardware Profile */}
       {device.hardware_profile && (
@@ -228,6 +292,25 @@ export default function DeviceDetail() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </Section>
+      )}
+
+      {/* Security */}
+      {tel?.security && (
+        <Section title="Security">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <InfoItem label="Firewall" value={tel.security.firewall_status || '-'} />
+            <InfoItem label="SELinux" value={tel.security.selinux || '-'} />
+            <InfoItem label="AppArmor" value={tel.security.apparmor || '-'} />
+            <InfoItem label="Failed Logins (24h)" value={String(tel.security.failed_logins_24h)} />
+            <InfoItem label="Logged-in Users" value={String(tel.security.logged_in_users)} />
+            {tel.security.open_ports && tel.security.open_ports.length > 0 && (
+              <div className="col-span-2">
+                <p className="text-xs text-gray-500">Open Ports</p>
+                <p className="text-sm text-gray-200 font-mono">{tel.security.open_ports.join(', ')}</p>
+              </div>
+            )}
           </div>
         </Section>
       )}

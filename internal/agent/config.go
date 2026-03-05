@@ -8,10 +8,23 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Collector CollectorConfig `yaml:"collectors"`
-	Docker    DockerConfig    `yaml:"docker"`
+	Server       ServerConfig       `yaml:"server"`
+	Agent        AgentConfig        `yaml:"agent"`
+	Collector    CollectorConfig    `yaml:"collectors"`
+	Docker       DockerConfig       `yaml:"docker"`
+	Commands     CommandsConfig     `yaml:"commands"`
+	HostTerminal HostTerminalConfig `yaml:"host_terminal"`
+}
+
+// CommandsConfig controls remote command execution.
+type CommandsConfig struct {
+	AllowReboot bool `yaml:"allow_reboot"` // opt-in for remote reboot
+}
+
+// HostTerminalConfig controls host-level terminal access.
+type HostTerminalConfig struct {
+	Enabled bool   `yaml:"enabled"` // opt-in for host shell access
+	Shell   string `yaml:"shell"`   // override default shell (e.g., /bin/bash)
 }
 
 // DockerConfig controls Docker collection behavior.
@@ -23,9 +36,10 @@ type DockerConfig struct {
 }
 
 type ServerConfig struct {
-	URL       string `yaml:"url"`
-	APIKey    string `yaml:"api_key"`
-	TLSVerify bool   `yaml:"tls_verify"`
+	URL        string `yaml:"url"`
+	APIKey     string `yaml:"api_key"`
+	TLSVerify  bool   `yaml:"tls_verify"`
+	CACertFile string `yaml:"ca_cert_file"` // custom CA certificate for TLS verification
 }
 
 type AgentConfig struct {

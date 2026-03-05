@@ -106,6 +106,8 @@ func (c *agentWSClient) connect(ctx context.Context) error {
 			c.agent.handleTerminalResize(msg)
 		case "terminal_close":
 			c.agent.handleTerminalClose(msg)
+		case "command":
+			go c.agent.handleCommand(ctx, msg)
 		default:
 			slog.Debug("agent ws: unknown message type", "type", msg.Type)
 		}

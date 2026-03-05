@@ -12,6 +12,9 @@ services:
       - RIOT_PORT=7331
       - RIOT_API_KEY=changeme
       - RIOT_RETENTION_DAYS=30
+      - RIOT_ADMIN_PASSWORD=changeme
+      - RIOT_JWT_SECRET=
+      # - RIOT_ALLOWED_ORIGINS=https://my-riot.example.com
     depends_on:
       riot-db:
         condition: service_healthy

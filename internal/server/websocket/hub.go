@@ -7,11 +7,12 @@ import (
 	"sync"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: middleware.CheckWSOrigin,
 }
 
 // WSMessage is the envelope for all WebSocket messages.
@@ -116,4 +117,12 @@ func (h *Hub) BroadcastDeviceRemoved(deviceID string) {
 
 func (h *Hub) BroadcastDockerUpdate(deviceID string, data interface{}) {
 	h.broadcastMsg(WSMessage{Type: "docker_update", DeviceID: deviceID, Data: data})
+}
+
+func (h *Hub) BroadcastCommandResult(commandID string, data interface{}) {
+	h.broadcastMsg(WSMessage{Type: "command_result", Data: data})
+}
+
+func (h *Hub) BroadcastProbeResult(probeID int64, data interface{}) {
+	h.broadcastMsg(WSMessage{Type: "probe_result", Data: data})
 }
