@@ -17,7 +17,7 @@ Thumbs.db
 
 # Environment
 .env
-.env.*
+.env.local
 
 # Claude Code
 .claude/

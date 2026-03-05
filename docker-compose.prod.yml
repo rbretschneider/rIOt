@@ -1,0 +1,36 @@
+services:
+  riot-server:
+    image: ghcr.io/rbretschneider/riot-server:latest
+    container_name: riot-server
+    ports:
+      - "7331:7331"
+    environment:
+      - RIOT_DB_URL=postgres://${POSTGRES_USER:-riot}:${POSTGRES_PASSWORD:-riot}@riot-db:5432/${POSTGRES_DB:-riot}?sslmode=disable
+      - RIOT_PORT=7331
+      - RIOT_API_KEY=${RIOT_API_KEY:-changeme}
+      - RIOT_ADMIN_PASSWORD=${RIOT_ADMIN_PASSWORD:-changeme}
+      - RIOT_JWT_SECRET=${RIOT_JWT_SECRET:-}
+      - RIOT_RETENTION_DAYS=${RIOT_RETENTION_DAYS:-30}
+    depends_on:
+      riot-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  riot-db:
+    image: postgres:16-alpine
+    container_name: riot-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-riot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-riot}
+      - POSTGRES_DB=${POSTGRES_DB:-riot}
+    volumes:
+      - riot-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-riot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  riot-data:
