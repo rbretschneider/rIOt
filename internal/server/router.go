@@ -52,20 +52,27 @@ func (s *Server) setupRouter() *chi.Mux {
 	})
 
 	// === AGENT routes (device key auth via X-rIOt-Key) ===
-	r.Route("/api/v1", func(r chi.Router) {
-		r.With(registerLimiter.Middleware()).Post("/devices/register", h.RegisterDevice)
-
-		r.Route("/devices/{id}", func(r chi.Router) {
-			r.Use(middleware.DeviceAuth(s.DeviceRepo))
-			r.Post("/heartbeat", h.Heartbeat)
-			r.Post("/telemetry", h.Telemetry)
-			r.Post("/docker-events", h.ReceiveDockerEvent)
-		})
-
-		r.Get("/update/check", h.AgentUpdateCheck)
-	})
-
+	r.With(registerLimiter.Middleware()).Post("/api/v1/devices/register", h.RegisterDevice)
+	r.Get("/api/v1/update/check", h.AgentUpdateCheck)
 	r.Get("/ws/agent", h.HandleAgentWS)
+
+	r.Route("/api/v1/devices/{id}", func(r chi.Router) {
+		// Agent-authenticated endpoints
+		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/heartbeat", h.Heartbeat)
+		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/telemetry", h.Telemetry)
+		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/docker-events", h.ReceiveDockerEvent)
+
+		// Admin-authenticated endpoints
+		adminAuth := middleware.AdminAuth(s.JWTSecret)
+		r.With(adminAuth).Get("/", h.GetDevice)
+		r.With(adminAuth).Get("/history", h.GetDeviceHistory)
+		r.With(adminAuth).Get("/containers", h.GetDeviceContainers)
+		r.With(adminAuth).Get("/containers/{cid}", h.GetContainerDetail)
+		r.With(adminAuth).Delete("/", h.DeleteDevice)
+		r.With(adminAuth).Post("/rotate-key", h.RotateKey)
+		r.With(adminAuth).Post("/commands", h.SendCommand)
+		r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
+	})
 
 	// === ADMIN routes (JWT cookie auth) ===
 	adminAuth := middleware.AdminAuth(s.JWTSecret)
@@ -76,58 +83,42 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Get("/ws", h.WebSocket)
 		r.Get("/ws/terminal/{deviceId}/{containerId}", h.HandleTerminalWS)
 
-		r.Route("/api/v1", func(r chi.Router) {
-			r.Get("/devices", h.ListDevices)
-			r.Get("/devices/{id}", h.GetDevice)
-			r.Get("/devices/{id}/history", h.GetDeviceHistory)
-			r.Get("/devices/{id}/containers", h.GetDeviceContainers)
-			r.Get("/devices/{id}/containers/{cid}", h.GetContainerDetail)
-			r.Delete("/devices/{id}", h.DeleteDevice)
-			r.Post("/devices/{id}/rotate-key", h.RotateKey)
-			r.Post("/devices/{id}/commands", h.SendCommand)
-			r.Get("/devices/{id}/commands", h.ListDeviceCommands)
-			r.Get("/summary", h.Summary)
-			r.Get("/events", h.ListEvents)
-			r.Get("/update/server", h.ServerUpdateCheck)
+		r.Get("/api/v1/devices", h.ListDevices)
+		r.Get("/api/v1/summary", h.Summary)
+		r.Get("/api/v1/events", h.ListEvents)
+		r.Get("/api/v1/update/server", h.ServerUpdateCheck)
 
-			// Settings: alert rules
-			r.Route("/settings/alert-rules", func(r chi.Router) {
-				r.Get("/", h.ListAlertRules)
-				r.Post("/", h.CreateAlertRule)
-				r.Put("/{id}", h.UpdateAlertRule)
-				r.Delete("/{id}", h.DeleteAlertRule)
-			})
+		// Settings: alert rules
+		r.Get("/api/v1/settings/alert-rules", h.ListAlertRules)
+		r.Post("/api/v1/settings/alert-rules", h.CreateAlertRule)
+		r.Put("/api/v1/settings/alert-rules/{id}", h.UpdateAlertRule)
+		r.Delete("/api/v1/settings/alert-rules/{id}", h.DeleteAlertRule)
 
-			// Settings: notification channels
-			r.Route("/settings/notification-channels", func(r chi.Router) {
-				r.Get("/", h.ListNotificationChannels)
-				r.Post("/", h.CreateNotificationChannel)
-				r.Put("/{id}", h.UpdateNotificationChannel)
-				r.Delete("/{id}", h.DeleteNotificationChannel)
-				r.Post("/{id}/test", h.TestNotificationChannel)
-			})
+		// Settings: notification channels
+		r.Get("/api/v1/settings/notification-channels", h.ListNotificationChannels)
+		r.Post("/api/v1/settings/notification-channels", h.CreateNotificationChannel)
+		r.Put("/api/v1/settings/notification-channels/{id}", h.UpdateNotificationChannel)
+		r.Delete("/api/v1/settings/notification-channels/{id}", h.DeleteNotificationChannel)
+		r.Post("/api/v1/settings/notification-channels/{id}/test", h.TestNotificationChannel)
 
-			// Settings: notification log
-			r.Get("/settings/notifications/log", h.ListNotificationLog)
+		// Settings: notification log
+		r.Get("/api/v1/settings/notifications/log", h.ListNotificationLog)
 
-			// Fleet management
-			r.Get("/fleet/agent-versions", h.AgentVersionSummary)
-			r.Post("/fleet/bulk-update", h.BulkUpdateAgents)
+		// Fleet management
+		r.Get("/api/v1/fleet/agent-versions", h.AgentVersionSummary)
+		r.Post("/api/v1/fleet/bulk-update", h.BulkUpdateAgents)
 
-			// Security
-			r.Get("/security/overview", h.SecurityOverview)
-			r.Get("/security/devices", h.SecurityDevices)
+		// Security
+		r.Get("/api/v1/security/overview", h.SecurityOverview)
+		r.Get("/api/v1/security/devices", h.SecurityDevices)
 
-			// Probes
-			r.Route("/probes", func(r chi.Router) {
-				r.Get("/", h.ListProbes)
-				r.Post("/", h.CreateProbe)
-				r.Put("/{id}", h.UpdateProbe)
-				r.Delete("/{id}", h.DeleteProbe)
-				r.Post("/{id}/run", h.RunProbe)
-				r.Get("/{id}/results", h.GetProbeResults)
-			})
-		})
+		// Probes
+		r.Get("/api/v1/probes", h.ListProbes)
+		r.Post("/api/v1/probes", h.CreateProbe)
+		r.Put("/api/v1/probes/{id}", h.UpdateProbe)
+		r.Delete("/api/v1/probes/{id}", h.DeleteProbe)
+		r.Post("/api/v1/probes/{id}/run", h.RunProbe)
+		r.Get("/api/v1/probes/{id}/results", h.GetProbeResults)
 	})
 
 	// Serve embedded frontend (must come last as catch-all)
