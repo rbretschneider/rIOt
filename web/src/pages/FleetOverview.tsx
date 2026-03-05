@@ -136,7 +136,7 @@ export default function FleetOverview() {
                       <span className={isAgentOutdated(d.agent_version) ? 'text-amber-400' : 'text-gray-400'}>
                         {d.agent_version}
                         {isAgentOutdated(d.agent_version) && (
-                          <span className="ml-1 text-xs" title={`Latest: ${latestVersion}`}>*</span>
+                          <span className="ml-1.5 text-xs italic text-gray-500" title={`Latest: ${latestVersion}`}>(outdated)</span>
                         )}
                       </span>
                     ) : (

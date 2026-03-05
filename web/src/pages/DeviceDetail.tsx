@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -23,6 +23,11 @@ export default function DeviceDetail() {
     queryFn: () => api.getEvents(50, 0),
     refetchInterval: wsConnected ? false : 30_000,
   })
+  const { data: serverUpdate } = useQuery({
+    queryKey: ['server-update'],
+    queryFn: api.getServerUpdate,
+    staleTime: 60 * 60 * 1000,
+  })
 
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const commandMutation = useMutation({
@@ -35,6 +40,12 @@ export default function DeviceDetail() {
 
   const { device, latest_telemetry } = data
   const tel = latest_telemetry?.data
+  const latestVersion = serverUpdate?.latest_version
+  const agentOutdated = useMemo(() => {
+    const v = device.agent_version
+    if (!v || !latestVersion || v === 'dev') return false
+    return v !== latestVersion
+  }, [device.agent_version, latestVersion])
 
   return (
     <div className="space-y-6">
@@ -44,7 +55,17 @@ export default function DeviceDetail() {
           <h1 className="text-2xl font-bold text-white">{device.hostname}</h1>
           <p className="text-sm text-gray-500 font-mono">
             {device.short_id} &middot; {device.arch}
-            {device.agent_version && <> &middot; v{device.agent_version}</>}
+            {device.agent_version && (
+              <>
+                {' '}&middot;{' '}
+                <span className={agentOutdated ? 'text-amber-400' : undefined}>
+                  v{device.agent_version}
+                </span>
+                {agentOutdated && (
+                  <span className="ml-1.5 italic text-gray-500" title={`Latest: ${latestVersion}`}>(outdated)</span>
+                )}
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -67,8 +88,12 @@ export default function DeviceDetail() {
                 </Link>
                 <button
                   onClick={() => setConfirmAction('agent_update')}
-                  disabled={commandMutation.isPending}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
+                  disabled={!agentOutdated || commandMutation.isPending}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    agentOutdated
+                      ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
+                      : 'text-gray-600 border border-gray-700/50'
+                  }`}
                 >
                   Update Agent
                 </button>
