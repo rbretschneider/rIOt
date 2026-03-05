@@ -217,7 +217,24 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	// Broadcast heartbeat via WebSocket
 	h.hub.BroadcastHeartbeat(deviceID, &hb.Data)
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// Include pending commands in the heartbeat response for agents without WS
+	resp := map[string]interface{}{"status": "ok"}
+	if h.commandRepo != nil {
+		pending, err := h.commandRepo.ListPending(r.Context(), deviceID)
+		if err == nil && len(pending) > 0 {
+			var payloads []models.CommandPayload
+			for _, cmd := range pending {
+				payloads = append(payloads, models.CommandPayload{
+					CommandID: cmd.ID,
+					Action:    cmd.Action,
+					Params:    cmd.Params,
+				})
+				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "delivered via heartbeat")
+			}
+			resp["pending_commands"] = payloads
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {

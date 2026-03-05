@@ -39,15 +39,6 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		req.Params = make(map[string]interface{})
 	}
 
-	// Check agent is connected
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-	if ac == nil {
-		http.Error(w, `{"error":"agent not connected"}`, http.StatusBadGateway)
-		return
-	}
-
 	// Create command record
 	cmd := &models.Command{
 		ID:       uuid.New().String(),
@@ -62,28 +53,36 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send to agent via WS
-	payload := models.CommandPayload{
-		CommandID: cmd.ID,
-		Action:    cmd.Action,
-		Params:    cmd.Params,
-	}
-	payloadJSON, _ := json.Marshal(payload)
-	if err := ac.Send(agentWSMessage{
-		Type: "command",
-		Data: payloadJSON,
-	}); err != nil {
-		slog.Error("send command to agent", "error", err)
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "error", "failed to send to agent")
-		http.Error(w, `{"error":"failed to send command to agent"}`, http.StatusBadGateway)
-		return
+	// Try to send via WS if agent is connected; otherwise queue for heartbeat pickup
+	agentConnections.RLock()
+	ac := agentConnections.m[deviceID]
+	agentConnections.RUnlock()
+
+	if ac != nil {
+		payload := models.CommandPayload{
+			CommandID: cmd.ID,
+			Action:    cmd.Action,
+			Params:    cmd.Params,
+		}
+		payloadJSON, _ := json.Marshal(payload)
+		if err := ac.Send(agentWSMessage{
+			Type: "command",
+			Data: payloadJSON,
+		}); err != nil {
+			slog.Warn("send command via ws failed, queued for heartbeat", "error", err)
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat delivery")
+			cmd.Status = "queued"
+		} else {
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
+			cmd.Status = "sent"
+		}
+	} else {
+		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected, queued for heartbeat delivery")
+		cmd.Status = "queued"
+		slog.Info("command queued for heartbeat delivery", "id", cmd.ID, "device", deviceID, "action", req.Action)
 	}
 
-	// Mark as sent
-	h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-	cmd.Status = "sent"
-
-	slog.Info("command sent", "id", cmd.ID, "device", deviceID, "action", req.Action)
+	slog.Info("command created", "id", cmd.ID, "device", deviceID, "action", req.Action, "status", cmd.Status)
 	writeJSON(w, http.StatusCreated, cmd)
 }
 

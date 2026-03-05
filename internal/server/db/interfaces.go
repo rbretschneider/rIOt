@@ -75,6 +75,7 @@ type CommandRepository interface {
 	Create(ctx context.Context, cmd *models.Command) error
 	UpdateStatus(ctx context.Context, id, status, resultMsg string) error
 	ListByDevice(ctx context.Context, deviceID string, limit int) ([]models.Command, error)
+	ListPending(ctx context.Context, deviceID string) ([]models.Command, error)
 	GetByID(ctx context.Context, id string) (*models.Command, error)
 }
 

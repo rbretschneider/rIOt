@@ -93,27 +93,39 @@ func (c *HTTPClient) Register(ctx context.Context, reg *models.DeviceRegistratio
 	return &result, nil
 }
 
-func (c *HTTPClient) SendHeartbeat(ctx context.Context, deviceID string, hb *models.Heartbeat) error {
+// HeartbeatResponse is the server's response to a heartbeat, potentially including queued commands.
+type HeartbeatResponse struct {
+	Status          string                 `json:"status"`
+	PendingCommands []models.CommandPayload `json:"pending_commands,omitempty"`
+}
+
+func (c *HTTPClient) SendHeartbeat(ctx context.Context, deviceID string, hb *models.Heartbeat) (*HeartbeatResponse, error) {
 	body, _ := json.Marshal(hb)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("%s/api/v1/devices/%s/heartbeat", c.baseURL, deviceID), bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-rIOt-Key", c.apiKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("heartbeat failed: %s", string(b))
+		return nil, fmt.Errorf("heartbeat failed: %s", string(b))
 	}
-	return nil
+
+	var hbResp HeartbeatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err != nil {
+		// Non-fatal: old servers may return a different format
+		return &HeartbeatResponse{Status: "ok"}, nil
+	}
+	return &hbResp, nil
 }
 
 // UpdateCheckResponse mirrors the server's update info response.

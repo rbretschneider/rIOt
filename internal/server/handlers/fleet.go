@@ -41,18 +41,10 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sent := 0
+	queued := 0
 	skipped := 0
 	for _, d := range devices {
 		if d.Status != models.DeviceStatusOnline {
-			skipped++
-			continue
-		}
-
-		// Check agent is connected
-		agentConnections.RLock()
-		ac := agentConnections.m[d.ID]
-		agentConnections.RUnlock()
-		if ac == nil {
 			skipped++
 			continue
 		}
@@ -70,28 +62,38 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    "agent_update",
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{
-			Type: "command",
-			Data: payloadJSON,
-		}); err != nil {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "error", "failed to send to agent")
-			skipped++
-			continue
-		}
+		// Try WS first, fall back to heartbeat queue
+		agentConnections.RLock()
+		ac := agentConnections.m[d.ID]
+		agentConnections.RUnlock()
 
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-		sent++
+		if ac != nil {
+			payload := models.CommandPayload{
+				CommandID: cmd.ID,
+				Action:    "agent_update",
+				Params:    cmd.Params,
+			}
+			payloadJSON, _ := json.Marshal(payload)
+			if err := ac.Send(agentWSMessage{
+				Type: "command",
+				Data: payloadJSON,
+			}); err != nil {
+				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat")
+				queued++
+			} else {
+				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
+				sent++
+			}
+		} else {
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "queued for heartbeat delivery")
+			queued++
+		}
 	}
 
-	slog.Info("bulk agent update", "version", req.Version, "sent", sent, "skipped", skipped)
+	slog.Info("bulk agent update", "version", req.Version, "sent", sent, "queued", queued, "skipped", skipped)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sent":    sent,
+		"queued":  queued,
 		"skipped": skipped,
 		"total":   len(devices),
 	})

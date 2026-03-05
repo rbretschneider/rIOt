@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -49,7 +50,19 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 		Data:      data,
 	}
 
-	if err := a.client.SendHeartbeat(ctx, a.config.Agent.DeviceID, hb); err != nil {
+	resp, err := a.client.SendHeartbeat(ctx, a.config.Agent.DeviceID, hb)
+	if err != nil {
 		slog.Warn("heartbeat failed", "error", err)
+		return
+	}
+
+	// Process any pending commands delivered via heartbeat
+	for _, payload := range resp.PendingCommands {
+		slog.Info("heartbeat: received command", "id", payload.CommandID, "action", payload.Action)
+		payloadJSON, _ := json.Marshal(payload)
+		go a.handleCommand(ctx, AgentWSMessage{
+			Type: "command",
+			Data: payloadJSON,
+		})
 	}
 }

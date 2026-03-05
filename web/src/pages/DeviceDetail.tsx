@@ -96,9 +96,9 @@ export default function DeviceDetail() {
                 )}
                 <button
                   onClick={() => setConfirmAction('agent_update')}
-                  disabled={!canCommand || !agentOutdated || commandMutation.isPending}
+                  disabled={!agentOutdated || commandMutation.isPending}
                   className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    agentOutdated && canCommand
+                    agentOutdated
                       ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
                       : 'text-gray-600 border border-gray-700/50'
                   }`}
@@ -107,7 +107,7 @@ export default function DeviceDetail() {
                 </button>
                 <button
                   onClick={() => setConfirmAction('reboot')}
-                  disabled={!canCommand || commandMutation.isPending}
+                  disabled={commandMutation.isPending}
                   className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Reboot
@@ -122,7 +122,7 @@ export default function DeviceDetail() {
       {/* Agent not connected warning */}
       {device.status === 'online' && agent_connected === false && (
         <div className="px-4 py-2 bg-amber-900/30 border border-amber-800 rounded text-sm text-amber-400">
-          Agent WebSocket not connected — commands (terminal, update, reboot) are unavailable.
+          Agent WebSocket not connected — terminal is unavailable. Commands will be queued and delivered on next heartbeat.
         </div>
       )}
 

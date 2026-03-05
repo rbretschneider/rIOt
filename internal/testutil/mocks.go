@@ -580,6 +580,19 @@ func (m *MockCommandRepo) UpdateStatus(_ context.Context, id, status, resultMsg 
 	return nil
 }
 
+func (m *MockCommandRepo) ListPending(_ context.Context, deviceID string) ([]models.Command, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []models.Command
+	for _, cmd := range m.Commands {
+		if cmd.DeviceID == deviceID && (cmd.Status == "pending" || cmd.Status == "queued") {
+			result = append(result, *cmd)
+		}
+	}
+	return result, nil
+}
+
 func (m *MockCommandRepo) ListByDevice(_ context.Context, deviceID string, limit int) ([]models.Command, error) {
 	if m.Err != nil {
 		return nil, m.Err

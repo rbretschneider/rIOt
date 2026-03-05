@@ -69,6 +69,32 @@ func (r *CommandRepo) ListByDevice(ctx context.Context, deviceID string, limit i
 	return commands, nil
 }
 
+// ListPending returns commands with status "pending" or "queued" for a device.
+func (r *CommandRepo) ListPending(ctx context.Context, deviceID string) ([]models.Command, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT id, device_id, action, params, status, result_msg, created_at, updated_at
+		 FROM commands WHERE device_id=$1 AND status IN ('pending', 'queued')
+		 ORDER BY created_at ASC LIMIT 10`,
+		deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	commands := []models.Command{}
+	for rows.Next() {
+		var cmd models.Command
+		var paramsJSON []byte
+		if err := rows.Scan(&cmd.ID, &cmd.DeviceID, &cmd.Action, &paramsJSON, &cmd.Status, &cmd.ResultMsg, &cmd.CreatedAt, &cmd.UpdatedAt); err != nil {
+			return nil, err
+		}
+		cmd.Params = make(map[string]interface{})
+		json.Unmarshal(paramsJSON, &cmd.Params)
+		commands = append(commands, cmd)
+	}
+	return commands, nil
+}
+
 // GetByID returns a single command.
 func (r *CommandRepo) GetByID(ctx context.Context, id string) (*models.Command, error) {
 	var cmd models.Command
