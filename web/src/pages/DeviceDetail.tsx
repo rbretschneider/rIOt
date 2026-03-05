@@ -35,17 +35,18 @@ export default function DeviceDetail() {
       api.sendCommand(id!, action, params || {}),
   })
 
+  const latestVersion = serverUpdate?.latest_version
+  const agentOutdated = useMemo(() => {
+    const v = data?.device.agent_version
+    if (!v || !latestVersion || v === 'dev') return false
+    return v !== latestVersion
+  }, [data?.device.agent_version, latestVersion])
+
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
 
   const { device, latest_telemetry } = data
   const tel = latest_telemetry?.data
-  const latestVersion = serverUpdate?.latest_version
-  const agentOutdated = useMemo(() => {
-    const v = device.agent_version
-    if (!v || !latestVersion || v === 'dev') return false
-    return v !== latestVersion
-  }, [device.agent_version, latestVersion])
 
   return (
     <div className="space-y-6">
