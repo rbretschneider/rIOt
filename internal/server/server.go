@@ -130,11 +130,14 @@ func (s *Server) Start() error {
 	// Set up HTTP server
 	router := s.setupRouter()
 	s.httpServer = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.Config.Port),
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        fmt.Sprintf(":%d", s.Config.Port),
+		Handler:     router,
+		ReadTimeout: 15 * time.Second,
+		// WriteTimeout is intentionally omitted — it sets a deadline on the
+		// underlying net.Conn that persists after WebSocket hijack, killing
+		// all long-lived connections (dashboard WS, agent WS, terminal).
+		// Per-handler write deadlines are managed by gorilla/websocket instead.
+		IdleTimeout: 60 * time.Second,
 	}
 
 	// Configure TLS if enabled

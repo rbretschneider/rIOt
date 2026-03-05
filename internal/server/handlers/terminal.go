@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
@@ -97,6 +98,25 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 		agentConnections.Unlock()
 		conn.Close()
 		slog.Info("agent ws disconnected", "device", deviceID)
+	}()
+
+	// Keepalive: send pings and expect pongs from agent
+	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		return nil
+	})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ac.mu.Lock()
+			err := conn.WriteControl(ws.PingMessage, nil, time.Now().Add(10*time.Second))
+			ac.mu.Unlock()
+			if err != nil {
+				return
+			}
+		}
 	}()
 
 	// Read messages from agent and relay terminal output to browsers
