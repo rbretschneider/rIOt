@@ -59,11 +59,11 @@ export default function Security() {
       )}
 
       {/* Per-Device Table */}
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
         <div className="px-4 py-3 border-b border-gray-800">
           <h2 className="text-sm font-semibold text-gray-300 uppercase">Per-Device Security</h2>
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-sm min-w-[640px]">
           <thead>
             <tr className="text-left text-gray-400 text-xs uppercase border-b border-gray-800">
               <th className="px-4 py-3">Device</th>

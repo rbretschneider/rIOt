@@ -42,6 +42,14 @@ var agentConnections = struct {
 	m map[string]*AgentConn
 }{m: make(map[string]*AgentConn)}
 
+// IsAgentConnected reports whether a device has an active agent WebSocket.
+func IsAgentConnected(deviceID string) bool {
+	agentConnections.RLock()
+	defer agentConnections.RUnlock()
+	_, ok := agentConnections.m[deviceID]
+	return ok
+}
+
 // terminalBrowserConns stores session_id → browser WebSocket connection.
 var terminalBrowserConns = struct {
 	sync.RWMutex

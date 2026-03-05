@@ -135,6 +135,14 @@ This will:
 3. Write a default config to `/etc/riot/agent.yaml`
 4. Install and start a systemd service (Linux) or print manual run instructions (macOS)
 
+### Uninstall
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/uninstall.sh | sudo bash
+```
+
+Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
+
 ### Manual Install
 
 1. Download the agent binary for your platform from [Releases](https://github.com/rbretschneider/rIOt/releases):

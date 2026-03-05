@@ -103,11 +103,11 @@ export default function FleetOverview() {
         />
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : (
-          <table className="w-full">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-gray-900/50 border-b border-gray-800">
               <tr>
                 <SortHeader k="hostname">Device</SortHeader>

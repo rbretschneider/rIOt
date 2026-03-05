@@ -25,7 +25,7 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
     <Link
       to={to}
-      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
         active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
       }`}
     >
@@ -137,11 +137,11 @@ export default function App() {
       <nav className="bg-gray-900 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-4">
-              <Link to="/" className="text-xl font-bold text-white tracking-tight">
+            <div className="flex items-center gap-4 min-w-0">
+              <Link to="/" className="text-xl font-bold text-white tracking-tight shrink-0">
                 rIOt
               </Link>
-              <div className="flex gap-1">
+              <div className="flex gap-1 overflow-x-auto scrollbar-hide">
                 <NavLink to="/">Fleet</NavLink>
                 <NavLink to="/alerts">Alerts</NavLink>
                 <NavLink to="/probes">Probes</NavLink>
@@ -149,7 +149,7 @@ export default function App() {
                 <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <UpdateBell />
               <button
                 onClick={logout}

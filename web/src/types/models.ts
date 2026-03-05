@@ -6,6 +6,7 @@ export interface Device {
   agent_version?: string
   primary_ip?: string
   status: 'online' | 'offline' | 'warning'
+  agent_connected?: boolean
   tags: string[]
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
@@ -301,6 +302,7 @@ export interface FleetSummary {
 export interface DeviceDetailResponse {
   device: Device
   latest_telemetry?: TelemetrySnapshot
+  agent_connected?: boolean
 }
 
 export interface UpdateInfo {

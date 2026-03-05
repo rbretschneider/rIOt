@@ -45,15 +45,16 @@ export default function DeviceDetail() {
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
 
-  const { device, latest_telemetry } = data
+  const { device, latest_telemetry, agent_connected } = data
   const tel = latest_telemetry?.data
+  const canCommand = device.status === 'online' && agent_connected !== false
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">{device.hostname}</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
           <p className="text-sm text-gray-500 font-mono">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (
@@ -81,17 +82,23 @@ export default function DeviceDetail() {
             )}
             {device.status === 'online' && (
               <>
-                <Link
-                  to={`/devices/${id}/terminal`}
-                  className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
-                >
-                  Terminal
-                </Link>
+                {canCommand ? (
+                  <Link
+                    to={`/devices/${id}/terminal`}
+                    className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors cursor-pointer"
+                  >
+                    Terminal
+                  </Link>
+                ) : (
+                  <span className="px-3 py-1.5 text-xs text-gray-600 border border-gray-700/50 rounded-md opacity-50 cursor-not-allowed">
+                    Terminal
+                  </span>
+                )}
                 <button
                   onClick={() => setConfirmAction('agent_update')}
-                  disabled={!agentOutdated || commandMutation.isPending}
-                  className={`px-3 py-1.5 text-xs rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                    agentOutdated
+                  disabled={!canCommand || !agentOutdated || commandMutation.isPending}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                    agentOutdated && canCommand
                       ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
                       : 'text-gray-600 border border-gray-700/50'
                   }`}
@@ -100,8 +107,8 @@ export default function DeviceDetail() {
                 </button>
                 <button
                   onClick={() => setConfirmAction('reboot')}
-                  disabled={commandMutation.isPending}
-                  className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors disabled:opacity-50"
+                  disabled={!canCommand || commandMutation.isPending}
+                  className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Reboot
                 </button>
@@ -111,6 +118,13 @@ export default function DeviceDetail() {
           <StatusBadge status={device.status} />
         </div>
       </div>
+
+      {/* Agent not connected warning */}
+      {device.status === 'online' && agent_connected === false && (
+        <div className="px-4 py-2 bg-amber-900/30 border border-amber-800 rounded text-sm text-amber-400">
+          Agent WebSocket not connected — commands (terminal, update, reboot) are unavailable.
+        </div>
+      )}
 
       {/* Command feedback */}
       {commandMutation.isSuccess && (
@@ -198,8 +212,8 @@ export default function DeviceDetail() {
       {/* Filesystems */}
       {tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
         <Section title="Filesystems">
-          <div className="max-h-64 overflow-y-auto">
-            <table className="w-full text-sm">
+          <div className="max-h-64 overflow-auto">
+            <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
                   <th className="text-left py-2">Mount</th>
@@ -234,7 +248,7 @@ export default function DeviceDetail() {
       {/* Services */}
       {tel?.services && tel.services.length > 0 && (
         <Section title="Services">
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-64 overflow-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
@@ -264,7 +278,8 @@ export default function DeviceDetail() {
       {/* Top Processes */}
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
         <Section title="Top Processes (by CPU)">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="text-gray-500 text-xs uppercase">
                 <th className="text-left py-2">PID</th>
@@ -286,6 +301,7 @@ export default function DeviceDetail() {
               ))}
             </tbody>
           </table>
+          </div>
         </Section>
       )}
 
@@ -362,7 +378,8 @@ function isVirtualInterface(name: string) {
 
 function NicTable({ interfaces }: { interfaces: import('../types/models').NetworkInterface[] }) {
   return (
-    <table className="w-full text-sm">
+    <div className="overflow-x-auto">
+    <table className="w-full text-sm min-w-[480px]">
       <thead>
         <tr className="text-gray-500 text-xs uppercase">
           <th className="text-left py-2">Name</th>
@@ -388,6 +405,7 @@ function NicTable({ interfaces }: { interfaces: import('../types/models').Networ
         ))}
       </tbody>
     </table>
+    </div>
   )
 }
 

@@ -39,11 +39,11 @@ export default function Alerts() {
         />
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : (
-          <table className="w-full">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-gray-900/50 border-b border-gray-800">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>

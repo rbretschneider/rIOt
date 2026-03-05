@@ -263,7 +263,15 @@ func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []models.Device{}
 	}
-	writeJSON(w, http.StatusOK, devices)
+	type deviceWithConn struct {
+		models.Device
+		AgentConnected bool `json:"agent_connected"`
+	}
+	result := make([]deviceWithConn, len(devices))
+	for i, d := range devices {
+		result[i] = deviceWithConn{Device: d, AgentConnected: IsAgentConnected(d.ID)}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handlers) GetDevice(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +288,7 @@ func (h *Handlers) GetDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"device":           device,
 		"latest_telemetry": latest,
+		"agent_connected":  IsAgentConnected(id),
 	})
 }
 

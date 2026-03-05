@@ -51,9 +51,14 @@ func TestListDevices_Populated(t *testing.T) {
 	h.ListDevices(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	var devices []models.Device
+	var devices []map[string]interface{}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&devices))
 	assert.Len(t, devices, 2)
+	// Each device should include agent_connected field
+	for _, d := range devices {
+		_, ok := d["agent_connected"]
+		assert.True(t, ok, "expected agent_connected field in device response")
+	}
 }
 
 func TestGetDevice_Found(t *testing.T) {
@@ -73,6 +78,10 @@ func TestGetDevice_Found(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
 	device := resp["device"].(map[string]interface{})
 	assert.Equal(t, "test-host", device["hostname"])
+	// Verify agent_connected field is present
+	agentConn, ok := resp["agent_connected"]
+	assert.True(t, ok, "expected agent_connected field in response")
+	assert.Equal(t, false, agentConn) // no WS connection in tests
 }
 
 func TestGetDevice_NotFound(t *testing.T) {

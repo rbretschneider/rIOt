@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+/* Ensure all interactive elements show pointer cursor */
+button:not(:disabled),
+a,
+[role="button"],
+summary,
+select,
+label[for],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
+/* Prevent horizontal overflow on mobile */
+html, body, #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Hide scrollbar for nav scroll areas */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

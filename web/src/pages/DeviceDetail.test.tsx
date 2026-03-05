@@ -19,6 +19,7 @@ vi.mock('../api/client', () => ({
         last_heartbeat: new Date().toISOString(),
       },
       latest_telemetry: null,
+      agent_connected: true,
     }),
     getEvents: vi.fn().mockResolvedValue([]),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),

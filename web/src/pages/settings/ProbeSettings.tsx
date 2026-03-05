@@ -82,8 +82,8 @@ export default function ProbeSettings() {
         </button>
       </div>
 
-      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
           <thead>
             <tr className="text-left text-gray-400 border-b border-gray-800">
               <th className="px-4 py-3">Enabled</th>
