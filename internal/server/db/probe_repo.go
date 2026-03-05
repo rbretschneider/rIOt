@@ -113,7 +113,7 @@ func (r *ProbeRepo) ListResults(ctx context.Context, probeID int64, limit int) (
 	}
 	defer rows.Close()
 
-	var results []models.ProbeResult
+	results := []models.ProbeResult{}
 	for rows.Next() {
 		var pr models.ProbeResult
 		var metaJSON []byte
@@ -156,7 +156,7 @@ func scanProbes(rows interface {
 	Next() bool
 	Scan(dest ...interface{}) error
 }) ([]models.Probe, error) {
-	var probes []models.Probe
+	probes := []models.Probe{}
 	for rows.Next() {
 		var p models.Probe
 		var configJSON []byte

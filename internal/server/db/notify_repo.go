@@ -29,7 +29,7 @@ func (r *NotifyRepo) ListChannels(ctx context.Context) ([]models.NotificationCha
 	}
 	defer rows.Close()
 
-	var channels []models.NotificationChannel
+	channels := []models.NotificationChannel{}
 	for rows.Next() {
 		var ch models.NotificationChannel
 		var configJSON []byte
@@ -53,7 +53,7 @@ func (r *NotifyRepo) ListEnabledChannels(ctx context.Context) ([]models.Notifica
 	}
 	defer rows.Close()
 
-	var channels []models.NotificationChannel
+	channels := []models.NotificationChannel{}
 	for rows.Next() {
 		var ch models.NotificationChannel
 		var configJSON []byte
@@ -143,7 +143,7 @@ func (r *NotifyRepo) ListNotificationLog(ctx context.Context, limit, offset int)
 	}
 	defer rows.Close()
 
-	var logs []models.NotificationLog
+	logs := []models.NotificationLog{}
 	for rows.Next() {
 		var l models.NotificationLog
 		if err := rows.Scan(&l.ID, &l.ChannelID, &l.EventID, &l.AlertRuleID, &l.Status, &l.ErrorMsg, &l.CreatedAt); err != nil {

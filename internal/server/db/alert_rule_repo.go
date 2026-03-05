@@ -26,7 +26,7 @@ func (r *AlertRuleRepo) List(ctx context.Context) ([]models.AlertRule, error) {
 	}
 	defer rows.Close()
 
-	var rules []models.AlertRule
+	rules := []models.AlertRule{}
 	for rows.Next() {
 		var rule models.AlertRule
 		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Enabled, &rule.Metric, &rule.Operator,
@@ -49,7 +49,7 @@ func (r *AlertRuleRepo) ListEnabled(ctx context.Context) ([]models.AlertRule, er
 	}
 	defer rows.Close()
 
-	var rules []models.AlertRule
+	rules := []models.AlertRule{}
 	for rows.Next() {
 		var rule models.AlertRule
 		if err := rows.Scan(&rule.ID, &rule.Name, &rule.Enabled, &rule.Metric, &rule.Operator,

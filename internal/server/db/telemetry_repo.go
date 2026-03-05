@@ -60,7 +60,7 @@ func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.Tel
 	}
 	defer rows.Close()
 
-	var snapshots []models.TelemetrySnapshot
+	snapshots := []models.TelemetrySnapshot{}
 	for rows.Next() {
 		var s models.TelemetrySnapshot
 		var dataJSON []byte
@@ -87,7 +87,7 @@ func (r *TelemetryRepo) GetHistory(ctx context.Context, deviceID string, limit, 
 	}
 	defer rows.Close()
 
-	var snapshots []models.TelemetrySnapshot
+	snapshots := []models.TelemetrySnapshot{}
 	for rows.Next() {
 		var s models.TelemetrySnapshot
 		var dataJSON []byte
@@ -111,7 +111,7 @@ func (r *TelemetryRepo) GetHeartbeatHistory(ctx context.Context, deviceID string
 	}
 	defer rows.Close()
 
-	var heartbeats []models.Heartbeat
+	heartbeats := []models.Heartbeat{}
 	for rows.Next() {
 		var hb models.Heartbeat
 		var dataJSON []byte

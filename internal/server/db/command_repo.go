@@ -55,7 +55,7 @@ func (r *CommandRepo) ListByDevice(ctx context.Context, deviceID string, limit i
 	}
 	defer rows.Close()
 
-	var commands []models.Command
+	commands := []models.Command{}
 	for rows.Next() {
 		var cmd models.Command
 		var paramsJSON []byte

@@ -73,7 +73,7 @@ type scannable interface {
 }
 
 func scanEvents(rows scannable) ([]models.Event, error) {
-	var events []models.Event
+	events := []models.Event{}
 	for rows.Next() {
 		var e models.Event
 		if err := rows.Scan(&e.ID, &e.DeviceID, &e.Type, &e.Severity, &e.Message, &e.CreatedAt); err != nil {

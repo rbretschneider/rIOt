@@ -70,7 +70,7 @@ func (r *DeviceRepo) List(ctx context.Context) ([]models.Device, error) {
 	}
 	defer rows.Close()
 
-	var devices []models.Device
+	devices := []models.Device{}
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
@@ -155,7 +155,7 @@ func (r *DeviceRepo) AgentVersionSummary(ctx context.Context) ([]AgentVersionCou
 	}
 	defer rows.Close()
 
-	var result []AgentVersionCount
+	result := []AgentVersionCount{}
 	for rows.Next() {
 		var v AgentVersionCount
 		if err := rows.Scan(&v.Version, &v.Count); err != nil {
@@ -176,7 +176,7 @@ func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]model
 	}
 	defer rows.Close()
 
-	var devices []models.Device
+	devices := []models.Device{}
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
