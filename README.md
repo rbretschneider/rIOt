@@ -8,17 +8,20 @@ Self-hosted infrastructure monitoring for homelab environments. Deploy a lightwe
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
-- **Offline resilience** — agent buffers telemetry locally when the server is unreachable
+- **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Simple deployment** — one `docker compose up` for the server, one-liner install for agents
 - **Admin authentication** — password-protected dashboard with JWT session cookies
-- **Configurable alert rules** — threshold-based alerts on any telemetry metric with cooldown deduplication and device filtering
-- **Notification channels** — alert delivery via ntfy and webhooks, with test-send support and delivery logging
+- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, and processes; one-click alert creation from device view; pre-built templates
+- **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
+- **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
+- **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
 - **Uptime probes** — scheduled HTTP and DNS probes with history and status tracking
 - **Fleet management** — agent version overview and bulk update across devices
 - **Remote commands** — send commands (e.g., Docker restart) to agents from the dashboard
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
 - **TLS support** — Let's Encrypt autocert or manual cert/key files
+- **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Architecture
 
@@ -118,6 +121,7 @@ docker run -d --name riot-server \
 | `RIOT_TLS_CERT_DIR` | — | Autocert cache directory |
 | `RIOT_TLS_CERT_FILE` | — | Manual TLS certificate file path |
 | `RIOT_TLS_KEY_FILE` | — | Manual TLS key file path |
+| `RIOT_MTLS_ENABLED` | `false` | Enable mTLS device authentication (see [mTLS](#mtls-device-authentication)) |
 
 ---
 
@@ -212,6 +216,10 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `server.url` | `http://localhost:7331` | rIOt server URL |
 | `server.api_key` | — | Master API key (used for initial registration; replaced with per-device key after) |
 | `server.tls_verify` | `true` | Verify TLS certificates |
+| `server.ca_cert_file` | — | Custom CA certificate for TLS verification |
+| `server.client_cert` | — | mTLS client certificate path (auto-populated after enrollment) |
+| `server.client_key` | — | mTLS client key path (auto-populated after enrollment) |
+| `server.bootstrap_key` | — | Single-use mTLS enrollment key (cleared after enrollment) |
 | `agent.device_name` | hostname | Display name override |
 | `agent.tags` | `[]` | Tags for grouping/filtering |
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
@@ -221,6 +229,12 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
+| `dns_cache.refresh_interval_seconds` | `1800` | How often to refresh cached DNS entries (seconds) |
+| `dns_cache.staleness_warning_hours` | `24` | Hours before a stale DNS cache entry triggers a warning |
+| `dns_cache.cache_file` | OS default | Path to the DNS cache file |
+| `deadman.enabled` | `false` | Enable dead man's switch heartbeat |
+| `deadman.url` | — | Healthcheck ping URL (e.g. `https://hc-ping.com/<uuid>`) |
+| `deadman.interval_seconds` | `60` | Seconds between healthcheck pings |
 
 ### Available Collectors
 
@@ -240,9 +254,146 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 
 ---
 
+## Alerting
+
+rIOt provides flexible alerting with two modes:
+
+### Threshold Alerts
+
+Traditional numeric alerts — fire when a metric crosses a threshold:
+
+- CPU usage > 90%
+- Memory usage > 90%
+- Disk usage > 90%
+- Updates available > 0
+
+### State Alerts
+
+Monitor service, network, and process state changes:
+
+- **Service monitoring** — alert when a systemd service enters a specific state (stopped, failed, etc.)
+- **Network interface monitoring** — alert when a NIC goes down
+- **Process monitoring** — alert when a named process is not running
+
+### Alert Templates
+
+Pre-built templates are available in Settings > Alert Rules > "Create from Template" for common scenarios. Templates pre-fill the metric, operator, threshold, and severity — just add a target name if needed.
+
+### One-Click Alert Creation
+
+From the device detail view, click the alert icon next to any service, process, or network interface to instantly create a targeted alert rule.
+
+### Event Acknowledgement
+
+The Alerts tab in the navigation bar shows a red badge with the count of unacknowledged warning/critical events. Events can be acknowledged individually or in bulk from the Alerts page. The badge updates in real-time via WebSocket.
+
+---
+
+## mTLS Device Authentication
+
+rIOt supports optional mTLS (mutual TLS) for certificate-based device authentication. The entire process is managed through the dashboard — no external tools like `openssl` are required.
+
+### How It Works
+
+1. The server runs a private ECDSA P-256 Certificate Authority, auto-generated on first start and stored in the database
+2. Admins create time-limited bootstrap keys from the dashboard
+3. Agents enroll by presenting a bootstrap key — the server signs a client certificate and returns it
+4. All subsequent agent communication uses the client certificate for authentication
+5. Certificates can be viewed and revoked from the dashboard
+
+### Setup
+
+**1. Enable mTLS on the server:**
+
+Add the environment variable to your Docker Compose or server startup:
+
+```yaml
+environment:
+  - RIOT_MTLS_ENABLED=true
+  - RIOT_TLS_ENABLED=true
+  - RIOT_TLS_CERT_FILE=/path/to/server.crt
+  - RIOT_TLS_KEY_FILE=/path/to/server.key
+```
+
+The server automatically generates and stores a CA on first start. No manual CA creation needed.
+
+**2. Create a bootstrap key in the dashboard:**
+
+Navigate to **Settings > Certificates > Bootstrap Keys** and click **Create Key**. Set an optional label and expiry (default: 24 hours). The plaintext key is shown exactly once — copy it.
+
+**3. Configure the agent:**
+
+```yaml
+server:
+  url: "https://<server-ip>:7331"
+  bootstrap_key: "<key-from-dashboard>"
+```
+
+**4. Start the agent:**
+
+On first run, the agent automatically:
+- Generates an ECDSA P-256 key pair
+- Creates a Certificate Signing Request (CSR)
+- Sends the CSR + bootstrap key to the server
+- Receives and saves the signed certificate and CA cert
+- Updates its config file (clears the bootstrap key, sets cert paths)
+- Connects using mTLS for all future communication
+
+No manual steps after the initial config. The agent handles everything.
+
+### Certificate Management
+
+From the dashboard (**Settings > Certificates**):
+
+- **CA info** — download the CA certificate
+- **Device certificates** — view all issued certs with device ID, serial, expiry, and status
+- **Revoke** — immediately revoke a device certificate
+- **Bootstrap keys** — create, list, and delete enrollment keys
+
+---
+
+## DNS Resilience
+
+The agent includes a resilient DNS resolver that caches DNS lookups to disk. If DNS becomes unavailable, the agent falls back to cached IPs to maintain connectivity with the server.
+
+- **Automatic caching** — DNS results are cached and refreshed in the background (default: every 30 minutes)
+- **Disk persistence** — cache survives agent restarts (stored at `/etc/riot/dns-cache.json` or `%PROGRAMDATA%\riot\dns-cache.json`)
+- **Staleness warnings** — logs warnings when cached entries become stale (24h warning, 72h critical)
+- **IP fallback** — on DNS failure, the agent tries cached IPs with the original hostname in the `Host` header and TLS `ServerName`
+
+### Notification Retry Queue
+
+Failed notification deliveries (ntfy, webhook) are queued to disk and retried automatically. The queue persists across server restarts with a configurable maximum size (default: 100 items).
+
+### Dead Man's Switch
+
+The agent can send periodic pings to an external healthcheck service (e.g., Healthchecks.io, Uptime Kuma) to detect agent failures from outside your infrastructure.
+
+```yaml
+deadman:
+  enabled: true
+  url: "https://hc-ping.com/<your-uuid>"
+  interval_seconds: 60
+```
+
+On consecutive failures, the agent increases retry frequency. When connectivity recovers, it resumes the normal interval.
+
+---
+
+## Notification Channels
+
+Alert delivery is supported via:
+
+- **ntfy** — push notifications via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server
+- **Webhooks** — JSON POST to any URL with custom headers
+
+Configure channels in **Settings > Notifications**. Each channel can be tested with a one-click test notification. All delivery attempts are logged in **Settings > Notifications > Delivery Log**.
+
+---
+
 ## API
 
-All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. Dashboard endpoints require admin authentication (JWT cookie).
+All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header (or mTLS client certificate). Dashboard endpoints require admin authentication (JWT cookie).
 
 ### Public
 
@@ -253,7 +404,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `GET` | `/api/v1/auth/check` | Check authentication status |
 
-### Agent (device key auth)
+### Agent (device key or mTLS auth)
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -262,6 +413,13 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
 | `GET` | `/api/v1/update/check` | Agent update check |
+
+### Enrollment (mTLS)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/enroll` | Enroll a device with bootstrap key + CSR |
+| `GET` | `/api/v1/ca.pem` | Download CA certificate |
 
 ### Dashboard (admin auth)
 
@@ -278,11 +436,18 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/commands` | List device command history |
 | `GET` | `/api/v1/summary` | Fleet summary stats |
 | `GET` | `/api/v1/events` | Event/alert list |
+| `GET` | `/api/v1/events/unread-count` | Count of unacknowledged events |
+| `POST` | `/api/v1/events/:id/acknowledge` | Acknowledge a single event |
+| `POST` | `/api/v1/events/acknowledge-all` | Acknowledge all events |
 | `GET` | `/api/v1/update/server` | Server update check |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/alert-rules[/:id]` | Alert rule CRUD |
+| `GET` | `/api/v1/settings/alert-templates` | List alert templates |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD |
 | `POST` | `/api/v1/settings/notification-channels/:id/test` | Test notification channel |
 | `GET` | `/api/v1/settings/notifications/log` | Notification delivery log |
+| `GET` | `/api/v1/settings/certs` | List device certificates |
+| `POST` | `/api/v1/settings/certs/:serial/revoke` | Revoke a device certificate |
+| `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
 | `GET` | `/api/v1/security/overview` | Security overview |
@@ -373,6 +538,8 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 | Heartbeats | 7 days |
 | Telemetry snapshots | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Events | 90 days |
+| Notification log | 90 days |
+| Probe results | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Device registry | Forever (until manually deleted) |
 
 A background worker runs hourly to purge expired data.

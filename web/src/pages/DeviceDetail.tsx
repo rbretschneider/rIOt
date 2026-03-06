@@ -6,6 +6,7 @@ import { useDevices } from '../hooks/useDevices'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
 import ConfirmModal from '../components/ConfirmModal'
+import CreateAlertDialog from '../components/CreateAlertDialog'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -30,6 +31,7 @@ export default function DeviceDetail() {
   })
 
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
+  const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
       api.sendCommand(id!, action, params || {}),
@@ -206,7 +208,10 @@ export default function DeviceDetail() {
 
       {/* Network */}
       {tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
-        <NetworkSection interfaces={tel.network.interfaces} />
+        <NetworkSection
+          interfaces={tel.network.interfaces}
+          onCreateAlert={(name) => setAlertDialog({ metric: 'nic_state', targetName: name, targetState: 'DOWN' })}
+        />
       )}
 
       {/* Filesystems */}
@@ -255,6 +260,7 @@ export default function DeviceDetail() {
                   <th className="text-left py-2">Name</th>
                   <th className="text-left py-2">State</th>
                   <th className="text-left py-2">Enabled</th>
+                  <th className="py-2 w-8"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
@@ -267,6 +273,15 @@ export default function DeviceDetail() {
                       </span>
                     </td>
                     <td className="py-1.5 text-gray-400">{svc.enabled ? 'Yes' : 'No'}</td>
+                    <td className="py-1.5">
+                      <button
+                        onClick={() => setAlertDialog({ metric: 'service_state', targetName: svc.name, targetState: 'stopped' })}
+                        className="text-gray-600 hover:text-amber-400 transition-colors"
+                        title="Create alert for this service"
+                      >
+                        <AlertIcon />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -287,6 +302,7 @@ export default function DeviceDetail() {
                 <th className="text-right py-2">CPU %</th>
                 <th className="text-right py-2">MEM %</th>
                 <th className="text-left py-2">User</th>
+                <th className="py-2 w-8"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -297,6 +313,15 @@ export default function DeviceDetail() {
                   <td className="py-1.5 text-right font-mono">{p.cpu_percent.toFixed(1)}</td>
                   <td className="py-1.5 text-right font-mono">{p.mem_percent.toFixed(1)}</td>
                   <td className="py-1.5 text-gray-400">{p.user}</td>
+                  <td className="py-1.5">
+                    <button
+                      onClick={() => setAlertDialog({ metric: 'process_missing', targetName: p.name, targetState: 'absent' })}
+                      className="text-gray-600 hover:text-amber-400 transition-colors"
+                      title="Create alert for this process"
+                    >
+                      <AlertIcon />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -366,6 +391,17 @@ export default function DeviceDetail() {
           </div>
         </Section>
       )}
+
+      {/* Create Alert Dialog */}
+      {alertDialog && (
+        <CreateAlertDialog
+          metric={alertDialog.metric}
+          targetName={alertDialog.targetName}
+          targetState={alertDialog.targetState}
+          deviceFilter={device.id}
+          onClose={() => setAlertDialog(null)}
+        />
+      )}
     </div>
   )
 }
@@ -376,7 +412,15 @@ function isVirtualInterface(name: string) {
   return VIRTUAL_PREFIXES.some(p => name.startsWith(p))
 }
 
-function NicTable({ interfaces }: { interfaces: import('../types/models').NetworkInterface[] }) {
+function AlertIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
+function NicTable({ interfaces, onCreateAlert }: { interfaces: import('../types/models').NetworkInterface[]; onCreateAlert?: (name: string) => void }) {
   return (
     <div className="overflow-x-auto">
     <table className="w-full text-sm min-w-[480px]">
@@ -387,6 +431,7 @@ function NicTable({ interfaces }: { interfaces: import('../types/models').Networ
           <th className="text-left py-2">IPv4</th>
           <th className="text-left py-2">MAC</th>
           <th className="text-right py-2">TX / RX</th>
+          {onCreateAlert && <th className="py-2 w-8"></th>}
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-800/50">
@@ -401,6 +446,17 @@ function NicTable({ interfaces }: { interfaces: import('../types/models').Networ
             <td className="py-2 text-right font-mono text-gray-400">
               {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
             </td>
+            {onCreateAlert && (
+              <td className="py-2">
+                <button
+                  onClick={() => onCreateAlert(iface.name)}
+                  className="text-gray-600 hover:text-amber-400 transition-colors"
+                  title="Create alert for this interface"
+                >
+                  <AlertIcon />
+                </button>
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -409,14 +465,14 @@ function NicTable({ interfaces }: { interfaces: import('../types/models').Networ
   )
 }
 
-function NetworkSection({ interfaces }: { interfaces: import('../types/models').NetworkInterface[] }) {
+function NetworkSection({ interfaces, onCreateAlert }: { interfaces: import('../types/models').NetworkInterface[]; onCreateAlert?: (name: string) => void }) {
   const physical = interfaces.filter(i => !isVirtualInterface(i.name))
   const virtual = interfaces.filter(i => isVirtualInterface(i.name))
   const [showVirtual, setShowVirtual] = useState(false)
 
   return (
     <Section title="Network Interfaces">
-      <NicTable interfaces={physical} />
+      <NicTable interfaces={physical} onCreateAlert={onCreateAlert} />
       {virtual.length > 0 && (
         <div className="mt-3">
           <button

@@ -45,6 +45,9 @@ type EventRepository interface {
 	ListByDevice(ctx context.Context, deviceID string, limit int) ([]models.Event, error)
 	ListAll(ctx context.Context, limit, offset int) ([]models.Event, error)
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+	CountUnacknowledged(ctx context.Context) (int, error)
+	Acknowledge(ctx context.Context, id int64) error
+	AcknowledgeAll(ctx context.Context) error
 }
 
 // AlertRuleRepository defines the interface for alert rule database operations.
@@ -105,6 +108,23 @@ type TerminalRepository interface {
 	LogSessionEnd(ctx context.Context, sessionID string) error
 }
 
+// CARepository defines the interface for CA, certificate, and bootstrap key operations.
+type CARepository interface {
+	GetCA(ctx context.Context) (certPEM, keyPEM string, err error)
+	StoreCA(ctx context.Context, certPEM, keyPEM string) error
+	StoreCert(ctx context.Context, cert *models.DeviceCert) error
+	GetCertByDevice(ctx context.Context, deviceID string) (*models.DeviceCert, error)
+	GetCertBySerial(ctx context.Context, serial string) (*models.DeviceCert, error)
+	ListCerts(ctx context.Context) ([]models.DeviceCert, error)
+	RevokeCert(ctx context.Context, serial string) error
+	ListRevokedSerials(ctx context.Context) ([]string, error)
+	CreateBootstrapKey(ctx context.Context, keyHash, label string, expiresAt time.Time) error
+	LookupBootstrapKey(ctx context.Context, keyHash string) (*models.BootstrapKey, error)
+	MarkBootstrapKeyUsed(ctx context.Context, keyHash, deviceID string) error
+	ListBootstrapKeys(ctx context.Context) ([]models.BootstrapKey, error)
+	DeleteBootstrapKey(ctx context.Context, keyHash string) error
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository    = (*DeviceRepo)(nil)
@@ -116,4 +136,5 @@ var (
 	_ ProbeRepository     = (*ProbeRepo)(nil)
 	_ AdminRepository     = (*AdminRepo)(nil)
 	_ TerminalRepository  = (*TerminalRepo)(nil)
+	_ CARepository        = (*CARepo)(nil)
 )

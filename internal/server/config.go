@@ -25,6 +25,7 @@ type Config struct {
 	TLSCertDir        string // autocert cache directory
 	TLSCertFile       string // manual TLS cert file
 	TLSKeyFile        string // manual TLS key file
+	MTLSEnabled       bool   // enable mTLS device authentication
 }
 
 func LoadConfig() *Config {
@@ -92,6 +93,11 @@ func LoadConfig() *Config {
 	}
 	if v := os.Getenv("RIOT_TLS_KEY_FILE"); v != "" {
 		cfg.TLSKeyFile = v
+	}
+
+	// mTLS
+	if v := os.Getenv("RIOT_MTLS_ENABLED"); v == "true" || v == "1" {
+		cfg.MTLSEnabled = true
 	}
 
 	// Allowed CORS origins

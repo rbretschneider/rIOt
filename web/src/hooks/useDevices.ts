@@ -73,6 +73,13 @@ export function useDevices() {
         if (!old) return [msg.data]
         return [msg.data, ...old]
       })
+      // Increment unread count for warning/critical events
+      const evt = msg.data as { severity?: string }
+      if (evt.severity === 'warning' || evt.severity === 'critical') {
+        queryClient.setQueryData(['unread-count'], (old: { count: number } | undefined) => {
+          return { count: (old?.count ?? 0) + 1 }
+        })
+      }
     }
   }, [queryClient])
 

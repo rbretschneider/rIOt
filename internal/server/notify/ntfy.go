@@ -17,6 +17,7 @@ type Ntfy struct {
 	topic     string
 	token     string
 	priority  string
+	client    *http.Client
 }
 
 // NewNtfy creates an Ntfy channel from a NotificationChannel config.
@@ -77,7 +78,11 @@ func (n *Ntfy) Send(ctx context.Context, alert models.Alert) error {
 		req.Header.Set("Authorization", "Bearer "+n.token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := n.client
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: send: %w", err)
 	}

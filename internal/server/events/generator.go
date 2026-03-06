@@ -135,6 +135,161 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 		g.evaluateMetric(ctx, deviceID, "updates", float64(data.Updates.PendingUpdates), "", models.EventUpdateAvail,
 			func(val float64) string { return fmt.Sprintf("%d updates available", int(val)) })
 	}
+
+	// Check service, NIC, and process alerts
+	if data.Services != nil {
+		g.CheckServiceAlerts(ctx, deviceID, data.Services)
+	}
+	if data.Network != nil && data.Network.Interfaces != nil {
+		g.CheckNICAlerts(ctx, deviceID, data.Network.Interfaces)
+	}
+	if data.Procs != nil {
+		g.CheckProcessAlerts(ctx, deviceID, data.Procs)
+	}
+}
+
+// CheckServiceAlerts checks service state against service_state alert rules.
+func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID string, services []models.ServiceInfo) {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		slog.Error("check service alerts", "error", err)
+		return
+	}
+
+	for i := range rules {
+		r := &rules[i]
+		if r.Metric != "service_state" || r.TargetName == "" {
+			continue
+		}
+		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+			continue
+		}
+
+		for _, svc := range services {
+			if !strings.EqualFold(svc.Name, r.TargetName) {
+				continue
+			}
+			// Check if service state matches the target state
+			if r.TargetState != "" && !strings.EqualFold(svc.State, r.TargetState) {
+				continue
+			}
+
+			key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, svc.Name)
+			cd := time.Duration(r.CooldownSeconds) * time.Second
+			if g.onCooldown(key, cd) {
+				continue
+			}
+
+			eventType := models.EventServiceStopped
+			if strings.Contains(strings.ToLower(svc.State), "failed") {
+				eventType = models.EventServiceFailed
+			}
+
+			e := &models.Event{
+				DeviceID:  deviceID,
+				Type:      eventType,
+				Severity:  models.EventSeverity(r.Severity),
+				Message:   fmt.Sprintf("Service %s is %s", svc.Name, svc.State),
+				CreatedAt: time.Now().UTC(),
+			}
+			g.createEventAndNotify(ctx, e, r, "", 1)
+		}
+	}
+}
+
+// CheckNICAlerts checks network interface state against nic_state alert rules.
+func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfaces []models.NetworkInterface) {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		slog.Error("check nic alerts", "error", err)
+		return
+	}
+
+	for i := range rules {
+		r := &rules[i]
+		if r.Metric != "nic_state" || r.TargetName == "" {
+			continue
+		}
+		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+			continue
+		}
+
+		for _, iface := range interfaces {
+			if !strings.EqualFold(iface.Name, r.TargetName) {
+				continue
+			}
+			if iface.State == "UP" {
+				continue // NIC is up, no alert needed
+			}
+
+			key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, iface.Name)
+			cd := time.Duration(r.CooldownSeconds) * time.Second
+			if g.onCooldown(key, cd) {
+				continue
+			}
+
+			e := &models.Event{
+				DeviceID:  deviceID,
+				Type:      models.EventNICDown,
+				Severity:  models.EventSeverity(r.Severity),
+				Message:   fmt.Sprintf("Network interface %s is %s", iface.Name, iface.State),
+				CreatedAt: time.Now().UTC(),
+			}
+			g.createEventAndNotify(ctx, e, r, "", 1)
+		}
+	}
+}
+
+// CheckProcessAlerts checks for missing processes against process_missing alert rules.
+func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID string, procs *models.ProcessInfo) {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		slog.Error("check process alerts", "error", err)
+		return
+	}
+
+	// Build a set of running process names
+	processNames := make(map[string]bool)
+	if procs.TopByCPU != nil {
+		for _, p := range procs.TopByCPU {
+			processNames[strings.ToLower(p.Name)] = true
+		}
+	}
+	if procs.TopByMemory != nil {
+		for _, p := range procs.TopByMemory {
+			processNames[strings.ToLower(p.Name)] = true
+		}
+	}
+
+	for i := range rules {
+		r := &rules[i]
+		if r.Metric != "process_missing" || r.TargetName == "" {
+			continue
+		}
+		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+			continue
+		}
+
+		// Check if the target process is running
+		if processNames[strings.ToLower(r.TargetName)] {
+			continue // Process is running, no alert needed
+		}
+
+		key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, r.TargetName)
+		cd := time.Duration(r.CooldownSeconds) * time.Second
+		if g.onCooldown(key, cd) {
+			continue
+		}
+
+		e := &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventProcessMissing,
+			Severity:  models.EventSeverity(r.Severity),
+			Message:   fmt.Sprintf("Process %s not found in running processes", r.TargetName),
+			CreatedAt: time.Now().UTC(),
+		}
+		g.createEventAndNotify(ctx, e, r, "", 1)
+	}
 }
 
 // CheckDockerEvent creates an event from a Docker container state change.

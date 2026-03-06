@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
-import type { AlertRule } from '../../types/models'
+import type { AlertRule, AlertTemplate } from '../../types/models'
 
 const METRICS = [
   { value: 'mem_percent', label: 'Memory %' },
@@ -10,7 +10,18 @@ const METRICS = [
   { value: 'container_died', label: 'Container Died' },
   { value: 'container_oom', label: 'Container OOM' },
   { value: 'device_offline', label: 'Device Offline' },
+  { value: 'service_state', label: 'Service State' },
+  { value: 'nic_state', label: 'NIC State' },
+  { value: 'process_missing', label: 'Process Missing' },
 ]
+
+const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
+
+const TARGET_STATES: Record<string, string[]> = {
+  service_state: ['stopped', 'failed', 'inactive', 'dead'],
+  nic_state: ['DOWN'],
+  process_missing: ['absent'],
+}
 
 const OPERATORS = ['>', '<', '>=', '<=', '==', '!=']
 const SEVERITIES = ['info', 'warning', 'critical']
@@ -21,10 +32,13 @@ const emptyRule: Partial<AlertRule> = {
   metric: 'mem_percent',
   operator: '>',
   threshold: 90,
+  target_name: '',
+  target_state: '',
   severity: 'warning',
   device_filter: '',
   cooldown_seconds: 900,
   notify: true,
+  template_id: '',
 }
 
 export default function AlertRuleSettings() {
@@ -35,6 +49,7 @@ export default function AlertRuleSettings() {
   })
   const [editing, setEditing] = useState<Partial<AlertRule> | null>(null)
   const [isNew, setIsNew] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
 
   const saveMutation = useMutation({
     mutationFn: (rule: Partial<AlertRule>) =>
@@ -58,6 +73,8 @@ export default function AlertRuleSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alert-rules'] }),
   })
 
+  const isStateMetric = editing ? STATE_METRICS.includes(editing.metric || '') : false
+
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
   }
@@ -66,12 +83,20 @@ export default function AlertRuleSettings() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Alert Rules</h2>
-        <button
-          onClick={() => { setEditing({ ...emptyRule }); setIsNew(true) }}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
-        >
-          Add Rule
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowTemplates(true)}
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-md transition-colors"
+          >
+            Create from Template
+          </button>
+          <button
+            onClick={() => { setEditing({ ...emptyRule }); setIsNew(true) }}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
+          >
+            Add Rule
+          </button>
+        </div>
       </div>
 
       <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
@@ -106,9 +131,12 @@ export default function AlertRuleSettings() {
                 <td className="px-4 py-3 text-white">{rule.name}</td>
                 <td className="px-4 py-3">
                   {METRICS.find(m => m.value === rule.metric)?.label || rule.metric}
+                  {rule.target_name && <span className="text-gray-500 ml-1">({rule.target_name})</span>}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">
-                  {rule.operator} {rule.threshold}
+                  {STATE_METRICS.includes(rule.metric)
+                    ? (rule.target_state || 'any')
+                    : `${rule.operator} ${rule.threshold}`}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded text-xs ${
@@ -167,29 +195,65 @@ export default function AlertRuleSettings() {
                 <Field label="Metric">
                   <select
                     value={editing.metric}
-                    onChange={e => setEditing({ ...editing, metric: e.target.value })}
+                    onChange={e => {
+                      const m = e.target.value
+                      const isState = STATE_METRICS.includes(m)
+                      setEditing({
+                        ...editing,
+                        metric: m,
+                        operator: isState ? '==' : '>',
+                        threshold: isState ? 1 : 90,
+                        target_state: isState ? (TARGET_STATES[m]?.[0] || '') : '',
+                      })
+                    }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                   >
                     {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
                 </Field>
-                <Field label="Operator">
-                  <select
-                    value={editing.operator}
-                    onChange={e => setEditing({ ...editing, operator: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-                  >
-                    {OPERATORS.map(op => <option key={op} value={op}>{op}</option>)}
-                  </select>
-                </Field>
-                <Field label="Threshold">
-                  <input
-                    type="number"
-                    value={editing.threshold ?? 0}
-                    onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-                  />
-                </Field>
+                {isStateMetric ? (
+                  <>
+                    <Field label="Target Name">
+                      <input
+                        value={editing.target_name || ''}
+                        onChange={e => setEditing({ ...editing, target_name: e.target.value })}
+                        placeholder="e.g. nginx, eth0"
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                      />
+                    </Field>
+                    <Field label="Target State">
+                      <select
+                        value={editing.target_state || ''}
+                        onChange={e => setEditing({ ...editing, target_state: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                      >
+                        {(TARGET_STATES[editing.metric || ''] || []).map(s =>
+                          <option key={s} value={s}>{s}</option>
+                        )}
+                      </select>
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field label="Operator">
+                      <select
+                        value={editing.operator}
+                        onChange={e => setEditing({ ...editing, operator: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                      >
+                        {OPERATORS.map(op => <option key={op} value={op}>{op}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Threshold">
+                      <input
+                        type="number"
+                        value={editing.threshold ?? 0}
+                        onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                      />
+                    </Field>
+                  </>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Severity">
@@ -246,6 +310,65 @@ export default function AlertRuleSettings() {
           </div>
         </div>
       )}
+
+      {/* Template Picker Modal */}
+      {showTemplates && (
+        <TemplatePicker
+          onSelect={(tpl) => {
+            setShowTemplates(false)
+            setEditing({
+              ...emptyRule,
+              name: tpl.name,
+              metric: tpl.metric,
+              operator: tpl.operator,
+              threshold: tpl.threshold,
+              target_state: tpl.target_state || '',
+              severity: tpl.severity,
+              cooldown_seconds: tpl.cooldown_seconds,
+              template_id: tpl.id,
+            })
+            setIsNew(true)
+          }}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function TemplatePicker({ onSelect, onClose }: { onSelect: (t: AlertTemplate) => void; onClose: () => void }) {
+  const { data: templates = [] } = useQuery({
+    queryKey: ['alert-templates'],
+    queryFn: settingsApi.getAlertTemplates,
+  })
+
+  const categories = [...new Set(templates.map(t => t.category))]
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold text-white mb-4">Create from Template</h3>
+        {categories.map(cat => (
+          <div key={cat} className="mb-4">
+            <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>
+            <div className="space-y-2">
+              {templates.filter(t => t.category === cat).map(tpl => (
+                <button
+                  key={tpl.id}
+                  onClick={() => onSelect(tpl)}
+                  className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <div className="text-sm text-white font-medium">{tpl.name}</div>
+                  <div className="text-xs text-gray-400 mt-1">{tpl.description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="flex justify-end mt-4">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+        </div>
+      </div>
     </div>
   )
 }

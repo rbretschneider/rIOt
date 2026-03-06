@@ -15,6 +15,7 @@ import (
 type Webhook struct {
 	url     string
 	headers map[string]string
+	client  *http.Client
 }
 
 // NewWebhook creates a Webhook channel from a NotificationChannel config.
@@ -57,7 +58,11 @@ func (w *Webhook) Send(ctx context.Context, alert models.Alert) error {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := w.client
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: send: %w", err)
 	}

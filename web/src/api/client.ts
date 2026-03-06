@@ -36,6 +36,23 @@ export const api = {
   getEvents: (limit = 100, offset = 0) =>
     fetchJSON<Event[]>(`${BASE}/events?limit=${limit}&offset=${offset}`),
 
+  getUnreadEventCount: () =>
+    fetchJSON<{ count: number }>(`${BASE}/events/unread-count`),
+
+  acknowledgeEvent: async (id: number) => {
+    const res = await fetch(`${BASE}/events/${id}/acknowledge`, { method: 'POST', credentials: 'same-origin' })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  acknowledgeAllEvents: async () => {
+    const res = await fetch(`${BASE}/events/acknowledge-all`, { method: 'POST', credentials: 'same-origin' })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
   getHealth: () => fetchJSON<{ status: string; database: boolean }>('/health'),
 
   getServerUpdate: () => fetchJSON<UpdateInfo>(`${BASE}/update/server`),

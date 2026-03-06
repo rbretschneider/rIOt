@@ -15,6 +15,10 @@ const (
 	EventContainerStop   EventType = "container_stopped"
 	EventContainerDied   EventType = "container_died"
 	EventContainerOOM    EventType = "container_oom_killed"
+	EventServiceStopped  EventType = "service_stopped"
+	EventServiceFailed   EventType = "service_failed"
+	EventProcessMissing  EventType = "process_missing"
+	EventNICDown         EventType = "nic_down"
 )
 
 // DockerEvent is the payload agents push for Docker container state changes.
@@ -32,12 +36,13 @@ const (
 )
 
 type Event struct {
-	ID        int64         `json:"id"`
-	DeviceID  string        `json:"device_id"`
-	Type      EventType     `json:"type"`
-	Severity  EventSeverity `json:"severity"`
-	Message   string        `json:"message"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID             int64         `json:"id"`
+	DeviceID       string        `json:"device_id"`
+	Type           EventType     `json:"type"`
+	Severity       EventSeverity `json:"severity"`
+	Message        string        `json:"message"`
+	CreatedAt      time.Time     `json:"created_at"`
+	AcknowledgedAt *time.Time    `json:"acknowledged_at,omitempty"`
 }
 
 // FleetSummary contains aggregated fleet statistics.

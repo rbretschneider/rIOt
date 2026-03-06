@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -49,8 +50,15 @@ func (a *Agent) Run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
+	// mTLS enrollment: if no client cert exists but a bootstrap key is set, enroll first
+	if a.config.Server.ClientCert == "" && a.config.Server.BootstrapKey != "" {
+		if err := a.enroll(); err != nil {
+			return fmt.Errorf("mTLS enrollment failed: %w", err)
+		}
+	}
+
 	// Initialize HTTP client
-	if a.config.Server.CACertFile != "" || !a.config.Server.TLSVerify {
+	if a.config.Server.ClientCert != "" || a.config.Server.CACertFile != "" || !a.config.Server.TLSVerify {
 		a.client = NewHTTPClientWithTLS(a.config.Server)
 	} else {
 		a.client = NewHTTPClient(a.config.Server.URL, a.config.Server.APIKey)
@@ -112,6 +120,16 @@ func (a *Agent) Run() error {
 		slog.Info("starting agent WebSocket client")
 		a.wsClient.run(ctx)
 	}()
+
+	// Start dead man's switch if configured
+	if a.config.DeadMan.Enabled && a.config.DeadMan.URL != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slog.Info("starting dead man's switch", "url", a.config.DeadMan.URL)
+			a.deadManLoop(ctx)
+		}()
+	}
 
 	// Graceful shutdown
 	done := make(chan os.Signal, 1)

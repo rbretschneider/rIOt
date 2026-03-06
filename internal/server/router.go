@@ -18,6 +18,12 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS(s.Config.AllowedOrigins))
 
+	// Set up enrollment handler if mTLS is enabled
+	var enrollH *handlers.EnrollHandler
+	if s.Config.MTLSEnabled && s.CA != nil {
+		enrollH = handlers.NewEnrollHandler(s.CA, s.CARepo, s.DeviceRepo)
+	}
+
 	h := handlers.New(handlers.HandlerDeps{
 		Devices:           s.DeviceRepo,
 		Telemetry:         s.TelemetryRepo,
@@ -56,6 +62,12 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Get("/api/v1/update/check", h.AgentUpdateCheck)
 	r.Get("/ws/agent", h.HandleAgentWS)
 
+	// mTLS enrollment routes (public, bootstrap key auth)
+	if enrollH != nil {
+		r.Post("/api/v1/enroll", enrollH.Enroll)
+		r.Get("/api/v1/ca.pem", enrollH.CACert)
+	}
+
 	r.Route("/api/v1/devices/{id}", func(r chi.Router) {
 		// Agent-authenticated endpoints
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/heartbeat", h.Heartbeat)
@@ -86,9 +98,13 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Get("/api/v1/devices", h.ListDevices)
 		r.Get("/api/v1/summary", h.Summary)
 		r.Get("/api/v1/events", h.ListEvents)
+		r.Get("/api/v1/events/unread-count", h.UnreadEventCount)
+		r.Post("/api/v1/events/{id}/acknowledge", h.AcknowledgeEvent)
+		r.Post("/api/v1/events/acknowledge-all", h.AcknowledgeAllEvents)
 		r.Get("/api/v1/update/server", h.ServerUpdateCheck)
 
-		// Settings: alert rules
+		// Settings: alert rules & templates
+		r.Get("/api/v1/settings/alert-templates", h.ListAlertTemplates)
 		r.Get("/api/v1/settings/alert-rules", h.ListAlertRules)
 		r.Post("/api/v1/settings/alert-rules", h.CreateAlertRule)
 		r.Put("/api/v1/settings/alert-rules/{id}", h.UpdateAlertRule)
@@ -103,6 +119,15 @@ func (s *Server) setupRouter() *chi.Mux {
 
 		// Settings: notification log
 		r.Get("/api/v1/settings/notifications/log", h.ListNotificationLog)
+
+		// Settings: certificates (mTLS)
+		if enrollH != nil {
+			r.Get("/api/v1/settings/certs", enrollH.ListCerts)
+			r.Post("/api/v1/settings/certs/{serial}/revoke", enrollH.RevokeCert)
+			r.Get("/api/v1/settings/bootstrap-keys", enrollH.ListBootstrapKeys)
+			r.Post("/api/v1/settings/bootstrap-keys", enrollH.CreateBootstrapKey)
+			r.Delete("/api/v1/settings/bootstrap-keys/{hash}", enrollH.DeleteBootstrapKey)
+		}
 
 		// Fleet management
 		r.Get("/api/v1/fleet/agent-versions", h.AgentVersionSummary)

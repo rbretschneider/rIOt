@@ -53,6 +53,17 @@ func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 		}
 	}
 
+	// Load mTLS client certificate if configured
+	if serverCfg.ClientCert != "" && serverCfg.ClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(serverCfg.ClientCert, serverCfg.ClientKey)
+		if err != nil {
+			slog.Error("failed to load mTLS client certificate", "error", err)
+		} else {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+			slog.Info("loaded mTLS client certificate", "cert", serverCfg.ClientCert)
+		}
+	}
+
 	transport.TLSClientConfig = tlsCfg
 
 	return &HTTPClient{
@@ -63,6 +74,34 @@ func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 			Transport: transport,
 		},
 	}
+}
+
+// TLSConfig returns the TLS configuration for the current server config.
+// Used by the WebSocket client to share TLS settings.
+func TLSConfigFromServerConfig(serverCfg ServerConfig) *tls.Config {
+	tlsCfg := &tls.Config{}
+
+	if !serverCfg.TLSVerify {
+		tlsCfg.InsecureSkipVerify = true
+	}
+
+	if serverCfg.CACertFile != "" {
+		caCert, err := os.ReadFile(serverCfg.CACertFile)
+		if err == nil {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caCert)
+			tlsCfg.RootCAs = pool
+		}
+	}
+
+	if serverCfg.ClientCert != "" && serverCfg.ClientKey != "" {
+		cert, err := tls.LoadX509KeyPair(serverCfg.ClientCert, serverCfg.ClientKey)
+		if err == nil {
+			tlsCfg.Certificates = []tls.Certificate{cert}
+		}
+	}
+
+	return tlsCfg
 }
 
 func (c *HTTPClient) Register(ctx context.Context, reg *models.DeviceRegistration) (*models.DeviceRegistrationResponse, error) {

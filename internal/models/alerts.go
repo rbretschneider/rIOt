@@ -7,15 +7,33 @@ type AlertRule struct {
 	ID              int64     `json:"id"`
 	Name            string    `json:"name"`
 	Enabled         bool      `json:"enabled"`
-	Metric          string    `json:"metric"`           // mem_percent, disk_percent, updates, container_died, container_oom, device_offline
+	Metric          string    `json:"metric"`           // mem_percent, disk_percent, updates, container_died, container_oom, device_offline, service_state, nic_state, process_missing
 	Operator        string    `json:"operator"`          // >, <, >=, <=, ==, !=
 	Threshold       float64   `json:"threshold"`
+	TargetName      string    `json:"target_name"`       // named target (service name, NIC name, process name)
+	TargetState     string    `json:"target_state"`      // state to match ("stopped", "failed", "DOWN", "absent")
 	Severity        string    `json:"severity"`
 	DeviceFilter    string    `json:"device_filter"`     // empty=all, comma-separated device IDs or tags
 	CooldownSeconds int       `json:"cooldown_seconds"`
 	Notify          bool      `json:"notify"`
+	TemplateID      string    `json:"template_id"`       // reference to a predefined template
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// AlertTemplate is a predefined alert rule template for quick creation.
+type AlertTemplate struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Category        string `json:"category"`         // service, network, process, system, container
+	Metric          string `json:"metric"`
+	Operator        string `json:"operator"`
+	Threshold       float64 `json:"threshold"`
+	TargetState     string `json:"target_state,omitempty"`
+	Severity        string `json:"severity"`
+	CooldownSeconds int    `json:"cooldown_seconds"`
+	NeedsTargetName bool   `json:"needs_target_name"`
+	Description     string `json:"description"`
 }
 
 // NotificationChannel represents a configured notification destination.

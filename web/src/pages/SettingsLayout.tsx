@@ -5,6 +5,7 @@ const tabs = [
   { to: '/settings/notifications', label: 'Notifications' },
   { to: '/settings/probes', label: 'Probes' },
   { to: '/settings/agents', label: 'Agents' },
+  { to: '/settings/certificates', label: 'Certificates' },
   { to: '/settings/general', label: 'General' },
 ]
 

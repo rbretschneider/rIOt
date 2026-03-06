@@ -11,6 +11,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// newWSDialer returns a websocket.Dialer configured for the agent's TLS settings.
+func newWSDialer(serverCfg ServerConfig) *websocket.Dialer {
+	dialer := *websocket.DefaultDialer
+
+	// Use mTLS-aware TLS config if client cert or custom CA is configured
+	if serverCfg.ClientCert != "" || serverCfg.CACertFile != "" || !serverCfg.TLSVerify {
+		dialer.TLSClientConfig = TLSConfigFromServerConfig(serverCfg)
+	}
+
+	return &dialer
+}
+
 // AgentWSMessage is the envelope for messages between server and agent.
 type AgentWSMessage struct {
 	Type        string          `json:"type"`
@@ -73,7 +85,8 @@ func (c *agentWSClient) connect(ctx context.Context) error {
 	header.Set("X-rIOt-Key", c.apiKey)
 	header.Set("X-rIOt-Device", c.deviceID)
 
-	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, header)
+	dialer := newWSDialer(c.agent.config.Server)
+	conn, _, err := dialer.DialContext(ctx, wsURL, header)
 	if err != nil {
 		return err
 	}

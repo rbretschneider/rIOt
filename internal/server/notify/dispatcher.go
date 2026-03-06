@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"net/http"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
@@ -16,8 +17,9 @@ type Channel interface {
 
 // Dispatcher fans out alerts to all enabled notification channels.
 type Dispatcher struct {
-	repo     db.NotifyRepository
-	backends map[string]func(models.NotificationChannel) Channel
+	repo       db.NotifyRepository
+	backends   map[string]func(models.NotificationChannel) Channel
+	httpClient *http.Client // shared HTTP client for backends (optional)
 }
 
 // NewDispatcher creates a new notification dispatcher.
@@ -27,9 +29,22 @@ func NewDispatcher(repo db.NotifyRepository) *Dispatcher {
 		backends: make(map[string]func(models.NotificationChannel) Channel),
 	}
 	// Register built-in backends
-	d.backends["ntfy"] = func(ch models.NotificationChannel) Channel { return NewNtfy(ch) }
-	d.backends["webhook"] = func(ch models.NotificationChannel) Channel { return NewWebhook(ch) }
+	d.backends["ntfy"] = func(ch models.NotificationChannel) Channel {
+		n := NewNtfy(ch)
+		n.client = d.httpClient
+		return n
+	}
+	d.backends["webhook"] = func(ch models.NotificationChannel) Channel {
+		w := NewWebhook(ch)
+		w.client = d.httpClient
+		return w
+	}
 	return d
+}
+
+// SetHTTPClient sets a shared HTTP client for all notification backends.
+func (d *Dispatcher) SetHTTPClient(c *http.Client) {
+	d.httpClient = c
 }
 
 // Dispatch sends an alert to all enabled notification channels and logs results.

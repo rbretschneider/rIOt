@@ -1,4 +1,4 @@
-import type { AlertRule, NotificationChannel, NotificationLog } from '../types/models'
+import type { AlertRule, AlertTemplate, NotificationChannel, NotificationLog } from '../types/models'
 
 const BASE = '/api/v1/settings'
 
@@ -40,6 +40,9 @@ export const settingsApi = {
   deleteAlertRule: (id: number) =>
     mutate<{ status: string }>(`${BASE}/alert-rules/${id}`, 'DELETE'),
 
+  // Alert Templates
+  getAlertTemplates: () => fetchJSON<AlertTemplate[]>(`${BASE}/alert-templates`),
+
   // Notification Channels
   getNotificationChannels: () => fetchJSON<NotificationChannel[]>(`${BASE}/notification-channels`),
 
@@ -58,4 +61,21 @@ export const settingsApi = {
   // Notification Log
   getNotificationLog: (limit = 50, offset = 0) =>
     fetchJSON<NotificationLog[]>(`${BASE}/notifications/log?limit=${limit}&offset=${offset}`),
+
+  // Certificates (mTLS)
+  getCerts: () => fetchJSON<unknown[]>(`${BASE}/certs`),
+
+  revokeCert: (serial: string) =>
+    mutate<{ status: string }>(`${BASE}/certs/${serial}/revoke`, 'POST'),
+
+  // Bootstrap Keys
+  getBootstrapKeys: () => fetchJSON<unknown[]>(`${BASE}/bootstrap-keys`),
+
+  createBootstrapKey: (data: { label: string; expires_in_hours: number }) =>
+    mutate<{ key: string; key_hash: string; label: string; expires_at: string }>(
+      `${BASE}/bootstrap-keys`, 'POST', data
+    ),
+
+  deleteBootstrapKey: (hash: string) =>
+    mutate<{ status: string }>(`${BASE}/bootstrap-keys/${hash}`, 'DELETE'),
 }

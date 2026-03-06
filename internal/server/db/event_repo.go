@@ -32,7 +32,7 @@ func (r *EventRepo) ListByDevice(ctx context.Context, deviceID string, limit int
 		limit = 50
 	}
 	rows, err := r.db.Pool.Query(ctx,
-		`SELECT id, device_id, type, severity, message, created_at
+		`SELECT id, device_id, type, severity, message, created_at, acknowledged_at
 		 FROM events WHERE device_id=$1 ORDER BY created_at DESC LIMIT $2`,
 		deviceID, limit)
 	if err != nil {
@@ -48,7 +48,7 @@ func (r *EventRepo) ListAll(ctx context.Context, limit, offset int) ([]models.Ev
 		limit = 100
 	}
 	rows, err := r.db.Pool.Query(ctx,
-		`SELECT id, device_id, type, severity, message, created_at
+		`SELECT id, device_id, type, severity, message, created_at, acknowledged_at
 		 FROM events ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
@@ -67,6 +67,28 @@ func (r *EventRepo) Purge(ctx context.Context, olderThan time.Time) (int64, erro
 	return tag.RowsAffected(), nil
 }
 
+// CountUnacknowledged returns the number of unacknowledged warning/critical events.
+func (r *EventRepo) CountUnacknowledged(ctx context.Context) (int, error) {
+	var count int
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM events WHERE acknowledged_at IS NULL AND severity IN ('warning', 'critical')`).Scan(&count)
+	return count, err
+}
+
+// Acknowledge marks a single event as acknowledged.
+func (r *EventRepo) Acknowledge(ctx context.Context, id int64) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE events SET acknowledged_at = NOW() WHERE id = $1 AND acknowledged_at IS NULL`, id)
+	return err
+}
+
+// AcknowledgeAll marks all unacknowledged events as acknowledged.
+func (r *EventRepo) AcknowledgeAll(ctx context.Context) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE events SET acknowledged_at = NOW() WHERE acknowledged_at IS NULL`)
+	return err
+}
+
 type scannable interface {
 	Next() bool
 	Scan(dest ...interface{}) error
@@ -76,7 +98,7 @@ func scanEvents(rows scannable) ([]models.Event, error) {
 	events := []models.Event{}
 	for rows.Next() {
 		var e models.Event
-		if err := rows.Scan(&e.ID, &e.DeviceID, &e.Type, &e.Severity, &e.Message, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.DeviceID, &e.Type, &e.Severity, &e.Message, &e.CreatedAt, &e.AcknowledgedAt); err != nil {
 			return nil, err
 		}
 		events = append(events, e)

@@ -359,6 +359,52 @@ func (m *MockEventRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
 	return 0, m.Err
 }
 
+func (m *MockEventRepo) CountUnacknowledged(_ context.Context) (int, error) {
+	if m.Err != nil {
+		return 0, m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, e := range m.Events {
+		if e.AcknowledgedAt == nil && (e.Severity == "warning" || e.Severity == "critical") {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *MockEventRepo) Acknowledge(_ context.Context, id int64) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for i := range m.Events {
+		if m.Events[i].ID == id {
+			m.Events[i].AcknowledgedAt = &now
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *MockEventRepo) AcknowledgeAll(_ context.Context) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for i := range m.Events {
+		if m.Events[i].AcknowledgedAt == nil {
+			m.Events[i].AcknowledgedAt = &now
+		}
+	}
+	return nil
+}
+
 // --- MockAlertRuleRepo ---
 
 type MockAlertRuleRepo struct {
@@ -836,6 +882,165 @@ func (m *MockDispatcher) Dispatch(_ context.Context, alert models.Alert) {
 	m.Alerts = append(m.Alerts, alert)
 }
 
+// --- MockCARepo ---
+
+type MockCARepo struct {
+	CACertPEM     string
+	CAKeyPEM      string
+	Certs         []models.DeviceCert
+	BootstrapKeys []models.BootstrapKey
+	Err           error
+}
+
+func NewMockCARepo() *MockCARepo {
+	return &MockCARepo{}
+}
+
+func (m *MockCARepo) GetCA(_ context.Context) (string, string, error) {
+	if m.Err != nil {
+		return "", "", m.Err
+	}
+	if m.CACertPEM == "" {
+		return "", "", fmt.Errorf("no CA")
+	}
+	return m.CACertPEM, m.CAKeyPEM, nil
+}
+
+func (m *MockCARepo) StoreCA(_ context.Context, certPEM, keyPEM string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.CACertPEM = certPEM
+	m.CAKeyPEM = keyPEM
+	return nil
+}
+
+func (m *MockCARepo) StoreCert(_ context.Context, cert *models.DeviceCert) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.Certs = append(m.Certs, *cert)
+	return nil
+}
+
+func (m *MockCARepo) GetCertByDevice(_ context.Context, deviceID string) (*models.DeviceCert, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	for i := range m.Certs {
+		if m.Certs[i].DeviceID == deviceID {
+			return &m.Certs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockCARepo) GetCertBySerial(_ context.Context, serial string) (*models.DeviceCert, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	for i := range m.Certs {
+		if m.Certs[i].SerialNumber == serial {
+			return &m.Certs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockCARepo) ListCerts(_ context.Context) ([]models.DeviceCert, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return m.Certs, nil
+}
+
+func (m *MockCARepo) RevokeCert(_ context.Context, serial string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	now := time.Now()
+	for i := range m.Certs {
+		if m.Certs[i].SerialNumber == serial {
+			m.Certs[i].Revoked = true
+			m.Certs[i].RevokedAt = &now
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+func (m *MockCARepo) ListRevokedSerials(_ context.Context) ([]string, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var serials []string
+	for _, c := range m.Certs {
+		if c.Revoked {
+			serials = append(serials, c.SerialNumber)
+		}
+	}
+	return serials, nil
+}
+
+func (m *MockCARepo) CreateBootstrapKey(_ context.Context, keyHash, label string, expiresAt time.Time) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.BootstrapKeys = append(m.BootstrapKeys, models.BootstrapKey{
+		KeyHash:   keyHash,
+		Label:     label,
+		ExpiresAt: expiresAt,
+		CreatedAt: time.Now(),
+	})
+	return nil
+}
+
+func (m *MockCARepo) LookupBootstrapKey(_ context.Context, keyHash string) (*models.BootstrapKey, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	for i := range m.BootstrapKeys {
+		if m.BootstrapKeys[i].KeyHash == keyHash {
+			return &m.BootstrapKeys[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockCARepo) MarkBootstrapKeyUsed(_ context.Context, keyHash, deviceID string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for i := range m.BootstrapKeys {
+		if m.BootstrapKeys[i].KeyHash == keyHash {
+			m.BootstrapKeys[i].Used = true
+			m.BootstrapKeys[i].UsedByDevice = deviceID
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+func (m *MockCARepo) ListBootstrapKeys(_ context.Context) ([]models.BootstrapKey, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return m.BootstrapKeys, nil
+}
+
+func (m *MockCARepo) DeleteBootstrapKey(_ context.Context, keyHash string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for i := range m.BootstrapKeys {
+		if m.BootstrapKeys[i].KeyHash == keyHash {
+			m.BootstrapKeys = append(m.BootstrapKeys[:i], m.BootstrapKeys[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -847,4 +1052,5 @@ var (
 	_ db.ProbeRepository     = (*MockProbeRepo)(nil)
 	_ db.AdminRepository     = (*MockAdminRepo)(nil)
 	_ db.TerminalRepository  = (*MockTerminalRepo)(nil)
+	_ db.CARepository        = (*MockCARepo)(nil)
 )

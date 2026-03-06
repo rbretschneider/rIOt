@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useEffect } from 'react'
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api/client'
@@ -15,6 +15,7 @@ import NotificationSettings from './pages/settings/NotificationSettings'
 import GeneralSettings from './pages/settings/GeneralSettings'
 import ProbeSettings from './pages/settings/ProbeSettings'
 import AgentManagement from './pages/settings/AgentManagement'
+import CertificateSettings from './pages/settings/CertificateSettings'
 import Security from './pages/Security'
 import Probes from './pages/Probes'
 import ProbeDetail from './pages/ProbeDetail'
@@ -34,79 +35,30 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   )
 }
 
-function UpdateBell() {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const { data: update } = useQuery({
-    queryKey: ['server-update'],
-    queryFn: api.getServerUpdate,
-    refetchInterval: 6 * 60 * 60 * 1000, // 6 hours
-    staleTime: 60 * 60 * 1000, // 1 hour
+function AlertsNavLink() {
+  const location = useLocation()
+  const active = location.pathname === '/alerts' || location.pathname.startsWith('/alerts')
+  const { data } = useQuery({
+    queryKey: ['unread-count'],
+    queryFn: api.getUnreadEventCount,
+    refetchInterval: 60_000,
   })
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
-
-  const hasUpdate = update?.update_available
+  const count = data?.count ?? 0
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="relative p-2 text-gray-400 hover:text-white transition-colors"
-        title={hasUpdate ? 'Update available' : 'No updates'}
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-        </svg>
-        {hasUpdate && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-amber-400 rounded-full" />
-        )}
-      </button>
-
-      {open && (
-        <div className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50">
-          <div className="p-4">
-            {hasUpdate ? (
-              <>
-                <p className="text-sm font-medium text-amber-400 mb-2">Server Update Available</p>
-                <p className="text-sm text-gray-300 mb-1">
-                  <span className="text-gray-500">Current:</span> {update.current_version}
-                </p>
-                <p className="text-sm text-gray-300 mb-3">
-                  <span className="text-gray-500">Latest:</span> {update.latest_version}
-                </p>
-                <div className="bg-gray-800 rounded p-3 mb-3">
-                  <p className="text-xs text-gray-400 mb-1">To update the server:</p>
-                  <code className="text-xs text-emerald-400 select-all">
-                    docker compose pull && docker compose up -d
-                  </code>
-                </div>
-                {update.release_url && (
-                  <a
-                    href={update.release_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-400 hover:text-blue-300"
-                  >
-                    View release notes
-                  </a>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-gray-400">
-                Server is up to date{update?.current_version ? ` (v${update.current_version})` : ''}.
-              </p>
-            )}
-          </div>
-        </div>
+    <Link
+      to="/alerts"
+      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap relative ${
+        active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+      }`}
+    >
+      Alerts
+      {count > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-red-500 text-white rounded-full leading-none">
+          {count > 99 ? '99+' : count}
+        </span>
       )}
-    </div>
+    </Link>
   )
 }
 
@@ -143,14 +95,13 @@ export default function App() {
               </Link>
               <div className="flex gap-1 overflow-x-auto scrollbar-hide">
                 <NavLink to="/">Fleet</NavLink>
-                <NavLink to="/alerts">Alerts</NavLink>
+                <AlertsNavLink />
                 <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/security">Security</NavLink>
                 <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <UpdateBell />
               <button
                 onClick={logout}
                 className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
@@ -178,6 +129,7 @@ export default function App() {
             <Route path="notifications" element={<NotificationSettings />} />
             <Route path="probes" element={<ProbeSettings />} />
             <Route path="agents" element={<AgentManagement />} />
+            <Route path="certificates" element={<CertificateSettings />} />
             <Route path="general" element={<GeneralSettings />} />
           </Route>
         </Routes>

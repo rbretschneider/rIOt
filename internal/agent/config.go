@@ -14,6 +14,15 @@ type Config struct {
 	Docker       DockerConfig       `yaml:"docker"`
 	Commands     CommandsConfig     `yaml:"commands"`
 	HostTerminal HostTerminalConfig `yaml:"host_terminal"`
+	DNSCache     DNSCacheConfig     `yaml:"dns_cache"`
+	DeadMan      DeadManConfig      `yaml:"deadman"`
+}
+
+// DNSCacheConfig controls resilient DNS caching.
+type DNSCacheConfig struct {
+	RefreshIntervalSeconds int    `yaml:"refresh_interval_seconds"` // default 1800 (30m)
+	StalenessWarningHours  int    `yaml:"staleness_warning_hours"`  // default 24
+	CacheFile              string `yaml:"cache_file"`               // default OS-specific
 }
 
 // CommandsConfig controls remote command execution.
@@ -36,10 +45,13 @@ type DockerConfig struct {
 }
 
 type ServerConfig struct {
-	URL        string `yaml:"url"`
-	APIKey     string `yaml:"api_key"`
-	TLSVerify  bool   `yaml:"tls_verify"`
-	CACertFile string `yaml:"ca_cert_file"` // custom CA certificate for TLS verification
+	URL          string `yaml:"url"`
+	APIKey       string `yaml:"api_key"`
+	TLSVerify    bool   `yaml:"tls_verify"`
+	CACertFile   string `yaml:"ca_cert_file"`   // custom CA certificate for TLS verification
+	ClientCert   string `yaml:"client_cert"`     // mTLS client certificate path
+	ClientKey    string `yaml:"client_key"`      // mTLS client key path
+	BootstrapKey string `yaml:"bootstrap_key"`   // single-use enrollment key
 }
 
 type AgentConfig struct {
@@ -115,6 +127,38 @@ func IDPath() string {
 		return os.Getenv("PROGRAMDATA") + "\\riot\\id"
 	}
 	return "/etc/riot/id"
+}
+
+// CertPath returns the default path for the mTLS client certificate.
+func CertPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\client.crt"
+	}
+	return "/etc/riot/client.crt"
+}
+
+// KeyPath returns the default path for the mTLS client key.
+func KeyPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\client.key"
+	}
+	return "/etc/riot/client.key"
+}
+
+// CACertPath returns the default path for the CA certificate.
+func CACertPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\ca.crt"
+	}
+	return "/etc/riot/ca.crt"
+}
+
+// DNSCachePath returns the default path for the DNS cache file.
+func DNSCachePath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\dns-cache.json"
+	}
+	return "/etc/riot/dns-cache.json"
 }
 
 // BufferPath returns the path for the offline buffer database.

@@ -290,6 +290,7 @@ export interface Event {
   severity: 'info' | 'warning' | 'critical'
   message: string
   created_at: string
+  acknowledged_at?: string
 }
 
 export interface FleetSummary {
@@ -328,12 +329,29 @@ export interface AlertRule {
   metric: string
   operator: string
   threshold: number
+  target_name: string
+  target_state: string
   severity: string
   device_filter: string
   cooldown_seconds: number
   notify: boolean
+  template_id: string
   created_at: string
   updated_at: string
+}
+
+export interface AlertTemplate {
+  id: string
+  name: string
+  category: string
+  metric: string
+  operator: string
+  threshold: number
+  target_state?: string
+  severity: string
+  cooldown_seconds: number
+  needs_target_name: boolean
+  description: string
 }
 
 export interface NotificationChannel {

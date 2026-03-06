@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -198,4 +199,46 @@ func (h *Handlers) ListNotificationLog(w http.ResponseWriter, r *http.Request) {
 		logs = []models.NotificationLog{}
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// --- Alert Templates ---
+
+// ListAlertTemplates handles GET /api/v1/settings/alert-templates.
+func (h *Handlers) ListAlertTemplates(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, events.AlertTemplates())
+}
+
+// --- Event Acknowledgement ---
+
+// UnreadEventCount handles GET /api/v1/events/unread-count.
+func (h *Handlers) UnreadEventCount(w http.ResponseWriter, r *http.Request) {
+	count, err := h.events.CountUnacknowledged(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to count unread events"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
+// AcknowledgeEvent handles POST /api/v1/events/{id}/acknowledge.
+func (h *Handlers) AcknowledgeEvent(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.events.Acknowledge(r.Context(), id); err != nil {
+		http.Error(w, `{"error":"failed to acknowledge event"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
+}
+
+// AcknowledgeAllEvents handles POST /api/v1/events/acknowledge-all.
+func (h *Handlers) AcknowledgeAllEvents(w http.ResponseWriter, r *http.Request) {
+	if err := h.events.AcknowledgeAll(r.Context()); err != nil {
+		http.Error(w, `{"error":"failed to acknowledge events"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
 }

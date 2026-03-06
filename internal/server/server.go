@@ -12,7 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/x509"
+
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/ca"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
@@ -37,6 +40,8 @@ type Server struct {
 	NotifyRepo     *db.NotifyRepo
 	CommandRepo    *db.CommandRepo
 	ProbeRepo      *db.ProbeRepo
+	CARepo         *db.CARepo
+	CA             *ca.CA
 	ProbeRunner    *probes.Runner
 	Hub            *websocket.Hub
 	EventGen       *events.Generator
@@ -81,6 +86,7 @@ func (s *Server) Start() error {
 	s.NotifyRepo = db.NewNotifyRepo(s.DB)
 	s.CommandRepo = db.NewCommandRepo(s.DB)
 	s.ProbeRepo = db.NewProbeRepo(s.DB)
+	s.CARepo = db.NewCARepo(s.DB)
 
 	// Store JWT secret
 	s.JWTSecret = []byte(s.Config.JWTSecret)
@@ -110,6 +116,13 @@ func (s *Server) Start() error {
 
 	// Initialize probe runner
 	s.ProbeRunner = probes.NewRunner(s.ProbeRepo, s.EventRepo, s.Hub)
+
+	// Load or create CA for mTLS
+	if s.Config.MTLSEnabled {
+		if err := s.loadOrCreateCA(ctx); err != nil {
+			return fmt.Errorf("mTLS CA: %w", err)
+		}
+	}
 
 	// Seed default alert rules on first run
 	s.seedDefaultAlertRules(ctx)
@@ -295,10 +308,47 @@ func (s *Server) configureTLS() error {
 	if err != nil {
 		return fmt.Errorf("load cert: %w", err)
 	}
-	s.httpServer.TLSConfig = &tls.Config{
+	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	}
+
+	// Add mTLS client cert verification if enabled
+	if s.Config.MTLSEnabled && s.CA != nil {
+		clientCAs := x509.NewCertPool()
+		clientCAs.AddCert(s.CA.Cert())
+		tlsCfg.ClientCAs = clientCAs
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven // Allow both cert and non-cert connections for enrollment
+		slog.Info("mTLS client certificate verification enabled")
+	}
+
+	s.httpServer.TLSConfig = tlsCfg
 	slog.Info("TLS configured with manual certificate", "cert", s.Config.TLSCertFile)
+	return nil
+}
+
+// loadOrCreateCA loads an existing CA from the database or generates a new one.
+func (s *Server) loadOrCreateCA(ctx context.Context) error {
+	certPEM, keyPEM, err := s.CARepo.GetCA(ctx)
+	if err == nil && certPEM != "" {
+		loaded, err := ca.LoadCA([]byte(certPEM), []byte(keyPEM))
+		if err != nil {
+			return fmt.Errorf("load CA: %w", err)
+		}
+		s.CA = loaded
+		slog.Info("loaded existing CA from database")
+		return nil
+	}
+
+	// Generate new CA
+	newCA, err := ca.NewCA()
+	if err != nil {
+		return fmt.Errorf("generate CA: %w", err)
+	}
+	if err := s.CARepo.StoreCA(ctx, string(newCA.CertPEM()), string(newCA.KeyPEM())); err != nil {
+		return fmt.Errorf("store CA: %w", err)
+	}
+	s.CA = newCA
+	slog.Info("generated new CA and stored in database")
 	return nil
 }
 
@@ -314,12 +364,12 @@ func (s *Server) seedDefaultAlertRules(ctx context.Context) {
 	}
 
 	defaults := []models.AlertRule{
-		{Name: "High Memory Usage", Enabled: true, Metric: "mem_percent", Operator: ">", Threshold: 90, Severity: "warning", CooldownSeconds: 3600, Notify: true},
-		{Name: "High Disk Usage", Enabled: true, Metric: "disk_percent", Operator: ">", Threshold: 90, Severity: "critical", CooldownSeconds: 3600, Notify: true},
+		{Name: "High Memory Usage", Enabled: true, Metric: "mem_percent", Operator: ">", Threshold: 90, Severity: "warning", CooldownSeconds: 3600, Notify: true, TemplateID: "high_memory"},
+		{Name: "High Disk Usage", Enabled: true, Metric: "disk_percent", Operator: ">", Threshold: 90, Severity: "critical", CooldownSeconds: 3600, Notify: true, TemplateID: "high_disk"},
 		{Name: "Updates Available", Enabled: true, Metric: "updates", Operator: ">", Threshold: 0, Severity: "info", CooldownSeconds: 86400, Notify: true},
-		{Name: "Container Died", Enabled: true, Metric: "container_died", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 900, Notify: true},
-		{Name: "Container OOM Killed", Enabled: true, Metric: "container_oom", Operator: "==", Threshold: 1, Severity: "critical", CooldownSeconds: 900, Notify: true},
-		{Name: "Device Offline", Enabled: true, Metric: "device_offline", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 300, Notify: true},
+		{Name: "Container Died", Enabled: true, Metric: "container_died", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 900, Notify: true, TemplateID: "container_died"},
+		{Name: "Container OOM Killed", Enabled: true, Metric: "container_oom", Operator: "==", Threshold: 1, Severity: "critical", CooldownSeconds: 900, Notify: true, TemplateID: "container_oom"},
+		{Name: "Device Offline", Enabled: true, Metric: "device_offline", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 300, Notify: true, TemplateID: "device_offline"},
 	}
 	for _, rule := range defaults {
 		if err := s.AlertRuleRepo.Create(ctx, &rule); err != nil {
