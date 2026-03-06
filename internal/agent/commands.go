@@ -231,12 +231,53 @@ func (a *Agent) performUninstall() {
 	os.Exit(0)
 }
 
-// handleTriggerUpdate triggers the agent's self-update mechanism.
+// handleTriggerUpdate runs the agent's self-update synchronously and returns the real result.
+// On success the agent restarts after the command result is sent (handled by the caller).
 func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
-	// Run update check in background — it will download and replace the binary
+	if a.version == "dev" {
+		return "error", "cannot auto-update dev builds"
+	}
+
+	if a.config.Agent.AutoUpdate != nil && !*a.config.Agent.AutoUpdate {
+		return "error", "auto-update disabled by agent config"
+	}
+
+	goarm := ""
+	if runtime.GOARCH == "arm" {
+		goarm = goarmVersion()
+	}
+
+	resp, err := a.client.CheckForUpdate(ctx, a.version, runtime.GOOS, runtime.GOARCH, goarm)
+	if err != nil {
+		return "error", fmt.Sprintf("update check failed: %v", err)
+	}
+	if !resp.UpdateAvail {
+		return "success", fmt.Sprintf("agent is already up to date (%s)", a.version)
+	}
+
+	suffix := platformSuffix(goarm)
+	downloadURL, ok := resp.Assets[suffix]
+	if !ok {
+		return "error", fmt.Sprintf("no binary available for platform %s", suffix)
+	}
+
+	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
+		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
+
+	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, suffix); err != nil {
+		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
+			fmt.Sprintf("Agent update failed: %v", err))
+		return "error", fmt.Sprintf("update failed: %v", err)
+	}
+
+	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
+		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
+
+	// Restart after a short delay so the command result is sent first
 	go func() {
-		time.Sleep(1 * time.Second) // small delay to let the result be sent first
-		a.checkAndUpdate(ctx)
+		time.Sleep(1 * time.Second)
+		a.restartSelf()
 	}()
-	return "success", "update check triggered"
+
+	return "success", fmt.Sprintf("updated %s → %s, restarting", a.version, resp.LatestVersion)
 }

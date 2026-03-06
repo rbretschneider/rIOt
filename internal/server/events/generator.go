@@ -76,10 +76,11 @@ func (g *Generator) createEventAndNotify(ctx context.Context, e *models.Event, r
 }
 
 // disruptiveActions are command actions that are expected to take a device offline.
+// agent_update is intentionally excluded — it's just a trigger; the actual update
+// lifecycle is tracked by agent_update_* events reported by the agent itself.
 var disruptiveActions = map[string]string{
-	"reboot":       "reboot",
-	"os_update":    "OS update",
-	"agent_update": "agent update",
+	"reboot":    "reboot",
+	"os_update": "OS update",
 }
 
 // recentDisruptiveCommand returns the most recent disruptive command sent to a device
