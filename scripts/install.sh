@@ -11,12 +11,15 @@ set -euo pipefail
 #   --fingerprint SHA256:xxx  — verify server cert fingerprint on first connect
 #   --key mykey          — registration key (if server requires one)
 #   --version 1.2.3      — install a specific version (default: latest)
+#   -y, --yes            — non-interactive: enable all remote features
+#   --non-interactive    — non-interactive: use defaults (all remote features disabled)
 
 # ── Parse arguments ──────────────────────────────────────────────────
 RIOT_SERVER=""
 RIOT_KEY=""
 RIOT_FINGERPRINT=""
 RIOT_VERSION="latest"
+RIOT_INTERACTIVE="auto"  # auto, yes-all, defaults
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -31,6 +34,14 @@ while [ $# -gt 0 ]; do
         --version)
             RIOT_VERSION="${2:-latest}"
             shift 2
+            ;;
+        -y|--yes)
+            RIOT_INTERACTIVE="yes-all"
+            shift
+            ;;
+        --non-interactive)
+            RIOT_INTERACTIVE="defaults"
+            shift
             ;;
         -*)
             echo "ERROR: Unknown flag: $1"
@@ -185,15 +196,47 @@ fi
 
 echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
 
+# ── Helper: ask yes/no question ──────────────────────────────────────
+# Reads from /dev/tty so it works even when piped (curl | bash).
+# Usage: ask_yn "prompt" default_value
+#   default_value: "y" or "n"
+#   Returns 0 for yes, 1 for no
+ask_yn() {
+    local prompt="$1" default="$2"
+    local hint="[y/N]"
+    [ "$default" = "y" ] && hint="[Y/n]"
+
+    # Non-interactive modes
+    if [ "$RIOT_INTERACTIVE" = "yes-all" ]; then
+        echo "    ${prompt} ${hint}: y (auto)"
+        return 0
+    elif [ "$RIOT_INTERACTIVE" = "defaults" ]; then
+        [ "$default" = "y" ] && return 0 || return 1
+    fi
+
+    # Interactive: read from /dev/tty
+    if [ -t 0 ] || [ -e /dev/tty ]; then
+        printf "    %s %s: " "$prompt" "$hint"
+        local answer
+        read -r answer < /dev/tty 2>/dev/null || answer=""
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
+        case "$answer" in
+            y|yes) return 0 ;;
+            n|no)  return 1 ;;
+            "")    [ "$default" = "y" ] && return 0 || return 1 ;;
+        esac
+        [ "$default" = "y" ] && return 0 || return 1
+    else
+        # No tty available, use defaults
+        [ "$default" = "y" ] && return 0 || return 1
+    fi
+}
+
 # ── Detect Docker for config ─────────────────────────────────────────
-DOCKER_SECTION=""
+HAS_DOCKER="false"
 if command -v docker >/dev/null 2>&1; then
+    HAS_DOCKER="true"
     echo "==> Docker detected, enabling container monitoring"
-    DOCKER_SECTION="
-docker:
-  enabled: auto
-  collect_stats: true
-  terminal_enabled: false"
 fi
 
 # ── Build optional config sections ────────────────────────────────────
@@ -209,9 +252,68 @@ if [ -n "$RIOT_FINGERPRINT" ]; then
   server_cert_pin: \"${RIOT_FINGERPRINT}\""
 fi
 
+# ── Interactive feature configuration ────────────────────────────────
+ALLOW_REBOOT="false"
+ALLOW_PATCHING="false"
+ALLOW_TERMINAL="false"
+ALLOW_DOCKER_TERMINAL="false"
+
+# Only ask on fresh install (no existing config)
+if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
+    echo ""
+    echo "==> Configure remote management features"
+    echo "    These can be changed later in ${RIOT_CONFIG_DIR}/agent.yaml"
+    echo ""
+
+    if ask_yn "Allow remote reboot from dashboard?" "n"; then
+        ALLOW_REBOOT="true"
+    fi
+
+    if ask_yn "Allow remote OS patching from dashboard?" "n"; then
+        ALLOW_PATCHING="true"
+    fi
+
+    if ask_yn "Allow remote terminal access to this host?" "n"; then
+        ALLOW_TERMINAL="true"
+    fi
+
+    if [ "$HAS_DOCKER" = "true" ]; then
+        if ask_yn "Allow remote exec into Docker containers?" "n"; then
+            ALLOW_DOCKER_TERMINAL="true"
+        fi
+    fi
+
+    echo ""
+fi
+
+# ── Build config sections from answers ───────────────────────────────
+COMMANDS_SECTION=""
+if [ "$ALLOW_REBOOT" = "true" ] || [ "$ALLOW_PATCHING" = "true" ]; then
+    COMMANDS_SECTION="
+commands:
+  allow_reboot: ${ALLOW_REBOOT}
+  allow_patching: ${ALLOW_PATCHING}"
+fi
+
+TERMINAL_SECTION=""
+if [ "$ALLOW_TERMINAL" = "true" ]; then
+    TERMINAL_SECTION="
+host_terminal:
+  enabled: true"
+fi
+
+DOCKER_SECTION=""
+if [ "$HAS_DOCKER" = "true" ]; then
+    DOCKER_SECTION="
+docker:
+  enabled: auto
+  collect_stats: true
+  terminal_enabled: ${ALLOW_DOCKER_TERMINAL}"
+fi
+
 # ── Write config (skip if already exists) ─────────────────────────────
 if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
-    echo "==> Writing default config to ${RIOT_CONFIG_DIR}/agent.yaml"
+    echo "==> Writing config to ${RIOT_CONFIG_DIR}/agent.yaml"
     cat > "$RIOT_CONFIG_DIR/agent.yaml" <<EOF
 server:
   url: "${RIOT_SERVER}"
@@ -234,6 +336,8 @@ collectors:
     - processes
     - docker
     - security
+${COMMANDS_SECTION}
+${TERMINAL_SECTION}
 ${DOCKER_SECTION}
 EOF
     if [ "$OS" = "linux" ]; then
