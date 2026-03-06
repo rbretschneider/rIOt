@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 
 	"github.com/DesyncTheThird/rIOt/internal/server/ca"
@@ -117,7 +118,19 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		certPEM, keyPEM, err := ca.GenerateServerTLS(hostname, nil, 3650)
+		// Collect extra IPs: the host the admin used (important when server
+		// runs in Docker — container interfaces won't include the host IP)
+		var extraIPs []net.IP
+		if ip := net.ParseIP(hostname); ip != nil {
+			extraIPs = append(extraIPs, ip)
+		}
+		// Also include X-Real-IP if set (from reverse proxy)
+		if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
+			if ip := net.ParseIP(realIP); ip != nil {
+				extraIPs = append(extraIPs, ip)
+			}
+		}
+		certPEM, keyPEM, err := ca.GenerateServerTLS(hostname, extraIPs, 3650)
 		if err != nil {
 			slog.Error("setup: generate server TLS cert", "error", err)
 			http.Error(w, `{"error":"failed to generate TLS certificate"}`, http.StatusInternalServerError)

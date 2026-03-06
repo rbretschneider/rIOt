@@ -29,11 +29,17 @@ func GenerateServerTLS(hostname string, extraIPs []net.IP, validityDays int) (ce
 
 	// Collect SANs
 	dnsNames := []string{"localhost"}
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
+
+	// Add hostname as DNS name or IP SAN depending on type
 	if hostname != "" && hostname != "localhost" {
-		dnsNames = append(dnsNames, hostname)
+		if ip := net.ParseIP(hostname); ip != nil {
+			ips = append(ips, ip)
+		} else {
+			dnsNames = append(dnsNames, hostname)
+		}
 	}
 
-	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
 	ips = append(ips, extraIPs...)
 
 	// Add all local interface IPs
