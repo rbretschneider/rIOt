@@ -9,6 +9,32 @@ import (
 	"github.com/google/uuid"
 )
 
+// PatchStatus handles GET /api/v1/fleet/patch-status.
+// Returns pending update counts per device from latest telemetry.
+func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
+	snaps, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
+		return
+	}
+	type devicePatchInfo struct {
+		DeviceID       string `json:"device_id"`
+		PendingUpdates int    `json:"pending_updates"`
+		SecurityCount  int    `json:"security_count"`
+	}
+	result := make([]devicePatchInfo, 0, len(snaps))
+	for _, s := range snaps {
+		if s.Data.Updates != nil && s.Data.Updates.PendingUpdates > 0 {
+			result = append(result, devicePatchInfo{
+				DeviceID:       s.DeviceID,
+				PendingUpdates: s.Data.Updates.PendingUpdates,
+				SecurityCount:  s.Data.Updates.PendingSecurityCount,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // AgentVersionSummary handles GET /api/v1/fleet/agent-versions.
 func (h *Handlers) AgentVersionSummary(w http.ResponseWriter, r *http.Request) {
 	versions, err := h.devices.AgentVersionSummary(r.Context())

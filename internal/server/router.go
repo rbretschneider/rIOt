@@ -151,6 +151,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 		// Fleet management
 		r.Get("/api/v1/fleet/agent-versions", h.AgentVersionSummary)
+		r.Get("/api/v1/fleet/patch-status", h.PatchStatus)
 		r.Post("/api/v1/fleet/bulk-update", h.BulkUpdateAgents)
 		r.Post("/api/v1/fleet/bulk-patch", h.BulkPatchDevices)
 

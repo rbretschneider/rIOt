@@ -24,17 +24,19 @@ type Generator struct {
 	hub           *websocket.Hub
 	alertRuleRepo db.AlertRuleRepository
 	dispatcher    Dispatcher
+	commandRepo   db.CommandRepository
 
 	mu       sync.Mutex
 	lastSent map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
 }
 
-func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.AlertRuleRepository, dispatcher Dispatcher) *Generator {
+func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.AlertRuleRepository, dispatcher Dispatcher, commandRepo db.CommandRepository) *Generator {
 	return &Generator{
 		repo:          repo,
 		hub:           hub,
 		alertRuleRepo: alertRuleRepo,
 		dispatcher:    dispatcher,
+		commandRepo:   commandRepo,
 		lastSent:      make(map[string]time.Time),
 	}
 }
@@ -73,26 +75,81 @@ func (g *Generator) createEventAndNotify(ctx context.Context, e *models.Event, r
 	}
 }
 
+// disruptiveActions are command actions that are expected to take a device offline.
+var disruptiveActions = map[string]string{
+	"reboot":       "reboot",
+	"os_update":    "OS update",
+	"agent_update": "agent update",
+}
+
+// recentDisruptiveCommand returns the most recent disruptive command sent to a device
+// within the last 2 minutes, or nil if none found.
+func (g *Generator) recentDisruptiveCommand(ctx context.Context, deviceID string) *models.Command {
+	if g.commandRepo == nil {
+		return nil
+	}
+	cmds, err := g.commandRepo.ListByDevice(ctx, deviceID, 5)
+	if err != nil {
+		return nil
+	}
+	cutoff := time.Now().UTC().Add(-2 * time.Minute)
+	for i := range cmds {
+		c := &cmds[i]
+		if _, ok := disruptiveActions[c.Action]; ok && c.CreatedAt.After(cutoff) {
+			return c
+		}
+	}
+	return nil
+}
+
+// CommandSent creates an informational event when a disruptive command is dispatched.
+func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action string) {
+	label, ok := disruptiveActions[action]
+	if !ok {
+		return
+	}
+	g.createEvent(ctx, &models.Event{
+		DeviceID:  deviceID,
+		Type:      models.EventCommandSent,
+		Severity:  models.SeverityInfo,
+		Message:   fmt.Sprintf("%s initiated on %s", strings.Title(label), hostname),
+		CreatedAt: time.Now().UTC(),
+	})
+}
+
 func (g *Generator) DeviceOnline(ctx context.Context, deviceID, hostname string) {
 	key := deviceID + ":" + string(models.EventDeviceOnline)
 	if g.onCooldown(key, 5*time.Minute) {
 		return
 	}
+	msg := fmt.Sprintf("Device %s came online", hostname)
+	if cmd := g.recentDisruptiveCommand(ctx, deviceID); cmd != nil {
+		msg += fmt.Sprintf(" (after %s)", disruptiveActions[cmd.Action])
+	}
 	g.createEvent(ctx, &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventDeviceOnline,
 		Severity:  models.SeverityInfo,
-		Message:   fmt.Sprintf("Device %s came online", hostname),
+		Message:   msg,
 		CreatedAt: time.Now().UTC(),
 	})
 }
 
 func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string) {
+	msg := fmt.Sprintf("Device %s went offline", hostname)
+	severity := models.SeverityWarning
+	if cmd := g.recentDisruptiveCommand(ctx, deviceID); cmd != nil {
+		label := disruptiveActions[cmd.Action]
+		ago := time.Since(cmd.CreatedAt).Truncate(time.Second)
+		msg += fmt.Sprintf(" (%s sent %s ago)", label, ago)
+		severity = models.SeverityInfo // expected downtime, not a warning
+	}
+
 	e := &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventDeviceOffline,
-		Severity:  models.SeverityWarning,
-		Message:   fmt.Sprintf("Device %s went offline", hostname),
+		Severity:  severity,
+		Message:   msg,
 		CreatedAt: time.Now().UTC(),
 	}
 
@@ -104,7 +161,9 @@ func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string
 		if g.onCooldown(key, cd) {
 			return
 		}
-		e.Severity = models.EventSeverity(rule.Severity)
+		if severity != models.SeverityInfo {
+			e.Severity = models.EventSeverity(rule.Severity)
+		}
 		g.createEventAndNotify(ctx, e, rule, hostname, 1)
 	} else {
 		// Fallback: create event without notification
@@ -135,10 +194,7 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 				func(val float64) string { return fmt.Sprintf("Disk %s usage at %.1f%%", fs.MountPoint, val) })
 		}
 	}
-	if data.Updates != nil && data.Updates.PendingUpdates > 0 {
-		g.evaluateMetric(ctx, deviceID, "updates", float64(data.Updates.PendingUpdates), "", models.EventUpdateAvail,
-			func(val float64) string { return fmt.Sprintf("%d updates available", int(val)) })
-	}
+	// Pending updates are shown as dashboard status, not as alert events.
 
 	// Check service, NIC, and process alerts
 	if data.Services != nil {

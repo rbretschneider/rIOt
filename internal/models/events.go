@@ -19,6 +19,7 @@ const (
 	EventServiceFailed   EventType = "service_failed"
 	EventProcessMissing  EventType = "process_missing"
 	EventNICDown         EventType = "nic_down"
+	EventCommandSent     EventType = "command_sent"
 )
 
 // DockerEvent is the payload agents push for Docker container state changes.

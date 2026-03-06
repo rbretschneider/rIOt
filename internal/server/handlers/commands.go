@@ -83,6 +83,11 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		slog.Info("command queued for heartbeat delivery", "id", cmd.ID, "device", deviceID, "action", req.Action)
 	}
 
+	// Emit event for disruptive commands (reboot, os_update, agent_update)
+	if device, err := h.devices.GetByID(r.Context(), deviceID); err == nil {
+		h.eventGen.CommandSent(r.Context(), deviceID, device.Hostname, req.Action)
+	}
+
 	slog.Info("command created", "id", cmd.ID, "device", deviceID, "action", req.Action, "status", cmd.Status)
 	writeJSON(w, http.StatusCreated, cmd)
 }

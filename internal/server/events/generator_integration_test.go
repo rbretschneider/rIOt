@@ -17,10 +17,11 @@ func setupGenerator(t *testing.T) (*Generator, *testutil.MockEventRepo, *testuti
 	eventRepo := testutil.NewMockEventRepo()
 	alertRuleRepo := testutil.NewMockAlertRuleRepo()
 	dispatcher := testutil.NewMockDispatcher()
+	commandRepo := testutil.NewMockCommandRepo()
 	hub := websocket.NewHub()
 	go hub.Run()
 
-	gen := NewGenerator(eventRepo, hub, alertRuleRepo, dispatcher)
+	gen := NewGenerator(eventRepo, hub, alertRuleRepo, dispatcher, commandRepo)
 	return gen, eventRepo, alertRuleRepo, dispatcher
 }
 

@@ -128,6 +128,9 @@ export const api = {
   getAgentVersions: () =>
     fetchJSON<{ version: string; count: number }[]>(`${BASE}/fleet/agent-versions`),
 
+  getPatchStatus: () =>
+    fetchJSON<{ device_id: string; pending_updates: number; security_count: number }[]>(`${BASE}/fleet/patch-status`),
+
   getSecurityOverview: () =>
     fetchJSON<{
       total_devices: number

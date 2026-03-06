@@ -6,7 +6,6 @@ import type { AlertRule, AlertTemplate } from '../../types/models'
 const METRICS = [
   { value: 'mem_percent', label: 'Memory %' },
   { value: 'disk_percent', label: 'Disk %' },
-  { value: 'updates', label: 'Pending Updates' },
   { value: 'container_died', label: 'Container Died' },
   { value: 'container_oom', label: 'Container OOM' },
   { value: 'device_offline', label: 'Device Offline' },

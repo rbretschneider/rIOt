@@ -18,8 +18,18 @@ export default function FleetOverview() {
     queryFn: api.getServerUpdate,
     staleTime: 60 * 60 * 1000,
   })
+  const { data: patchStatus } = useQuery({
+    queryKey: ['patch-status'],
+    queryFn: api.getPatchStatus,
+    refetchInterval: wsConnected ? 120_000 : 60_000,
+  })
 
   const latestVersion = serverUpdate?.latest_version
+  const patchMap = useMemo(() => {
+    const m = new Map<string, number>()
+    patchStatus?.forEach(p => m.set(p.device_id, p.pending_updates))
+    return m
+  }, [patchStatus])
   const queryClient = useQueryClient()
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string; status: string } | null>(null)
   const [showGuide, setShowGuide] = useState(false)
@@ -111,11 +121,12 @@ export default function FleetOverview() {
   return (
     <div className="space-y-6">
       {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
           <StatCard label="Total Devices" value={summary.total_devices} />
           <StatCard label="Online" value={summary.online_count} color="text-emerald-400" />
           <StatCard label="Offline" value={summary.offline_count} color="text-red-400" />
           <StatCard label="Warnings" value={summary.warning_count} color="text-amber-400" />
+          <StatCard label="Need Updates" value={patchMap.size} color={patchMap.size > 0 ? 'text-cyan-400' : 'text-white'} />
         </div>
       )}
 
@@ -153,6 +164,7 @@ export default function FleetOverview() {
                 <SortHeader k="status">Status</SortHeader>
                 <SortHeader k="arch">Arch</SortHeader>
                 <SortHeader k="agent_version">Version</SortHeader>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Updates</th>
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
@@ -182,6 +194,13 @@ export default function FleetOverview() {
                       <span className="text-gray-600">-</span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-sm">
+                    {(() => {
+                      const count = patchMap.get(d.id)
+                      if (!count) return <span className="text-gray-600">-</span>
+                      return <span className="text-cyan-400">{count}</span>
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
                   <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3">
@@ -206,7 +225,7 @@ export default function FleetOverview() {
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                     No devices match your search
                   </td>
                 </tr>

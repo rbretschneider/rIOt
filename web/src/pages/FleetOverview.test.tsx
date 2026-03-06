@@ -20,6 +20,7 @@ vi.mock('../api/client', () => ({
       },
     ]),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),
+    getPatchStatus: vi.fn().mockResolvedValue([]),
   },
 }))
 

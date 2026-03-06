@@ -124,7 +124,7 @@ func (s *Server) Start() error {
 
 	// Initialize event generator and notification dispatcher
 	s.Dispatcher = notify.NewDispatcher(s.NotifyRepo)
-	s.EventGen = events.NewGenerator(s.EventRepo, s.Hub, s.AlertRuleRepo, s.Dispatcher)
+	s.EventGen = events.NewGenerator(s.EventRepo, s.Hub, s.AlertRuleRepo, s.Dispatcher, s.CommandRepo)
 
 	// Initialize probe runner
 	s.ProbeRunner = probes.NewRunner(s.ProbeRepo, s.EventRepo, s.Hub)
