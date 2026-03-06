@@ -368,7 +368,7 @@ riot ALL=(root) NOPASSWD: /usr/bin/dnf makecache
 riot ALL=(root) NOPASSWD: /usr/bin/dnf -y update
 riot ALL=(root) NOPASSWD: /usr/bin/dnf -y --security update
 riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
-riot ALL=(root) NOPASSWD: /usr/bin/install -m 755 ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN}
+riot ALL=(root) NOPASSWD: /bin/sh -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old
 SUDOEOF
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then

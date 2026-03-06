@@ -151,20 +151,29 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 		}
 	}
 
-	// Replace the running binary atomically using sudo install.
-	// The riot user can't write to /usr/local/bin/ directly, and opening
-	// a running binary for writing gives ETXTBSY. `install` creates a new
-	// inode (temp + rename), so the running process keeps its old inode
-	// until it exits. The sudoers drop-in whitelists this exact command.
+	// Replace the running binary using a shell one-liner:
+	//   1. mv the running binary to .old (renames the dir entry, process
+	//      keeps its open inode — always works even on busy executables)
+	//   2. cp the new binary into place (new inode at the original path)
+	//   3. chmod 755
+	//   4. rm the .old file (safe — old process holds the inode)
+	// This avoids the "Device or resource busy" error that `install` and
+	// direct `rm` can hit on some systems when the target is a running binary.
 	currentBinary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	installCmd := exec.CommandContext(ctx, "sudo", "install", "-m", "755",
-		stagingPath, currentBinary)
-	if out, err := installCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("install binary: %s: %s", err, strings.TrimSpace(string(out)))
+	script := fmt.Sprintf(
+		"mv -f %s %s.old && cp %s %s && chmod 755 %s && rm -f %s.old",
+		currentBinary, currentBinary,
+		stagingPath, currentBinary,
+		currentBinary,
+		currentBinary,
+	)
+	shCmd := exec.CommandContext(ctx, "sudo", "sh", "-c", script)
+	if out, err := shCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("replace binary: %s: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	return nil
