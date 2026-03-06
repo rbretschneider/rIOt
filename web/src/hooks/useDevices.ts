@@ -68,13 +68,14 @@ export function useDevices() {
       // Docker container state changed — invalidate device detail to trigger refetch
       queryClient.invalidateQueries({ queryKey: ['device', msg.device_id] })
     } else if (msg.type === 'event') {
-      // Prepend new event into events cache
+      // Prepend new event into events cache (dedup by id)
+      const evt = msg.data as { id?: number; severity?: string }
       queryClient.setQueryData(['events'], (old: any) => {
         if (!old) return [msg.data]
+        if (evt.id && old.some((e: any) => e.id === evt.id)) return old
         return [msg.data, ...old]
       })
       // Increment unread count for warning/critical events
-      const evt = msg.data as { severity?: string }
       if (evt.severity === 'warning' || evt.severity === 'critical') {
         queryClient.setQueryData(['unread-count'], (old: { count: number } | undefined) => {
           return { count: (old?.count ?? 0) + 1 }

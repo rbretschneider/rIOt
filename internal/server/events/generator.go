@@ -74,6 +74,10 @@ func (g *Generator) createEventAndNotify(ctx context.Context, e *models.Event, r
 }
 
 func (g *Generator) DeviceOnline(ctx context.Context, deviceID, hostname string) {
+	key := deviceID + ":" + string(models.EventDeviceOnline)
+	if g.onCooldown(key, 5*time.Minute) {
+		return
+	}
 	g.createEvent(ctx, &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventDeviceOnline,
