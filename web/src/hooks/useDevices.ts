@@ -36,6 +36,7 @@ export function useDevices() {
           ...updated[idx],
           status: 'online',
           last_heartbeat: new Date().toISOString(),
+          ...(hb.agent_version ? { agent_version: hb.agent_version } : {}),
         }
         return updated
       })
@@ -44,7 +45,12 @@ export function useDevices() {
         if (!old) return old
         return {
           ...old,
-          device: { ...old.device, status: 'online', last_heartbeat: new Date().toISOString() },
+          device: {
+            ...old.device,
+            status: 'online',
+            last_heartbeat: new Date().toISOString(),
+            ...(hb.agent_version ? { agent_version: hb.agent_version } : {}),
+          },
           latest_heartbeat: hb,
         }
       })

@@ -202,10 +202,8 @@ User=${RIOT_USER}
 Group=${RIOT_USER}
 ${SUPPLEMENTARY_GROUPS}
 LimitNOFILE=65536
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=true
-ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR}
+ProtectSystem=strict
+ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR} ${RIOT_BIN}
 PrivateTmp=true
 
 [Install]

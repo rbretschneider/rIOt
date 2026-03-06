@@ -13,10 +13,8 @@ Group=riot
 LimitNOFILE=65536
 
 # Security hardening
-NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/var/lib/riot /etc/riot
+ReadWritePaths=/var/lib/riot /etc/riot /usr/local/bin/riot-agent
 PrivateTmp=true
 
 [Install]

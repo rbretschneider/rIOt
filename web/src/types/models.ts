@@ -33,6 +33,7 @@ export interface HeartbeatData {
   mem_percent: number
   load_avg_1m: number
   disk_root_percent: number
+  agent_version?: string
 }
 
 export interface TelemetrySnapshot {
