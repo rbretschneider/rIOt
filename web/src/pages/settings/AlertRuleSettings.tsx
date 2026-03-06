@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import type { AlertRule, AlertTemplate } from '../../types/models'
@@ -80,14 +80,27 @@ export default function AlertRuleSettings() {
 
   const isStateMetric = editing ? STATE_METRICS.includes(editing.metric || '') : false
 
+  const globalRules = useMemo(() => rules.filter(r => !r.device_filter), [rules])
+  const deviceRules = useMemo(() => rules.filter(r => !!r.device_filter), [rules])
+
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
   }
 
+  const openEdit = (rule: AlertRule) => {
+    const r = { ...rule }
+    if (r.target_state?.toLowerCase() === 'any' && TARGET_STATES[r.metric]) {
+      r.target_state = TARGET_STATES[r.metric].join(',')
+    }
+    setEditing(r)
+    setIsNew(false)
+  }
+
   return (
     <div>
+      {/* Global Alert Rules */}
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Alert Rules</h2>
+        <h2 className="text-lg font-semibold text-white">Global Alert Rules</h2>
         <div className="flex gap-2">
           <button
             onClick={() => setShowTemplates(true)}
@@ -104,89 +117,34 @@ export default function AlertRuleSettings() {
         </div>
       </div>
 
-      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
-        <table className="w-full text-sm min-w-[640px]">
-          <thead>
-            <tr className="text-left text-gray-400 border-b border-gray-800">
-              <th className="px-4 py-3">Enabled</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Metric</th>
-              <th className="px-4 py-3">Condition</th>
-              <th className="px-4 py-3">Severity</th>
-              <th className="px-4 py-3">Cooldown</th>
-              <th className="px-4 py-3">Notify</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map(rule => (
-              <tr key={rule.id} className="border-b border-gray-800/50 text-gray-300">
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => toggleMutation.mutate(rule)}
-                    className={`w-8 h-4 rounded-full transition-colors relative ${
-                      rule.enabled ? 'bg-emerald-600' : 'bg-gray-600'
-                    }`}
-                  >
-                    <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
-                      rule.enabled ? 'left-4' : 'left-0.5'
-                    }`} />
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-white">{rule.name}</td>
-                <td className="px-4 py-3">
-                  {METRICS.find(m => m.value === rule.metric)?.label || rule.metric}
-                  {rule.target_name && <span className="text-gray-500 ml-1">({rule.target_name})</span>}
-                </td>
-                <td className="px-4 py-3 font-mono text-xs">
-                  {STATE_METRICS.includes(rule.metric)
-                    ? (rule.target_state || 'any')
-                    : `${rule.operator} ${rule.threshold}`}
-                </td>
-                <td className="px-4 py-3">
-                  <span className={`px-2 py-0.5 rounded text-xs ${
-                    rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
-                    rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
-                    'bg-blue-900/50 text-blue-400'
-                  }`}>
-                    {rule.severity}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
-                <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => {
-                      const r = { ...rule }
-                      // Convert legacy "any" to all states for the multi-select
-                      if (r.target_state?.toLowerCase() === 'any' && TARGET_STATES[r.metric]) {
-                        r.target_state = TARGET_STATES[r.metric].join(',')
-                      }
-                      setEditing(r); setIsNew(false)
-                    }}
-                    className="text-gray-400 hover:text-white mr-2"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => { if (confirm('Delete this rule?')) deleteMutation.mutate(rule.id) }}
-                    className="text-gray-400 hover:text-red-400"
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rules.length === 0 && (
-              <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
-                  No alert rules configured. Click "Add Rule" to create one.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <RulesTable
+        rules={globalRules}
+        showDevices={false}
+        emptyMessage="No global alert rules configured. Click &quot;Add Rule&quot; to create one."
+        onToggle={rule => toggleMutation.mutate(rule)}
+        onEdit={openEdit}
+        onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
+      />
+
+      {/* Device-Specific Alert Rules */}
+      <div className="flex items-center justify-between mb-4 mt-8">
+        <h2 className="text-lg font-semibold text-white">Device-Specific Alert Rules</h2>
+        <button
+          onClick={() => { setEditing({ ...emptyRule, device_filter: '' }); setIsNew(true) }}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
+        >
+          Add Rule
+        </button>
       </div>
+
+      <RulesTable
+        rules={deviceRules}
+        showDevices={true}
+        emptyMessage="No device-specific alert rules configured."
+        onToggle={rule => toggleMutation.mutate(rule)}
+        onEdit={openEdit}
+        onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
+      />
 
       {/* Edit / Create Modal */}
       {editing && (
@@ -345,6 +303,99 @@ export default function AlertRuleSettings() {
           onClose={() => setShowTemplates(false)}
         />
       )}
+    </div>
+  )
+}
+
+function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDelete }: {
+  rules: AlertRule[]
+  showDevices: boolean
+  emptyMessage: string
+  onToggle: (rule: AlertRule) => void
+  onEdit: (rule: AlertRule) => void
+  onDelete: (id: number) => void
+}) {
+  const colCount = showDevices ? 9 : 8
+  return (
+    <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+      <table className="w-full text-sm min-w-[640px]">
+        <thead>
+          <tr className="text-left text-gray-400 border-b border-gray-800">
+            <th className="px-4 py-3">Enabled</th>
+            <th className="px-4 py-3">Name</th>
+            <th className="px-4 py-3">Metric</th>
+            <th className="px-4 py-3">Condition</th>
+            <th className="px-4 py-3">Severity</th>
+            <th className="px-4 py-3">Cooldown</th>
+            <th className="px-4 py-3">Notify</th>
+            {showDevices && <th className="px-4 py-3">Devices</th>}
+            <th className="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rules.map(rule => (
+            <tr key={rule.id} className="border-b border-gray-800/50 text-gray-300">
+              <td className="px-4 py-3">
+                <button
+                  onClick={() => onToggle(rule)}
+                  className={`w-8 h-4 rounded-full transition-colors relative ${
+                    rule.enabled ? 'bg-emerald-600' : 'bg-gray-600'
+                  }`}
+                >
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                    rule.enabled ? 'left-4' : 'left-0.5'
+                  }`} />
+                </button>
+              </td>
+              <td className="px-4 py-3 text-white">{rule.name}</td>
+              <td className="px-4 py-3">
+                {METRICS.find(m => m.value === rule.metric)?.label || rule.metric}
+                {rule.target_name && <span className="text-gray-500 ml-1">({rule.target_name})</span>}
+              </td>
+              <td className="px-4 py-3 font-mono text-xs">
+                {STATE_METRICS.includes(rule.metric)
+                  ? (rule.target_state || 'any')
+                  : `${rule.operator} ${rule.threshold}`}
+              </td>
+              <td className="px-4 py-3">
+                <span className={`px-2 py-0.5 rounded text-xs ${
+                  rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
+                  rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
+                  'bg-blue-900/50 text-blue-400'
+                }`}>
+                  {rule.severity}
+                </span>
+              </td>
+              <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
+              <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
+              {showDevices && (
+                <td className="px-4 py-3 text-gray-400 font-mono text-xs">{rule.device_filter}</td>
+              )}
+              <td className="px-4 py-3 text-right">
+                <button
+                  onClick={() => onEdit(rule)}
+                  className="text-gray-400 hover:text-white mr-2"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => onDelete(rule.id)}
+                  className="text-gray-400 hover:text-red-400"
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+          {rules.length === 0 && (
+            <tr>
+              <td colSpan={colCount} className="px-4 py-8 text-center text-gray-500">
+                {emptyMessage}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }
