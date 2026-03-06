@@ -179,6 +179,9 @@ else
     exit 1
 fi
 chmod +x "$RIOT_BIN"
+if [ "$OS" = "linux" ]; then
+    chown "$RIOT_USER:$RIOT_USER" "$RIOT_BIN"
+fi
 
 echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
 
