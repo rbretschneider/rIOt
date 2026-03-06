@@ -16,7 +16,9 @@
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
+- **Zero-config setup** — setup wizard configures admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
 - **Simple deployment** — one `docker compose up` for the server, one-liner install for agents
+- **Open registration** — devices register automatically; optionally gate with a registration key via Settings
 - **Admin authentication** — password-protected dashboard with JWT session cookies
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, and processes; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
@@ -27,7 +29,7 @@
 - **Remote commands** — send commands (e.g., Docker restart) to agents from the dashboard
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
-- **TLS support** — Let's Encrypt autocert or manual cert/key files
+- **TLS support** — self-signed (auto-generated), Let's Encrypt autocert, or manual cert/key files
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Architecture
@@ -46,49 +48,38 @@ The server is a single Go binary that embeds the compiled React frontend. No ngi
 
 ### Docker Compose (recommended)
 
-Create a `docker-compose.yml`:
+```bash
+# 1. Grab the compose file and .env template
+curl -O https://raw.githubusercontent.com/rbretschneider/rIOt/main/docker-compose.prod.yml
+curl -O https://raw.githubusercontent.com/rbretschneider/rIOt/main/.env.example
+cp .env.example .env
 
-```yaml
-services:
-  riot-server:
-    image: ghcr.io/rbretschneider/riot-server:latest
-    ports:
-      - "7331:7331"
-    environment:
-      - RIOT_DB_URL=postgres://riot:riot@riot-db:5432/riot?sslmode=disable
-      - RIOT_PORT=7331
-      - RIOT_API_KEY=changeme        # Master key used for agent registration
-      - RIOT_ADMIN_PASSWORD=changeme # Dashboard login password
-      - RIOT_RETENTION_DAYS=30
-    depends_on:
-      riot-db:
-        condition: service_healthy
-    restart: unless-stopped
+# 2. Edit .env — at minimum, change the Postgres password
+vi .env
 
-  riot-db:
-    image: postgres:16-alpine
-    environment:
-      - POSTGRES_USER=riot
-      - POSTGRES_PASSWORD=riot
-      - POSTGRES_DB=riot
-    volumes:
-      - riot-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U riot"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-volumes:
-  riot-data:
+# 3. Start everything
+docker compose -f docker-compose.prod.yml up -d
 ```
+
+On first launch the server starts in **setup mode**. Open `http://<server-ip>:7331` in a browser and the setup wizard will walk you through:
+- Setting an admin password
+- Configuring TLS (self-signed, Let's Encrypt, manual cert, or none)
+- Enabling mTLS device authentication (optional)
+
+Everything else (JWT secret, TLS certs, admin password) is stored in the database — no extra env vars needed.
+
+#### `.env.example`
 
 ```bash
-docker compose up -d
-```
+# PostgreSQL credentials (change the password!)
+POSTGRES_USER=riot
+POSTGRES_PASSWORD=riot
+POSTGRES_DB=riot
 
-The dashboard is available at `http://<server-ip>:7331`.
+# Optional overrides (uncomment if needed)
+# RIOT_RETENTION_DAYS=30
+# RIOT_ALLOWED_ORIGINS=https://riot.example.com
+```
 
 ### Docker Run
 
@@ -106,24 +97,26 @@ docker run -d --name riot-server \
   -p 7331:7331 \
   --link riot-db \
   -e RIOT_DB_URL=postgres://riot:riot@riot-db:5432/riot?sslmode=disable \
-  -e RIOT_API_KEY=changeme \
-  -e RIOT_ADMIN_PASSWORD=changeme \
   ghcr.io/rbretschneider/riot-server:latest
 ```
 
+Then open the browser for the setup wizard.
+
 ### Server Environment Variables
+
+Most settings are configured through the setup wizard and stored in the database. These env vars are available as overrides:
 
 | Variable | Default | Description |
 |---|---|---|
 | `RIOT_DB_URL` | `postgres://riot:riot@localhost:5432/riot?sslmode=disable` | PostgreSQL connection string |
 | `RIOT_PORT` | `7331` | HTTP listen port |
-| `RIOT_API_KEY` | `changeme` | Master API key for agent registration |
-| `RIOT_ADMIN_PASSWORD` | — | Dashboard login password (bcrypt-hashed at startup) |
-| `RIOT_JWT_SECRET` | auto-generated | Secret for JWT session tokens (auto-generated if omitted; set for stable sessions across restarts) |
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
-| `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
 | `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins |
-| `RIOT_TLS_ENABLED` | `false` | Enable TLS (`true` or `1`) |
+| `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
+| `RIOT_API_KEY` | — | Registration key override (if set, agents must present this key to register; also configurable in Settings) |
+| `RIOT_ADMIN_PASSWORD` | — | Admin password override (bypasses wizard; bcrypt-hashed at startup) |
+| `RIOT_JWT_SECRET` | auto-generated | JWT session secret (auto-generated if omitted; set for stable sessions across restarts) |
+| `RIOT_TLS_ENABLED` | `false` | Enable TLS (`true` or `1`); overrides wizard setting |
 | `RIOT_TLS_DOMAIN` | — | Let's Encrypt autocert domain (implies TLS enabled) |
 | `RIOT_TLS_CERT_DIR` | — | Autocert cache directory |
 | `RIOT_TLS_CERT_FILE` | — | Manual TLS certificate file path |
@@ -137,14 +130,30 @@ docker run -d --name riot-server \
 ### One-liner (Linux / macOS)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- http://<server-ip>:7331 <master-api-key>
+curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331
 ```
 
 This will:
 1. Detect your architecture
 2. Download the correct agent binary from GitHub Releases
 3. Write a default config to `/etc/riot/agent.yaml`
-4. Install and start a systemd service (Linux) or print manual run instructions (macOS)
+4. On first connect, automatically pin the server's TLS certificate (TOFU)
+5. Install and start a systemd service (Linux) or print manual run instructions (macOS)
+
+**Optional flags:**
+
+```bash
+# Verify server cert fingerprint on first connect (shown in Settings > General)
+curl ... | sudo bash -s -- https://server:7331 --fingerprint SHA256:xxxx
+
+# Provide a registration key (if the server requires one)
+curl ... | sudo bash -s -- https://server:7331 --key mykey
+
+# Install a specific version
+curl ... | sudo bash -s -- https://server:7331 --version 2.3.0
+```
+
+By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration.
 
 ### Uninstall
 
@@ -175,9 +184,8 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
 
    ```yaml
    server:
-     url: "http://<server-ip>:7331"
-     api_key: "<master-api-key>"
-     tls_verify: false
+     url: "https://<server-ip>:7331"
+     tls_verify: true
 
    agent:
      device_name: ""              # leave empty to auto-detect hostname
@@ -206,6 +214,8 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
      terminal_enabled: false        # set to true to allow remote exec from dashboard
    ```
 
+   On first HTTPS connect, the agent will automatically fetch and pin the server's certificate (TOFU). To verify the fingerprint up front, add `server_cert_pin: "SHA256:xxxx"` (available in Settings > General).
+
 4. Run the agent:
 
    ```bash
@@ -221,9 +231,10 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | Field | Default | Description |
 |---|---|---|
 | `server.url` | `http://localhost:7331` | rIOt server URL |
-| `server.api_key` | — | Master API key (used for initial registration; replaced with per-device key after) |
+| `server.api_key` | — | Registration key (only needed if the server requires one; per-device key is generated after registration) |
 | `server.tls_verify` | `true` | Verify TLS certificates |
-| `server.ca_cert_file` | — | Custom CA certificate for TLS verification |
+| `server.server_cert_pin` | — | SHA256 fingerprint for TOFU verification (auto-populated on first connect) |
+| `server.ca_cert_file` | — | Custom CA certificate for TLS verification (auto-populated by TOFU) |
 | `server.client_cert` | — | mTLS client certificate path (auto-populated after enrollment) |
 | `server.client_key` | — | mTLS client key path (auto-populated after enrollment) |
 | `server.bootstrap_key` | — | Single-use mTLS enrollment key (cleared after enrollment) |
@@ -410,12 +421,15 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `GET` | `/api/v1/auth/check` | Check authentication status |
+| `GET` | `/api/v1/server-cert` | Server TLS certificate + fingerprint (for agent TOFU) |
+| `GET` | `/api/v1/setup/status` | Setup wizard status |
+| `POST` | `/api/v1/setup/complete` | Complete setup wizard |
 
 ### Agent (device key or mTLS auth)
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/devices/register` | Register a new device (master key) |
+| `POST` | `/api/v1/devices/register` | Register a new device |
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
@@ -452,6 +466,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD |
 | `POST` | `/api/v1/settings/notification-channels/:id/test` | Test notification channel |
 | `GET` | `/api/v1/settings/notifications/log` | Notification delivery log |
+| `GET` | `/api/v1/settings/registration` | Get registration key setting |
+| `PUT` | `/api/v1/settings/registration` | Set registration key (empty = open registration) |
 | `GET` | `/api/v1/settings/certs` | List device certificates |
 | `POST` | `/api/v1/settings/certs/:serial/revoke` | Revoke a device certificate |
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
