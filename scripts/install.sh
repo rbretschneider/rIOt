@@ -67,8 +67,16 @@ RIOT_BIN="/usr/local/bin/riot-agent"
 echo "==> rIOt Agent Installer"
 
 # ── Detect if server URL points to this machine, use 127.0.0.1 ──────
+# Only for http:// — HTTPS certs are issued to the real hostname/IP,
+# so rewriting to 127.0.0.1 would break TLS verification.
 resolve_server_url() {
     local url="$1"
+
+    # Skip for HTTPS — cert SANs won't match 127.0.0.1
+    case "$url" in
+        https://*) return ;;
+    esac
+
     # Extract host from URL (strip protocol and port/path)
     local host
     host=$(echo "$url" | sed -E 's|https?://||; s|[:/].*||')

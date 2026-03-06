@@ -275,6 +275,13 @@ func (a *Agent) trustServerCert() error {
 		return fmt.Errorf("server-cert endpoint returned %d", resp.StatusCode)
 	}
 
+	// Check content type — if the server is old and doesn't have this endpoint,
+	// the SPA catch-all serves HTML instead of JSON
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		return fmt.Errorf("server-cert endpoint returned %s (server may need updating)", ct)
+	}
+
 	var certResp struct {
 		CertPEM     string `json:"cert_pem"`
 		Fingerprint string `json:"fingerprint"`
