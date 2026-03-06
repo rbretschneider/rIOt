@@ -12,7 +12,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	cfg := LoadConfig()
 	assert.Equal(t, 7331, cfg.Port)
 	assert.Equal(t, "postgres://riot:riot@localhost:5432/riot?sslmode=disable", cfg.DBUrl)
-	assert.Equal(t, "changeme", cfg.MasterAPIKey)
+	assert.Empty(t, cfg.RegistrationKey)
 	assert.Equal(t, 30, cfg.RetentionDays)
 	assert.NotEmpty(t, cfg.JWTSecret, "JWT secret should be auto-generated")
 	assert.False(t, cfg.TLSEnabled)
@@ -46,7 +46,7 @@ func TestLoadConfig_RetentionDays(t *testing.T) {
 func TestLoadConfig_APIKey(t *testing.T) {
 	t.Setenv("RIOT_API_KEY", "my-secret-key")
 	cfg := LoadConfig()
-	assert.Equal(t, "my-secret-key", cfg.MasterAPIKey)
+	assert.Equal(t, "my-secret-key", cfg.RegistrationKey)
 }
 
 func TestLoadConfig_JWTSecret(t *testing.T) {

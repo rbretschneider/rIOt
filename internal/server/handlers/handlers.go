@@ -2,8 +2,12 @@ package handlers
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -29,7 +33,6 @@ type HandlerDeps struct {
 	Hub               *websocket.Hub
 	EventGen          *events.Generator
 	UpdateChecker     *updates.Checker
-	MasterAPIKey      string
 	AdminRepo         db.AdminRepository
 	TerminalRepo      db.TerminalRepository
 	AlertRuleRepo     db.AlertRuleRepository
@@ -49,7 +52,6 @@ type Handlers struct {
 	hub                *websocket.Hub
 	eventGen           *events.Generator
 	updateChecker      *updates.Checker
-	masterAPIKey       string
 	adminRepo          db.AdminRepository
 	terminalRepo       db.TerminalRepository
 	alertRuleRepo      db.AlertRuleRepository
@@ -70,7 +72,6 @@ func New(deps HandlerDeps) *Handlers {
 		hub:               deps.Hub,
 		eventGen:          deps.EventGen,
 		updateChecker:     deps.UpdateChecker,
-		masterAPIKey:      deps.MasterAPIKey,
 		adminRepo:         deps.AdminRepo,
 		terminalRepo:      deps.TerminalRepo,
 		alertRuleRepo:     deps.AlertRuleRepo,
@@ -100,11 +101,14 @@ func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
 }
 
 func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
-	// Validate master key or allow open registration
-	apiKey := r.Header.Get("X-rIOt-Key")
-	if h.masterAPIKey != "" && apiKey != h.masterAPIKey {
-		http.Error(w, `{"error":"invalid master api key"}`, http.StatusUnauthorized)
-		return
+	// Check registration key: if server has one configured, require it
+	regKey, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")
+	if regKey != "" {
+		apiKey := r.Header.Get("X-rIOt-Key")
+		if apiKey != regKey {
+			http.Error(w, `{"error":"invalid registration key"}`, http.StatusUnauthorized)
+			return
+		}
 	}
 
 	var reg models.DeviceRegistration
@@ -520,4 +524,69 @@ func generateAPIKey() string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	return "riot_" + hex.EncodeToString(b)
+}
+
+// ServerCert returns the server's public TLS certificate and fingerprint.
+// Only has content when TLS mode is self-signed.
+func (h *Handlers) ServerCert(w http.ResponseWriter, r *http.Request) {
+	tlsMode, _ := h.adminRepo.GetConfig(r.Context(), "tls_mode")
+	if tlsMode != "self-signed" {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"cert_pem":    "",
+			"fingerprint": "",
+		})
+		return
+	}
+
+	certPEM, _, err := h.adminRepo.GetServerTLSCert(r.Context())
+	if err != nil || certPEM == "" {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"cert_pem":    "",
+			"fingerprint": "",
+		})
+		return
+	}
+
+	// Compute SHA256 fingerprint of the DER certificate
+	block, _ := pem.Decode([]byte(certPEM))
+	fingerprint := ""
+	if block != nil {
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			hash := sha256.Sum256(cert.Raw)
+			fingerprint = fmt.Sprintf("SHA256:%s", hex.EncodeToString(hash[:]))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"cert_pem":    certPEM,
+		"fingerprint": fingerprint,
+	})
+}
+
+// GetRegistrationKey returns the current registration key setting.
+func (h *Handlers) GetRegistrationKey(w http.ResponseWriter, r *http.Request) {
+	key, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"registration_key": key,
+	})
+}
+
+// SetRegistrationKey updates the registration key (empty = open registration).
+func (h *Handlers) SetRegistrationKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		RegistrationKey string `json:"registration_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.adminRepo.SetConfig(r.Context(), "registration_key", body.RegistrationKey); err != nil {
+		slog.Error("set registration key", "error", err)
+		http.Error(w, `{"error":"failed to save registration key"}`, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

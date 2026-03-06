@@ -34,7 +34,6 @@ func (s *Server) setupRouter() *chi.Mux {
 		Hub:               s.Hub,
 		EventGen:          s.EventGen,
 		UpdateChecker:     s.UpdateChecker,
-		MasterAPIKey:      s.Config.MasterAPIKey,
 		AdminRepo:         s.AdminRepo,
 		TerminalRepo:      s.TerminalRepo,
 		AlertRuleRepo:     s.AlertRuleRepo,
@@ -68,6 +67,9 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Post("/logout", h.Logout)
 		r.Get("/check", h.AuthCheck)
 	})
+
+	// === PUBLIC routes (agent TOFU) ===
+	r.Get("/api/v1/server-cert", h.ServerCert)
 
 	// === AGENT routes (device key auth via X-rIOt-Key) ===
 	r.With(registerLimiter.Middleware()).Post("/api/v1/devices/register", h.RegisterDevice)
@@ -133,6 +135,10 @@ func (s *Server) setupRouter() *chi.Mux {
 
 		// Settings: notification log
 		r.Get("/api/v1/settings/notifications/log", h.ListNotificationLog)
+
+		// Settings: device registration
+		r.Get("/api/v1/settings/registration", h.GetRegistrationKey)
+		r.Put("/api/v1/settings/registration", h.SetRegistrationKey)
 
 		// Settings: certificates (mTLS)
 		if enrollH != nil {

@@ -14,7 +14,7 @@ import (
 type Config struct {
 	Port              int
 	DBUrl             string
-	MasterAPIKey      string
+	RegistrationKey   string // optional key to gate device registration (empty = open)
 	RetentionDays     int
 	GitHubRepo        string
 	AdminPasswordHash string
@@ -34,7 +34,6 @@ func LoadConfig() *Config {
 	cfg := &Config{
 		Port:          7331,
 		DBUrl:         "postgres://riot:riot@localhost:5432/riot?sslmode=disable",
-		MasterAPIKey:  "changeme",
 		RetentionDays: 30,
 		GitHubRepo:    "rbretschneider/rIOt",
 	}
@@ -48,7 +47,7 @@ func LoadConfig() *Config {
 		cfg.DBUrl = v
 	}
 	if v := os.Getenv("RIOT_API_KEY"); v != "" {
-		cfg.MasterAPIKey = v
+		cfg.RegistrationKey = v
 	}
 	if v := os.Getenv("RIOT_RETENTION_DAYS"); v != "" {
 		if d, err := strconv.Atoi(v); err == nil {

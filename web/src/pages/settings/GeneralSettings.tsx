@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 
@@ -18,6 +18,12 @@ export default function GeneralSettings() {
       <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 space-y-6">
         {/* Password Change */}
         <PasswordChangeSection />
+
+        {/* Device Registration */}
+        <RegistrationKeySection />
+
+        {/* Server Certificate */}
+        <ServerCertSection />
 
         {/* Server Update */}
         <div>
@@ -67,6 +73,98 @@ export default function GeneralSettings() {
             <code className="text-gray-400 ml-1">RIOT_RETENTION_DAYS</code> (default: 30 days for telemetry, 7 days for heartbeats, 90 days for events).
           </p>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function RegistrationKeySection() {
+  const [key, setKey] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/v1/settings/registration', { credentials: 'same-origin' })
+      .then(res => res.json())
+      .then(data => {
+        setKey(data.registration_key || '')
+        setLoaded(true)
+      })
+      .catch(() => setLoaded(true))
+  }, [])
+
+  async function handleSave() {
+    setStatus('loading')
+    setError('')
+    try {
+      const res = await fetch('/api/v1/settings/registration', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ registration_key: key }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Failed to save' }))
+        setError(data.error || 'Failed to save')
+        setStatus('error')
+        return
+      }
+      setStatus('success')
+      setTimeout(() => setStatus('idle'), 3000)
+    } catch {
+      setError('Network error')
+      setStatus('error')
+    }
+  }
+
+  if (!loaded) return null
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-white mb-2">Device Registration</h3>
+      <p className="text-xs text-gray-500 mb-3">
+        Optional key to gate device registration. Leave empty for open registration (any device that can reach the server can register).
+      </p>
+      <div className="flex items-center gap-2 max-w-sm">
+        <input
+          type="text"
+          value={key}
+          onChange={e => setKey(e.target.value)}
+          placeholder="Open registration (no key)"
+          className="flex-1 px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          onClick={handleSave}
+          disabled={status === 'loading'}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-md font-medium transition-colors"
+        >
+          {status === 'loading' ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      {status === 'success' && <p className="text-xs text-emerald-400 mt-1">Registration key saved</p>}
+    </div>
+  )
+}
+
+function ServerCertSection() {
+  const { data: certInfo } = useQuery({
+    queryKey: ['server-cert'],
+    queryFn: () => fetch('/api/v1/server-cert', { credentials: 'same-origin' }).then(r => r.json()),
+    staleTime: 60 * 1000,
+  })
+
+  if (!certInfo?.fingerprint) return null
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-white mb-2">Server Certificate</h3>
+      <p className="text-xs text-gray-500 mb-2">
+        Use this fingerprint with <code className="text-gray-400">--fingerprint</code> during agent install to verify the server on first connect.
+      </p>
+      <div className="bg-gray-800 rounded p-3">
+        <code className="text-xs text-emerald-400 select-all break-all">{certInfo.fingerprint}</code>
       </div>
     </div>
   )

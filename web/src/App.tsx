@@ -95,7 +95,8 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4 min-w-0">
-              <Link to="/" className="text-xl font-bold text-white tracking-tight shrink-0">
+              <Link to="/" className="flex items-center gap-2 text-xl font-bold text-white tracking-tight shrink-0">
+                <img src="/android-chrome-192x192.png" alt="rIOt" className="w-6 h-6" />
                 rIOt
               </Link>
               <div className="flex gap-1 overflow-x-auto scrollbar-hide">

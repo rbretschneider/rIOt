@@ -7,9 +7,6 @@ services:
     environment:
       - RIOT_DB_URL=postgres://${POSTGRES_USER:-riot}:${POSTGRES_PASSWORD:-riot}@riot-db:5432/${POSTGRES_DB:-riot}?sslmode=disable
       - RIOT_PORT=7331
-      - RIOT_API_KEY=${RIOT_API_KEY:-changeme}
-      - RIOT_ADMIN_PASSWORD=${RIOT_ADMIN_PASSWORD:-changeme}
-      - RIOT_JWT_SECRET=${RIOT_JWT_SECRET:-}
       - RIOT_RETENTION_DAYS=${RIOT_RETENTION_DAYS:-30}
     depends_on:
       riot-db:

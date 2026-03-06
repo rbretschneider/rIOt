@@ -223,7 +223,7 @@ func (s *Server) Start() error {
 
 // loadDBConfig loads configuration from the database, allowing env vars to override.
 func (s *Server) loadDBConfig(ctx context.Context) {
-	keys := []string{"jwt_secret", "tls_enabled", "tls_mode", "tls_domain", "mtls_enabled"}
+	keys := []string{"jwt_secret", "tls_enabled", "tls_mode", "tls_domain", "mtls_enabled", "registration_key"}
 	dbCfg, err := s.AdminRepo.GetConfigMap(ctx, keys)
 	if err != nil {
 		slog.Debug("could not load config from DB", "error", err)
@@ -261,6 +261,13 @@ func (s *Server) loadDBConfig(ctx context.Context) {
 	if os.Getenv("RIOT_MTLS_ENABLED") == "" {
 		if dbCfg["mtls_enabled"] == "true" {
 			s.Config.MTLSEnabled = true
+		}
+	}
+
+	// Registration key: env var overrides DB
+	if os.Getenv("RIOT_API_KEY") == "" {
+		if v := dbCfg["registration_key"]; v != "" {
+			s.Config.RegistrationKey = v
 		}
 	}
 }

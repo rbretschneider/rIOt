@@ -45,13 +45,14 @@ type DockerConfig struct {
 }
 
 type ServerConfig struct {
-	URL          string `yaml:"url"`
-	APIKey       string `yaml:"api_key"`
-	TLSVerify    bool   `yaml:"tls_verify"`
-	CACertFile   string `yaml:"ca_cert_file"`   // custom CA certificate for TLS verification
-	ClientCert   string `yaml:"client_cert"`     // mTLS client certificate path
-	ClientKey    string `yaml:"client_key"`      // mTLS client key path
-	BootstrapKey string `yaml:"bootstrap_key"`   // single-use enrollment key
+	URL            string `yaml:"url"`
+	APIKey         string `yaml:"api_key"`
+	TLSVerify      bool   `yaml:"tls_verify"`
+	CACertFile     string `yaml:"ca_cert_file"`      // custom CA certificate for TLS verification
+	ClientCert     string `yaml:"client_cert"`        // mTLS client certificate path
+	ClientKey      string `yaml:"client_key"`         // mTLS client key path
+	BootstrapKey   string `yaml:"bootstrap_key"`      // single-use enrollment key
+	ServerCertPin  string `yaml:"server_cert_pin"`    // SHA256 fingerprint for TOFU verification
 }
 
 type AgentConfig struct {
@@ -143,6 +144,14 @@ func KeyPath() string {
 		return os.Getenv("PROGRAMDATA") + "\\riot\\client.key"
 	}
 	return "/etc/riot/client.key"
+}
+
+// ServerCertPath returns the default path for the TOFU-pinned server certificate.
+func ServerCertPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\server.crt"
+	}
+	return "/etc/riot/server.crt"
 }
 
 // CACertPath returns the default path for the CA certificate.

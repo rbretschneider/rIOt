@@ -4,16 +4,60 @@ set -euo pipefail
 # rIOt Agent Install Script
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://server:7331
 #
-# Options (pass as arguments or env vars):
-#   $1 / RIOT_SERVER_URL   — rIOt server URL          (default: http://localhost:7331)
-#   $2 / RIOT_API_KEY      — Master API key            (default: changeme)
-#   $3 / RIOT_VERSION      — Version to install        (default: latest)
+# Options:
+#   $1                   — rIOt server URL (required)
+#   --fingerprint SHA256:xxx  — verify server cert fingerprint on first connect
+#   --key mykey          — registration key (if server requires one)
+#   --version 1.2.3      — install a specific version (default: latest)
 
-RIOT_SERVER="${RIOT_SERVER_URL:-${1:-http://localhost:7331}}"
-RIOT_KEY="${RIOT_API_KEY:-${2:-changeme}}"
-RIOT_VERSION="${RIOT_VERSION:-${3:-latest}}"
+# ── Parse arguments ──────────────────────────────────────────────────
+RIOT_SERVER=""
+RIOT_KEY=""
+RIOT_FINGERPRINT=""
+RIOT_VERSION="latest"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --fingerprint)
+            RIOT_FINGERPRINT="${2:-}"
+            shift 2
+            ;;
+        --key)
+            RIOT_KEY="${2:-}"
+            shift 2
+            ;;
+        --version)
+            RIOT_VERSION="${2:-latest}"
+            shift 2
+            ;;
+        -*)
+            echo "ERROR: Unknown flag: $1"
+            exit 1
+            ;;
+        *)
+            if [ -z "$RIOT_SERVER" ]; then
+                RIOT_SERVER="$1"
+            else
+                echo "ERROR: Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Allow env var overrides
+RIOT_SERVER="${RIOT_SERVER_URL:-${RIOT_SERVER:-}}"
+RIOT_VERSION="${RIOT_VERSION_OVERRIDE:-${RIOT_VERSION}}"
+
+if [ -z "$RIOT_SERVER" ]; then
+    echo "ERROR: Server URL is required."
+    echo "Usage: curl -sSL .../install.sh | sudo bash -s -- https://server:7331"
+    exit 1
+fi
+
 RIOT_REPO="rbretschneider/rIOt"
 RIOT_USER="riot"
 RIOT_CONFIG_DIR="/etc/riot"
@@ -131,7 +175,6 @@ chmod +x "$RIOT_BIN"
 echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
 
 # ── Detect Docker for config ─────────────────────────────────────────
-DOCKER_ENABLED="auto"
 DOCKER_SECTION=""
 if command -v docker >/dev/null 2>&1; then
     echo "==> Docker detected, enabling container monitoring"
@@ -142,14 +185,26 @@ docker:
   terminal_enabled: false"
 fi
 
+# ── Build optional config sections ────────────────────────────────────
+API_KEY_LINE=""
+if [ -n "$RIOT_KEY" ]; then
+    API_KEY_LINE="
+  api_key: \"${RIOT_KEY}\""
+fi
+
+CERT_PIN_LINE=""
+if [ -n "$RIOT_FINGERPRINT" ]; then
+    CERT_PIN_LINE="
+  server_cert_pin: \"${RIOT_FINGERPRINT}\""
+fi
+
 # ── Write config (skip if already exists) ─────────────────────────────
 if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
     echo "==> Writing default config to ${RIOT_CONFIG_DIR}/agent.yaml"
     cat > "$RIOT_CONFIG_DIR/agent.yaml" <<EOF
 server:
   url: "${RIOT_SERVER}"
-  api_key: "${RIOT_KEY}"
-  tls_verify: false
+  tls_verify: true${API_KEY_LINE}${CERT_PIN_LINE}
 
 agent:
   poll_interval: 60
