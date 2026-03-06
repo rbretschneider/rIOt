@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,7 +50,11 @@ type Server struct {
 	Dispatcher     *notify.Dispatcher
 	UpdateChecker  *updates.Checker
 	JWTSecret      []byte
+	SetupComplete  atomic.Bool
 	httpServer     *http.Server
+	listener       net.Listener
+	router         http.Handler
+	done           chan os.Signal
 }
 
 func New(cfg *Config) *Server {
@@ -88,6 +94,9 @@ func (s *Server) Start() error {
 	s.ProbeRepo = db.NewProbeRepo(s.DB)
 	s.CARepo = db.NewCARepo(s.DB)
 
+	// Load config from DB, with env vars taking precedence
+	s.loadDBConfig(ctx)
+
 	// Store JWT secret
 	s.JWTSecret = []byte(s.Config.JWTSecret)
 
@@ -102,9 +111,12 @@ func (s *Server) Start() error {
 		// Check if one exists in DB already
 		hash, err := s.AdminRepo.GetPasswordHash(ctx)
 		if err != nil || hash == "" {
-			slog.Warn("no admin password configured — set RIOT_ADMIN_PASSWORD env var to enable dashboard authentication")
+			slog.Warn("no admin password configured — setup wizard will appear on first visit")
 		}
 	}
+
+	// Determine setup state
+	s.determineSetupState(ctx)
 
 	// Initialize WebSocket hub
 	s.Hub = websocket.NewHub()
@@ -142,6 +154,7 @@ func (s *Server) Start() error {
 
 	// Set up HTTP server
 	router := s.setupRouter()
+	s.router = router
 	s.httpServer = &http.Server{
 		Addr:        fmt.Sprintf(":%d", s.Config.Port),
 		Handler:     router,
@@ -161,8 +174,8 @@ func (s *Server) Start() error {
 	}
 
 	// Graceful shutdown
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	s.done = make(chan os.Signal, 1)
+	signal.Notify(s.done, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		if s.Config.TLSEnabled {
@@ -171,15 +184,22 @@ func (s *Server) Start() error {
 			if s.Config.TLSDomain != "" {
 				// autocert handles cert files
 				err = s.httpServer.ListenAndServeTLS("", "")
-			} else {
+			} else if s.Config.TLSCertFile != "" && s.Config.TLSKeyFile != "" {
 				err = s.httpServer.ListenAndServeTLS(s.Config.TLSCertFile, s.Config.TLSKeyFile)
+			} else {
+				// DB-stored cert: TLSConfig already configured with cert
+				err = s.httpServer.ListenAndServeTLS("", "")
 			}
 			if err != nil && err != http.ErrServerClosed {
 				slog.Error("server error", "error", err)
 				os.Exit(1)
 			}
 		} else {
-			slog.Info("server starting", "port", s.Config.Port)
+			if !s.SetupComplete.Load() {
+				slog.Info("server starting in setup mode (no TLS)", "port", s.Config.Port)
+			} else {
+				slog.Info("server starting", "port", s.Config.Port)
+			}
 			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				slog.Error("server error", "error", err)
 				os.Exit(1)
@@ -187,7 +207,7 @@ func (s *Server) Start() error {
 		}
 	}()
 
-	<-done
+	<-s.done
 	slog.Info("shutting down server")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -199,6 +219,162 @@ func (s *Server) Start() error {
 	s.DB.Close()
 	slog.Info("server stopped")
 	return nil
+}
+
+// loadDBConfig loads configuration from the database, allowing env vars to override.
+func (s *Server) loadDBConfig(ctx context.Context) {
+	keys := []string{"jwt_secret", "tls_enabled", "tls_mode", "tls_domain", "mtls_enabled"}
+	dbCfg, err := s.AdminRepo.GetConfigMap(ctx, keys)
+	if err != nil {
+		slog.Debug("could not load config from DB", "error", err)
+		return
+	}
+
+	// JWT secret: env var overrides DB
+	if s.Config.JWTSecret == "" || isRandomJWTSecret(s.Config.JWTSecret) {
+		if v := dbCfg["jwt_secret"]; v != "" {
+			s.Config.JWTSecret = v
+			slog.Info("loaded JWT secret from database")
+		}
+	}
+
+	// TLS: env vars override DB
+	if os.Getenv("RIOT_TLS_ENABLED") == "" && os.Getenv("RIOT_TLS_CERT_FILE") == "" && os.Getenv("RIOT_TLS_DOMAIN") == "" {
+		if dbCfg["tls_enabled"] == "true" {
+			s.Config.TLSEnabled = true
+			s.Config.TLSMode = dbCfg["tls_mode"]
+			if dbCfg["tls_domain"] != "" {
+				s.Config.TLSDomain = dbCfg["tls_domain"]
+			}
+
+			// For self-signed mode, load cert from DB
+			if dbCfg["tls_mode"] == "self-signed" {
+				certPEM, keyPEM, err := s.AdminRepo.GetServerTLSCert(ctx)
+				if err == nil && certPEM != "" && keyPEM != "" {
+					slog.Info("loaded TLS certificate from database")
+				}
+			}
+		}
+	}
+
+	// mTLS: env var overrides DB
+	if os.Getenv("RIOT_MTLS_ENABLED") == "" {
+		if dbCfg["mtls_enabled"] == "true" {
+			s.Config.MTLSEnabled = true
+		}
+	}
+}
+
+// isRandomJWTSecret checks if the JWT secret appears to be auto-generated
+// (64 hex chars = 32 random bytes). This is a heuristic.
+func isRandomJWTSecret(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// determineSetupState checks if setup is complete and sets the atomic flag.
+func (s *Server) determineSetupState(ctx context.Context) {
+	// If env var password is set, auto-mark setup as complete (backwards compat)
+	if s.Config.AdminPasswordHash != "" {
+		s.SetupComplete.Store(true)
+		s.Config.SetupComplete = true
+		// Also persist to DB so future starts without env var still work
+		s.AdminRepo.SetConfig(ctx, "setup_complete", "true")
+		return
+	}
+
+	// Check DB
+	complete, _ := s.AdminRepo.IsSetupComplete(ctx)
+	if complete {
+		s.SetupComplete.Store(true)
+		s.Config.SetupComplete = true
+		return
+	}
+
+	// Check if password exists in DB (legacy setup)
+	hash, err := s.AdminRepo.GetPasswordHash(ctx)
+	if err == nil && hash != "" {
+		s.SetupComplete.Store(true)
+		s.Config.SetupComplete = true
+		s.AdminRepo.SetConfig(ctx, "setup_complete", "true")
+		return
+	}
+
+	// Setup not complete — wizard mode
+	s.SetupComplete.Store(false)
+	s.Config.SetupComplete = false
+	slog.Info("setup not complete — wizard will be shown on first visit")
+}
+
+// applyTLSAndRestart shuts down the current HTTP listener and restarts with TLS.
+// Called after setup wizard completes.
+func (s *Server) applyTLSAndRestart() {
+	ctx := context.Background()
+
+	// Reload config from DB
+	s.loadDBConfig(ctx)
+	s.JWTSecret = []byte(s.Config.JWTSecret)
+	s.SetupComplete.Store(true)
+	s.Config.SetupComplete = true
+
+	// Load mTLS CA if now enabled
+	if s.Config.MTLSEnabled && s.CA == nil {
+		if err := s.loadOrCreateCA(ctx); err != nil {
+			slog.Error("post-setup: failed to load/create CA", "error", err)
+		}
+	}
+
+	if !s.Config.TLSEnabled {
+		slog.Info("setup complete, TLS not enabled — continuing on HTTP")
+		return
+	}
+
+	slog.Info("setup complete — restarting with TLS")
+
+	// Shut down current server
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	s.httpServer.Shutdown(shutdownCtx)
+
+	// Reconfigure with TLS
+	s.httpServer = &http.Server{
+		Addr:        fmt.Sprintf(":%d", s.Config.Port),
+		Handler:     s.router,
+		ReadTimeout: 15 * time.Second,
+		IdleTimeout: 60 * time.Second,
+	}
+
+	if err := s.configureTLS(); err != nil {
+		slog.Error("post-setup: TLS configuration failed", "error", err)
+		// Fall back to plain HTTP
+		go func() {
+			slog.Info("falling back to HTTP", "port", s.Config.Port)
+			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("server error", "error", err)
+			}
+		}()
+		return
+	}
+
+	go func() {
+		slog.Info("server restarting with TLS", "port", s.Config.Port)
+		var err error
+		if s.Config.TLSDomain != "" {
+			err = s.httpServer.ListenAndServeTLS("", "")
+		} else {
+			err = s.httpServer.ListenAndServeTLS("", "")
+		}
+		if err != nil && err != http.ErrServerClosed {
+			slog.Error("server error after TLS restart", "error", err)
+		}
+	}()
 }
 
 func (s *Server) retentionWorker(ctx context.Context) {
@@ -300,30 +476,53 @@ func (s *Server) configureTLS() error {
 		return nil
 	}
 
-	// Manual certificate
-	if s.Config.TLSCertFile == "" || s.Config.TLSKeyFile == "" {
-		return fmt.Errorf("TLS enabled but no domain or cert/key files configured")
-	}
-	cert, err := tls.LoadX509KeyPair(s.Config.TLSCertFile, s.Config.TLSKeyFile)
-	if err != nil {
-		return fmt.Errorf("load cert: %w", err)
-	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
+	// Manual certificate from files
+	if s.Config.TLSCertFile != "" && s.Config.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(s.Config.TLSCertFile, s.Config.TLSKeyFile)
+		if err != nil {
+			return fmt.Errorf("load cert: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		s.addMTLSConfig(tlsCfg)
+		s.httpServer.TLSConfig = tlsCfg
+		slog.Info("TLS configured with manual certificate", "cert", s.Config.TLSCertFile)
+		return nil
 	}
 
-	// Add mTLS client cert verification if enabled
+	// Self-signed certificate from database
+	if s.Config.TLSMode == "self-signed" {
+		ctx := context.Background()
+		certPEM, keyPEM, err := s.AdminRepo.GetServerTLSCert(ctx)
+		if err != nil || certPEM == "" || keyPEM == "" {
+			return fmt.Errorf("TLS enabled (self-signed) but no certificate found in database")
+		}
+		cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+		if err != nil {
+			return fmt.Errorf("parse DB cert: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		s.addMTLSConfig(tlsCfg)
+		s.httpServer.TLSConfig = tlsCfg
+		slog.Info("TLS configured with self-signed certificate from database")
+		return nil
+	}
+
+	return fmt.Errorf("TLS enabled but no domain, cert files, or self-signed cert configured")
+}
+
+// addMTLSConfig adds mTLS client cert verification to the TLS config if enabled.
+func (s *Server) addMTLSConfig(tlsCfg *tls.Config) {
 	if s.Config.MTLSEnabled && s.CA != nil {
 		clientCAs := x509.NewCertPool()
 		clientCAs.AddCert(s.CA.Cert())
 		tlsCfg.ClientCAs = clientCAs
-		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven // Allow both cert and non-cert connections for enrollment
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
 		slog.Info("mTLS client certificate verification enabled")
 	}
-
-	s.httpServer.TLSConfig = tlsCfg
-	slog.Info("TLS configured with manual certificate", "cert", s.Config.TLSCertFile)
-	return nil
 }
 
 // loadOrCreateCA loads an existing CA from the database or generates a new one.

@@ -2,22 +2,32 @@ import { useState, useEffect, useCallback } from 'react'
 
 interface AuthState {
   authenticated: boolean
+  needsSetup: boolean
   loading: boolean
   login: (password: string) => Promise<boolean>
   logout: () => Promise<void>
+  recheckAuth: () => Promise<void>
 }
 
 export function useAuth(): AuthState {
   const [authenticated, setAuthenticated] = useState(false)
+  const [needsSetup, setNeedsSetup] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    fetch('/api/v1/auth/check', { credentials: 'same-origin' })
-      .then((res) => res.json())
-      .then((data) => setAuthenticated(data.authenticated === true))
-      .catch(() => setAuthenticated(false))
-      .finally(() => setLoading(false))
+  const checkAuth = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/auth/check', { credentials: 'same-origin' })
+      const data = await res.json()
+      setAuthenticated(data.authenticated === true)
+      setNeedsSetup(data.needs_setup === true)
+    } catch {
+      setAuthenticated(false)
+    }
   }, [])
+
+  useEffect(() => {
+    checkAuth().finally(() => setLoading(false))
+  }, [checkAuth])
 
   const login = useCallback(async (password: string): Promise<boolean> => {
     try {
@@ -29,6 +39,7 @@ export function useAuth(): AuthState {
       })
       if (res.ok) {
         setAuthenticated(true)
+        setNeedsSetup(false)
         return true
       }
       return false
@@ -45,5 +56,11 @@ export function useAuth(): AuthState {
     setAuthenticated(false)
   }, [])
 
-  return { authenticated, loading, login, logout }
+  const recheckAuth = useCallback(async () => {
+    setLoading(true)
+    await checkAuth()
+    setLoading(false)
+  }, [checkAuth])
+
+  return { authenticated, needsSetup, loading, login, logout, recheckAuth }
 }

@@ -1,0 +1,4 @@
+-- Setup wizard uses existing admin_config key-value table.
+-- No schema changes needed; new keys (jwt_secret, tls_enabled, tls_mode,
+-- tls_domain, tls_cert_pem, tls_key_pem, mtls_enabled, setup_complete)
+-- are inserted at runtime via SetConfig.

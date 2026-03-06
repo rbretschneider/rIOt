@@ -18,6 +18,9 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS(s.Config.AllowedOrigins))
 
+	// Setup guard: blocks non-setup API routes until setup is complete
+	r.Use(middleware.SetupGuard(&s.SetupComplete))
+
 	// Set up enrollment handler if mTLS is enabled
 	var enrollH *handlers.EnrollHandler
 	if s.Config.MTLSEnabled && s.CA != nil {
@@ -44,12 +47,21 @@ func (s *Server) setupRouter() *chi.Mux {
 		AdminPasswordHash: s.Config.AdminPasswordHash,
 	})
 
+	// Setup wizard handler
+	setupH := handlers.NewSetupHandler(s.AdminRepo, s.CARepo, s.applyTLSAndRestart)
+
 	// Rate limiters
 	loginLimiter := middleware.NewRateLimiter(5, 5)     // 5/min
 	registerLimiter := middleware.NewRateLimiter(10, 10) // 10/min
 
 	// === PUBLIC routes (no auth) ===
 	r.Get("/health", h.Health(s.DB))
+
+	// Setup wizard routes
+	r.Route("/api/v1/setup", func(r chi.Router) {
+		r.Get("/status", setupH.Status)
+		r.With(loginLimiter.Middleware()).Post("/complete", setupH.Complete)
+	})
 
 	r.Route("/api/v1/auth", func(r chi.Router) {
 		r.With(loginLimiter.Middleware()).Post("/login", h.Login)
@@ -91,6 +103,8 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	r.Group(func(r chi.Router) {
 		r.Use(adminAuth)
+
+		r.Post("/api/v1/auth/change-password", h.ChangePassword)
 
 		r.Get("/ws", h.WebSocket)
 		r.Get("/ws/terminal/{deviceId}/{containerId}", h.HandleTerminalWS)

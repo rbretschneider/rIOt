@@ -100,6 +100,12 @@ type ProbeRepository interface {
 type AdminRepository interface {
 	GetPasswordHash(ctx context.Context) (string, error)
 	SetPasswordHash(ctx context.Context, hash string) error
+	GetConfig(ctx context.Context, key string) (string, error)
+	SetConfig(ctx context.Context, key, value string) error
+	GetConfigMap(ctx context.Context, keys []string) (map[string]string, error)
+	IsSetupComplete(ctx context.Context) (bool, error)
+	GetServerTLSCert(ctx context.Context) (certPEM, keyPEM string, err error)
+	StoreServerTLSCert(ctx context.Context, certPEM, keyPEM string) error
 }
 
 // TerminalRepository defines the interface for terminal session audit logging.

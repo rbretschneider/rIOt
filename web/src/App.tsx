@@ -8,6 +8,7 @@ import DeviceDetail from './pages/DeviceDetail'
 import DeviceContainers from './pages/DeviceContainers'
 import Alerts from './pages/Alerts'
 import Login from './pages/Login'
+import Setup from './pages/Setup'
 import DeviceTerminal from './pages/DeviceTerminal'
 import SettingsLayout from './pages/SettingsLayout'
 import AlertRuleSettings from './pages/settings/AlertRuleSettings'
@@ -69,7 +70,7 @@ function ScrollToTop() {
 }
 
 export default function App() {
-  const { authenticated, loading, login, logout } = useAuth()
+  const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
 
   if (loading) {
     return (
@@ -77,6 +78,10 @@ export default function App() {
         <div className="text-gray-400">Loading...</div>
       </div>
     )
+  }
+
+  if (needsSetup) {
+    return <Setup onComplete={recheckAuth} />
   }
 
   if (!authenticated) {

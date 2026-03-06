@@ -69,9 +69,23 @@ func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 
 // AuthCheck handles GET /api/v1/auth/check.
 func (h *Handlers) AuthCheck(w http.ResponseWriter, r *http.Request) {
+	// Check if setup is needed
+	needsSetup := false
+	complete, _ := h.adminRepo.IsSetupComplete(r.Context())
+	if !complete {
+		// Also check if password exists (legacy setups without setup_complete flag)
+		hash, err := h.adminRepo.GetPasswordHash(r.Context())
+		if err != nil || hash == "" {
+			needsSetup = true
+		}
+	}
+
 	cookie, err := r.Cookie("riot_session")
 	if err != nil || cookie.Value == "" {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"authenticated": false,
+			"needs_setup":   needsSetup,
+		})
 		return
 	}
 
@@ -82,9 +96,56 @@ func (h *Handlers) AuthCheck(w http.ResponseWriter, r *http.Request) {
 		return h.jwtSecret, nil
 	})
 	if err != nil || !token.Valid {
-		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": false})
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"authenticated": false,
+			"needs_setup":   needsSetup,
+		})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"authenticated": true,
+		"needs_setup":   false,
+	})
+}
+
+// ChangePassword handles POST /api/v1/auth/change-password.
+func (h *Handlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.NewPassword == "" {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.NewPassword) < 8 {
+		http.Error(w, `{"error":"password must be at least 8 characters"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Verify current password
+	hash, err := h.adminRepo.GetPasswordHash(r.Context())
+	if err != nil || hash == "" {
+		http.Error(w, `{"error":"no password configured"}`, http.StatusBadRequest)
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
+		http.Error(w, `{"error":"current password is incorrect"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Hash and store new password
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := h.adminRepo.SetPasswordHash(r.Context(), string(newHash)); err != nil {
+		http.Error(w, `{"error":"failed to update password"}`, http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

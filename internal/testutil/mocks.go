@@ -796,11 +796,12 @@ func (m *MockProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int64, err
 
 type MockAdminRepo struct {
 	PasswordHash string
+	Config       map[string]string
 	Err          error
 }
 
 func NewMockAdminRepo(hash string) *MockAdminRepo {
-	return &MockAdminRepo{PasswordHash: hash}
+	return &MockAdminRepo{PasswordHash: hash, Config: make(map[string]string)}
 }
 
 func (m *MockAdminRepo) GetPasswordHash(_ context.Context) (string, error) {
@@ -818,6 +819,61 @@ func (m *MockAdminRepo) SetPasswordHash(_ context.Context, hash string) error {
 		return m.Err
 	}
 	m.PasswordHash = hash
+	return nil
+}
+
+func (m *MockAdminRepo) GetConfig(_ context.Context, key string) (string, error) {
+	if m.Err != nil {
+		return "", m.Err
+	}
+	v, ok := m.Config[key]
+	if !ok {
+		return "", fmt.Errorf("not found")
+	}
+	return v, nil
+}
+
+func (m *MockAdminRepo) SetConfig(_ context.Context, key, value string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.Config[key] = value
+	return nil
+}
+
+func (m *MockAdminRepo) GetConfigMap(_ context.Context, keys []string) (map[string]string, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	result := make(map[string]string)
+	for _, k := range keys {
+		if v, ok := m.Config[k]; ok {
+			result[k] = v
+		}
+	}
+	return result, nil
+}
+
+func (m *MockAdminRepo) IsSetupComplete(_ context.Context) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	return m.Config["setup_complete"] == "true", nil
+}
+
+func (m *MockAdminRepo) GetServerTLSCert(_ context.Context) (string, string, error) {
+	if m.Err != nil {
+		return "", "", m.Err
+	}
+	return m.Config["tls_cert_pem"], m.Config["tls_key_pem"], nil
+}
+
+func (m *MockAdminRepo) StoreServerTLSCert(_ context.Context, certPEM, keyPEM string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.Config["tls_cert_pem"] = certPEM
+	m.Config["tls_key_pem"] = keyPEM
 	return nil
 }
 

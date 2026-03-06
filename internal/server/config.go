@@ -21,11 +21,13 @@ type Config struct {
 	JWTSecret         string
 	AllowedOrigins    []string
 	TLSEnabled        bool
+	TLSMode           string // "self-signed", "letsencrypt", "manual", or ""
 	TLSDomain         string // Let's Encrypt autocert domain
 	TLSCertDir        string // autocert cache directory
 	TLSCertFile       string // manual TLS cert file
 	TLSKeyFile        string // manual TLS key file
 	MTLSEnabled       bool   // enable mTLS device authentication
+	SetupComplete     bool   // whether initial setup wizard has been completed
 }
 
 func LoadConfig() *Config {
