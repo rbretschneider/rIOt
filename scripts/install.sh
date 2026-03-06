@@ -159,7 +159,7 @@ fi
 echo "==> Creating directories"
 mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
 if [ "$OS" = "linux" ]; then
-    chown "$RIOT_USER:$RIOT_USER" "$RIOT_DATA_DIR"
+    chown "$RIOT_USER:$RIOT_USER" "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
 fi
 
 # ── Stop existing agent if running ────────────────────────────────────
