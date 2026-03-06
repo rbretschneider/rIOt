@@ -149,10 +149,18 @@ export default function AlertRuleSettings() {
       {/* Edit / Create Modal */}
       {editing && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">
-              {isNew ? 'Create Alert Rule' : 'Edit Alert Rule'}
-            </h3>
+          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 pb-4">
+              <h3 className="text-lg font-semibold text-white">
+                {isNew ? 'Create Alert Rule' : 'Edit Alert Rule'}
+              </h3>
+              <button onClick={() => setEditing(null)} className="text-gray-500 hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto px-6">
             <div className="space-y-4">
               <Field label="Name">
                 <input
@@ -161,7 +169,7 @@ export default function AlertRuleSettings() {
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                 />
               </Field>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Field label="Metric">
                   <select
                     value={editing.metric}
@@ -258,7 +266,8 @@ export default function AlertRuleSettings() {
                 Send notifications when triggered
               </label>
             </div>
-            <div className="flex justify-end gap-3 mt-6">
+            </div>
+            <div className="flex justify-end gap-3 p-6">
               <button
                 onClick={() => setEditing(null)}
                 className="px-4 py-2 text-sm text-gray-400 hover:text-white"
@@ -410,27 +419,33 @@ function TemplatePicker({ onSelect, onClose }: { onSelect: (t: AlertTemplate) =>
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-white mb-4">Create from Template</h3>
-        {categories.map(cat => (
-          <div key={cat} className="mb-4">
-            <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>
-            <div className="space-y-2">
-              {templates.filter(t => t.category === cat).map(tpl => (
-                <button
-                  key={tpl.id}
-                  onClick={() => onSelect(tpl)}
-                  className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <div className="text-sm text-white font-medium">{tpl.name}</div>
-                  <div className="text-xs text-gray-400 mt-1">{tpl.description}</div>
-                </button>
-              ))}
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-6 pb-4">
+          <h3 className="text-lg font-semibold text-white">Create from Template</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+        <div className="overflow-y-auto px-6 pb-6">
+          {categories.map(cat => (
+            <div key={cat} className="mb-4">
+              <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>
+              <div className="space-y-2">
+                {templates.filter(t => t.category === cat).map(tpl => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => onSelect(tpl)}
+                    className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+                  >
+                    <div className="text-sm text-white font-medium">{tpl.name}</div>
+                    <div className="text-xs text-gray-400 mt-1">{tpl.description}</div>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
-        <div className="flex justify-end mt-4">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+          ))}
         </div>
       </div>
     </div>

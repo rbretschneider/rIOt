@@ -10,7 +10,7 @@ interface Props {
 export default function ConfirmModal({ title, message, confirmLabel = 'Confirm', confirmVariant = 'danger', onConfirm, onCancel }: Props) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onCancel}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-sm mx-4 p-6" onClick={e => e.stopPropagation()}>
         <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
         <p className="text-sm text-gray-400 mb-6">{message}</p>
         <div className="flex justify-end gap-3">

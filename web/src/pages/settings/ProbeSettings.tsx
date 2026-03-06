@@ -158,10 +158,18 @@ export default function ProbeSettings() {
       {/* Edit / Create Modal */}
       {editing && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">
-              {isNew ? 'Create Probe' : 'Edit Probe'}
-            </h3>
+          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 pb-4">
+              <h3 className="text-lg font-semibold text-white">
+                {isNew ? 'Create Probe' : 'Edit Probe'}
+              </h3>
+              <button onClick={() => setEditing(null)} className="text-gray-500 hover:text-white transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto px-6">
             <div className="space-y-4">
               <Field label="Name">
                 <input
@@ -171,7 +179,7 @@ export default function ProbeSettings() {
                   placeholder="e.g. Homepage Check"
                 />
               </Field>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Field label="Type">
                   <select
                     value={editing.type}
@@ -303,7 +311,8 @@ export default function ProbeSettings() {
                 Enabled
               </label>
             </div>
-            <div className="flex justify-end gap-3 mt-6">
+            </div>
+            <div className="flex justify-end gap-3 p-6">
               <button
                 onClick={() => setEditing(null)}
                 className="px-4 py-2 text-sm text-gray-400 hover:text-white"

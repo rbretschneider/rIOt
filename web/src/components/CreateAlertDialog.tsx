@@ -65,8 +65,16 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-white mb-4">Create Alert Rule</h3>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-md mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-6 pb-0">
+          <h3 className="text-lg font-semibold text-white">Create Alert Rule</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+        <div className="overflow-y-auto p-6 pt-4">
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Name</label>
@@ -163,7 +171,8 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
             Send notifications
           </label>
         </div>
-        <div className="flex justify-end gap-3 mt-6">
+        </div>
+        <div className="flex justify-end gap-3 p-6 pt-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
           <button
             onClick={() => mutation.mutate(rule)}
@@ -174,7 +183,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
           </button>
         </div>
         {mutation.isError && (
-          <p className="text-xs text-red-400 mt-2">{(mutation.error as Error).message}</p>
+          <p className="text-xs text-red-400 px-6 pb-4">{(mutation.error as Error).message}</p>
         )}
       </div>
     </div>
