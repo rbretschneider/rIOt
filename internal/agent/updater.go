@@ -142,11 +142,18 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	// On Linux, we can rename over the running binary
+	// Replace the running binary.
+	// os.Rename is ideal but fails across filesystems (e.g. PrivateTmp).
+	// Direct copy-over fails with ETXTBSY on Linux because the binary is running.
+	// Solution: remove the old file first (Linux allows unlinking a running binary —
+	// the inode stays alive until the process exits), then rename/copy the new one in.
 	if err := os.Rename(tmpPath, currentBinary); err != nil {
-		// Rename across filesystems doesn't work, fall back to copy
-		if err := copyFile(tmpPath, currentBinary); err != nil {
-			return fmt.Errorf("replace binary: %w", err)
+		os.Remove(currentBinary) // unlink running binary (OK on Linux)
+		if err := os.Rename(tmpPath, currentBinary); err != nil {
+			// Still cross-device — copy into the now-free path
+			if err := copyFile(tmpPath, currentBinary); err != nil {
+				return fmt.Errorf("replace binary: %w", err)
+			}
 		}
 	}
 
