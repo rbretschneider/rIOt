@@ -117,6 +117,34 @@ func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action 
 	})
 }
 
+// CommandCompleted creates an event when a disruptive command finishes (success or failure).
+func (g *Generator) CommandCompleted(ctx context.Context, deviceID, hostname, action, status, message string) {
+	label, ok := disruptiveActions[action]
+	if !ok {
+		return
+	}
+
+	severity := models.SeverityInfo
+	msg := fmt.Sprintf("%s completed on %s", strings.Title(label), hostname)
+	if status == "error" {
+		severity = models.SeverityWarning
+		// Include a brief reason — truncate long output
+		reason := message
+		if len(reason) > 200 {
+			reason = reason[:200] + "..."
+		}
+		msg = fmt.Sprintf("%s failed on %s: %s", strings.Title(label), hostname, reason)
+	}
+
+	g.createEvent(ctx, &models.Event{
+		DeviceID:  deviceID,
+		Type:      models.EventCommandCompleted,
+		Severity:  severity,
+		Message:   msg,
+		CreatedAt: time.Now().UTC(),
+	})
+}
+
 func (g *Generator) DeviceOnline(ctx context.Context, deviceID, hostname string) {
 	key := deviceID + ":" + string(models.EventDeviceOnline)
 	if g.onCooldown(key, 5*time.Minute) {
@@ -278,8 +306,16 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfa
 			if !strings.EqualFold(iface.Name, r.TargetName) {
 				continue
 			}
-			if iface.State == "UP" {
-				continue // NIC is up, no alert needed
+			// If target_state is set and not "any", only match that specific state
+			if r.TargetState != "" && !strings.EqualFold(r.TargetState, "any") {
+				if !strings.EqualFold(iface.State, r.TargetState) {
+					continue
+				}
+			} else {
+				// "any" or empty = any non-UP state (existing behavior)
+				if iface.State == "UP" {
+					continue
+				}
 			}
 
 			key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, iface.Name)

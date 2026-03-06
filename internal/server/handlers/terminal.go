@@ -173,6 +173,17 @@ func (h *Handlers) handleCommandResult(ctx context.Context, msg agentWSMessage) 
 	// Broadcast to dashboard clients
 	h.hub.BroadcastCommandResult(result.CommandID, &result)
 	slog.Info("command result", "id", result.CommandID, "status", result.Status)
+
+	// Fire completion event for disruptive commands
+	if h.commandRepo != nil && h.eventGen != nil {
+		if cmd, err := h.commandRepo.GetByID(ctx, result.CommandID); err == nil && cmd != nil {
+			hostname := cmd.DeviceID[:8] // fallback
+			if device, err := h.devices.GetByID(ctx, cmd.DeviceID); err == nil {
+				hostname = device.Hostname
+			}
+			h.eventGen.CommandCompleted(ctx, cmd.DeviceID, hostname, cmd.Action, result.Status, result.Message)
+		}
+	}
 }
 
 // HandleTerminalWS bridges browser ↔ server ↔ agent for terminal sessions.

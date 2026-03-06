@@ -96,6 +96,13 @@ type ProbeRepository interface {
 	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// LogRepository defines the interface for server log database operations.
+type LogRepository interface {
+	Insert(ctx context.Context, entries []models.ServerLog) error
+	List(ctx context.Context, level string, limit int, before *time.Time) ([]models.ServerLog, error)
+	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
 // AdminRepository defines the interface for admin configuration operations.
 type AdminRepository interface {
 	GetPasswordHash(ctx context.Context) (string, error)
@@ -140,6 +147,7 @@ var (
 	_ NotifyRepository    = (*NotifyRepo)(nil)
 	_ CommandRepository   = (*CommandRepo)(nil)
 	_ ProbeRepository     = (*ProbeRepo)(nil)
+	_ LogRepository       = (*LogRepo)(nil)
 	_ AdminRepository     = (*AdminRepo)(nil)
 	_ TerminalRepository  = (*TerminalRepo)(nil)
 	_ CARepository        = (*CARepo)(nil)

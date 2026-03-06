@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 func (a *Agent) updateCheckLoop(ctx context.Context) {
@@ -44,6 +46,11 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 		return // Don't auto-update dev builds
 	}
 
+	if a.config.Agent.AutoUpdate != nil && !*a.config.Agent.AutoUpdate {
+		slog.Debug("auto-update disabled by config")
+		return
+	}
+
 	goarm := ""
 	if runtime.GOARCH == "arm" {
 		goarm = goarmVersion()
@@ -61,6 +68,8 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 	}
 
 	slog.Info("update available", "current", a.version, "latest", resp.LatestVersion)
+	a.reportUpdateEvent(ctx, models.EventAgentUpdateAvail, models.SeverityInfo,
+		fmt.Sprintf("Agent update available: %s → %s", a.version, resp.LatestVersion))
 
 	// Find the download URL for our platform
 	suffix := platformSuffix(goarm)
@@ -70,11 +79,18 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 		return
 	}
 
+	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
+		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
+
 	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, suffix); err != nil {
 		slog.Error("update failed", "error", err)
+		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
+			fmt.Sprintf("Agent update failed: %v", err))
 		return
 	}
 
+	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
+		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
 	slog.Info("update applied successfully, restarting")
 	a.restartSelf()
 }
@@ -202,5 +218,21 @@ func platformSuffix(goarm string) string {
 func goarmVersion() string {
 	// Default to v7 on ARM — the build matrix uses v6 and v7
 	return "7"
+}
+
+// reportUpdateEvent sends an agent update event to the server (best-effort).
+func (a *Agent) reportUpdateEvent(ctx context.Context, evtType models.EventType, severity models.EventSeverity, message string) {
+	deviceID := a.config.Agent.DeviceID
+	if deviceID == "" || a.client == nil {
+		return
+	}
+	evt := &models.AgentEvent{
+		Type:     evtType,
+		Severity: severity,
+		Message:  message,
+	}
+	if err := a.client.ReportEvent(ctx, deviceID, evt); err != nil {
+		slog.Debug("failed to report update event", "type", evtType, "error", err)
+	}
 }
 

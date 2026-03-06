@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/ca"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/logstore"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
@@ -43,6 +45,8 @@ type Server struct {
 	CommandRepo    *db.CommandRepo
 	ProbeRepo      *db.ProbeRepo
 	CARepo         *db.CARepo
+	LogRepo        *db.LogRepo
+	LogHandler     *logstore.DBHandler
 	CA             *ca.CA
 	ProbeRunner    *probes.Runner
 	Hub            *websocket.Hub
@@ -93,6 +97,24 @@ func (s *Server) Start() error {
 	s.CommandRepo = db.NewCommandRepo(s.DB)
 	s.ProbeRepo = db.NewProbeRepo(s.DB)
 	s.CARepo = db.NewCARepo(s.DB)
+	s.LogRepo = db.NewLogRepo(s.DB)
+
+	// Set up database log handler (stores WARN+ logs to DB alongside stdout)
+	logStoreLevel := slog.LevelWarn
+	if lvl := os.Getenv("RIOT_LOG_STORE_LEVEL"); lvl != "" {
+		switch strings.ToUpper(lvl) {
+		case "INFO":
+			logStoreLevel = slog.LevelInfo
+		case "WARN", "WARNING":
+			logStoreLevel = slog.LevelWarn
+		case "ERROR":
+			logStoreLevel = slog.LevelError
+		}
+	}
+	s.LogHandler = logstore.NewDBHandler(s.LogRepo, logStoreLevel)
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	multiHandler := logstore.NewMultiHandler(jsonHandler, s.LogHandler)
+	slog.SetDefault(slog.New(multiHandler))
 
 	// Load config from DB, with env vars taking precedence
 	s.loadDBConfig(ctx)
@@ -434,6 +456,13 @@ func (s *Server) runRetention(ctx context.Context) {
 		slog.Error("purge notification log failed", "error", err)
 	} else if nlDeleted > 0 {
 		slog.Info("purged old notification log entries", "count", nlDeleted)
+	}
+
+	logDeleted, err := s.LogRepo.Purge(ctx, now.AddDate(0, 0, -7))
+	if err != nil {
+		slog.Error("purge server logs failed", "error", err)
+	} else if logDeleted > 0 {
+		slog.Info("purged old server logs", "count", logDeleted)
 	}
 }
 

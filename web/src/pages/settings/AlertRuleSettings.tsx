@@ -18,7 +18,7 @@ const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
 
 const TARGET_STATES: Record<string, string[]> = {
   service_state: ['stopped', 'failed', 'inactive', 'dead'],
-  nic_state: ['DOWN'],
+  nic_state: ['any', 'DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
   process_missing: ['absent'],
 }
 

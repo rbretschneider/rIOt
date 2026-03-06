@@ -19,8 +19,20 @@ const (
 	EventServiceFailed   EventType = "service_failed"
 	EventProcessMissing  EventType = "process_missing"
 	EventNICDown         EventType = "nic_down"
-	EventCommandSent     EventType = "command_sent"
+	EventCommandSent          EventType = "command_sent"
+	EventCommandCompleted     EventType = "command_completed"
+	EventAgentUpdateAvail     EventType = "agent_update_available"
+	EventAgentUpdateStarted   EventType = "agent_update_started"
+	EventAgentUpdateCompleted EventType = "agent_update_completed"
+	EventAgentUpdateFailed    EventType = "agent_update_failed"
 )
+
+// AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
+type AgentEvent struct {
+	Type     EventType     `json:"type"`
+	Severity EventSeverity `json:"severity"`
+	Message  string        `json:"message"`
+}
 
 // DockerEvent is the payload agents push for Docker container state changes.
 type DockerEvent struct {
@@ -44,6 +56,16 @@ type Event struct {
 	Message        string        `json:"message"`
 	CreatedAt      time.Time     `json:"created_at"`
 	AcknowledgedAt *time.Time    `json:"acknowledged_at,omitempty"`
+}
+
+// ServerLog is a server log entry stored in the database.
+type ServerLog struct {
+	ID        int64             `json:"id"`
+	Timestamp time.Time         `json:"timestamp"`
+	Level     string            `json:"level"`
+	Message   string            `json:"message"`
+	Attrs     map[string]any    `json:"attrs,omitempty"`
+	Source    string             `json:"source,omitempty"`
 }
 
 // FleetSummary contains aggregated fleet statistics.

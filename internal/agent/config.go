@@ -62,6 +62,7 @@ type AgentConfig struct {
 	Tags              []string `yaml:"tags"`
 	PollInterval      int      `yaml:"poll_interval"`
 	HeartbeatInterval int      `yaml:"heartbeat_interval"`
+	AutoUpdate        *bool    `yaml:"auto_update,omitempty"` // nil = true (default enabled)
 }
 
 type CollectorConfig struct {

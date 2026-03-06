@@ -40,11 +40,11 @@ func AlertTemplates() []models.AlertTemplate {
 			Metric:          "nic_state",
 			Operator:        "==",
 			Threshold:       1,
-			TargetState:     "DOWN",
+			TargetState:     "any",
 			Severity:        "critical",
 			CooldownSeconds: 300,
 			NeedsTargetName: true,
-			Description:     "Fires when a network interface state is DOWN",
+			Description:     "Fires when a network interface is in any non-UP state",
 		},
 		// Process
 		{

@@ -42,6 +42,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		CommandRepo:       s.CommandRepo,
 		ProbeRepo:         s.ProbeRepo,
 		ProbeRunner:       s.ProbeRunner,
+		LogRepo:           s.LogRepo,
 		JWTSecret:         s.JWTSecret,
 		AdminPasswordHash: s.Config.AdminPasswordHash,
 	})
@@ -87,6 +88,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/heartbeat", h.Heartbeat)
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/telemetry", h.Telemetry)
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/docker-events", h.ReceiveDockerEvent)
+		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/events", h.ReceiveAgentEvent)
 
 		// Admin-authenticated endpoints
 		adminAuth := middleware.AdminAuth(s.JWTSecret)
@@ -135,6 +137,9 @@ func (s *Server) setupRouter() *chi.Mux {
 
 		// Settings: notification log
 		r.Get("/api/v1/settings/notifications/log", h.ListNotificationLog)
+
+		// Settings: server logs
+		r.Get("/api/v1/settings/logs", h.GetServerLogs)
 
 		// Settings: device registration
 		r.Get("/api/v1/settings/registration", h.GetRegistrationKey)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
@@ -197,6 +198,39 @@ func (h *Handlers) ListNotificationLog(w http.ResponseWriter, r *http.Request) {
 	}
 	if logs == nil {
 		logs = []models.NotificationLog{}
+	}
+	writeJSON(w, http.StatusOK, logs)
+}
+
+// --- Server Logs ---
+
+// GetServerLogs handles GET /api/v1/settings/logs.
+func (h *Handlers) GetServerLogs(w http.ResponseWriter, r *http.Request) {
+	if h.logRepo == nil {
+		writeJSON(w, http.StatusOK, []models.ServerLog{})
+		return
+	}
+
+	level := r.URL.Query().Get("level")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit == 0 {
+		limit = 100
+	}
+
+	var before *time.Time
+	if b := r.URL.Query().Get("before"); b != "" {
+		if t, err := time.Parse(time.RFC3339Nano, b); err == nil {
+			before = &t
+		}
+	}
+
+	logs, err := h.logRepo.List(r.Context(), level, limit, before)
+	if err != nil {
+		http.Error(w, `{"error":"failed to list server logs"}`, http.StatusInternalServerError)
+		return
+	}
+	if logs == nil {
+		logs = []models.ServerLog{}
 	}
 	writeJSON(w, http.StatusOK, logs)
 }

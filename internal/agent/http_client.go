@@ -228,6 +228,30 @@ func (c *HTTPClient) SendDockerEvent(ctx context.Context, deviceID string, evt *
 	return nil
 }
 
+// ReportEvent sends an agent-generated event to the server.
+func (c *HTTPClient) ReportEvent(ctx context.Context, deviceID string, evt *models.AgentEvent) error {
+	body, _ := json.Marshal(evt)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("%s/api/v1/devices/%s/events", c.baseURL, deviceID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-rIOt-Key", c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("event report failed: %s", string(b))
+	}
+	return nil
+}
+
 func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *models.TelemetrySnapshot) error {
 	body, _ := json.Marshal(snap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

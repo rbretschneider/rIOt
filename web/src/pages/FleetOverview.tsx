@@ -126,7 +126,7 @@ export default function FleetOverview() {
           <StatCard label="Online" value={summary.online_count} color="text-emerald-400" />
           <StatCard label="Offline" value={summary.offline_count} color="text-red-400" />
           <StatCard label="Warnings" value={summary.warning_count} color="text-amber-400" />
-          <StatCard label="Need Updates" value={patchMap.size} color={patchMap.size > 0 ? 'text-cyan-400' : 'text-white'} />
+          <StatCard label="OS Updates" value={patchMap.size} color={patchMap.size > 0 ? 'text-cyan-400' : 'text-white'} />
         </div>
       )}
 
@@ -142,7 +142,7 @@ export default function FleetOverview() {
           onClick={() => setShowPatchConfirm(true)}
           className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
         >
-          Patch All
+          Update All Packages
         </button>
         <button
           onClick={() => setShowGuide(true)}
@@ -250,9 +250,9 @@ export default function FleetOverview() {
 
       {showPatchConfirm && (
         <ConfirmModal
-          title="Patch All Devices"
+          title="Update All Packages"
           message="Run OS package updates on all online devices? Each device must have commands.allow_patching enabled in its agent config to apply updates."
-          confirmLabel="Patch All"
+          confirmLabel="Update All"
           confirmVariant="primary"
           onConfirm={handlePatchAll}
           onCancel={() => setShowPatchConfirm(false)}

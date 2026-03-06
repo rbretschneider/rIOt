@@ -41,6 +41,7 @@ type HandlerDeps struct {
 	CommandRepo       db.CommandRepository
 	ProbeRepo         db.ProbeRepository
 	ProbeRunner       *probes.Runner
+	LogRepo           db.LogRepository
 	JWTSecret         []byte
 	AdminPasswordHash string
 }
@@ -60,6 +61,7 @@ type Handlers struct {
 	commandRepo        db.CommandRepository
 	probeRepo          db.ProbeRepository
 	probeRunner        *probes.Runner
+	logRepo            db.LogRepository
 	jwtSecret          []byte
 	adminPasswordHash  string
 }
@@ -80,6 +82,7 @@ func New(deps HandlerDeps) *Handlers {
 		commandRepo:       deps.CommandRepo,
 		probeRepo:         deps.ProbeRepo,
 		probeRunner:       deps.ProbeRunner,
+		logRepo:           deps.LogRepo,
 		jwtSecret:         deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
 	}
@@ -428,6 +431,42 @@ func (h *Handlers) GetContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, `{"error":"container not found"}`, http.StatusNotFound)
+}
+
+// ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update status).
+func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	var agentEvt models.AgentEvent
+	if err := json.NewDecoder(r.Body).Decode(&agentEvt); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate event type
+	switch agentEvt.Type {
+	case models.EventAgentUpdateAvail, models.EventAgentUpdateStarted,
+		models.EventAgentUpdateCompleted, models.EventAgentUpdateFailed:
+		// allowed
+	default:
+		http.Error(w, `{"error":"unsupported event type"}`, http.StatusBadRequest)
+		return
+	}
+
+	e := &models.Event{
+		DeviceID:  deviceID,
+		Type:      agentEvt.Type,
+		Severity:  agentEvt.Severity,
+		Message:   agentEvt.Message,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := h.events.Create(r.Context(), e); err != nil {
+		slog.Error("create agent event", "error", err)
+		http.Error(w, `{"error":"failed to create event"}`, http.StatusInternalServerError)
+		return
+	}
+	h.hub.BroadcastEvent(e)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ReceiveDockerEvent handles Docker events pushed from agents.
