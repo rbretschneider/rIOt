@@ -23,6 +23,8 @@ export default function FleetOverview() {
   const queryClient = useQueryClient()
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string; status: string } | null>(null)
   const [showGuide, setShowGuide] = useState(false)
+  const [showPatchConfirm, setShowPatchConfirm] = useState(false)
+  const [patchResult, setPatchResult] = useState<{ sent: number; queued: number; skipped: number; total: number } | null>(null)
 
   async function handleDelete() {
     if (!deleteTarget) return
@@ -32,6 +34,14 @@ export default function FleetOverview() {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
     } catch { /* ignore */ }
     setDeleteTarget(null)
+  }
+
+  async function handlePatchAll() {
+    try {
+      const result = await api.bulkPatchDevices('full')
+      setPatchResult(result)
+    } catch { /* ignore */ }
+    setShowPatchConfirm(false)
   }
 
   // Derive summary from live device data — no separate polling needed
@@ -117,6 +127,12 @@ export default function FleetOverview() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
+        <button
+          onClick={() => setShowPatchConfirm(true)}
+          className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
+        >
+          Patch All
+        </button>
         <button
           onClick={() => setShowGuide(true)}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
@@ -205,6 +221,24 @@ export default function FleetOverview() {
       )}
 
       {showGuide && <SetupGuide onClose={() => setShowGuide(false)} />}
+
+      {patchResult && (
+        <div className="px-4 py-2 bg-cyan-900/30 border border-cyan-800 rounded text-sm text-cyan-400 flex items-center justify-between">
+          <span>Patch commands dispatched: {patchResult.sent} sent, {patchResult.queued} queued, {patchResult.skipped} skipped ({patchResult.total} total)</span>
+          <button onClick={() => setPatchResult(null)} className="text-cyan-600 hover:text-cyan-400 ml-4">&times;</button>
+        </div>
+      )}
+
+      {showPatchConfirm && (
+        <ConfirmModal
+          title="Patch All Devices"
+          message="Run OS package updates on all online devices? Each device must have commands.allow_patching enabled in its agent config to apply updates."
+          confirmLabel="Patch All"
+          confirmVariant="primary"
+          onConfirm={handlePatchAll}
+          onCancel={() => setShowPatchConfirm(false)}
+        />
+      )}
 
       {deleteTarget && (
         <ConfirmModal

@@ -98,3 +98,81 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 		"total":   len(devices),
 	})
 }
+
+// BulkPatchDevices handles POST /api/v1/fleet/bulk-patch.
+// Sends os_update command to all online devices.
+func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Mode == "" {
+		req.Mode = "full"
+	}
+
+	devices, err := h.devices.List(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to list devices"}`, http.StatusInternalServerError)
+		return
+	}
+
+	sent := 0
+	queued := 0
+	skipped := 0
+	for _, d := range devices {
+		if d.Status != models.DeviceStatusOnline {
+			skipped++
+			continue
+		}
+
+		cmd := &models.Command{
+			ID:       uuid.New().String(),
+			DeviceID: d.ID,
+			Action:   "os_update",
+			Params:   map[string]interface{}{"mode": req.Mode},
+			Status:   "pending",
+		}
+		if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
+			slog.Error("bulk patch: create command", "device", d.ID, "error", err)
+			skipped++
+			continue
+		}
+
+		agentConnections.RLock()
+		ac := agentConnections.m[d.ID]
+		agentConnections.RUnlock()
+
+		if ac != nil {
+			payload := models.CommandPayload{
+				CommandID: cmd.ID,
+				Action:    "os_update",
+				Params:    cmd.Params,
+			}
+			payloadJSON, _ := json.Marshal(payload)
+			if err := ac.Send(agentWSMessage{
+				Type: "command",
+				Data: payloadJSON,
+			}); err != nil {
+				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat")
+				queued++
+			} else {
+				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
+				sent++
+			}
+		} else {
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "queued for heartbeat delivery")
+			queued++
+		}
+	}
+
+	slog.Info("bulk patch", "mode", req.Mode, "sent", sent, "queued", queued, "skipped", skipped)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"sent":    sent,
+		"queued":  queued,
+		"skipped": skipped,
+		"total":   len(devices),
+	})
+}

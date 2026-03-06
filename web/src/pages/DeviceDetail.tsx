@@ -108,6 +108,15 @@ export default function DeviceDetail() {
                 >
                   Update Agent
                 </button>
+                {tel?.updates && tel.updates.pending_updates > 0 && (
+                  <button
+                    onClick={() => setConfirmAction('os_update')}
+                    disabled={commandMutation.isPending}
+                    className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Patch ({tel.updates.pending_updates})
+                  </button>
+                )}
                 <button
                   onClick={() => setConfirmAction('reboot')}
                   disabled={commandMutation.isPending}
@@ -144,16 +153,23 @@ export default function DeviceDetail() {
       {/* Confirm modal */}
       {confirmAction && (
         <ConfirmModal
-          title={confirmAction === 'reboot' ? 'Reboot Device' : 'Update Agent'}
+          title={
+            confirmAction === 'reboot' ? 'Reboot Device'
+              : confirmAction === 'os_update' ? 'Patch Device'
+              : 'Update Agent'
+          }
           message={
             confirmAction === 'reboot'
               ? `Are you sure you want to reboot "${device.hostname}"? This will temporarily take the device offline.`
+              : confirmAction === 'os_update'
+              ? `Run OS package updates on "${device.hostname}"? This will upgrade all pending packages.`
               : `Trigger an agent update check on "${device.hostname}"?`
           }
-          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : 'Update'}
+          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : confirmAction === 'os_update' ? 'Patch' : 'Update'}
           confirmVariant={confirmAction === 'reboot' ? 'danger' : 'primary'}
           onConfirm={() => {
-            commandMutation.mutate({ action: confirmAction })
+            const params = confirmAction === 'os_update' ? { mode: 'full' } : {}
+            commandMutation.mutate({ action: confirmAction, params })
             setConfirmAction(null)
           }}
           onCancel={() => setConfirmAction(null)}

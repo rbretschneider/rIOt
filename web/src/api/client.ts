@@ -167,6 +167,21 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.json()
   },
+
+  bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number }> => {
+    const res = await fetch(`${BASE}/fleet/bulk-patch`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
 }
 
 export const authApi = {

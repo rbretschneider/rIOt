@@ -17,6 +17,7 @@ var validActions = map[string]bool{
 	"docker_start":   true,
 	"reboot":         true,
 	"agent_update":   true,
+	"os_update":      true,
 }
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.

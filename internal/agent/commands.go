@@ -34,6 +34,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.dockerCommand(ctx, payload, "start")
 	case "reboot":
 		status, message = a.handleReboot(payload)
+	case "os_update":
+		status, message = a.handleOSUpdate(ctx, payload)
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(ctx)
 	case "agent_uninstall":
@@ -98,13 +100,86 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("shutdown", "/r", "/t", "5")
 	} else {
-		cmd = exec.Command("systemctl", "reboot")
+		cmd = exec.Command("sudo", "systemctl", "reboot")
 	}
 
 	if err := cmd.Start(); err != nil {
 		return "error", fmt.Sprintf("reboot: %s", err)
 	}
 	return "success", "reboot initiated"
+}
+
+// handleOSUpdate runs package manager updates if allowed by config.
+func (a *Agent) handleOSUpdate(ctx context.Context, payload models.CommandPayload) (string, string) {
+	if !a.config.Commands.AllowPatching {
+		return "error", "patching not allowed by agent config (set commands.allow_patching: true)"
+	}
+	if runtime.GOOS != "linux" {
+		return "error", "os_update is only supported on Linux"
+	}
+
+	mode, _ := payload.Params["mode"].(string)
+	if mode == "" {
+		mode = "full"
+	}
+
+	// Use a long timeout independent of the WS read loop
+	updateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// Detect package manager
+	aptPath, aptErr := exec.LookPath("apt-get")
+	dnfPath, dnfErr := exec.LookPath("dnf")
+
+	var refreshArgs, upgradeArgs []string
+
+	switch {
+	case aptErr == nil:
+		refreshArgs = []string{"sudo", aptPath, "update"}
+		if mode == "security" {
+			upgradeArgs = []string{"sudo", aptPath, "-y", "upgrade",
+				"-o", "Dpkg::Options::=--force-confold",
+				"-o", "Dpkg::Options::=--force-confdef"}
+		} else {
+			upgradeArgs = []string{"sudo", aptPath, "-y", "dist-upgrade",
+				"-o", "Dpkg::Options::=--force-confold",
+				"-o", "Dpkg::Options::=--force-confdef"}
+		}
+	case dnfErr == nil:
+		refreshArgs = []string{"sudo", dnfPath, "makecache"}
+		if mode == "security" {
+			upgradeArgs = []string{"sudo", dnfPath, "-y", "--security", "update"}
+		} else {
+			upgradeArgs = []string{"sudo", dnfPath, "-y", "update"}
+		}
+	default:
+		return "error", "no supported package manager found (apt-get or dnf)"
+	}
+
+	slog.Info("os_update: refreshing package index", "mode", mode)
+	refreshCmd := exec.CommandContext(updateCtx, refreshArgs[0], refreshArgs[1:]...)
+	refreshOut, err := refreshCmd.CombinedOutput()
+	if err != nil {
+		return "error", fmt.Sprintf("package refresh failed: %s\n%s", err, truncateOutput(refreshOut, 4000))
+	}
+
+	slog.Info("os_update: running upgrade", "mode", mode)
+	upgradeCmd := exec.CommandContext(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
+	upgradeOut, err := upgradeCmd.CombinedOutput()
+	combined := append(refreshOut, upgradeOut...)
+	if err != nil {
+		return "error", fmt.Sprintf("upgrade failed: %s\n%s", err, truncateOutput(combined, 4000))
+	}
+
+	return "success", truncateOutput(combined, 4000)
+}
+
+// truncateOutput returns the last maxLen characters of output.
+func truncateOutput(data []byte, maxLen int) string {
+	if len(data) <= maxLen {
+		return string(data)
+	}
+	return "...(truncated)\n" + string(data[len(data)-maxLen:])
 }
 
 // handleUninstall initiates agent self-removal from the host.
