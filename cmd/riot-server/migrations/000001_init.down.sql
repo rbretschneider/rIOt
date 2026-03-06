@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS bootstrap_keys;
+DROP TABLE IF EXISTS device_certs;
+DROP TABLE IF EXISTS ca_config;
+DROP TABLE IF EXISTS probe_results;
+DROP TABLE IF EXISTS probes;
+DROP TABLE IF EXISTS commands;
+DROP TABLE IF EXISTS notification_log;
+DROP TABLE IF EXISTS notification_channels;
+DROP TABLE IF EXISTS alert_rules;
+DROP TABLE IF EXISTS terminal_sessions;
+DROP TABLE IF EXISTS admin_config;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS telemetry_snapshots;
+DROP TABLE IF EXISTS heartbeats;
+DROP TABLE IF EXISTS api_keys;
+DROP TABLE IF EXISTS devices;

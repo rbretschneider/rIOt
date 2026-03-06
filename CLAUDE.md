@@ -39,7 +39,7 @@ make dev                # Run server in dev mode
 - `internal/models/` — Shared data types
 - `internal/server/` — Server code (handlers, middleware, db, websocket, events)
 - `internal/agent/` — Agent code (collectors, config, lifecycle)
-- `migrations/` — SQL migration files
+- `cmd/riot-server/migrations/` — SQL migration files (embedded via go:embed)
 - `web/` — React frontend (Vite)
 - `scripts/` — Install scripts, systemd units
 

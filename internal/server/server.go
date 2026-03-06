@@ -132,8 +132,7 @@ func (s *Server) Start() error {
 	// Load or create CA for mTLS
 	if s.Config.MTLSEnabled {
 		if err := s.loadOrCreateCA(ctx); err != nil {
-			slog.Error("mTLS CA initialization failed, disabling mTLS", "error", err)
-			s.Config.MTLSEnabled = false
+			return fmt.Errorf("mTLS CA: %w", err)
 		}
 	}
 
