@@ -79,44 +79,48 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 	a.restartSelf()
 }
 
+// stagingPath is where the new binary is downloaded before being installed.
+const stagingPath = "/var/lib/riot/riot-agent.update"
+
 func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suffix string) error {
-	// Download the new binary to a temp file
-	tmpFile, err := os.CreateTemp("", "riot-agent-update-*")
+	// Download the new binary to the staging path (riot-owned directory).
+	// We avoid /tmp because PrivateTmp gives us an isolated namespace,
+	// and os.Rename fails across filesystem boundaries.
+	stagingFile, err := os.OpenFile(stagingPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
 	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
+		return fmt.Errorf("create staging file: %w", err)
 	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath) // Clean up on failure
+	defer os.Remove(stagingPath) // Clean up on failure
 
 	slog.Info("downloading update", "url", downloadURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		tmpFile.Close()
+		stagingFile.Close()
 		return fmt.Errorf("create request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		tmpFile.Close()
+		stagingFile.Close()
 		return fmt.Errorf("download: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		tmpFile.Close()
+		stagingFile.Close()
 		return fmt.Errorf("download failed: status %d", resp.StatusCode)
 	}
 
 	// Write and compute checksum simultaneously
 	hash := sha256.New()
-	writer := io.MultiWriter(tmpFile, hash)
+	writer := io.MultiWriter(stagingFile, hash)
 	if _, err := io.Copy(writer, resp.Body); err != nil {
-		tmpFile.Close()
+		stagingFile.Close()
 		return fmt.Errorf("write binary: %w", err)
 	}
-	tmpFile.Close()
+	stagingFile.Close()
 	actualSum := hex.EncodeToString(hash.Sum(nil))
 
 	// Verify checksum if available
@@ -131,30 +135,20 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 		}
 	}
 
-	// Make executable
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		return fmt.Errorf("chmod: %w", err)
-	}
-
-	// Replace current binary
+	// Replace the running binary atomically using sudo install.
+	// The riot user can't write to /usr/local/bin/ directly, and opening
+	// a running binary for writing gives ETXTBSY. `install` creates a new
+	// inode (temp + rename), so the running process keeps its old inode
+	// until it exits. The sudoers drop-in whitelists this exact command.
 	currentBinary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	// Replace the running binary.
-	// os.Rename is ideal but fails across filesystems (e.g. PrivateTmp).
-	// Direct copy-over fails with ETXTBSY on Linux because the binary is running.
-	// Solution: remove the old file first (Linux allows unlinking a running binary —
-	// the inode stays alive until the process exits), then rename/copy the new one in.
-	if err := os.Rename(tmpPath, currentBinary); err != nil {
-		os.Remove(currentBinary) // unlink running binary (OK on Linux)
-		if err := os.Rename(tmpPath, currentBinary); err != nil {
-			// Still cross-device — copy into the now-free path
-			if err := copyFile(tmpPath, currentBinary); err != nil {
-				return fmt.Errorf("replace binary: %w", err)
-			}
-		}
+	installCmd := exec.CommandContext(ctx, "sudo", "install", "-m", "755",
+		stagingPath, currentBinary)
+	if out, err := installCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("install binary: %s: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	return nil
@@ -210,19 +204,3 @@ func goarmVersion() string {
 	return "7"
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}

@@ -22,10 +22,12 @@ func (c *ServicesCollector) Collect(ctx context.Context) (interface{}, error) {
 		return []models.ServiceInfo{}, nil
 	}
 
-	// List enabled and failed services
+	// List enabled and failed services.
+	// systemctl list-units exits with status 1 when degraded units exist,
+	// but the output is still valid — use it regardless of exit code.
 	out, err := exec.CommandContext(ctx, "systemctl", "list-units", "--type=service",
-		"--no-pager", "--no-legend", "--plain").Output()
-	if err != nil {
+		"--no-pager", "--no-legend", "--plain").CombinedOutput()
+	if err != nil && len(out) == 0 {
 		return []models.ServiceInfo{}, err
 	}
 

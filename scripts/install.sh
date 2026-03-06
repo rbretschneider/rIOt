@@ -255,7 +255,7 @@ PROTECT_SYSTEM="ProtectSystem=strict"
 if [ "$OS" = "linux" ]; then
     SUDOERS_FILE="/etc/sudoers.d/riot-agent"
     echo "==> Installing sudoers rules for fleet management"
-    cat > "$SUDOERS_FILE" <<'SUDOEOF'
+    cat > "$SUDOERS_FILE" <<SUDOEOF
 # rIOt Agent — least-privilege escalation for fleet management
 riot ALL=(root) NOPASSWD: /usr/bin/apt-get update
 riot ALL=(root) NOPASSWD: /usr/bin/apt-get -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef
@@ -264,6 +264,7 @@ riot ALL=(root) NOPASSWD: /usr/bin/dnf makecache
 riot ALL=(root) NOPASSWD: /usr/bin/dnf -y update
 riot ALL=(root) NOPASSWD: /usr/bin/dnf -y --security update
 riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
+riot ALL=(root) NOPASSWD: /usr/bin/install -m 755 ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN}
 SUDOEOF
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
