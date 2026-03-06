@@ -6,6 +6,7 @@ import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
 import ConfirmModal from '../components/ConfirmModal'
+import SetupGuide from '../components/SetupGuide'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
 type SortDir = 'asc' | 'desc'
@@ -20,12 +21,14 @@ export default function FleetOverview() {
 
   const latestVersion = serverUpdate?.latest_version
   const queryClient = useQueryClient()
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string; status: string } | null>(null)
+  const [showGuide, setShowGuide] = useState(false)
 
   async function handleDelete() {
     if (!deleteTarget) return
+    const uninstall = deleteTarget.status === 'online'
     try {
-      await api.deleteDevice(deleteTarget.id)
+      await api.deleteDevice(deleteTarget.id, uninstall)
       queryClient.invalidateQueries({ queryKey: ['devices'] })
     } catch { /* ignore */ }
     setDeleteTarget(null)
@@ -114,6 +117,12 @@ export default function FleetOverview() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
+        <button
+          onClick={() => setShowGuide(true)}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
+        >
+          + Add Device
+        </button>
       </div>
 
       <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
@@ -168,7 +177,7 @@ export default function FleetOverview() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: d.id, hostname: d.hostname }) }}
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: d.id, hostname: d.hostname, status: d.status }) }}
                       className="text-gray-600 hover:text-red-400 transition-colors p-1"
                       title="Delete device"
                     >
@@ -179,10 +188,10 @@ export default function FleetOverview() {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && search && (
                 <tr>
                   <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
-                    {search ? 'No devices match your search' : 'No devices registered yet'}
+                    No devices match your search
                   </td>
                 </tr>
               )}
@@ -191,10 +200,19 @@ export default function FleetOverview() {
         )}
       </div>
 
+      {!search && filtered.length === 0 && !isLoading && (
+        <SetupGuide inline />
+      )}
+
+      {showGuide && <SetupGuide onClose={() => setShowGuide(false)} />}
+
       {deleteTarget && (
         <ConfirmModal
           title="Delete Device"
-          message={`Remove "${deleteTarget.hostname}" from the fleet? This cannot be undone.`}
+          message={deleteTarget.status === 'online'
+            ? `Remove "${deleteTarget.hostname}" from the fleet? The agent will be uninstalled from the device.`
+            : `Remove "${deleteTarget.hostname}" from the fleet? The device is offline — you may need to manually uninstall the agent.`
+          }
           confirmLabel="Delete"
           confirmVariant="danger"
           onConfirm={handleDelete}

@@ -22,8 +22,9 @@ export const api = {
   getDeviceHistory: (id: string, limit = 50, offset = 0) =>
     fetchJSON<TelemetrySnapshot[]>(`${BASE}/devices/${id}/history?limit=${limit}&offset=${offset}`),
 
-  deleteDevice: async (id: string) => {
-    const res = await fetch(`${BASE}/devices/${id}`, { method: 'DELETE', credentials: 'same-origin' })
+  deleteDevice: async (id: string, uninstall?: boolean) => {
+    const params = uninstall ? '?uninstall=true' : ''
+    const res = await fetch(`${BASE}/devices/${id}${params}`, { method: 'DELETE', credentials: 'same-origin' })
     if (res.status === 401) {
       window.location.reload()
       throw new Error('Unauthorized')

@@ -334,6 +334,26 @@ func (h *Handlers) GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	uninstall := r.URL.Query().Get("uninstall") == "true"
+
+	// If uninstall requested, try to send uninstall command to connected agent
+	if uninstall {
+		agentConnections.RLock()
+		ac := agentConnections.m[id]
+		agentConnections.RUnlock()
+		if ac != nil {
+			payload := models.CommandPayload{
+				CommandID: uuid.New().String(),
+				Action:    "agent_uninstall",
+			}
+			payloadJSON, _ := json.Marshal(payload)
+			ac.Send(agentWSMessage{
+				Type: "command",
+				Data: payloadJSON,
+			})
+		}
+	}
+
 	if err := h.devices.Delete(r.Context(), id); err != nil {
 		http.Error(w, `{"error":"failed to delete device"}`, http.StatusInternalServerError)
 		return

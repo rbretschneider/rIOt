@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
@@ -35,6 +36,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.handleReboot(payload)
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(ctx)
+	case "agent_uninstall":
+		status, message = a.handleUninstall()
 	default:
 		status = "error"
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
@@ -102,6 +105,49 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 		return "error", fmt.Sprintf("reboot: %s", err)
 	}
 	return "success", "reboot initiated"
+}
+
+// handleUninstall initiates agent self-removal from the host.
+func (a *Agent) handleUninstall() (string, string) {
+	go func() {
+		time.Sleep(1 * time.Second) // let the result message flush
+		a.performUninstall()
+	}()
+	return "success", "uninstall initiated"
+}
+
+// performUninstall removes the agent binary, config, data, and service, then exits.
+func (a *Agent) performUninstall() {
+	slog.Info("uninstall: beginning self-removal")
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("uninstall: command failed", "cmd", name, "args", args, "error", err, "output", string(out))
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		run("sc", "stop", "riot-agent")
+		run("sc", "delete", "riot-agent")
+		os.RemoveAll(os.Getenv("PROGRAMDATA") + `\riot`)
+		// Remove binary last
+		exe, _ := os.Executable()
+		if exe != "" {
+			os.Remove(exe)
+		}
+	} else {
+		run("systemctl", "stop", "riot-agent")
+		run("systemctl", "disable", "riot-agent")
+		os.Remove("/etc/systemd/system/riot-agent.service")
+		run("systemctl", "daemon-reload")
+		os.Remove("/usr/local/bin/riot-agent")
+		os.RemoveAll("/etc/riot")
+		os.RemoveAll("/var/lib/riot")
+	}
+
+	slog.Info("uninstall: cleanup complete, exiting")
+	os.Exit(0)
 }
 
 // handleTriggerUpdate triggers the agent's self-update mechanism.
