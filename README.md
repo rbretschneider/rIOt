@@ -1,6 +1,13 @@
-# rIOt — Remote Infrastructure Oversight Tool
+<p align="center">
+  <img src="docs/logo.png" alt="rIOt logo" width="200" />
+</p>
 
-Self-hosted infrastructure monitoring for homelab environments. Deploy a lightweight agent on each device and get a single-pane-of-glass view of your entire fleet through a real-time web dashboard.
+<h1 align="center">rIOt — Remote Infrastructure Oversight Tool</h1>
+
+<p align="center">
+  Self-hosted infrastructure monitoring for homelab environments.<br/>
+  Deploy a lightweight agent on each device and get a single-pane-of-glass view of your entire fleet through a real-time web dashboard.
+</p>
 
 ## Features
 
