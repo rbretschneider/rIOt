@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
+import ConfirmModal from '../components/ConfirmModal'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
 type SortDir = 'asc' | 'desc'
@@ -18,6 +19,17 @@ export default function FleetOverview() {
   })
 
   const latestVersion = serverUpdate?.latest_version
+  const queryClient = useQueryClient()
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string } | null>(null)
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    try {
+      await api.deleteDevice(deleteTarget.id)
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+    } catch { /* ignore */ }
+    setDeleteTarget(null)
+  }
 
   // Derive summary from live device data — no separate polling needed
   const summary = useMemo(() => {
@@ -119,6 +131,7 @@ export default function FleetOverview() {
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -153,11 +166,22 @@ export default function FleetOverview() {
                       ))}
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: d.id, hostname: d.hostname }) }}
+                      className="text-gray-600 hover:text-red-400 transition-colors p-1"
+                      title="Delete device"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                     {search ? 'No devices match your search' : 'No devices registered yet'}
                   </td>
                 </tr>
@@ -166,6 +190,17 @@ export default function FleetOverview() {
           </table>
         )}
       </div>
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete Device"
+          message={`Remove "${deleteTarget.hostname}" from the fleet? This cannot be undone.`}
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   )
 }
