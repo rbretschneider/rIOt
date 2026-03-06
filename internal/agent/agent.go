@@ -65,6 +65,18 @@ func (a *Agent) Run() error {
 		}
 	}
 
+	// Auto-detect HTTP→HTTPS upgrade: if server is running TLS but config has http://,
+	// upgrade the URL automatically so TOFU and registration work.
+	if strings.HasPrefix(a.config.Server.URL, "http://") {
+		if a.detectHTTPS() {
+			a.config.Server.URL = "https://" + strings.TrimPrefix(a.config.Server.URL, "http://")
+			slog.Info("server is running HTTPS, upgraded URL", "url", a.config.Server.URL)
+			if err := a.config.Save(a.configPath); err != nil {
+				slog.Warn("failed to save upgraded URL to config", "error", err)
+			}
+		}
+	}
+
 	// TOFU: pin server cert on first HTTPS connection
 	if strings.HasPrefix(a.config.Server.URL, "https://") {
 		if err := a.trustServerCert(); err != nil {
@@ -200,6 +212,33 @@ func (a *Agent) telemetryLoop(ctx context.Context) {
 			a.sendTelemetry(ctx)
 		}
 	}
+}
+
+// detectHTTPS probes the server with a plain HTTP request. If it gets back the
+// "Client sent an HTTP request to an HTTPS server" error, the server is running
+// TLS and we should upgrade our URL.
+func (a *Agent) detectHTTPS() bool {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(a.config.Server.URL + "/health")
+	if err != nil {
+		// Connection error could also indicate HTTPS — check the error string
+		if strings.Contains(err.Error(), "HTTP request to an HTTPS server") ||
+			strings.Contains(err.Error(), "tls:") ||
+			strings.Contains(err.Error(), "first record does not look like a TLS handshake") {
+			return true
+		}
+		return false
+	}
+	defer resp.Body.Close()
+	// 400 with the specific "Client sent an HTTP request to an HTTPS server" body
+	if resp.StatusCode == http.StatusBadRequest {
+		body := make([]byte, 256)
+		n, _ := resp.Body.Read(body)
+		if strings.Contains(string(body[:n]), "HTTPS") {
+			return true
+		}
+	}
+	return false
 }
 
 // trustServerCert implements SSH-like TOFU for the server's TLS certificate.
