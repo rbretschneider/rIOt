@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
@@ -33,7 +33,9 @@ export default function FleetOverview() {
   const queryClient = useQueryClient()
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string; status: string } | null>(null)
   const [showGuide, setShowGuide] = useState(false)
-  const [showPatchConfirm, setShowPatchConfirm] = useState(false)
+  const [showPatchReview, setShowPatchReview] = useState(false)
+  const [patchDetail, setPatchDetail] = useState<DevicePatchInfo[] | null>(null)
+  const [patchDetailLoading, setPatchDetailLoading] = useState(false)
   const [patchResult, setPatchResult] = useState<{ sent: number; queued: number; skipped: number; total: number } | null>(null)
 
   async function handleDelete() {
@@ -46,12 +48,23 @@ export default function FleetOverview() {
     setDeleteTarget(null)
   }
 
+  async function handleOpenPatchReview() {
+    setPatchDetailLoading(true)
+    setShowPatchReview(true)
+    try {
+      const detail = await api.getPatchStatusDetail()
+      setPatchDetail(detail)
+    } catch { setPatchDetail(null) }
+    setPatchDetailLoading(false)
+  }
+
   async function handlePatchAll() {
     try {
       const result = await api.bulkPatchDevices('full')
       setPatchResult(result)
     } catch { /* ignore */ }
-    setShowPatchConfirm(false)
+    setShowPatchReview(false)
+    setPatchDetail(null)
   }
 
   // Derive summary from live device data — no separate polling needed
@@ -139,10 +152,10 @@ export default function FleetOverview() {
           className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
         <button
-          onClick={() => setShowPatchConfirm(true)}
+          onClick={handleOpenPatchReview}
           className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
         >
-          Update All Packages
+          Review Patches
         </button>
         <button
           onClick={() => setShowGuide(true)}
@@ -248,14 +261,12 @@ export default function FleetOverview() {
         </div>
       )}
 
-      {showPatchConfirm && (
-        <ConfirmModal
-          title="Update All Packages"
-          message="Run OS package updates on all online devices? Each device must have commands.allow_patching enabled in its agent config to apply updates."
-          confirmLabel="Update All"
-          confirmVariant="primary"
+      {showPatchReview && (
+        <PatchReviewModal
+          loading={patchDetailLoading}
+          patches={patchDetail}
           onConfirm={handlePatchAll}
-          onCancel={() => setShowPatchConfirm(false)}
+          onClose={() => { setShowPatchReview(false); setPatchDetail(null) }}
         />
       )}
 
@@ -272,6 +283,111 @@ export default function FleetOverview() {
           onCancel={() => setDeleteTarget(null)}
         />
       )}
+    </div>
+  )
+}
+
+function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
+  loading: boolean
+  patches: DevicePatchInfo[] | null
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const toggle = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const totalPkgs = patches?.reduce((n, d) => n + d.pending_updates, 0) ?? 0
+  const totalSecurity = patches?.reduce((n, d) => n + d.security_count, 0) ?? 0
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-gray-800">
+          <h3 className="text-lg font-semibold text-white">Pending OS Patches</h3>
+          {!loading && patches && (
+            <p className="text-sm text-gray-400 mt-1">
+              {totalPkgs} package{totalPkgs !== 1 ? 's' : ''} across {patches.length} device{patches.length !== 1 ? 's' : ''}
+              {totalSecurity > 0 && <span className="text-red-400 ml-2">({totalSecurity} security)</span>}
+            </p>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading ? (
+            <div className="text-center text-gray-500 py-8">Loading patch details...</div>
+          ) : !patches || patches.length === 0 ? (
+            <div className="text-center text-gray-500 py-8">No pending updates on any device.</div>
+          ) : (
+            <div className="space-y-2">
+              {patches.map(d => (
+                <div key={d.device_id} className="border border-gray-800 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => toggle(d.device_id)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-800/50 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-white font-medium">{d.hostname || d.device_id}</span>
+                      {d.package_manager && <span className="text-xs text-gray-500">{d.package_manager}</span>}
+                    </div>
+                    <div className="flex items-center gap-3 text-sm">
+                      {d.security_count > 0 && (
+                        <span className="text-red-400">{d.security_count} security</span>
+                      )}
+                      <span className="text-cyan-400">{d.pending_updates} pkg{d.pending_updates !== 1 ? 's' : ''}</span>
+                      <span className="text-gray-500">{expanded.has(d.device_id) ? '\u25B2' : '\u25BC'}</span>
+                    </div>
+                  </button>
+                  {expanded.has(d.device_id) && d.updates && (
+                    <div className="border-t border-gray-800 max-h-64 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-500 text-xs uppercase">
+                            <th className="text-left px-4 py-2">Package</th>
+                            <th className="text-left px-4 py-2">Current</th>
+                            <th className="text-left px-4 py-2">New</th>
+                            <th className="text-left px-4 py-2">Sec</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-800/50">
+                          {d.updates.map(u => (
+                            <tr key={u.name}>
+                              <td className="px-4 py-1.5 font-mono text-xs text-gray-200">{u.name}</td>
+                              <td className="px-4 py-1.5 font-mono text-xs text-gray-500">{u.current_ver || '-'}</td>
+                              <td className="px-4 py-1.5 font-mono text-xs text-gray-400">{u.new_ver}</td>
+                              <td className="px-4 py-1.5">{u.is_security ? <span className="text-red-400 text-xs">Yes</span> : ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-800 flex items-center justify-between">
+          <p className="text-xs text-gray-500">Devices must have <code className="text-gray-400">commands.allow_patching</code> enabled.</p>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+            <button
+              onClick={onConfirm}
+              disabled={loading || !patches?.length}
+              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-md transition-colors disabled:opacity-50"
+            >
+              Update All Devices
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

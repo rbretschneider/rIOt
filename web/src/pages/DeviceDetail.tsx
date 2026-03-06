@@ -227,7 +227,7 @@ export default function DeviceDetail() {
       {tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
         <NetworkSection
           interfaces={tel.network.interfaces}
-          onCreateAlert={(name) => setAlertDialog({ metric: 'nic_state', targetName: name, targetState: 'DOWN' })}
+          onCreateAlert={(name) => setAlertDialog({ metric: 'nic_state', targetName: name })}
         />
       )}
 
@@ -292,7 +292,7 @@ export default function DeviceDetail() {
                     <td className="py-1.5 text-gray-400">{svc.enabled ? 'Yes' : 'No'}</td>
                     <td className="py-1.5">
                       <button
-                        onClick={() => setAlertDialog({ metric: 'service_state', targetName: svc.name, targetState: 'stopped' })}
+                        onClick={() => setAlertDialog({ metric: 'service_state', targetName: svc.name })}
                         className="text-gray-600 hover:text-amber-400 transition-colors"
                         title="Create alert for this service"
                       >
@@ -332,7 +332,7 @@ export default function DeviceDetail() {
                   <td className="py-1.5 text-gray-400">{p.user}</td>
                   <td className="py-1.5">
                     <button
-                      onClick={() => setAlertDialog({ metric: 'process_missing', targetName: p.name, targetState: 'absent' })}
+                      onClick={() => setAlertDialog({ metric: 'process_missing', targetName: p.name })}
                       className="text-gray-600 hover:text-amber-400 transition-colors"
                       title="Create alert for this process"
                     >

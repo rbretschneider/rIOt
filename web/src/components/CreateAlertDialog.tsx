@@ -13,6 +13,18 @@ interface CreateAlertDialogProps {
 
 const SEVERITIES = ['info', 'warning', 'critical']
 
+const TARGET_STATES: Record<string, string[]> = {
+  service_state: ['stopped', 'failed', 'inactive', 'dead'],
+  nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
+  process_missing: ['absent'],
+}
+
+const TARGET_STATE_DEFAULTS: Record<string, string[]> = {
+  service_state: ['stopped', 'failed'],
+  nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'NO-CARRIER'],
+  process_missing: ['absent'],
+}
+
 export default function CreateAlertDialog({ metric, targetName, targetState, deviceFilter, onClose }: CreateAlertDialogProps) {
   const qc = useQueryClient()
   const isState = ['service_state', 'nic_state', 'process_missing'].includes(metric)
@@ -23,6 +35,11 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     process_missing: 'Process Missing',
   }
 
+  // Use provided targetState or sensible defaults
+  const defaultStates = targetState
+    ? targetState
+    : (TARGET_STATE_DEFAULTS[metric] || []).join(',')
+
   const [rule, setRule] = useState<Partial<AlertRule>>({
     name: `${metricLabels[metric] || metric}: ${targetName}`,
     enabled: true,
@@ -30,7 +47,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     operator: isState ? '==' : '>',
     threshold: isState ? 1 : 90,
     target_name: targetName,
-    target_state: targetState || '',
+    target_state: defaultStates,
     severity: 'warning',
     device_filter: deviceFilter || '',
     cooldown_seconds: 900,
@@ -73,6 +90,48 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
               </div>
             </div>
           </div>
+          {isState && TARGET_STATES[metric] && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Alert on States</label>
+              <div className="bg-gray-800 border border-gray-700 rounded px-3 py-2">
+                {TARGET_STATES[metric].length > 1 && (
+                  <label className="flex items-center gap-2 text-xs text-gray-400 mb-1.5 pb-1.5 border-b border-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={TARGET_STATES[metric].every(s => (rule.target_state || '').split(',').includes(s))}
+                      onChange={() => {
+                        const all = TARGET_STATES[metric].every(s => (rule.target_state || '').split(',').includes(s))
+                        setRule({ ...rule, target_state: all ? '' : TARGET_STATES[metric].join(',') })
+                      }}
+                      className="rounded bg-gray-700 border-gray-600 text-blue-500"
+                    />
+                    Any (all states)
+                  </label>
+                )}
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {TARGET_STATES[metric].map(s => {
+                    const selected = (rule.target_state || '').split(',').filter(Boolean)
+                    return (
+                      <label key={s} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(s)}
+                          onChange={() => {
+                            const next = selected.includes(s)
+                              ? selected.filter(x => x !== s)
+                              : [...selected, s]
+                            setRule({ ...rule, target_state: next.join(',') })
+                          }}
+                          className="rounded bg-gray-700 border-gray-600 text-blue-500"
+                        />
+                        {s}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Severity</label>

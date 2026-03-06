@@ -18,7 +18,13 @@ const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
 
 const TARGET_STATES: Record<string, string[]> = {
   service_state: ['stopped', 'failed', 'inactive', 'dead'],
-  nic_state: ['any', 'DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
+  nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
+  process_missing: ['absent'],
+}
+
+const TARGET_STATE_DEFAULTS: Record<string, string[]> = {
+  service_state: ['stopped', 'failed'],
+  nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'NO-CARRIER'],
   process_missing: ['absent'],
 }
 
@@ -150,7 +156,14 @@ export default function AlertRuleSettings() {
                 <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
                 <td className="px-4 py-3 text-right">
                   <button
-                    onClick={() => { setEditing({ ...rule }); setIsNew(false) }}
+                    onClick={() => {
+                      const r = { ...rule }
+                      // Convert legacy "any" to all states for the multi-select
+                      if (r.target_state?.toLowerCase() === 'any' && TARGET_STATES[r.metric]) {
+                        r.target_state = TARGET_STATES[r.metric].join(',')
+                      }
+                      setEditing(r); setIsNew(false)
+                    }}
                     className="text-gray-400 hover:text-white mr-2"
                   >
                     Edit
@@ -202,7 +215,7 @@ export default function AlertRuleSettings() {
                         metric: m,
                         operator: isState ? '==' : '>',
                         threshold: isState ? 1 : 90,
-                        target_state: isState ? (TARGET_STATES[m]?.[0] || '') : '',
+                        target_state: isState ? (TARGET_STATE_DEFAULTS[m] || []).join(',') : '',
                       })
                     }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
@@ -220,16 +233,12 @@ export default function AlertRuleSettings() {
                         className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       />
                     </Field>
-                    <Field label="Target State">
-                      <select
-                        value={editing.target_state || ''}
-                        onChange={e => setEditing({ ...editing, target_state: e.target.value })}
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-                      >
-                        {(TARGET_STATES[editing.metric || ''] || []).map(s =>
-                          <option key={s} value={s}>{s}</option>
-                        )}
-                      </select>
+                    <Field label="Alert on States">
+                      <StateMultiSelect
+                        options={TARGET_STATES[editing.metric || ''] || []}
+                        selected={(editing.target_state || '').split(',').filter(Boolean)}
+                        onChange={states => setEditing({ ...editing, target_state: states.join(',') })}
+                      />
                     </Field>
                   </>
                 ) : (
@@ -315,13 +324,18 @@ export default function AlertRuleSettings() {
         <TemplatePicker
           onSelect={(tpl) => {
             setShowTemplates(false)
+            // Convert "any" from templates to all available states for that metric
+            let targetState = tpl.target_state || ''
+            if (targetState.toLowerCase() === 'any' && TARGET_STATES[tpl.metric]) {
+              targetState = TARGET_STATES[tpl.metric].join(',')
+            }
             setEditing({
               ...emptyRule,
               name: tpl.name,
               metric: tpl.metric,
               operator: tpl.operator,
               threshold: tpl.threshold,
-              target_state: tpl.target_state || '',
+              target_state: targetState,
               severity: tpl.severity,
               cooldown_seconds: tpl.cooldown_seconds,
               template_id: tpl.id,
@@ -377,6 +391,51 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="block text-xs text-gray-400 mb-1">{label}</label>
       {children}
+    </div>
+  )
+}
+
+function StateMultiSelect({ options, selected, onChange }: {
+  options: string[]
+  selected: string[]
+  onChange: (states: string[]) => void
+}) {
+  const toggle = (state: string) => {
+    onChange(
+      selected.includes(state)
+        ? selected.filter(s => s !== state)
+        : [...selected, state]
+    )
+  }
+
+  const allSelected = options.length > 0 && options.every(s => selected.includes(s))
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded px-3 py-2">
+      {options.length > 1 && (
+        <label className="flex items-center gap-2 text-xs text-gray-400 mb-1.5 pb-1.5 border-b border-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() => onChange(allSelected ? [] : [...options])}
+            className="rounded bg-gray-700 border-gray-600 text-blue-500"
+          />
+          Any (all states)
+        </label>
+      )}
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {options.map(s => (
+          <label key={s} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.includes(s)}
+              onChange={() => toggle(s)}
+              className="rounded bg-gray-700 border-gray-600 text-blue-500"
+            />
+            {s}
+          </label>
+        ))}
+      </div>
     </div>
   )
 }

@@ -258,8 +258,8 @@ func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID string, ser
 			if !strings.EqualFold(svc.Name, r.TargetName) {
 				continue
 			}
-			// Check if service state matches the target state
-			if r.TargetState != "" && !strings.EqualFold(svc.State, r.TargetState) {
+			// Check if service state matches the target state(s)
+			if !matchesTargetState(r.TargetState, svc.State) {
 				continue
 			}
 
@@ -307,16 +307,14 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfa
 			if !strings.EqualFold(iface.Name, r.TargetName) {
 				continue
 			}
-			// If target_state is set and not "any", only match that specific state
-			if r.TargetState != "" && !strings.EqualFold(r.TargetState, "any") {
-				if !strings.EqualFold(iface.State, r.TargetState) {
-					continue
-				}
-			} else {
+			// Check if interface state matches the target state(s)
+			if r.TargetState == "" || strings.EqualFold(r.TargetState, "any") {
 				// "any" or empty = any non-UP state (existing behavior)
 				if iface.State == "UP" {
 					continue
 				}
+			} else if !matchesTargetState(r.TargetState, iface.State) {
+				continue
 			}
 
 			key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, iface.Name)
@@ -514,6 +512,20 @@ func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID strin
 		return r
 	}
 	return nil
+}
+
+// matchesTargetState checks if an actual state matches a comma-separated list
+// of target states (case-insensitive). Empty target matches any state.
+func matchesTargetState(targetState, actualState string) bool {
+	if targetState == "" {
+		return true
+	}
+	for _, s := range strings.Split(targetState, ",") {
+		if strings.EqualFold(strings.TrimSpace(s), actualState) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesDeviceFilter checks if a device matches the rule's filter.

@@ -10,26 +10,47 @@ import (
 )
 
 // PatchStatus handles GET /api/v1/fleet/patch-status.
-// Returns pending update counts per device from latest telemetry.
+// Returns pending update details per device from latest telemetry.
+// Use ?detail=true to include the full package list per device.
 func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 	snaps, err := h.telemetry.GetAllLatestSnapshots(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Build hostname lookup
+	hostnames := map[string]string{}
+	if devices, err := h.devices.List(r.Context()); err == nil {
+		for _, d := range devices {
+			hostnames[d.ID] = d.Hostname
+		}
+	}
+
+	detail := r.URL.Query().Get("detail") == "true"
+
 	type devicePatchInfo struct {
-		DeviceID       string `json:"device_id"`
-		PendingUpdates int    `json:"pending_updates"`
-		SecurityCount  int    `json:"security_count"`
+		DeviceID       string                `json:"device_id"`
+		Hostname       string                `json:"hostname"`
+		PendingUpdates int                   `json:"pending_updates"`
+		SecurityCount  int                   `json:"security_count"`
+		PackageManager string                `json:"package_manager,omitempty"`
+		Updates        []models.PendingUpdate `json:"updates,omitempty"`
 	}
 	result := make([]devicePatchInfo, 0, len(snaps))
 	for _, s := range snaps {
 		if s.Data.Updates != nil && s.Data.Updates.PendingUpdates > 0 {
-			result = append(result, devicePatchInfo{
+			info := devicePatchInfo{
 				DeviceID:       s.DeviceID,
+				Hostname:       hostnames[s.DeviceID],
 				PendingUpdates: s.Data.Updates.PendingUpdates,
 				SecurityCount:  s.Data.Updates.PendingSecurityCount,
-			})
+			}
+			if detail {
+				info.PackageManager = s.Data.Updates.PackageManager
+				info.Updates = s.Data.Updates.Updates
+			}
+			result = append(result, info)
 		}
 	}
 	writeJSON(w, http.StatusOK, result)

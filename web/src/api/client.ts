@@ -1,4 +1,4 @@
-import type { Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -12,6 +12,15 @@ async function fetchJSON<T>(url: string): Promise<T> {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`)
   }
   return res.json()
+}
+
+export interface DevicePatchInfo {
+  device_id: string
+  hostname: string
+  pending_updates: number
+  security_count: number
+  package_manager?: string
+  updates?: PendingUpdate[]
 }
 
 export const api = {
@@ -129,7 +138,10 @@ export const api = {
     fetchJSON<{ version: string; count: number }[]>(`${BASE}/fleet/agent-versions`),
 
   getPatchStatus: () =>
-    fetchJSON<{ device_id: string; pending_updates: number; security_count: number }[]>(`${BASE}/fleet/patch-status`),
+    fetchJSON<DevicePatchInfo[]>(`${BASE}/fleet/patch-status`),
+
+  getPatchStatusDetail: () =>
+    fetchJSON<DevicePatchInfo[]>(`${BASE}/fleet/patch-status?detail=true`),
 
   getSecurityOverview: () =>
     fetchJSON<{
