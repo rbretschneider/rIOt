@@ -45,6 +45,12 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
 	}
 
+	if status == "error" {
+		slog.Warn("command: failed", "id", payload.CommandID, "action", payload.Action, "error", message)
+	} else {
+		slog.Info("command: completed", "id", payload.CommandID, "action", payload.Action, "status", status)
+	}
+
 	// Send result back to server
 	result := models.CommandResult{
 		CommandID: payload.CommandID,
