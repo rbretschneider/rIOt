@@ -91,8 +91,7 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 
 	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
 		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
-	slog.Info("update applied successfully, restarting")
-	a.restartSelf()
+	slog.Info("update scheduled, service will restart shortly")
 }
 
 // stagingPath is where the new binary is downloaded before being installed.
@@ -106,7 +105,13 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 	if err != nil {
 		return fmt.Errorf("create staging file: %w", err)
 	}
-	defer os.Remove(stagingPath) // Clean up on failure
+	// Clean up staging on failure only — on success the systemd-run unit needs it.
+	staged := false
+	defer func() {
+		if !staged {
+			os.Remove(stagingPath)
+		}
+	}()
 
 	slog.Info("downloading update", "url", downloadURL)
 
@@ -151,47 +156,39 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 		}
 	}
 
-	// Replace the running binary using a shell one-liner:
-	//   1. mv the running binary to .old (renames the dir entry, process
-	//      keeps its open inode — always works even on busy executables)
-	//   2. cp the new binary into place (new inode at the original path)
-	//   3. chmod 755
-	//   4. rm the .old file (safe — old process holds the inode)
-	// This avoids the "Device or resource busy" error that `install` and
-	// direct `rm` can hit on some systems when the target is a running binary.
+	// Schedule the binary replacement via a transient systemd unit.
+	// The key insight: we can't reliably replace a running executable
+	// in-place — mv/rename/rm can all return EBUSY depending on the
+	// filesystem.  Instead, we schedule a unit that stops the service
+	// first, copies the new binary into place (no longer running, so
+	// no EBUSY), then starts the service again.
 	currentBinary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
+	// Clear any leftover failed unit from a previous attempt.
+	_ = exec.Command("sudo", "systemctl", "reset-failed", "riot-agent-update").Run()
+
 	script := fmt.Sprintf(
-		"mv -f %s %s.old && cp %s %s && chmod 755 %s && rm -f %s.old",
-		currentBinary, currentBinary,
+		"sleep 3 && systemctl stop riot-agent && cp -f %s %s && chmod 755 %s && rm -f %s && systemctl start riot-agent",
 		stagingPath, currentBinary,
 		currentBinary,
-		currentBinary,
+		stagingPath,
 	)
-	shCmd := exec.CommandContext(ctx, "sudo", "sh", "-c", script)
+	shCmd := exec.CommandContext(ctx, "sudo", "systemd-run",
+		"--unit=riot-agent-update",
+		"--description=rIOt agent binary update",
+		"sh", "-c", script,
+	)
 	if out, err := shCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("replace binary: %s: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("schedule update: %s: %s", err, strings.TrimSpace(string(out)))
 	}
 
+	staged = true // keep staging file for the transient unit
 	return nil
 }
 
-func (a *Agent) restartSelf() {
-	// Try systemd restart first
-	if runtime.GOOS == "linux" {
-		cmd := exec.Command("systemctl", "restart", "riot-agent")
-		if err := cmd.Run(); err == nil {
-			return
-		}
-	}
-
-	// Fallback: exit with code 0 and let the service manager restart us
-	slog.Info("exiting for restart")
-	os.Exit(0)
-}
 
 func fetchExpectedChecksum(ctx context.Context, checksumURL, suffix string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
