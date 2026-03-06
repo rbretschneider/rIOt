@@ -11,23 +11,24 @@
 
 ## Features
 
-- **Lightweight agent** — single static binary, < 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
+- **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
-- **Zero-config setup** — setup wizard configures admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
-- **Simple deployment** — one `docker compose up` for the server, one-liner install for agents
-- **Open registration** — devices register automatically; optionally gate with a registration key via Settings
-- **Admin authentication** — password-protected dashboard with JWT session cookies
+- **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
+- **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
+- **Open registration** — devices register automatically; optionally require a registration key via Settings
+- **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, and processes; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
 - **Uptime probes** — scheduled HTTP and DNS probes with history and status tracking
-- **Fleet management** — agent version overview and bulk update across devices
+- **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands (e.g., Docker restart) to agents from the dashboard
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
+- **Server log viewer** — browse and search server logs directly from the dashboard
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
 - **TLS support** — self-signed (auto-generated), Let's Encrypt autocert, or manual cert/key files
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
@@ -40,7 +41,7 @@ Agent (Go)  ──HTTP POST──►  Server (Go + embedded React UI)  ──►
 Dashboard (browser)  ◄──WebSocket──┘
 ```
 
-The server is a single Go binary that embeds the compiled React frontend. No nginx, no separate web container. PostgreSQL runs alongside as the only other service.
+The server is a single Go binary with the compiled React frontend embedded. No reverse proxy, no separate web container. PostgreSQL is the only additional service.
 
 ---
 
@@ -66,7 +67,7 @@ On first launch the server starts in **setup mode**. Open `http://<server-ip>:73
 - Configuring TLS (self-signed, Let's Encrypt, manual cert, or none)
 - Enabling mTLS device authentication (optional)
 
-Everything else (JWT secret, TLS certs, admin password) is stored in the database — no extra env vars needed.
+Everything else (JWT secret, TLS certs, admin password hash) is stored in the database — no extra env vars needed.
 
 #### `.env.example`
 
@@ -104,7 +105,7 @@ Then open the browser for the setup wizard.
 
 ### Server Environment Variables
 
-Most settings are configured through the setup wizard and stored in the database. These env vars are available as overrides:
+Most settings are configured through the setup wizard and stored in the database. The following environment variables are available as overrides:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -242,6 +243,7 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `agent.tags` | `[]` | Tags for grouping/filtering |
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
+| `agent.auto_update` | `true` | Automatically install agent updates when available |
 | `collectors.enabled` | all | List of collectors to run |
 | `docker.enabled` | `auto` | Docker collection mode: `auto` (detect), `true`, `false` |
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
@@ -357,7 +359,7 @@ On first run, the agent automatically:
 - Updates its config file (clears the bootstrap key, sets cert paths)
 - Connects using mTLS for all future communication
 
-No manual steps after the initial config. The agent handles everything.
+No manual steps required after writing the initial config — the agent handles everything.
 
 ### Certificate Management
 
@@ -420,6 +422,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/health` | Server health check |
 | `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
+| `POST` | `/api/v1/auth/change-password` | Change admin password |
 | `GET` | `/api/v1/auth/check` | Check authentication status |
 | `GET` | `/api/v1/server-cert` | Server TLS certificate + fingerprint (for agent TOFU) |
 | `GET` | `/api/v1/setup/status` | Setup wizard status |
@@ -472,9 +475,12 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/settings/certs/:serial/revoke` | Revoke a device certificate |
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
+| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
+| `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices |
 | `GET` | `/api/v1/security/overview` | Security overview |
 | `GET` | `/api/v1/security/devices` | Per-device security details |
+| `GET/POST` | `/api/v1/settings/logs` | Server log viewer |
 | `GET/POST/PUT/DELETE` | `/api/v1/probes[/:id]` | Uptime probe CRUD |
 | `POST` | `/api/v1/probes/:id/run` | Run probe on demand |
 | `GET` | `/api/v1/probes/:id/results` | Probe result history |
@@ -565,13 +571,13 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 | Probe results | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Device registry | Forever (until manually deleted) |
 
-A background worker runs hourly to purge expired data.
+A background worker purges expired data hourly.
 
 ---
 
 ## Docker Container Management
 
-Devices running Docker get a dedicated container dashboard at `/devices/:id/containers` in the web UI, with search, filtering, and grouped container cards.
+Devices running Docker get a dedicated container dashboard in the web UI with search, filtering, and grouped container cards.
 
 ### `riot.*` Labels
 
@@ -615,7 +621,7 @@ docker:
   terminal_enabled: true
 ```
 
-The terminal uses a WebSocket relay: browser connects to the server, which proxies to the agent's persistent WebSocket connection, which attaches to a `docker exec` session on the target container.
+The terminal uses a WebSocket relay: the browser connects to the server, which proxies through the agent's persistent WebSocket connection into a `docker exec` session on the target container.
 
 ### Real-time Container Events
 
