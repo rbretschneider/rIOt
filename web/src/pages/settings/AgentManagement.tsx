@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { isVersionOlder } from '../../utils/version'
 
 export default function AgentManagement() {
   const qc = useQueryClient()
@@ -46,7 +47,7 @@ export default function AgentManagement() {
             versions.map(v => {
               const pct = totalDevices > 0 ? (v.count / totalDevices) * 100 : 0
               const isLatest = latestVersion && v.version === latestVersion
-              const isOutdated = latestVersion && v.version !== latestVersion && v.version !== 'dev' && v.version !== 'unknown'
+              const isOutdated = latestVersion && v.version !== 'dev' && v.version !== 'unknown' && isVersionOlder(v.version, latestVersion)
               return (
                 <div key={v.version}>
                   <div className="flex items-center justify-between mb-1">

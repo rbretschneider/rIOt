@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
+import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
 import ConfirmModal from '../components/ConfirmModal'
@@ -41,7 +42,7 @@ export default function DeviceDetail() {
   const agentOutdated = useMemo(() => {
     const v = data?.device.agent_version
     if (!v || !latestVersion || v === 'dev') return false
-    return v !== latestVersion
+    return isVersionOlder(v, latestVersion)
   }, [data?.device.agent_version, latestVersion])
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>

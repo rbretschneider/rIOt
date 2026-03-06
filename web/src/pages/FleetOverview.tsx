@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
+import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
@@ -79,7 +80,7 @@ export default function FleetOverview() {
 
   function isAgentOutdated(version?: string) {
     if (!version || !latestVersion || version === 'dev') return false
-    return version !== latestVersion
+    return isVersionOlder(version, latestVersion)
   }
 
   return (
