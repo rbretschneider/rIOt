@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,7 @@ func (c *Checker) AgentUpdateInfo(agentVersion, goos, goarch, goarm string) *Upd
 
 	latestVer := normalizeVersion(release.TagName)
 	info.LatestVersion = latestVer
-	info.UpdateAvail = agentVersion != latestVer && agentVersion != "dev"
+	info.UpdateAvail = agentVersion != "dev" && isNewer(latestVer, agentVersion)
 	info.ReleaseURL = release.HTMLURL
 	info.PublishedAt = &release.Published
 
@@ -170,7 +171,7 @@ func (c *Checker) ServerUpdateInfo() *UpdateInfo {
 
 	latestVer := normalizeVersion(release.TagName)
 	info.LatestVersion = latestVer
-	info.UpdateAvail = latestVer != c.currentVersion && c.currentVersion != "dev"
+	info.UpdateAvail = c.currentVersion != "dev" && isNewer(latestVer, c.currentVersion)
 	info.ReleaseURL = release.HTMLURL
 	info.PublishedAt = &release.Published
 
@@ -179,6 +180,30 @@ func (c *Checker) ServerUpdateInfo() *UpdateInfo {
 
 func normalizeVersion(tag string) string {
 	return strings.TrimPrefix(tag, "v")
+}
+
+// isNewer returns true if candidate is strictly greater than current (semver).
+func isNewer(candidate, current string) bool {
+	cp := parseSemver(candidate)
+	cu := parseSemver(current)
+	for i := 0; i < 3; i++ {
+		if cp[i] != cu[i] {
+			return cp[i] > cu[i]
+		}
+	}
+	return false
+}
+
+func parseSemver(v string) [3]int {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.SplitN(v, ".", 3)
+	var out [3]int
+	for i := 0; i < len(parts) && i < 3; i++ {
+		// Strip any pre-release suffix (e.g. "1-rc1")
+		num := strings.SplitN(parts[i], "-", 2)[0]
+		out[i], _ = strconv.Atoi(num)
+	}
+	return out
 }
 
 func assetSuffix(goos, goarch, goarm string) string {

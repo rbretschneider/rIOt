@@ -101,3 +101,31 @@ func TestServerUpdateInfo_UpdateAvailable(t *testing.T) {
 	assert.True(t, info.UpdateAvail)
 	assert.Equal(t, "2.0.0", info.LatestVersion)
 }
+
+func TestAgentUpdateInfo_NoDowngrade(t *testing.T) {
+	c := NewChecker("test/repo", "1.0.0")
+	c.latest = &GitHubRelease{TagName: "v2.6.5"}
+
+	info := c.AgentUpdateInfo("2.6.6", "linux", "amd64", "")
+	assert.False(t, info.UpdateAvail, "agent ahead of latest release should not trigger update")
+}
+
+func TestIsNewer(t *testing.T) {
+	tests := []struct {
+		candidate string
+		current   string
+		want      bool
+	}{
+		{"2.6.7", "2.6.5", true},
+		{"2.6.5", "2.6.6", false},
+		{"2.6.5", "2.6.5", false},
+		{"3.0.0", "2.9.9", true},
+		{"1.1.0", "1.0.9", true},
+		{"1.0.0", "1.0.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.candidate+"_vs_"+tt.current, func(t *testing.T) {
+			assert.Equal(t, tt.want, isNewer(tt.candidate, tt.current))
+		})
+	}
+}
