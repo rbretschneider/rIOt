@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -137,6 +137,7 @@ const PORT_DISPLAY_LIMIT = 10
 
 function PortsList({ ports }: { ports: number[] }) {
   const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
   if (!ports || ports.length === 0) return <span className="text-gray-600">-</span>
 
   const sorted = [...ports].sort((a, b) => a - b)
@@ -145,18 +146,24 @@ function PortsList({ ports }: { ports: number[] }) {
     return <span className="font-mono text-xs text-gray-500">{sorted.join(', ')}</span>
   }
 
+  const rect = btnRef.current?.getBoundingClientRect()
+
   return (
-    <div className="relative inline-block">
+    <div className="inline-block">
       <button
+        ref={btnRef}
         onClick={() => setOpen(!open)}
         className="font-mono text-xs text-blue-400 hover:text-blue-300 transition-colors"
       >
         {sorted.length} ports
       </button>
-      {open && (
+      {open && rect && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 z-50 w-72 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-3">
+          <div
+            className="fixed z-50 w-72 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-3"
+            style={{ top: rect.bottom + 4, right: window.innerWidth - rect.right }}
+          >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">{sorted.length} open ports</span>
               <button onClick={() => setOpen(false)} className="text-gray-500 hover:text-white text-xs">&times;</button>
