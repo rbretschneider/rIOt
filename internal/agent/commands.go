@@ -273,5 +273,11 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
 		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
 
-	return "success", fmt.Sprintf("updated %s → %s, service will restart shortly", a.version, resp.LatestVersion)
+	// Restart after a short delay so the command result is sent first.
+	go func() {
+		time.Sleep(1 * time.Second)
+		a.restartSelf()
+	}()
+
+	return "success", fmt.Sprintf("updated %s → %s, restarting", a.version, resp.LatestVersion)
 }

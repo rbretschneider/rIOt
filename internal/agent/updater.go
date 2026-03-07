@@ -91,7 +91,8 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 
 	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
 		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
-	slog.Info("update scheduled, service will restart shortly")
+	slog.Info("update applied, restarting")
+	a.restartSelf()
 }
 
 // stagingPath is where the new binary is downloaded before being installed.
@@ -156,20 +157,15 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 		}
 	}
 
-	// Schedule the binary replacement via a transient systemd unit.
-	// The key insight: we can't reliably replace a running executable
-	// in-place — mv/rename/rm can all return EBUSY depending on the
-	// filesystem.  Instead, we schedule a unit that stops the service
-	// first, copies the new binary into place (no longer running, so
-	// no EBUSY), then starts the service again.
 	currentBinary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	// Clear any leftover failed unit from a previous attempt.
+	// Strategy 1: systemd-run — schedule a transient unit that stops the
+	// service, replaces the binary (not running → no EBUSY), then restarts.
+	// Requires sudoers rule from install.sh v2.6.6+.
 	_ = exec.Command("sudo", "systemctl", "reset-failed", "riot-agent-update").Run()
-
 	script := fmt.Sprintf(
 		"sleep 3 && systemctl stop riot-agent && cp -f %s %s && chmod 755 %s && rm -f %s && systemctl start riot-agent",
 		stagingPath, currentBinary,
@@ -178,17 +174,46 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, suf
 	)
 	shCmd := exec.CommandContext(ctx, "sudo", "systemd-run",
 		"--unit=riot-agent-update",
-		"--description=rIOt agent binary update",
 		"sh", "-c", script,
 	)
-	if out, err := shCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("schedule update: %s: %s", err, strings.TrimSpace(string(out)))
+	if out, err := shCmd.CombinedOutput(); err == nil {
+		slog.Info("update scheduled via systemd-run")
+		staged = true // keep staging file for the transient unit
+		return nil
+	} else {
+		slog.Debug("systemd-run unavailable, trying direct replacement",
+			"error", fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))))
 	}
 
-	staged = true // keep staging file for the transient unit
+	// Strategy 2: direct in-place replacement via mv + cp.
+	// Works on most filesystems but fails with EBUSY on some.
+	script2 := fmt.Sprintf(
+		"mv -f %s %s.old && cp %s %s && chmod 755 %s && rm -f %s.old",
+		currentBinary, currentBinary,
+		stagingPath, currentBinary,
+		currentBinary,
+		currentBinary,
+	)
+	shCmd2 := exec.CommandContext(ctx, "sudo", "sh", "-c", script2)
+	if out, err := shCmd2.CombinedOutput(); err == nil {
+		slog.Info("binary replaced via direct copy")
+		return nil
+	} else {
+		slog.Debug("direct replacement failed",
+			"error", fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))))
+	}
+
+	// Strategy 3: leave the staging file for the systemd ExecStartPre
+	// to apply on next restart. Requires install.sh v2.6.6+ service unit.
+	slog.Warn("could not replace binary directly; update staged for next restart — re-run install.sh to enable automatic updates")
+	staged = true
 	return nil
 }
 
+func (a *Agent) restartSelf() {
+	slog.Info("exiting for restart")
+	os.Exit(0)
+}
 
 func fetchExpectedChecksum(ctx context.Context, checksumURL, suffix string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)

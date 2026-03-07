@@ -369,6 +369,8 @@ riot ALL=(root) NOPASSWD: /usr/bin/dnf -y update
 riot ALL=(root) NOPASSWD: /usr/bin/dnf -y --security update
 riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
 riot ALL=(root) NOPASSWD: /bin/sh -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old
+riot ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=riot-agent-update sh -c *
+riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
 SUDOEOF
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
@@ -393,6 +395,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=+/bin/sh -c 'test -f ${RIOT_DATA_DIR}/riot-agent.update && cp -f ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_DATA_DIR}/riot-agent.update || true'
 ExecStart=${RIOT_BIN} -config ${RIOT_CONFIG_DIR}/agent.yaml
 Restart=always
 RestartSec=5
