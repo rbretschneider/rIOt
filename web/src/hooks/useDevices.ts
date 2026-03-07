@@ -75,11 +75,11 @@ export function useDevices() {
         if (evt.id && old.some((e: any) => e.id === evt.id)) return old
         return [msg.data, ...old]
       })
-      // Increment unread count for warning/critical events
+      // Refetch the authoritative unread count from the server rather than
+      // optimistically incrementing — avoids double-counting from races
+      // between the WS push and the periodic poll.
       if (evt.severity === 'warning' || evt.severity === 'critical') {
-        queryClient.setQueryData(['unread-count'], (old: { count: number } | undefined) => {
-          return { count: (old?.count ?? 0) + 1 }
-        })
+        queryClient.invalidateQueries({ queryKey: ['unread-count'] })
       }
     }
   }, [queryClient])
