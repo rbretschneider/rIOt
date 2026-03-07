@@ -147,7 +147,7 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 // BulkPatchDevices handles POST /api/v1/fleet/bulk-patch.
-// Sends os_update command to all online devices.
+// Sends os_update command to online devices that have pending OS patches.
 func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Mode string `json:"mode"`
@@ -160,6 +160,19 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 		req.Mode = "full"
 	}
 
+	// Get telemetry to find devices with pending patches
+	snaps, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
+		return
+	}
+	needsPatch := make(map[string]bool, len(snaps))
+	for _, s := range snaps {
+		if s.Data.Updates != nil && s.Data.Updates.PendingUpdates > 0 {
+			needsPatch[s.DeviceID] = true
+		}
+	}
+
 	devices, err := h.devices.List(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to list devices"}`, http.StatusInternalServerError)
@@ -170,7 +183,7 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 	queued := 0
 	skipped := 0
 	for _, d := range devices {
-		if d.Status != models.DeviceStatusOnline {
+		if !needsPatch[d.ID] || d.Status != models.DeviceStatusOnline {
 			skipped++
 			continue
 		}

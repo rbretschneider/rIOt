@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
@@ -37,6 +37,34 @@ export default function FleetOverview() {
   const [patchDetail, setPatchDetail] = useState<DevicePatchInfo[] | null>(null)
   const [patchDetailLoading, setPatchDetailLoading] = useState(false)
   const [patchResult, setPatchResult] = useState<{ sent: number; queued: number; skipped: number; total: number } | null>(null)
+  const [updateResult, setUpdateResult] = useState<{ sent: number; skipped: number } | null>(null)
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false)
+  const { data: agentVersions = [] } = useQuery({
+    queryKey: ['agent-versions'],
+    queryFn: api.getAgentVersions,
+    refetchInterval: 30_000,
+  })
+  const outdatedVersions = useMemo(() => {
+    if (!latestVersion) return []
+    return agentVersions.filter(v => v.version !== 'dev' && v.version !== 'unknown' && isVersionOlder(v.version, latestVersion))
+  }, [agentVersions, latestVersion])
+  const outdatedCount = outdatedVersions.reduce((n, v) => n + v.count, 0)
+
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async () => {
+      let totalSent = 0, totalSkipped = 0
+      for (const v of outdatedVersions) {
+        const result = await api.bulkUpdateAgents(v.version)
+        totalSent += result.sent
+        totalSkipped += result.skipped
+      }
+      return { sent: totalSent, skipped: totalSkipped }
+    },
+    onSuccess: (data) => {
+      setUpdateResult(data)
+      queryClient.invalidateQueries({ queryKey: ['agent-versions'] })
+    },
+  })
 
   async function handleDelete() {
     if (!deleteTarget) return
@@ -152,6 +180,14 @@ export default function FleetOverview() {
           className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
         <div className="flex gap-4">
+          {outdatedCount > 0 && (
+            <button
+              onClick={() => setShowUpdateConfirm(true)}
+              className="px-4 py-2 text-sm text-amber-400 hover:text-amber-300 border border-amber-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
+            >
+              Update Agents ({outdatedCount})
+            </button>
+          )}
           <button
             onClick={handleOpenPatchReview}
             className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
@@ -263,12 +299,30 @@ export default function FleetOverview() {
         </div>
       )}
 
+      {updateResult && (
+        <div className="px-4 py-2 bg-amber-900/30 border border-amber-800 rounded text-sm text-amber-400 flex items-center justify-between">
+          <span>Agent update dispatched: {updateResult.sent} sent{updateResult.skipped > 0 && `, ${updateResult.skipped} skipped (offline)`}</span>
+          <button onClick={() => setUpdateResult(null)} className="text-amber-600 hover:text-amber-400 ml-4">&times;</button>
+        </div>
+      )}
+
       {showPatchReview && (
         <PatchReviewModal
           loading={patchDetailLoading}
           patches={patchDetail}
           onConfirm={handlePatchAll}
           onClose={() => { setShowPatchReview(false); setPatchDetail(null) }}
+        />
+      )}
+
+      {showUpdateConfirm && (
+        <ConfirmModal
+          title="Update Agents"
+          message={`Send update command to ${outdatedCount} outdated agent${outdatedCount !== 1 ? 's' : ''}? They will download and install the latest version (${latestVersion}).`}
+          confirmLabel={bulkUpdateMutation.isPending ? 'Updating...' : 'Update All'}
+          confirmVariant="primary"
+          onConfirm={() => { bulkUpdateMutation.mutate(); setShowUpdateConfirm(false) }}
+          onCancel={() => setShowUpdateConfirm(false)}
         />
       )}
 
