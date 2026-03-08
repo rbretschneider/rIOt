@@ -32,6 +32,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.dockerCommand(ctx, payload, "restart")
 	case "docker_start":
 		status, message = a.dockerCommand(ctx, payload, "start")
+	case "docker_update":
+		status, message = a.dockerUpdate(ctx, payload)
 	case "reboot":
 		status, message = a.handleReboot(payload)
 	case "os_update":

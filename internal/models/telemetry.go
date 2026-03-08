@@ -223,8 +223,9 @@ type ContainerInfo struct {
 	Networks      []NetworkAttach   `json:"networks,omitempty"`
 	Env           []EnvVar          `json:"env,omitempty"`
 	HealthStatus  string            `json:"health_status,omitempty"`
-	RepoURL       string            `json:"repo_url,omitempty"`
-	Riot          *RiotLabels       `json:"riot,omitempty"`
+	RepoURL         string            `json:"repo_url,omitempty"`
+	Riot            *RiotLabels       `json:"riot,omitempty"`
+	UpdateAvailable *bool             `json:"update_available,omitempty"`
 }
 
 // PortMapping represents a container port binding.

@@ -67,21 +67,9 @@ export function useDevices() {
     } else if (msg.type === 'docker_update' && msg.device_id) {
       // Docker container state changed — invalidate device detail to trigger refetch
       queryClient.invalidateQueries({ queryKey: ['device', msg.device_id] })
-    } else if (msg.type === 'event') {
-      // Prepend new event into events cache (dedup by id)
-      const evt = msg.data as { id?: number; severity?: string }
-      queryClient.setQueryData(['events'], (old: any) => {
-        if (!old) return [msg.data]
-        if (evt.id && old.some((e: any) => e.id === evt.id)) return old
-        return [msg.data, ...old]
-      })
-      // Refetch the authoritative unread count from the server rather than
-      // optimistically incrementing — avoids double-counting from races
-      // between the WS push and the periodic poll.
-      if (evt.severity === 'warning' || evt.severity === 'critical') {
-        queryClient.invalidateQueries({ queryKey: ['unread-count'] })
-      }
     }
+    // Note: 'event' messages are handled by GlobalWSHandler in App.tsx
+    // so the alert badge updates on ALL pages, not just pages using useDevices().
   }, [queryClient])
 
   const { connected } = useWebSocket(handleWS)

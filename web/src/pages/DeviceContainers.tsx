@@ -52,6 +52,12 @@ export default function DeviceContainers() {
         <p className="text-sm text-gray-500">
           {docker.running} running / {docker.total_containers} total
           {docker.paused ? ` / ${docker.paused} paused` : ''}
+          {(() => {
+            const updatable = (docker.containers ?? []).filter(c => c.update_available).length
+            return updatable > 0 ? (
+              <span className="text-amber-400 ml-1">/ {updatable} updatable</span>
+            ) : null
+          })()}
         </p>
       </div>
 

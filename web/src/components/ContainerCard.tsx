@@ -22,7 +22,14 @@ export default function ContainerCard({ container: c, onClick }: Props) {
           {c.riot?.icon && <span className="text-lg flex-shrink-0">{c.riot.icon}</span>}
           <h3 className="text-sm font-medium text-white truncate">{name}</h3>
         </div>
-        <ContainerStatusBadge state={c.state} />
+        <div className="flex items-center gap-1.5">
+          <ContainerStatusBadge state={c.state} />
+          {c.update_available && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              Update
+            </span>
+          )}
+        </div>
       </div>
 
       <p className="text-xs text-gray-500 truncate mb-3">{c.image}</p>

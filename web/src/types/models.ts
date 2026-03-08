@@ -228,6 +228,7 @@ export interface ContainerInfo {
   health_status?: string
   repo_url?: string
   riot?: RiotLabels
+  update_available?: boolean | null
 }
 
 export interface PortMapping {

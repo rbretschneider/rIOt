@@ -13,7 +13,7 @@
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status
-- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, and optional remote terminal (exec into running containers from the browser)
+- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
@@ -24,9 +24,10 @@
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
-- **Uptime probes** — scheduled HTTP and DNS probes with history and status tracking
+- **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
-- **Remote commands** — send commands (e.g., Docker restart) to agents from the dashboard
+- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, agent update, system reboot (with per-command permission controls)
+- **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent)
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Server log viewer** — browse and search server logs directly from the dashboard
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
@@ -213,6 +214,14 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
      enabled: "auto"               # "auto" (detect), "true", or "false"
      collect_stats: true            # per-container CPU/memory stats
      terminal_enabled: false        # set to true to allow remote exec from dashboard
+     check_updates: true            # check registries for newer container images
+
+   commands:
+     allow_reboot: false            # set to true to allow remote reboot
+     allow_patching: false          # set to true to allow remote OS updates
+
+   host_terminal:
+     enabled: false                 # set to true to allow host shell access
    ```
 
    On first HTTPS connect, the agent will automatically fetch and pin the server's certificate (TOFU). To verify the fingerprint up front, add `server_cert_pin: "SHA256:xxxx"` (available in Settings > General).
@@ -249,6 +258,11 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
+| `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
+| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard |
+| `commands.allow_patching` | `false` | Allow remote OS patching command from the dashboard |
+| `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
+| `host_terminal.shell` | auto-detect | Override default shell (e.g., `/bin/bash`) |
 | `dns_cache.refresh_interval_seconds` | `1800` | How often to refresh cached DNS entries (seconds) |
 | `dns_cache.staleness_warning_hours` | `24` | Hours before a stale DNS cache entry triggers a warning |
 | `dns_cache.cache_file` | OS default | Path to the DNS cache file |
@@ -609,6 +623,33 @@ services:
       riot.priority: "10"
       riot.tags: "media,streaming"
 ```
+
+### Container Updates
+
+The agent periodically checks container image registries for newer versions (every 30 minutes). Containers with available updates are highlighted in the dashboard with an amber "Update" badge.
+
+From the container detail panel, click **Update** to pull the new image and recreate the container:
+
+- **Compose-managed containers** (detected via standard Docker Compose labels): uses `docker compose pull` + `docker compose up -d` for safe recreation
+- **Standalone containers**: pulls the new image, then stops, removes, and recreates the container with the same configuration
+
+This works for any container, including the rIOt server itself — the agent on the server's host can update the server container.
+
+To disable update checking, set `docker.check_updates: false` in the agent config.
+
+### Host Terminal
+
+The agent can optionally allow browser-based SSH-like shell access to the host device. This is disabled by default for security.
+
+To enable, set `host_terminal.enabled: true` in the agent config (`/etc/riot/agent.yaml`):
+
+```yaml
+host_terminal:
+  enabled: true
+  shell: "/bin/bash"  # optional: override default shell
+```
+
+Access the terminal from the device detail page via the Terminal link.
 
 ### Remote Terminal
 

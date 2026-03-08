@@ -51,7 +51,7 @@ export default function Alerts() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-xl font-bold text-white">Events & Alerts</h1>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
             <input
               type="checkbox"

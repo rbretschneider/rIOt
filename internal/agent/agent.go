@@ -38,9 +38,11 @@ func New(configPath, version string) (*Agent, error) {
 	}
 
 	registry := collectors.NewRegistry()
+	checkUpdates := cfg.Docker.CheckUpdates == nil || *cfg.Docker.CheckUpdates
 	registry.RegisterDefaultsWithDocker(collectors.DockerOptions{
 		CollectStats: cfg.Docker.CollectStats,
 		SocketPath:   cfg.Docker.SocketPath,
+		CheckUpdates: checkUpdates,
 	})
 
 	return &Agent{

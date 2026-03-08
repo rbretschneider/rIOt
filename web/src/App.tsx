@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Routes, Route, Link, useLocation, Navigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api/client'
 import { useAuth } from './hooks/useAuth'
+import { WebSocketProvider, useWebSocket } from './contexts/WebSocketProvider'
+import type { WSMessage } from './types/models'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
 import DeviceContainers from './pages/DeviceContainers'
@@ -43,7 +45,7 @@ function AlertsNavLink() {
   const { data } = useQuery({
     queryKey: ['unread-count'],
     queryFn: api.getUnreadEventCount,
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
   })
   const count = data?.count ?? 0
 
@@ -62,6 +64,25 @@ function AlertsNavLink() {
       )}
     </Link>
   )
+}
+
+/** Global WebSocket handler — keeps alert badge and caches up-to-date on ALL pages. */
+function GlobalWSHandler() {
+  const queryClient = useQueryClient()
+  useWebSocket(useCallback((msg: WSMessage) => {
+    if (msg.type === 'event') {
+      const evt = msg.data as { id?: number; severity?: string }
+      queryClient.setQueryData(['events'], (old: any) => {
+        if (!old) return old // only update if events were already fetched
+        if (evt.id && old.some((e: any) => e.id === evt.id)) return old
+        return [msg.data, ...old]
+      })
+      if (evt.severity === 'warning' || evt.severity === 'critical') {
+        queryClient.invalidateQueries({ queryKey: ['unread-count'] })
+      }
+    }
+  }, [queryClient]))
+  return null
 }
 
 function ScrollToTop() {
@@ -133,6 +154,9 @@ function UpdateBanner() {
                 <code className="text-sm text-emerald-400 select-all">
                   docker compose pull && docker compose up -d
                 </code>
+                <p className="text-xs text-gray-500 mt-2">
+                  If the server runs on a managed device, you can also update it from the Containers view on that device's page.
+                </p>
               </div>
               {update.release_url && (
                 <a
@@ -160,8 +184,29 @@ function UpdateBanner() {
   )
 }
 
+function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="sm:hidden p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
+      aria-label="Toggle menu"
+    >
+      {open ? (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+        </svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 export default function App() {
   const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   if (loading) {
     return (
@@ -180,8 +225,10 @@ export default function App() {
   }
 
   return (
+    <WebSocketProvider>
     <div className="min-h-screen bg-gray-950">
       <ScrollToTop />
+      <GlobalWSHandler />
       <nav className="bg-gray-900 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
@@ -190,7 +237,8 @@ export default function App() {
                 <img src="/android-chrome-192x192.png" alt="rIOt" className="w-6 h-6" />
                 rIOt
               </Link>
-              <div className="flex gap-1 overflow-x-auto scrollbar-hide">
+              {/* Desktop nav */}
+              <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
                 <AlertsNavLink />
                 <NavLink to="/probes">Probes</NavLink>
@@ -201,14 +249,31 @@ export default function App() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={logout}
-                className="px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
+                className="hidden sm:block px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
                 title="Sign out"
               >
                 Logout
               </button>
+              <MobileMenuButton open={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)} />
             </div>
           </div>
         </div>
+        {/* Mobile nav dropdown */}
+        {mobileMenuOpen && (
+          <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
+            <NavLink to="/">Fleet</NavLink>
+            <AlertsNavLink />
+            <NavLink to="/probes">Probes</NavLink>
+            <NavLink to="/security">Security</NavLink>
+            <NavLink to="/settings">Settings</NavLink>
+            <button
+              onClick={logout}
+              className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+            >
+              Logout
+            </button>
+          </div>
+        )}
       </nav>
       <UpdateBanner />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -234,5 +299,6 @@ export default function App() {
         </Routes>
       </main>
     </div>
+    </WebSocketProvider>
   )
 }

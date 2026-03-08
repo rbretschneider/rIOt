@@ -29,6 +29,7 @@ func (r *Registry) Register(c Collector) {
 type DockerOptions struct {
 	CollectStats bool
 	SocketPath   string
+	CheckUpdates bool
 }
 
 func (r *Registry) RegisterDefaults() {
@@ -48,6 +49,7 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 	r.Register(&DockerCollector{
 		CollectStats: opts.CollectStats,
 		SocketPath:   opts.SocketPath,
+		CheckUpdates: opts.CheckUpdates,
 	})
 	r.Register(&SecurityCollector{})
 }

@@ -55,6 +55,9 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
               <ContainerStatusBadge state={c.state} />
               {deviceId && (
                 <div className="flex gap-1 ml-2">
+                  {c.update_available && (
+                    <ActionBtn label="Update" onClick={() => setConfirmAction('docker_update')} pending={commandMutation.isPending} />
+                  )}
                   {c.state === 'running' ? (
                     <>
                       <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
@@ -146,6 +149,8 @@ function GeneralTab({ container: c }: { container: ContainerInfo }) {
           {c.restart_policy && <DetailItem label="Restart Policy" value={c.restart_policy} />}
           {(c.restart_count ?? 0) > 0 && <DetailItem label="Restart Count" value={String(c.restart_count)} />}
           {c.health_status && <DetailItem label="Health" value={c.health_status} />}
+          {c.update_available === true && <DetailItem label="Image" value="Newer version available" valueClass="text-amber-400" />}
+          {c.update_available === false && <DetailItem label="Image" value="Up to date" valueClass="text-emerald-400/70" />}
         </div>
       </DetailSection>
 

@@ -43,6 +43,7 @@ type DockerConfig struct {
 	SocketPath      string `yaml:"socket_path"`      // override auto-detection
 	CollectStats    bool   `yaml:"collect_stats"`    // CPU/mem per container
 	TerminalEnabled bool   `yaml:"terminal_enabled"` // opt-in for remote exec
+	CheckUpdates    *bool  `yaml:"check_updates,omitempty"` // nil = true (default enabled)
 }
 
 type ServerConfig struct {

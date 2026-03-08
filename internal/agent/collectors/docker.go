@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/system"
@@ -20,6 +22,18 @@ import (
 type DockerCollector struct {
 	CollectStats bool
 	SocketPath   string
+	CheckUpdates bool
+
+	// Image freshness cache
+	cacheMu     sync.RWMutex
+	digestCache map[string]*imageFreshness
+}
+
+const freshnessCacheTTL = 30 * time.Minute
+
+type imageFreshness struct {
+	updateAvailable *bool
+	checkedAt       time.Time
 }
 
 func (c *DockerCollector) Name() string { return "docker" }
@@ -77,6 +91,11 @@ func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
 	// Collect CPU/mem stats for running containers
 	if c.CollectStats {
 		c.collectStats(ctx, cli, info.Containers)
+	}
+
+	// Check for image updates
+	if c.CheckUpdates {
+		c.checkImageUpdates(ctx, cli, info.Containers)
 	}
 
 	return info, nil
@@ -239,4 +258,83 @@ func portStr(port uint16, proto string) string {
 		return fmt.Sprintf("%d/%s", port, proto)
 	}
 	return fmt.Sprintf("%d", port)
+}
+
+// checkImageUpdates queries registries to determine if running container images
+// have newer versions available. Results are cached for 30 minutes.
+func (c *DockerCollector) checkImageUpdates(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+	for i := range containers {
+		if containers[i].State != "running" {
+			continue
+		}
+		imageRef := containers[i].Image
+		if imageRef == "" {
+			continue
+		}
+
+		// Check cache
+		c.cacheMu.RLock()
+		if c.digestCache != nil {
+			if cached, ok := c.digestCache[imageRef]; ok && time.Since(cached.checkedAt) < freshnessCacheTTL {
+				containers[i].UpdateAvailable = cached.updateAvailable
+				c.cacheMu.RUnlock()
+				continue
+			}
+		}
+		c.cacheMu.RUnlock()
+
+		result := c.checkSingleImage(ctx, cli, imageRef)
+
+		// Cache the result
+		c.cacheMu.Lock()
+		if c.digestCache == nil {
+			c.digestCache = make(map[string]*imageFreshness)
+		}
+		c.digestCache[imageRef] = &imageFreshness{
+			updateAvailable: result,
+			checkedAt:       time.Now(),
+		}
+		c.cacheMu.Unlock()
+
+		containers[i].UpdateAvailable = result
+	}
+}
+
+// checkSingleImage compares the local image digest with the remote registry digest.
+// Returns nil if the check fails (unknown), *true if update available, *false if up to date.
+func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Client, imageRef string) *bool {
+	// Skip images pinned by digest — they are immutable
+	if strings.Contains(imageRef, "@sha256:") {
+		f := false
+		return &f
+	}
+
+	// Query registry for remote digest (empty auth works for public registries)
+	distInfo, err := cli.DistributionInspect(ctx, imageRef, "")
+	if err != nil {
+		slog.Debug("image freshness: registry check failed", "image", imageRef, "error", err)
+		return nil // unknown
+	}
+	remoteDigest := distInfo.Descriptor.Digest.String()
+
+	// Get local image digests
+	localInfo, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
+	if err != nil {
+		slog.Debug("image freshness: local inspect failed", "image", imageRef, "error", err)
+		return nil
+	}
+
+	// Compare: RepoDigests contains "repo@sha256:..." strings
+	for _, rd := range localInfo.RepoDigests {
+		if atIdx := strings.LastIndex(rd, "@"); atIdx != -1 {
+			localDigest := rd[atIdx+1:]
+			if localDigest == remoteDigest {
+				f := false
+				return &f // up to date
+			}
+		}
+	}
+
+	t := true
+	return &t // update available
 }

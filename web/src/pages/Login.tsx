@@ -26,12 +26,15 @@ export default function Login({ onLogin }: LoginProps) {
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 w-full max-w-sm">
         <h1 className="text-2xl font-bold text-white mb-6 text-center">rIOt</h1>
         <form onSubmit={handleSubmit}>
+          <input type="hidden" name="username" autoComplete="username" value="admin" />
           <label className="block text-sm text-gray-400 mb-2" htmlFor="password">
             Admin Password
           </label>
           <input
             id="password"
+            name="password"
             type="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
