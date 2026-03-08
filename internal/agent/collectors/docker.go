@@ -260,6 +260,14 @@ func portStr(port uint16, proto string) string {
 	return fmt.Sprintf("%d", port)
 }
 
+// ClearFreshnessCache clears the image freshness cache, forcing the next
+// telemetry cycle to re-check all images against their registries.
+func (c *DockerCollector) ClearFreshnessCache() {
+	c.cacheMu.Lock()
+	c.digestCache = nil
+	c.cacheMu.Unlock()
+}
+
 // checkImageUpdates queries registries to determine if running container images
 // have newer versions available. Results are cached for 30 minutes.
 func (c *DockerCollector) checkImageUpdates(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {

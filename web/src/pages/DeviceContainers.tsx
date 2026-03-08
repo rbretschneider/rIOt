@@ -77,6 +77,7 @@ export default function DeviceContainers() {
         docker={docker}
         search={containerSearch}
         onContainerClick={setSelectedContainer}
+        deviceId={id}
       />
 
       {/* Container Detail Panel */}
@@ -95,10 +96,12 @@ function ContainerList({
   docker,
   search,
   onContainerClick,
+  deviceId,
 }: {
   docker: NonNullable<import('../types/models').FullTelemetryData['docker']>
   search: string
   onContainerClick: (c: ContainerInfo) => void
+  deviceId?: string
 }) {
   const filtered = useMemo(() => {
     let containers = docker.containers ?? []
@@ -127,7 +130,7 @@ function ContainerList({
   return (
     <div className="space-y-6">
       {groups.map(g => (
-        <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} />
+        <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} deviceId={deviceId} />
       ))}
     </div>
   )

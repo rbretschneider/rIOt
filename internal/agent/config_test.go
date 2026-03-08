@@ -60,9 +60,15 @@ docker:
 }
 
 func TestLoadConfig_MissingFile(t *testing.T) {
-	cfg, err := LoadConfig("/nonexistent/path.yaml")
-	require.Error(t, err)
-	// Should still return defaults
+	dir := t.TempDir()
+	cfg, err := LoadConfig(filepath.Join(dir, "subdir", "deep", "agent.yaml"))
+	// On first run with a missing file, the agent generates a default config.
+	// If the directory is writable the file is created and loaded (no error).
+	// If it's not writable we get an error but still get defaults.
+	if err != nil {
+		assert.True(t, os.IsNotExist(err) || os.IsPermission(err))
+	}
+	// Either way, defaults should be returned
 	assert.Equal(t, "http://localhost:7331", cfg.Server.URL)
 }
 

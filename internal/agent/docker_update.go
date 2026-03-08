@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -19,10 +20,23 @@ import (
 // dockerUpdate pulls a newer image and recreates the container.
 // For Compose-managed containers it delegates to `docker compose`.
 // For standalone containers it uses the Docker SDK directly.
+//
+// Supports two modes:
+//   - Single container: params must include "container_id"
+//   - Full compose stack: params must include "compose_work_dir" (updates all services)
 func (a *Agent) dockerUpdate(ctx context.Context, payload models.CommandPayload) (string, string) {
+	// Full-stack compose update — pull + up the entire project
+	if workDir, _ := payload.Params["compose_work_dir"].(string); workDir != "" {
+		status, msg := a.dockerUpdateCompose(workDir, "")
+		if status == "success" {
+			a.clearFreshnessCache()
+		}
+		return status, msg
+	}
+
 	containerID, _ := payload.Params["container_id"].(string)
 	if containerID == "" {
-		return "error", "container_id is required"
+		return "error", "container_id or compose_work_dir is required"
 	}
 
 	cli, err := newDockerClient(a.config.Docker.SocketPath)
@@ -42,39 +56,56 @@ func (a *Agent) dockerUpdate(ctx context.Context, payload models.CommandPayload)
 	composeService := inspect.Config.Labels["com.docker.compose.service"]
 	composeWorkDir := inspect.Config.Labels["com.docker.compose.project.working_dir"]
 
+	var status, msg string
 	if composeProject != "" && composeService != "" && composeWorkDir != "" {
-		return a.dockerUpdateCompose(composeWorkDir, composeService)
+		status, msg = a.dockerUpdateCompose(composeWorkDir, composeService)
+	} else {
+		status, msg = a.dockerUpdateStandalone(ctx, cli, inspect)
 	}
 
-	return a.dockerUpdateStandalone(ctx, cli, inspect)
+	if status == "success" {
+		a.clearFreshnessCache()
+	}
+	return status, msg
 }
 
-// dockerUpdateCompose updates a Compose-managed container by running
-// `docker compose pull <service> && docker compose up -d <service>`.
+// dockerUpdateCompose updates Compose-managed containers by running
+// `docker compose pull && docker compose up -d`.
+// If service is non-empty, only that service is updated; otherwise the entire stack is updated.
 func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	slog.Info("docker_update: compose path", "workDir", workDir, "service", service)
 
-	// Pull new image
-	pullCmd := exec.CommandContext(updateCtx, "docker", "compose",
-		"--project-directory", workDir, "pull", service)
+	// Build pull command
+	pullArgs := []string{"compose", "--project-directory", workDir, "pull"}
+	if service != "" {
+		pullArgs = append(pullArgs, service)
+	}
+	pullCmd := exec.CommandContext(updateCtx, "docker", pullArgs...)
 	pullOut, err := pullCmd.CombinedOutput()
 	if err != nil {
 		return "error", fmt.Sprintf("compose pull failed: %s\n%s", err, truncateOutput(pullOut, 4000))
 	}
 
-	// Recreate with new image
-	upCmd := exec.CommandContext(updateCtx, "docker", "compose",
-		"--project-directory", workDir, "up", "-d", service)
+	// Build up command
+	upArgs := []string{"compose", "--project-directory", workDir, "up", "-d"}
+	if service != "" {
+		upArgs = append(upArgs, service)
+	}
+	upCmd := exec.CommandContext(updateCtx, "docker", upArgs...)
 	upOut, err := upCmd.CombinedOutput()
 	combined := append(pullOut, upOut...)
 	if err != nil {
 		return "error", fmt.Sprintf("compose up failed: %s\n%s", err, truncateOutput(combined, 4000))
 	}
 
-	return "success", fmt.Sprintf("updated compose service %s\n%s", service, truncateOutput(combined, 4000))
+	target := "stack"
+	if service != "" {
+		target = "service " + service
+	}
+	return "success", fmt.Sprintf("updated compose %s\n%s", target, truncateOutput(combined, 4000))
 }
 
 // dockerUpdateStandalone updates a standalone container by pulling the new image,
@@ -147,4 +178,15 @@ func (a *Agent) dockerUpdateStandalone(ctx context.Context, cli *client.Client, 
 	}
 
 	return "success", fmt.Sprintf("updated container %s (%s)", containerName, imageRef)
+}
+
+// clearFreshnessCache clears the docker collector's image freshness cache
+// so the next telemetry push reflects the updated state.
+func (a *Agent) clearFreshnessCache() {
+	for _, c := range a.registry.Collectors() {
+		if dc, ok := c.(*collectors.DockerCollector); ok {
+			dc.ClearFreshnessCache()
+			return
+		}
+	}
 }
