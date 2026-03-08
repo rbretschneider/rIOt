@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import ContainerGroup from '../components/ContainerGroup'
@@ -20,6 +20,10 @@ export default function DeviceContainers() {
 
   const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
   const [containerSearch, setContainerSearch] = useState('')
+
+  const checkUpdatesMutation = useMutation({
+    mutationFn: () => api.sendCommand(id!, 'docker_check_updates', {}),
+  })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
@@ -49,16 +53,26 @@ export default function DeviceContainers() {
         <h1 className="text-2xl font-bold text-white mt-2">
           Docker Containers
         </h1>
-        <p className="text-sm text-gray-500">
-          {docker.running} running / {docker.total_containers} total
-          {docker.paused ? ` / ${docker.paused} paused` : ''}
-          {(() => {
-            const updatable = (docker.containers ?? []).filter(c => c.update_available).length
-            return updatable > 0 ? (
-              <span className="text-amber-400 ml-1">/ {updatable} updatable</span>
-            ) : null
-          })()}
-        </p>
+        <div className="flex items-center gap-3 mt-1">
+          <p className="text-sm text-gray-500">
+            {docker.running} running / {docker.total_containers} total
+            {docker.paused ? ` / ${docker.paused} paused` : ''}
+            {(() => {
+              const updatable = (docker.containers ?? []).filter(c => c.update_available).length
+              return updatable > 0 ? (
+                <span className="text-amber-400 ml-1">/ {updatable} updatable</span>
+              ) : null
+            })()}
+          </p>
+          <button
+            onClick={() => checkUpdatesMutation.mutate()}
+            disabled={checkUpdatesMutation.isPending}
+            className="px-2 py-0.5 text-[11px] text-gray-500 hover:text-gray-300 border border-gray-700 hover:border-gray-600 rounded transition-colors disabled:opacity-50"
+            title="Clear image cache and re-check registries on next telemetry cycle"
+          >
+            {checkUpdatesMutation.isPending ? 'Checking...' : checkUpdatesMutation.isSuccess ? 'Check queued' : 'Check for Updates'}
+          </button>
+        </div>
       </div>
 
       {/* Search */}

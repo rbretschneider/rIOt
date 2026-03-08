@@ -34,6 +34,9 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.dockerCommand(ctx, payload, "start")
 	case "docker_update":
 		status, message = a.dockerUpdate(ctx, payload)
+	case "docker_check_updates":
+		a.clearFreshnessCache()
+		status, message = "success", "image freshness cache cleared, will re-check on next telemetry cycle"
 	case "reboot":
 		status, message = a.handleReboot(payload)
 	case "os_update":

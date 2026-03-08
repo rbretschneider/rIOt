@@ -314,6 +314,7 @@ export interface UpdateInfo {
   update_available: boolean
   release_url?: string
   published_at?: string
+  server_host_device_id?: string
 }
 
 export interface WSMessage {

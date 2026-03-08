@@ -9,9 +9,11 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -64,6 +66,10 @@ type Handlers struct {
 	logRepo            db.LogRepository
 	jwtSecret          []byte
 	adminPasswordHash  string
+
+	// serverHostID tracks which device is hosting the rIOt server.
+	// Detected via Docker container image or loopback connection.
+	serverHostID atomic.Value // stores string
 }
 
 func New(deps HandlerDeps) *Handlers {
@@ -218,6 +224,13 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	h.devices.UpdateHeartbeatTime(r.Context(), deviceID, hb.Data.AgentVersion)
 
+	// Loopback fallback: if agent connects from localhost, it's likely the server host
+	if h.serverHostID.Load() == nil {
+		if isLoopback(r.RemoteAddr) {
+			h.serverHostID.Store(deviceID)
+		}
+	}
+
 	// Check thresholds and generate events
 	h.eventGen.CheckHeartbeatThresholds(r.Context(), deviceID, &hb.Data)
 
@@ -267,6 +280,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// Extract and store primary IP from network telemetry
 	if ip := extractPrimaryIP(&snap.Data); ip != "" {
 		h.devices.UpdatePrimaryIP(r.Context(), deviceID, ip)
+	}
+
+	// Detect if this device hosts the rIOt server (check docker containers)
+	if hasRiotServerContainer(&snap.Data) {
+		h.serverHostID.Store(deviceID)
 	}
 
 	// Check thresholds
@@ -518,7 +536,15 @@ func (h *Handlers) AgentUpdateCheck(w http.ResponseWriter, r *http.Request) {
 // ServerUpdateCheck returns update info for the server (dashboard use).
 func (h *Handlers) ServerUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	info := h.updateChecker.ServerUpdateInfo()
-	writeJSON(w, http.StatusOK, info)
+	// Wrap with server host device ID
+	resp := struct {
+		*updates.UpdateInfo
+		ServerHostDeviceID string `json:"server_host_device_id,omitempty"`
+	}{UpdateInfo: info}
+	if v := h.serverHostID.Load(); v != nil {
+		resp.ServerHostDeviceID = v.(string)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // extractPrimaryIP finds the first non-loopback IPv4 address from telemetry.
@@ -546,6 +572,31 @@ func extractPrimaryIP(data *models.FullTelemetryData) string {
 		}
 	}
 	return ""
+}
+
+// hasRiotServerContainer checks if telemetry includes a Docker container
+// running the rIOt server image.
+func hasRiotServerContainer(data *models.FullTelemetryData) bool {
+	if data.Docker == nil {
+		return false
+	}
+	for _, c := range data.Docker.Containers {
+		img := strings.ToLower(c.Image)
+		if strings.Contains(img, "riot-server") {
+			return true
+		}
+	}
+	return false
+}
+
+// isLoopback checks if a remote address is a loopback address.
+func isLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		host = remoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // RotateKey handles POST /api/v1/devices/{id}/rotate-key.

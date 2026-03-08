@@ -12,13 +12,14 @@ import (
 )
 
 var validActions = map[string]bool{
-	"docker_stop":    true,
-	"docker_restart": true,
-	"docker_start":   true,
-	"docker_update":  true,
-	"reboot":         true,
-	"agent_update":   true,
-	"os_update":      true,
+	"docker_stop":          true,
+	"docker_restart":       true,
+	"docker_start":         true,
+	"docker_update":        true,
+	"docker_check_updates": true,
+	"reboot":               true,
+	"agent_update":         true,
+	"os_update":            true,
 }
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.

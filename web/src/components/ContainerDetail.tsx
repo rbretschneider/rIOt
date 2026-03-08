@@ -58,6 +58,13 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
                   {c.update_available && (
                     <ActionBtn label="Update" onClick={() => setConfirmAction('docker_update')} pending={commandMutation.isPending} />
                   )}
+                  {c.state === 'running' && (
+                    <ActionBtn
+                      label={commandMutation.isSuccess && commandMutation.variables?.action === 'docker_check_updates' ? 'Queued' : 'Check'}
+                      onClick={() => commandMutation.mutate({ action: 'docker_check_updates', params: {} })}
+                      pending={commandMutation.isPending}
+                    />
+                  )}
                   {c.state === 'running' ? (
                     <>
                       <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
