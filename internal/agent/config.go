@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"gopkg.in/yaml.v3"
@@ -99,6 +101,14 @@ func LoadConfig(path string) (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Generate default config on first run so the user can edit it
+			if writeErr := writeDefaultConfig(path); writeErr != nil {
+				slog.Warn("could not write default config", "path", path, "error", writeErr)
+			} else {
+				slog.Info("generated default config", "path", path)
+			}
+		}
 		return cfg, err
 	}
 
@@ -108,6 +118,64 @@ func LoadConfig(path string) (*Config, error) {
 
 	return cfg, nil
 }
+
+// writeDefaultConfig creates the config directory and writes a commented
+// default agent.yaml so users can discover and edit settings.
+func writeDefaultConfig(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(defaultConfigTemplate), 0600)
+}
+
+const defaultConfigTemplate = `# rIOt Agent Configuration
+# Generated on first run — edit and restart the agent to apply changes.
+
+server:
+  url: "http://localhost:7331"
+  tls_verify: true
+  # api_key: ""            # Set during enrollment
+  # bootstrap_key: ""      # Single-use enrollment key
+  # ca_cert_file: ""       # Custom CA certificate for TLS
+  # server_cert_pin: ""    # SHA256 fingerprint for TOFU verification
+
+agent:
+  poll_interval: 60        # Telemetry push interval (seconds)
+  heartbeat_interval: 15   # Heartbeat interval (seconds)
+  # device_name: ""        # Override auto-detected hostname
+  # auto_update: true      # Auto-update agent binary when server offers a new version
+  # tags: []               # Device tags for grouping/filtering
+
+collectors:
+  enabled:
+    - system
+    - cpu
+    - memory
+    - disk
+    - network
+    - os_info
+    - updates
+    - services
+    - processes
+    - docker
+    - security
+
+docker:
+  enabled: "auto"          # "auto" (detect), "true", or "false"
+  collect_stats: true      # Per-container CPU/memory stats
+  # check_updates: true    # Check registries for newer images (30min cache)
+  # terminal_enabled: false  # Allow remote exec into containers
+  # socket_path: ""        # Override Docker socket auto-detection
+
+commands:
+  allow_reboot: false      # Allow remote reboot commands
+  allow_patching: false    # Allow remote OS patching commands
+
+host_terminal:
+  enabled: false           # Allow remote shell access to this host
+  # shell: ""              # Override default shell (e.g., /bin/bash)
+`
 
 func (c *Config) Save(path string) error {
 	data, err := yaml.Marshal(c)
