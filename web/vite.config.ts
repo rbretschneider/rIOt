@@ -10,10 +10,10 @@ export default defineConfig({
   base: isDemo ? '/rIOt/' : '/',
   resolve: isDemo ? {
     alias: [
-      { find: /^(\.\.?\/.*)\/api\/client$/, replacement: '$1/api/demo-client' },
-      { find: /^(\.\.?\/.*)\/api\/settings$/, replacement: '$1/api/demo-settings' },
-      { find: /^(\.\.?\/.*)\/hooks\/useAuth$/, replacement: '$1/hooks/useDemoAuth' },
-      { find: /^(\.\.?\/.*)\/contexts\/WebSocketProvider$/, replacement: '$1/contexts/DemoWebSocketProvider' },
+      { find: /^(\.\.?(?:\/.*)?)\/api\/client$/, replacement: '$1/api/demo-client' },
+      { find: /^(\.\.?(?:\/.*)?)\/api\/settings$/, replacement: '$1/api/demo-settings' },
+      { find: /^(\.\.?(?:\/.*)?)\/hooks\/useAuth$/, replacement: '$1/hooks/useDemoAuth' },
+      { find: /^(\.\.?(?:\/.*)?)\/contexts\/WebSocketProvider$/, replacement: '$1/contexts/DemoWebSocketProvider' },
     ],
   } : undefined,
   server: {

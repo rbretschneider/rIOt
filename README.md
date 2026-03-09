@@ -9,6 +9,10 @@
   Deploy a lightweight agent on each device and get a single-pane-of-glass view of your entire fleet through a real-time web dashboard.
 </p>
 
+<p align="center">
+  <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
+</p>
+
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
