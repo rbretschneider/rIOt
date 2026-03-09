@@ -16,7 +16,7 @@
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -24,7 +24,8 @@
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
 - **Open registration** — devices register automatically; optionally require a registration key via Settings
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
-- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, and processes; one-click alert creation from device view; pre-built templates
+- **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery
+- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, and UPS power events; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
@@ -213,6 +214,8 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - processes
        - docker
        - security
+       - logs
+       - ups
 
    docker:
      enabled: "auto"               # "auto" (detect), "true", or "false"
@@ -289,6 +292,8 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `processes` | Top 15 by CPU, top 15 by memory |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events |
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins |
+| `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
+| `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
 
 ---
 
@@ -307,11 +312,12 @@ Traditional numeric alerts — fire when a metric crosses a threshold:
 
 ### State Alerts
 
-Monitor service, network, and process state changes:
+Monitor service, network, process, and UPS state changes:
 
 - **Service monitoring** — alert when a systemd service enters a specific state (stopped, failed, etc.)
 - **Network interface monitoring** — alert when a NIC goes down
 - **Process monitoring** — alert when a named process is not running
+- **UPS monitoring** — alert when UPS switches to battery or battery charge drops below threshold
 
 ### Alert Templates
 

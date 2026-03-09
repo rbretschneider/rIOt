@@ -6,7 +6,7 @@ import type {
   Device, DeviceDetailResponse, TelemetrySnapshot, FullTelemetryData,
   ContainerInfo, Event, FleetSummary, ProbeWithResult, ProbeResult,
   AlertRule, AlertTemplate, NotificationChannel, NotificationLog,
-  Command,
+  Command, UPSInfo,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
 
@@ -97,6 +97,24 @@ export function getDevices(): Device[] {
 }
 
 // ── Telemetry ────────────────────────────────────────────────────────────────
+
+function makeUPS(hostname: string): UPSInfo | undefined {
+  if (hostname === 'nas-synology') {
+    return {
+      name: 'ups', status: 'OL', on_battery: false, low_battery: false,
+      battery_charge: 100, battery_runtime: 2340, input_voltage: 230.4,
+      output_voltage: 230.4, load: 28, model: 'Back-UPS ES 700G', manufacturer: 'APC',
+    }
+  }
+  if (hostname === 'proxmox-01') {
+    return {
+      name: 'eaton', status: 'OL', on_battery: false, low_battery: false,
+      battery_charge: 95, battery_runtime: 1680, input_voltage: 231.2,
+      output_voltage: 231.2, load: 42, model: '5E 1500i', manufacturer: 'EATON',
+    }
+  }
+  return undefined
+}
 
 function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
   const cpuUsage = d.hostname === 'pi-cameras' ? 87 : d.hostname === 'proxmox-01' ? 34 : 15 + Math.floor(Math.random() * 20)
@@ -189,6 +207,7 @@ function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
       open_ports: d.hostname === 'proxmox-01' ? [22, 80, 443, 8006, 8080, 9090] : [22],
       apparmor: d.os.id === 'ubuntu' || d.os.id === 'debian' ? 'enabled' : undefined,
     },
+    ups: makeUPS(d.hostname),
     updates: {
       package_manager: 'apt',
       total_installed: 340,
@@ -430,6 +449,8 @@ export function getAlertTemplates(): AlertTemplate[] {
     { id: 'disk_high', name: 'High Disk Usage', category: 'resource', metric: 'disk_usage', operator: '>', threshold: 80, severity: 'warning', cooldown_seconds: 3600, needs_target_name: true, description: 'Fires when disk usage exceeds threshold' },
     { id: 'memory_high', name: 'High Memory', category: 'resource', metric: 'memory_usage', operator: '>', threshold: 90, severity: 'critical', cooldown_seconds: 600, needs_target_name: false, description: 'Fires when memory usage exceeds threshold' },
     { id: 'container_stopped', name: 'Container Stopped', category: 'docker', metric: 'container_state', operator: '==', threshold: 0, target_state: 'exited', severity: 'warning', cooldown_seconds: 300, needs_target_name: true, description: 'Fires when a named container stops' },
+    { id: 'ups_on_battery', name: 'UPS On Battery', category: 'ups', metric: 'ups_on_battery', operator: '==', threshold: 1, severity: 'warning', cooldown_seconds: 900, needs_target_name: false, description: 'Fires when the UPS switches to battery power' },
+    { id: 'ups_low_battery', name: 'UPS Low Battery', category: 'ups', metric: 'ups_battery_percent', operator: '<', threshold: 20, severity: 'critical', cooldown_seconds: 300, needs_target_name: false, description: 'Fires when UPS battery charge drops below the threshold' },
   ]
 }
 
