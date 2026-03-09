@@ -1,25 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-
-interface ServerLog {
-  id: number
-  timestamp: string
-  level: string
-  message: string
-  attrs?: Record<string, unknown>
-  source?: string
-}
-
-const BASE = '/api/v1'
-
-async function fetchLogs(level: string, limit: number, before?: string): Promise<ServerLog[]> {
-  let url = `${BASE}/settings/logs?limit=${limit}`
-  if (level) url += `&level=${level}`
-  if (before) url += `&before=${encodeURIComponent(before)}`
-  const res = await fetch(url, { credentials: 'same-origin' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
-}
+import { settingsApi } from '../../api/settings'
 
 export default function LogSettings() {
   const [level, setLevel] = useState('')
@@ -28,7 +9,7 @@ export default function LogSettings() {
 
   const { data: logs = [], isLoading, isFetching } = useQuery({
     queryKey: ['server-logs', level, before],
-    queryFn: () => fetchLogs(level, 100, before),
+    queryFn: () => settingsApi.getLogs(level, 100, before),
     refetchInterval: autoRefresh ? 5000 : false,
   })
 

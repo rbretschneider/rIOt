@@ -78,4 +78,30 @@ export const settingsApi = {
 
   deleteBootstrapKey: (hash: string) =>
     mutate<{ status: string }>(`${BASE}/bootstrap-keys/${hash}`, 'DELETE'),
+
+  // Registration key
+  getRegistrationKey: () =>
+    fetchJSON<{ registration_key: string }>(`${BASE}/registration`),
+
+  saveRegistrationKey: (key: string) =>
+    mutate<{ status: string }>(`${BASE}/registration`, 'PUT', { registration_key: key }),
+
+  // Password
+  changePassword: (currentPassword: string, newPassword: string) =>
+    mutate<{ status: string }>('/api/v1/auth/change-password', 'POST', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
+  // Server certificate
+  getServerCert: () =>
+    fetchJSON<{ fingerprint?: string }>('/api/v1/server-cert'),
+
+  // Server logs
+  getLogs: (level: string, limit: number, before?: string) => {
+    let url = `${BASE}/logs?limit=${limit}`
+    if (level) url += `&level=${level}`
+    if (before) url += `&before=${encodeURIComponent(before)}`
+    return fetchJSON<{ id: number; timestamp: string; level: string; message: string; attrs?: Record<string, unknown>; source?: string }[]>(url)
+  },
 }

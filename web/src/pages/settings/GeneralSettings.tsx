@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { settingsApi } from '../../api/settings'
 
 export default function GeneralSettings() {
   const { data: update } = useQuery({
@@ -85,8 +86,7 @@ function RegistrationKeySection() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/v1/settings/registration', { credentials: 'same-origin' })
-      .then(res => res.json())
+    settingsApi.getRegistrationKey()
       .then(data => {
         setKey(data.registration_key || '')
         setLoaded(true)
@@ -98,22 +98,11 @@ function RegistrationKeySection() {
     setStatus('loading')
     setError('')
     try {
-      const res = await fetch('/api/v1/settings/registration', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ registration_key: key }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to save' }))
-        setError(data.error || 'Failed to save')
-        setStatus('error')
-        return
-      }
+      await settingsApi.saveRegistrationKey(key)
       setStatus('success')
       setTimeout(() => setStatus('idle'), 3000)
-    } catch {
-      setError('Network error')
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save')
       setStatus('error')
     }
   }
@@ -151,7 +140,7 @@ function RegistrationKeySection() {
 function ServerCertSection() {
   const { data: certInfo } = useQuery({
     queryKey: ['server-cert'],
-    queryFn: () => fetch('/api/v1/server-cert', { credentials: 'same-origin' }).then(r => r.json()),
+    queryFn: settingsApi.getServerCert,
     staleTime: 60 * 1000,
   })
 
@@ -192,28 +181,14 @@ function PasswordChangeSection() {
 
     setStatus('loading')
     try {
-      const res = await fetch('/api/v1/auth/change-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to change password' }))
-        setError(data.error || 'Failed to change password')
-        setStatus('error')
-        return
-      }
+      await settingsApi.changePassword(currentPassword, newPassword)
       setStatus('success')
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
       setTimeout(() => setStatus('idle'), 3000)
-    } catch {
-      setError('Network error')
+    } catch (err: any) {
+      setError(err?.message || 'Failed to change password')
       setStatus('error')
     }
   }

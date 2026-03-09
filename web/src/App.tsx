@@ -275,6 +275,16 @@ export default function App() {
           </div>
         )}
       </nav>
+      {import.meta.env.VITE_DEMO === 'true' && (
+        <div className="bg-violet-900/40 border-b border-violet-800/50">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1.5 flex items-center justify-center gap-2 text-sm text-violet-300">
+            <span>This is a static demo with simulated data.</span>
+            <a href="https://github.com/rbretschneider/rIOt" target="_blank" rel="noopener noreferrer" className="text-violet-400 hover:text-violet-200 font-medium underline underline-offset-2">
+              View on GitHub
+            </a>
+          </div>
+        </div>
+      )}
       <UpdateBanner />
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Routes>
