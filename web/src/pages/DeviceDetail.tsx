@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
@@ -38,6 +38,7 @@ export default function DeviceDetail() {
     enabled: !!id,
   })
 
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
@@ -74,6 +75,13 @@ export default function DeviceDetail() {
     onSuccess: () => {
       // Refetch logs after a short delay to let the agent push them
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['device-logs', id] }), 3000)
+    },
+  })
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteDevice(id!, data?.device.status === 'online'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      navigate('/')
     },
   })
 
@@ -135,6 +143,12 @@ export default function DeviceDetail() {
                 </span>
               )
             )}
+            <button
+              onClick={() => setConfirmAction('delete')}
+              className="text-sm text-gray-600 hover:text-red-400 transition-colors"
+            >
+              Delete
+            </button>
           </div>
         </div>
         {/* Right: status badge + action buttons */}
@@ -225,7 +239,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Confirm modal */}
-      {confirmAction && (
+      {confirmAction && confirmAction !== 'delete' && (
         <ConfirmModal
           title={
             confirmAction === 'reboot' ? 'Reboot Device'
@@ -249,20 +263,48 @@ export default function DeviceDetail() {
           onCancel={() => setConfirmAction(null)}
         />
       )}
+      {confirmAction === 'delete' && (
+        <ConfirmModal
+          title="Delete Device"
+          message={device.status === 'online'
+            ? `Remove "${device.hostname}" from the fleet? The agent will be uninstalled from the device.`
+            : `Remove "${device.hostname}" from the fleet? The device is offline — you may need to manually uninstall the agent.`
+          }
+          confirmLabel="Delete"
+          confirmVariant="danger"
+          onConfirm={() => { deleteMutation.mutate(); setConfirmAction(null) }}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
 
-      {/* Hardware Profile */}
-      {device.hardware_profile && (
-        <Section title="Hardware">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <InfoItem label="CPU" value={device.hardware_profile.cpu_model} />
-            <InfoItem label="Cores / Threads" value={`${device.hardware_profile.cpu_cores} / ${device.hardware_profile.cpu_threads}`} />
-            <InfoItem label="RAM" value={`${device.hardware_profile.total_ram_mb} MB`} />
-            <InfoItem label="Board" value={device.hardware_profile.board_model || '-'} />
-            {device.hardware_profile.virtualization && (
-              <InfoItem label="Virtualization" value={device.hardware_profile.virtualization} />
-            )}
-          </div>
-        </Section>
+      {/* Hardware + OS (side by side) */}
+      {(device.hardware_profile || tel?.os) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {device.hardware_profile && (
+            <Section title="Hardware">
+              <div className="grid grid-cols-2 gap-4">
+                <InfoItem label="CPU" value={device.hardware_profile.cpu_model} />
+                <InfoItem label="Cores / Threads" value={`${device.hardware_profile.cpu_cores} / ${device.hardware_profile.cpu_threads}`} />
+                <InfoItem label="RAM" value={`${device.hardware_profile.total_ram_mb} MB`} />
+                <InfoItem label="Board" value={device.hardware_profile.board_model || '-'} />
+                {device.hardware_profile.virtualization && (
+                  <InfoItem label="Virtualization" value={device.hardware_profile.virtualization} />
+                )}
+              </div>
+            </Section>
+          )}
+          {tel?.os && (
+            <Section title="Operating System">
+              <div className="grid grid-cols-2 gap-4">
+                <InfoItem label="OS" value={tel.os.name} />
+                <InfoItem label="Kernel" value={tel.os.kernel} />
+                <InfoItem label="Arch" value={tel.os.kernel_arch} />
+                <InfoItem label="Timezone" value={tel.os.timezone || '-'} />
+                {tel.os.uptime != null && <InfoItem label="Uptime" value={formatUptime(tel.os.uptime)} />}
+              </div>
+            </Section>
+          )}
+        </div>
       )}
 
       {/* Live Metrics */}
@@ -279,7 +321,6 @@ export default function DeviceDetail() {
             <div className="mt-4 grid grid-cols-3 gap-4">
               <InfoItem label="Load (1m/5m/15m)" value={`${tel.cpu.load_avg_1m.toFixed(2)} / ${tel.cpu.load_avg_5m.toFixed(2)} / ${tel.cpu.load_avg_15m.toFixed(2)}`} />
               {tel.cpu.temperature != null && <InfoItem label="CPU Temp" value={`${tel.cpu.temperature.toFixed(1)} C`} />}
-              {tel.os && <InfoItem label="Uptime" value={formatUptime(tel.os.uptime)} />}
             </div>
           )}
         </Section>
@@ -333,6 +374,20 @@ export default function DeviceDetail() {
               <InfoItem label="Output Voltage" value={`${tel.ups.output_voltage.toFixed(1)} V`} />
             )}
           </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => setAlertDialog({ metric: 'ups_on_battery', targetName: tel.ups!.name })}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-amber-400 border border-gray-700 hover:border-amber-600/50 rounded-md transition-colors"
+            >
+              <AlertIcon /> On Battery Alert
+            </button>
+            <button
+              onClick={() => setAlertDialog({ metric: 'ups_battery_percent', targetName: tel.ups!.name })}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-amber-400 border border-gray-700 hover:border-amber-600/50 rounded-md transition-colors"
+            >
+              <AlertIcon /> Low Battery Alert
+            </button>
+          </div>
         </Section>
       )}
 
@@ -356,96 +411,6 @@ export default function DeviceDetail() {
             <MetricChart heartbeats={heartbeats} metricKey="cpu_percent" label="CPU %" color="#3b82f6" />
             <MetricChart heartbeats={heartbeats} metricKey="mem_percent" label="Memory %" color="#8b5cf6" />
             <MetricChart heartbeats={heartbeats} metricKey="disk_root_percent" label="Disk %" color="#f59e0b" />
-          </div>
-        </Section>
-      )}
-
-      {/* Device Logs */}
-      <Section title="Device Logs">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex gap-2">
-            {([
-              { label: 'All', value: 7 },
-              { label: 'Info', value: 6 },
-              { label: 'Notice', value: 5 },
-              { label: 'Warning', value: 4 },
-              { label: 'Error', value: 3 },
-              { label: 'Crit', value: 2 },
-            ] as const).map(p => (
-              <button
-                key={p.value}
-                onClick={() => setLogPriority(p.value)}
-                className={`px-2 py-1 text-xs rounded-md transition-colors ${
-                  logPriority === p.value ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {canCommand && (
-            <button
-              onClick={() => fetchLogsMutation.mutate({ hours: 24, priority: 6 })}
-              disabled={fetchLogsMutation.isPending}
-              className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {fetchLogsMutation.isPending ? 'Fetching...' : 'Fetch Last 24h'}
-            </button>
-          )}
-        </div>
-        {fetchLogsMutation.isSuccess && (
-          <p className="text-xs text-emerald-400 mb-2">Logs fetched — refreshing...</p>
-        )}
-        {fetchLogsMutation.isError && (
-          <p className="text-xs text-red-400 mb-2">Failed to fetch logs: {(fetchLogsMutation.error as Error).message}</p>
-        )}
-        {deviceLogs && deviceLogs.length > 0 ? (
-          <div className="max-h-96 overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-900">
-                <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Time</th>
-                  <th className="text-left py-2">Priority</th>
-                  <th className="text-left py-2">Unit</th>
-                  <th className="text-left py-2">Message</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {deviceLogs.map((log, i) => (
-                  <tr key={i}>
-                    <td className="py-1.5 font-mono text-xs text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
-                    <td className="py-1.5">
-                      <span className={`text-xs ${
-                        log.priority <= 2 ? 'text-red-400' :
-                        log.priority === 3 ? 'text-amber-400' :
-                        log.priority === 4 ? 'text-yellow-400' :
-                        'text-gray-400'
-                      }`}>
-                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : log.priority === 6 ? 'INFO' : 'DEBUG'}
-                      </span>
-                    </td>
-                    <td className="py-1.5 font-mono text-xs text-gray-400">{log.unit || '-'}</td>
-                    <td className="py-1.5 text-xs text-gray-300 max-w-md truncate">{log.message}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-6 text-gray-500 text-sm">
-            No logs stored yet.{canCommand && ' Click "Fetch Last 24h" to pull logs from this device.'}
-          </div>
-        )}
-      </Section>
-
-      {/* OS Info */}
-      {tel?.os && (
-        <Section title="Operating System">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <InfoItem label="OS" value={tel.os.name} />
-            <InfoItem label="Kernel" value={tel.os.kernel} />
-            <InfoItem label="Arch" value={tel.os.kernel_arch} />
-            <InfoItem label="Timezone" value={tel.os.timezone || '-'} />
           </div>
         </Section>
       )}
@@ -508,7 +473,10 @@ export default function DeviceDetail() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
-                {tel.services.map((svc) => (
+                {[...tel.services].sort((a, b) => {
+                  const rank = (s: string) => s.includes('running') ? 0 : s.includes('failed') ? 2 : 1
+                  return rank(a.state) - rank(b.state)
+                }).map((svc) => (
                   <tr key={svc.name}>
                     <td className="py-1.5 font-mono text-xs">{svc.name}</td>
                     <td className="py-1.5">
@@ -600,6 +568,69 @@ export default function DeviceDetail() {
         </Section>
       )}
 
+      {/* Alert Rules */}
+      {alertRules && alertRules.length > 0 && (() => {
+        const globalRules = alertRules.filter(r => !r.device_filter)
+        const deviceRules = alertRules.filter(r => !!r.device_filter)
+        const RulesTable = ({ rules }: { rules: typeof alertRules }) => (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-gray-500 text-xs uppercase">
+                <th className="text-left py-2 w-6"></th>
+                <th className="text-left py-2">Name</th>
+                <th className="text-left py-2">Metric</th>
+                <th className="text-left py-2">Condition</th>
+                <th className="text-left py-2">Severity</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-800/50">
+              {rules.map(rule => (
+                <tr key={rule.id}>
+                  <td className="py-1.5">
+                    <span className={`w-2 h-2 rounded-full inline-block ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                  </td>
+                  <td className="py-1.5 text-gray-200">{rule.name}</td>
+                  <td className="py-1.5 text-gray-400 font-mono text-xs">{rule.metric}</td>
+                  <td className="py-1.5 text-gray-400 font-mono text-xs">
+                    {rule.target_state
+                      ? `state in [${rule.target_state}]`
+                      : `${rule.operator} ${rule.threshold}`}
+                  </td>
+                  <td className="py-1.5">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
+                        : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
+                        : 'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {rule.severity}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+        return (
+          <Section title="Alert Rules">
+            {deviceRules.length > 0 && (
+              <div className={globalRules.length > 0 ? 'mb-4' : ''}>
+                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-1">Device-Specific</h3>
+                <RulesTable rules={deviceRules} />
+              </div>
+            )}
+            {globalRules.length > 0 && (
+              <div>
+                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-1">Global</h3>
+                <RulesTable rules={globalRules} />
+              </div>
+            )}
+            <Link to="/settings/alert-rules" className="text-xs text-blue-400 hover:text-blue-300 mt-3 inline-block">
+              Edit rules
+            </Link>
+          </Section>
+        )
+      })()}
+
       {/* Security */}
       {tel?.security && (
         <Section title="Security">
@@ -619,28 +650,86 @@ export default function DeviceDetail() {
         </Section>
       )}
 
-      {/* Alert Rules */}
-      {alertRules && alertRules.length > 0 && (
-        <Section title="Alert Rules">
-          <div className="space-y-2">
-            {alertRules.map(rule => (
-              <div key={rule.id} className="flex items-center gap-3 text-sm">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-                <span className="text-gray-200">{rule.name}</span>
-                <span className="text-gray-500 text-xs">{rule.metric}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                  rule.severity === 'critical' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
-                }`}>
-                  {rule.severity}
-                </span>
-              </div>
+      {/* Device Logs */}
+      <Section title="Device Logs">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex gap-2">
+            {([
+              { label: 'All', value: 7 },
+              { label: 'Info', value: 6 },
+              { label: 'Notice', value: 5 },
+              { label: 'Warning', value: 4 },
+              { label: 'Error', value: 3 },
+              { label: 'Crit', value: 2 },
+            ] as const).map(p => (
+              <button
+                key={p.value}
+                onClick={() => setLogPriority(p.value)}
+                className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                  logPriority === p.value ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                }`}
+              >
+                {p.label}
+              </button>
             ))}
-            <Link to="/settings/alert-rules" className="text-xs text-blue-400 hover:text-blue-300 mt-2 inline-block">
-              Edit rules
-            </Link>
           </div>
-        </Section>
-      )}
+          {canCommand && (
+            <button
+              onClick={() => fetchLogsMutation.mutate({ hours: 24, priority: 6 })}
+              disabled={fetchLogsMutation.isPending}
+              className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {fetchLogsMutation.isPending ? 'Fetching...' : 'Fetch Last 24h'}
+            </button>
+          )}
+        </div>
+        {fetchLogsMutation.isSuccess && (
+          <p className="text-xs text-emerald-400 mb-2">Logs fetched — refreshing...</p>
+        )}
+        {fetchLogsMutation.isError && (
+          <p className="text-xs text-red-400 mb-2">Failed to fetch logs: {(fetchLogsMutation.error as Error).message}</p>
+        )}
+        {deviceLogs && deviceLogs.length > 0 ? (
+          <div className="max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-gray-900">
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2">Time</th>
+                  <th className="text-left py-2">Priority</th>
+                  <th className="text-left py-2">Unit</th>
+                  <th className="text-left py-2">Message</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {deviceLogs.map((log, i) => {
+                  const rowColor = log.priority <= 2 ? 'text-red-400'
+                    : log.priority === 3 ? 'text-red-400/80'
+                    : log.priority === 4 ? 'text-amber-400'
+                    : log.priority === 5 ? 'text-gray-300'
+                    : log.priority === 6 ? 'text-blue-400/80'
+                    : 'text-gray-500'
+                  return (
+                    <tr key={i} className={rowColor}>
+                      <td className="py-1.5 font-mono text-xs whitespace-nowrap opacity-70">{new Date(log.timestamp).toLocaleString()}</td>
+                      <td className="py-1.5">
+                        <span className="text-xs font-medium">
+                          {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : log.priority === 6 ? 'INFO' : 'DEBUG'}
+                        </span>
+                      </td>
+                      <td className="py-1.5 font-mono text-xs opacity-70">{log.unit || '-'}</td>
+                      <td className="py-1.5 text-xs max-w-md truncate">{log.message}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-6 text-gray-500 text-sm">
+            No logs stored yet.{canCommand && ' Click "Fetch Last 24h" to pull logs from this device.'}
+          </div>
+        )}
+      </Section>
 
       {/* Recent Events */}
       {events && events.filter(e => e.device_id === id).length > 0 && (() => {

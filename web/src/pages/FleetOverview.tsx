@@ -31,7 +31,6 @@ export default function FleetOverview() {
     return m
   }, [patchStatus])
   const queryClient = useQueryClient()
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; hostname: string; status: string } | null>(null)
   const [showGuide, setShowGuide] = useState(false)
   const [showPatchReview, setShowPatchReview] = useState(false)
   const [patchDetail, setPatchDetail] = useState<DevicePatchInfo[] | null>(null)
@@ -65,16 +64,6 @@ export default function FleetOverview() {
       queryClient.invalidateQueries({ queryKey: ['agent-versions'] })
     },
   })
-
-  async function handleDelete() {
-    if (!deleteTarget) return
-    const uninstall = deleteTarget.status === 'online'
-    try {
-      await api.deleteDevice(deleteTarget.id, uninstall)
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
-    } catch { /* ignore */ }
-    setDeleteTarget(null)
-  }
 
   async function handleOpenPatchReview() {
     setPatchDetailLoading(true)
@@ -221,7 +210,6 @@ export default function FleetOverview() {
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
-                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -229,6 +217,7 @@ export default function FleetOverview() {
                 <tr key={d.id} className="hover:bg-gray-800/30 transition-colors">
                   <td className="px-4 py-3">
                     <Link to={`/devices/${d.id}`} className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5">
+                      {d.hostname}
                       {serverUpdate?.server_host_device_id === d.id && (
                         <span title="rIOt Server Host" className="text-violet-400 flex-shrink-0">
                           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -236,7 +225,6 @@ export default function FleetOverview() {
                           </svg>
                         </span>
                       )}
-                      {d.hostname}
                     </Link>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
@@ -270,22 +258,11 @@ export default function FleetOverview() {
                       ))}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: d.id, hostname: d.hostname, status: d.status }) }}
-                      className="text-gray-600 hover:text-red-400 transition-colors p-1"
-                      title="Delete device"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                     No devices match your search
                   </td>
                 </tr>
@@ -335,19 +312,6 @@ export default function FleetOverview() {
         />
       )}
 
-      {deleteTarget && (
-        <ConfirmModal
-          title="Delete Device"
-          message={deleteTarget.status === 'online'
-            ? `Remove "${deleteTarget.hostname}" from the fleet? The agent will be uninstalled from the device.`
-            : `Remove "${deleteTarget.hostname}" from the fleet? The device is offline — you may need to manually uninstall the agent.`
-          }
-          confirmLabel="Delete"
-          confirmVariant="danger"
-          onConfirm={handleDelete}
-          onCancel={() => setDeleteTarget(null)}
-        />
-      )}
     </div>
   )
 }

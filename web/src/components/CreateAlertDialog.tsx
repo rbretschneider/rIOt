@@ -32,6 +32,8 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
   container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },
   device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
+  ups_on_battery:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when UPS switches to battery power' },
+  ups_battery_percent: { operator: '<', threshold: 20, severity: 'critical', cooldown: 300, hint: 'UPS battery charge percentage (0–100)' },
 }
 
 export default function CreateAlertDialog({ metric, targetName, targetState, deviceFilter, onClose }: CreateAlertDialogProps) {
@@ -44,6 +46,8 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     nic_state: 'NIC State',
     process_missing: 'Process Missing',
     log_errors: 'Log Errors',
+    ups_on_battery: 'UPS On Battery',
+    ups_battery_percent: 'UPS Battery %',
   }
 
   // Use provided targetState or sensible defaults
@@ -149,6 +153,27 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
                   })}
                 </div>
               </div>
+            </div>
+          )}
+          {!isState && defaults?.hint && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Condition</label>
+              <div className="flex gap-2">
+                <select
+                  value={rule.operator}
+                  onChange={e => setRule({ ...rule, operator: e.target.value })}
+                  className="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm w-20"
+                >
+                  {['>', '>=', '<', '<=', '==', '!='].map(op => <option key={op} value={op}>{op}</option>)}
+                </select>
+                <input
+                  type="number"
+                  value={rule.threshold ?? 0}
+                  onChange={e => setRule({ ...rule, threshold: parseFloat(e.target.value) || 0 })}
+                  className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">{defaults.hint}</p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
