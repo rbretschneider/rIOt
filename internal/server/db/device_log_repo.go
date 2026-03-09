@@ -23,7 +23,7 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 	for _, e := range entries {
 		_, err := r.db.Pool.Exec(ctx,
 			`INSERT INTO device_logs (device_id, timestamp, priority, unit, message) VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT (device_id, timestamp, priority, unit, md5(message)) DO NOTHING`,
+			 ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`,
 			deviceID, e.Timestamp, e.Priority, e.Unit, e.Message,
 		)
 		if err != nil {

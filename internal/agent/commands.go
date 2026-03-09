@@ -56,6 +56,9 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 
 	if status == "error" {
 		slog.Warn("command: failed", "id", payload.CommandID, "action", payload.Action, "error", message)
+		// Report command failure as a server event so it appears in the dashboard
+		a.reportUpdateEvent(ctx, models.EventCommandCompleted, models.SeverityWarning,
+			fmt.Sprintf("Command %s failed: %s", payload.Action, message))
 	} else {
 		slog.Info("command: completed", "id", payload.CommandID, "action", payload.Action, "status", status)
 	}
