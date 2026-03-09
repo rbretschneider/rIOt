@@ -17,6 +17,19 @@ const METRICS = [
 
 const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
 
+// Event-based metrics where threshold is always 1 (fires when the event occurs)
+const EVENT_METRICS = ['container_died', 'container_oom', 'device_offline']
+
+// Per-metric suggested defaults applied when the user changes the dropdown
+const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; severity: string; cooldown: number; hint: string }> = {
+  mem_percent:     { operator: '>', threshold: 90, severity: 'warning',  cooldown: 3600, hint: 'Memory usage percentage (0–100)' },
+  disk_percent:    { operator: '>', threshold: 90, severity: 'critical', cooldown: 3600, hint: 'Disk usage percentage (0–100)' },
+  log_errors:      { operator: '>', threshold: 0,  severity: 'warning',  cooldown: 900,  hint: 'Number of error-level log entries since last heartbeat' },
+  container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
+  container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },
+  device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
+}
+
 const TARGET_STATES: Record<string, string[]> = {
   service_state: ['stopped', 'failed', 'inactive', 'dead'],
   nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
@@ -177,12 +190,16 @@ export default function AlertRuleSettings() {
                     onChange={e => {
                       const m = e.target.value
                       const isState = STATE_METRICS.includes(m)
+                      const defaults = METRIC_DEFAULTS[m]
                       setEditing({
                         ...editing,
                         metric: m,
-                        operator: isState ? '==' : '>',
-                        threshold: isState ? 1 : 90,
+                        operator: isState ? '==' : (defaults?.operator ?? '>'),
+                        threshold: isState ? 1 : (defaults?.threshold ?? 90),
+                        severity: defaults?.severity ?? editing.severity,
+                        cooldown_seconds: defaults?.cooldown ?? editing.cooldown_seconds,
                         target_state: isState ? (TARGET_STATE_DEFAULTS[m] || []).join(',') : '',
+                        target_name: isState ? editing.target_name : '',
                       })
                     }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
@@ -208,6 +225,10 @@ export default function AlertRuleSettings() {
                       />
                     </Field>
                   </>
+                ) : EVENT_METRICS.includes(editing.metric || '') ? (
+                  <div className="sm:col-span-2 flex items-center">
+                    <p className="text-xs text-gray-400 italic">{METRIC_DEFAULTS[editing.metric || '']?.hint}</p>
+                  </div>
                 ) : (
                   <>
                     <Field label="Operator">
@@ -226,6 +247,9 @@ export default function AlertRuleSettings() {
                         onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
                         className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       />
+                      {METRIC_DEFAULTS[editing.metric || '']?.hint && (
+                        <p className="text-[11px] text-gray-500 mt-1">{METRIC_DEFAULTS[editing.metric || '']?.hint}</p>
+                      )}
                     </Field>
                   </>
                 )}

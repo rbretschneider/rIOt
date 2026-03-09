@@ -25,9 +25,19 @@ const TARGET_STATE_DEFAULTS: Record<string, string[]> = {
   process_missing: ['absent'],
 }
 
+const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; severity: string; cooldown: number; hint: string }> = {
+  mem_percent:     { operator: '>', threshold: 90, severity: 'warning',  cooldown: 3600, hint: 'Memory usage percentage (0–100)' },
+  disk_percent:    { operator: '>', threshold: 90, severity: 'critical', cooldown: 3600, hint: 'Disk usage percentage (0–100)' },
+  log_errors:      { operator: '>', threshold: 0,  severity: 'warning',  cooldown: 900,  hint: 'Number of error-level log entries since last heartbeat' },
+  container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
+  container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },
+  device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
+}
+
 export default function CreateAlertDialog({ metric, targetName, targetState, deviceFilter, onClose }: CreateAlertDialogProps) {
   const qc = useQueryClient()
   const isState = ['service_state', 'nic_state', 'process_missing'].includes(metric)
+  const defaults = METRIC_DEFAULTS[metric]
 
   const metricLabels: Record<string, string> = {
     service_state: 'Service State',
@@ -45,13 +55,13 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     name: `${metricLabels[metric] || metric}: ${targetName}`,
     enabled: true,
     metric,
-    operator: isState ? '==' : '>',
-    threshold: isState ? 1 : 90,
+    operator: isState ? '==' : (defaults?.operator ?? '>'),
+    threshold: isState ? 1 : (defaults?.threshold ?? 90),
     target_name: targetName,
     target_state: defaultStates,
-    severity: 'warning',
+    severity: defaults?.severity ?? 'warning',
     device_filter: deviceFilter || '',
-    cooldown_seconds: 900,
+    cooldown_seconds: defaults?.cooldown ?? 900,
     notify: true,
     template_id: '',
   })
