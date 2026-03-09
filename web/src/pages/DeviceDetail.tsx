@@ -285,6 +285,57 @@ export default function DeviceDetail() {
         </Section>
       )}
 
+      {/* UPS */}
+      {tel?.ups?.name && (
+        <Section title="UPS">
+          {tel.ups.on_battery && (
+            <div className={`px-4 py-2 mb-4 rounded text-sm ${
+              tel.ups.low_battery
+                ? 'bg-red-900/30 border border-red-800 text-red-400'
+                : 'bg-amber-900/30 border border-amber-800 text-amber-400'
+            }`}>
+              {tel.ups.low_battery
+                ? `UPS ${tel.ups.name} — LOW BATTERY` + (tel.ups.battery_charge != null ? ` (${tel.ups.battery_charge.toFixed(0)}%)` : '')
+                : `UPS ${tel.ups.name} — Running on battery`}
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div>
+              <p className="text-xs text-gray-500">Status</p>
+              <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium mt-1 ${
+                tel.ups.low_battery ? 'bg-red-500/20 text-red-400'
+                  : tel.ups.on_battery ? 'bg-amber-500/20 text-amber-400'
+                  : 'bg-emerald-500/20 text-emerald-400'
+              }`}>
+                {tel.ups.status || 'Unknown'}
+              </span>
+            </div>
+            <InfoItem label="UPS Name" value={tel.ups.name} />
+            {tel.ups.model && <InfoItem label="Model" value={tel.ups.model} />}
+            {tel.ups.manufacturer && <InfoItem label="Manufacturer" value={tel.ups.manufacturer} />}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {tel.ups.battery_charge != null && (
+              <GaugeBar label="Battery Charge" value={tel.ups.battery_charge} />
+            )}
+            {tel.ups.load != null && (
+              <GaugeBar label="UPS Load" value={tel.ups.load} />
+            )}
+          </div>
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+            {tel.ups.battery_runtime != null && (
+              <InfoItem label="Runtime Remaining" value={formatUptime(tel.ups.battery_runtime)} />
+            )}
+            {tel.ups.input_voltage != null && (
+              <InfoItem label="Input Voltage" value={`${tel.ups.input_voltage.toFixed(1)} V`} />
+            )}
+            {tel.ups.output_voltage != null && (
+              <InfoItem label="Output Voltage" value={`${tel.ups.output_voltage.toFixed(1)} V`} />
+            )}
+          </div>
+        </Section>
+      )}
+
       {/* Metric History */}
       {heartbeats && heartbeats.length > 0 && (
         <Section title="Metric History">

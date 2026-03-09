@@ -86,7 +86,7 @@ func DefaultConfig() *Config {
 			Enabled: []string{
 				"system", "cpu", "memory", "disk", "network",
 				"os_info", "updates", "services", "processes",
-				"docker", "security",
+				"docker", "security", "logs", "ups",
 			},
 		},
 		Docker: DockerConfig{
@@ -160,6 +160,8 @@ collectors:
     - processes
     - docker
     - security
+    - logs
+    - ups
 
 docker:
   enabled: "auto"          # "auto" (detect), "true", or "false"

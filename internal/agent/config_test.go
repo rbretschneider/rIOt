@@ -19,9 +19,11 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 15, cfg.Agent.HeartbeatInterval)
 	assert.Equal(t, "auto", cfg.Docker.Enabled)
 	assert.True(t, cfg.Docker.CollectStats)
-	assert.Len(t, cfg.Collector.Enabled, 11)
+	assert.Len(t, cfg.Collector.Enabled, 13)
 	assert.Contains(t, cfg.Collector.Enabled, "cpu")
 	assert.Contains(t, cfg.Collector.Enabled, "docker")
+	assert.Contains(t, cfg.Collector.Enabled, "logs")
+	assert.Contains(t, cfg.Collector.Enabled, "ups")
 }
 
 func TestLoadConfig_FromYAML(t *testing.T) {

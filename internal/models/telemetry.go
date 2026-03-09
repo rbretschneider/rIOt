@@ -43,6 +43,7 @@ type FullTelemetryData struct {
 	Docker   *DockerInfo   `json:"docker,omitempty"`
 	Security *SecurityInfo `json:"security,omitempty"`
 	Logs     []LogEntry    `json:"logs,omitempty"`
+	UPS      *UPSInfo      `json:"ups,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.
@@ -278,6 +279,21 @@ type RiotLabels struct {
 	Priority    int      `json:"priority"`
 	Hide        bool     `json:"hide,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+}
+
+// UPSInfo holds NUT UPS status.
+type UPSInfo struct {
+	Name           string   `json:"name"`
+	Status         string   `json:"status"`
+	OnBattery      bool     `json:"on_battery"`
+	LowBattery     bool     `json:"low_battery"`
+	BatteryCharge  *float64 `json:"battery_charge,omitempty"`
+	BatteryRuntime *int     `json:"battery_runtime,omitempty"`
+	InputVoltage   *float64 `json:"input_voltage,omitempty"`
+	OutputVoltage  *float64 `json:"output_voltage,omitempty"`
+	Load           *float64 `json:"load,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Manufacturer   string   `json:"manufacturer,omitempty"`
 }
 
 // SecurityInfo holds security-related info.

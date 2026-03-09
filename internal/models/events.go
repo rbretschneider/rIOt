@@ -33,6 +33,9 @@ const (
 	EventAgentUpdateCompleted EventType = "agent_update_completed"
 	EventAgentUpdateFailed    EventType = "agent_update_failed"
 	EventLogErrors            EventType = "log_errors"
+	EventUPSOnBattery         EventType = "ups_on_battery"
+	EventUPSLowBattery        EventType = "ups_low_battery"
+	EventUPSRestored          EventType = "ups_restored"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

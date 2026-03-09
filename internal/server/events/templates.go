@@ -122,6 +122,31 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when a Docker container is killed by the OOM killer",
 		},
+		// UPS
+		{
+			ID:              "ups_on_battery",
+			Name:            "UPS On Battery",
+			Category:        "ups",
+			Metric:          "ups_on_battery",
+			Operator:        "==",
+			Threshold:       1,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: false,
+			Description:     "Fires when the UPS switches to battery power",
+		},
+		{
+			ID:              "ups_low_battery",
+			Name:            "UPS Low Battery",
+			Category:        "ups",
+			Metric:          "ups_battery_percent",
+			Operator:        "<",
+			Threshold:       20,
+			Severity:        "critical",
+			CooldownSeconds: 300,
+			NeedsTargetName: false,
+			Description:     "Fires when UPS battery charge drops below the threshold",
+		},
 		// Logs
 		{
 			ID:              "log_errors",

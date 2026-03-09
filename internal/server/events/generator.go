@@ -240,6 +240,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 	if data.Procs != nil {
 		g.CheckProcessAlerts(ctx, deviceID, data.Procs)
 	}
+	if data.UPS != nil {
+		g.CheckUPSAlerts(ctx, deviceID, data.UPS)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -389,6 +392,76 @@ func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID string, pro
 			CreatedAt: time.Now().UTC(),
 		}
 		g.createEventAndNotify(ctx, e, r, "", 1)
+	}
+}
+
+// CheckUPSAlerts checks UPS state and creates events for power transitions.
+func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *models.UPSInfo) {
+	if ups.Name == "" {
+		return
+	}
+
+	wasOnBatteryKey := deviceID + ":ups_was_on_battery"
+
+	if ups.OnBattery {
+		// On battery — fire warning event
+		if ups.LowBattery {
+			// Low battery is more urgent
+			key := deviceID + ":" + string(models.EventUPSLowBattery)
+			if !g.onCooldown(key, 5*time.Minute) {
+				charge := ""
+				if ups.BatteryCharge != nil {
+					charge = fmt.Sprintf(" (%.0f%%)", *ups.BatteryCharge)
+				}
+				g.createEvent(ctx, &models.Event{
+					DeviceID:  deviceID,
+					Type:      models.EventUPSLowBattery,
+					Severity:  models.SeverityCrit,
+					Message:   fmt.Sprintf("UPS %s low battery%s", ups.Name, charge),
+					CreatedAt: time.Now().UTC(),
+				})
+			}
+		} else {
+			key := deviceID + ":" + string(models.EventUPSOnBattery)
+			if !g.onCooldown(key, 15*time.Minute) {
+				g.createEvent(ctx, &models.Event{
+					DeviceID:  deviceID,
+					Type:      models.EventUPSOnBattery,
+					Severity:  models.SeverityWarning,
+					Message:   fmt.Sprintf("UPS %s running on battery", ups.Name),
+					CreatedAt: time.Now().UTC(),
+				})
+			}
+		}
+
+		// Track that we were on battery
+		g.mu.Lock()
+		g.lastSent[wasOnBatteryKey] = time.Now()
+		g.mu.Unlock()
+	} else {
+		// On line power — check if we were previously on battery
+		g.mu.Lock()
+		_, wasOnBattery := g.lastSent[wasOnBatteryKey]
+		if wasOnBattery {
+			delete(g.lastSent, wasOnBatteryKey)
+		}
+		g.mu.Unlock()
+
+		if wasOnBattery {
+			g.createEvent(ctx, &models.Event{
+				DeviceID:  deviceID,
+				Type:      models.EventUPSRestored,
+				Severity:  models.SeverityInfo,
+				Message:   fmt.Sprintf("UPS %s restored to line power", ups.Name),
+				CreatedAt: time.Now().UTC(),
+			})
+		}
+	}
+
+	// Battery charge threshold check via evaluateMetric
+	if ups.BatteryCharge != nil {
+		g.evaluateMetric(ctx, deviceID, "ups_battery_percent", *ups.BatteryCharge, "", models.EventUPSLowBattery,
+			func(val float64) string { return fmt.Sprintf("UPS %s battery at %.0f%%", ups.Name, val) })
 	}
 }
 

@@ -70,6 +70,7 @@ export interface FullTelemetryData {
   processes?: ProcessInfo
   docker?: DockerInfo
   security?: SecurityInfo
+  ups?: UPSInfo
 }
 
 export interface SystemInfo {
@@ -288,6 +289,20 @@ export interface DockerEvent {
   container_name: string
   action: string
   image?: string
+}
+
+export interface UPSInfo {
+  name: string
+  status: string
+  on_battery: boolean
+  low_battery: boolean
+  battery_charge?: number
+  battery_runtime?: number
+  input_voltage?: number
+  output_voltage?: number
+  load?: number
+  model?: string
+  manufacturer?: string
 }
 
 export interface SecurityInfo {
