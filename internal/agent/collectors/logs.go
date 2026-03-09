@@ -35,7 +35,7 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 		since = time.Now().Add(-5 * time.Minute)
 	}
 
-	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	sinceStr := since.Format("2006-01-02 15:04:05")
 	out, err := exec.CommandContext(ctx, "journalctl",
 		"--since", sinceStr,
 		"--priority=0..6",

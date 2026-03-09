@@ -10,6 +10,7 @@ Restart=always
 RestartSec=5
 User=riot
 Group=riot
+SupplementaryGroups=docker systemd-journal
 LimitNOFILE=65536
 
 # Security hardening

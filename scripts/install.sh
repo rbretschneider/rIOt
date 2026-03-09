@@ -164,6 +164,14 @@ if [ "$OS" = "linux" ]; then
             usermod -aG docker "$RIOT_USER"
         fi
     fi
+
+    # Add riot user to systemd-journal group for log collection
+    if getent group systemd-journal >/dev/null 2>&1; then
+        if ! id -nG "$RIOT_USER" | grep -qw systemd-journal; then
+            echo "==> Adding $RIOT_USER to systemd-journal group (for log collection)"
+            usermod -aG systemd-journal "$RIOT_USER"
+        fi
+    fi
 fi
 
 # ── Create directories ───────────────────────────────────────────────
@@ -349,9 +357,16 @@ else
 fi
 
 # ── Build supplementary groups for systemd ────────────────────────────
-SUPPLEMENTARY_GROUPS=""
+SUPP_GROUPS=""
 if getent group docker >/dev/null 2>&1; then
-    SUPPLEMENTARY_GROUPS="SupplementaryGroups=docker"
+    SUPP_GROUPS="docker"
+fi
+if getent group systemd-journal >/dev/null 2>&1; then
+    SUPP_GROUPS="${SUPP_GROUPS:+$SUPP_GROUPS }systemd-journal"
+fi
+SUPPLEMENTARY_GROUPS=""
+if [ -n "$SUPP_GROUPS" ]; then
+    SUPPLEMENTARY_GROUPS="SupplementaryGroups=$SUPP_GROUPS"
 fi
 
 # ── Install sudoers drop-in for privilege escalation ──────────────────

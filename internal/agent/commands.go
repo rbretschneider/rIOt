@@ -267,7 +267,7 @@ func (a *Agent) handleFetchLogs(ctx context.Context, payload models.CommandPaylo
 	}
 
 	since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
-	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	sinceStr := since.Format("2006-01-02 15:04:05")
 
 	priorityArg := fmt.Sprintf("--priority=0..%d", maxPriority)
 	limitArg := fmt.Sprintf("%d", limit)

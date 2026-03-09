@@ -185,6 +185,21 @@ function UpdateBanner() {
   )
 }
 
+function ServerVersion() {
+  const { data: update } = useQuery({
+    queryKey: ['server-update'],
+    queryFn: api.getServerUpdate,
+    staleTime: 60 * 60 * 1000,
+    refetchInterval: 6 * 60 * 60 * 1000,
+  })
+  if (!update?.current_version) return null
+  return (
+    <span className={`text-[11px] font-normal ${update.update_available ? 'text-amber-400' : 'text-gray-500'}`}>
+      v{update.current_version}{update.update_available ? ` \u2192 v${update.latest_version}` : ''}
+    </span>
+  )
+}
+
 function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => void }) {
   return (
     <button
@@ -237,6 +252,7 @@ export default function App() {
               <Link to="/" className="flex items-center gap-2 text-xl font-bold text-white tracking-tight shrink-0">
                 <img src={`${import.meta.env.BASE_URL}android-chrome-192x192.png`} alt="rIOt" className="w-6 h-6" />
                 rIOt
+                <ServerVersion />
               </Link>
               {/* Desktop nav */}
               <div className="hidden sm:flex gap-1">
