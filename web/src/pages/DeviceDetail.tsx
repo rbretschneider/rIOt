@@ -47,7 +47,7 @@ export default function DeviceDetail() {
   const [eventsPage, setEventsPage] = useState(0)
   const { data: deviceLogs } = useQuery({
     queryKey: ['device-logs', id, logPriority],
-    queryFn: () => api.getDeviceLogs(id!, logPriority, 100),
+    queryFn: () => api.getDeviceLogs(id!, logPriority, 500),
     enabled: !!id,
     refetchInterval: 60_000,
   })
@@ -67,6 +67,14 @@ export default function DeviceDetail() {
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
       api.sendCommand(id!, action, params || {}),
+  })
+  const fetchLogsMutation = useMutation({
+    mutationFn: (params: { hours: number; priority: number }) =>
+      api.sendCommand(id!, 'fetch_logs', params),
+    onSuccess: () => {
+      // Refetch logs after a short delay to let the agent push them
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['device-logs', id] }), 3000)
+    },
   })
 
   const latestVersion = serverUpdate?.latest_version
@@ -302,13 +310,15 @@ export default function DeviceDetail() {
       )}
 
       {/* Device Logs */}
-      {deviceLogs && deviceLogs.length > 0 && (
-        <Section title="Device Logs">
-          <div className="flex gap-2 mb-3">
+      <Section title="Device Logs">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex gap-2">
             {([
-              { label: 'Crit', value: 2 },
-              { label: 'Error', value: 3 },
+              { label: 'Info', value: 6 },
+              { label: 'Notice', value: 5 },
               { label: 'Warning', value: 4 },
+              { label: 'Error', value: 3 },
+              { label: 'Crit', value: 2 },
             ] as const).map(p => (
               <button
                 key={p.value}
@@ -321,9 +331,26 @@ export default function DeviceDetail() {
               </button>
             ))}
           </div>
-          <div className="max-h-64 overflow-y-auto">
+          {canCommand && (
+            <button
+              onClick={() => fetchLogsMutation.mutate({ hours: 24, priority: logPriority })}
+              disabled={fetchLogsMutation.isPending}
+              className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {fetchLogsMutation.isPending ? 'Fetching...' : 'Fetch Last 24h'}
+            </button>
+          )}
+        </div>
+        {fetchLogsMutation.isSuccess && (
+          <p className="text-xs text-emerald-400 mb-2">Logs fetched — refreshing...</p>
+        )}
+        {fetchLogsMutation.isError && (
+          <p className="text-xs text-red-400 mb-2">Failed to fetch logs: {(fetchLogsMutation.error as Error).message}</p>
+        )}
+        {deviceLogs && deviceLogs.length > 0 ? (
+          <div className="max-h-96 overflow-y-auto">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
                   <th className="text-left py-2">Time</th>
                   <th className="text-left py-2">Priority</th>
@@ -337,9 +364,12 @@ export default function DeviceDetail() {
                     <td className="py-1.5 font-mono text-xs text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
                     <td className="py-1.5">
                       <span className={`text-xs ${
-                        log.priority <= 2 ? 'text-red-400' : log.priority === 3 ? 'text-amber-400' : 'text-yellow-400'
+                        log.priority <= 2 ? 'text-red-400' :
+                        log.priority === 3 ? 'text-amber-400' :
+                        log.priority === 4 ? 'text-yellow-400' :
+                        'text-gray-400'
                       }`}>
-                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : 'WARN'}
+                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : 'INFO'}
                       </span>
                     </td>
                     <td className="py-1.5 font-mono text-xs text-gray-400">{log.unit || '-'}</td>
@@ -349,8 +379,12 @@ export default function DeviceDetail() {
               </tbody>
             </table>
           </div>
-        </Section>
-      )}
+        ) : (
+          <div className="text-center py-6 text-gray-500 text-sm">
+            No logs stored yet.{canCommand && ' Click "Fetch Last 24h" to pull logs from this device.'}
+          </div>
+        )}
+      </Section>
 
       {/* OS Info */}
       {tel?.os && (

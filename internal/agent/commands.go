@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -45,6 +47,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.handleTriggerUpdate(ctx)
 	case "agent_uninstall":
 		status, message = a.handleUninstall()
+	case "fetch_logs":
+		status, message = a.handleFetchLogs(ctx, payload)
 	default:
 		status = "error"
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
@@ -234,6 +238,102 @@ func (a *Agent) performUninstall() {
 
 	slog.Info("uninstall: cleanup complete, exiting")
 	os.Exit(0)
+}
+
+// handleFetchLogs runs journalctl with the requested parameters and pushes log entries to the server.
+func (a *Agent) handleFetchLogs(ctx context.Context, payload models.CommandPayload) (string, string) {
+	if runtime.GOOS != "linux" {
+		return "error", "fetch_logs is only supported on Linux"
+	}
+
+	// Parse parameters with defaults
+	hours := 24.0
+	if h, ok := payload.Params["hours"].(float64); ok && h > 0 {
+		hours = h
+	}
+	maxPriority := 6 // info level
+	if p, ok := payload.Params["priority"].(float64); ok {
+		maxPriority = int(p)
+	}
+	limit := 1000
+	if l, ok := payload.Params["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+
+	since := time.Now().Add(-time.Duration(hours * float64(time.Hour)))
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+
+	priorityArg := fmt.Sprintf("--priority=0..%d", maxPriority)
+	limitArg := fmt.Sprintf("%d", limit)
+
+	fetchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(fetchCtx, "journalctl",
+		"--since", sinceStr,
+		priorityArg,
+		"-o", "json",
+		"--no-pager",
+		"-n", limitArg,
+	).Output()
+	if err != nil {
+		return "error", fmt.Sprintf("journalctl: %s", err)
+	}
+
+	var entries []models.LogEntry
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			continue
+		}
+
+		var ts time.Time
+		if usecStr, ok := raw["__REALTIME_TIMESTAMP"].(string); ok {
+			if usec, err := strconv.ParseInt(usecStr, 10, 64); err == nil {
+				ts = time.Unix(usec/1_000_000, (usec%1_000_000)*1000)
+			}
+		}
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+
+		priority := 6
+		if p, ok := raw["PRIORITY"].(string); ok {
+			if v, err := strconv.Atoi(p); err == nil {
+				priority = v
+			}
+		}
+
+		unit, _ := raw["_SYSTEMD_UNIT"].(string)
+		if unit == "" {
+			unit, _ = raw["SYSLOG_IDENTIFIER"].(string)
+		}
+		message, _ := raw["MESSAGE"].(string)
+
+		entries = append(entries, models.LogEntry{
+			Timestamp: ts,
+			Priority:  priority,
+			Unit:      unit,
+			Message:   message,
+		})
+	}
+
+	if len(entries) == 0 {
+		return "success", "no log entries found for the requested time range"
+	}
+
+	// Push to server
+	if err := a.client.SendDeviceLogs(ctx, a.config.Agent.DeviceID, entries); err != nil {
+		return "error", fmt.Sprintf("failed to push logs: %s", err)
+	}
+
+	return "success", fmt.Sprintf("fetched and pushed %d log entries", len(entries))
 }
 
 // handleTriggerUpdate runs the agent's self-update synchronously and returns the real result.

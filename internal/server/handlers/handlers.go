@@ -406,6 +406,31 @@ func (h *Handlers) GetDeviceLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// ReceiveDeviceLogs accepts log entries pushed by the agent (e.g. via fetch_logs command).
+func (h *Handlers) ReceiveDeviceLogs(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	var entries []models.LogEntry
+	if err := json.NewDecoder(r.Body).Decode(&entries); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if len(entries) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	if h.deviceLogRepo == nil {
+		http.Error(w, `{"error":"device log storage not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+	if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, entries); err != nil {
+		slog.Error("receive device logs", "device", deviceID, "error", err)
+		http.Error(w, `{"error":"failed to store logs"}`, http.StatusInternalServerError)
+		return
+	}
+	slog.Info("received device logs", "device", deviceID, "count", len(entries))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "count": strconv.Itoa(len(entries))})
+}
+
 func (h *Handlers) GetDeviceAlertRules(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	device, err := h.devices.GetByID(r.Context(), id)

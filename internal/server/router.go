@@ -90,6 +90,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/telemetry", h.Telemetry)
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/docker-events", h.ReceiveDockerEvent)
 		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/events", h.ReceiveAgentEvent)
+		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/logs", h.ReceiveDeviceLogs)
 
 		// Admin-authenticated endpoints
 		adminAuth := middleware.AdminAuth(s.JWTSecret)
