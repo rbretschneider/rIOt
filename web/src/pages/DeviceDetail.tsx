@@ -43,7 +43,7 @@ export default function DeviceDetail() {
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [metricHours, setMetricHours] = useState(24)
-  const [logPriority, setLogPriority] = useState(4)
+  const [logPriority, setLogPriority] = useState(7)
   const [eventsPage, setEventsPage] = useState(0)
   const { data: deviceLogs } = useQuery({
     queryKey: ['device-logs', id, logPriority],
@@ -314,6 +314,7 @@ export default function DeviceDetail() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex gap-2">
             {([
+              { label: 'All', value: 7 },
               { label: 'Info', value: 6 },
               { label: 'Notice', value: 5 },
               { label: 'Warning', value: 4 },
@@ -333,7 +334,7 @@ export default function DeviceDetail() {
           </div>
           {canCommand && (
             <button
-              onClick={() => fetchLogsMutation.mutate({ hours: 24, priority: logPriority })}
+              onClick={() => fetchLogsMutation.mutate({ hours: 24, priority: 6 })}
               disabled={fetchLogsMutation.isPending}
               className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-md transition-colors disabled:opacity-50 flex items-center gap-1.5"
             >
@@ -369,7 +370,7 @@ export default function DeviceDetail() {
                         log.priority === 4 ? 'text-yellow-400' :
                         'text-gray-400'
                       }`}>
-                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : 'INFO'}
+                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : log.priority === 6 ? 'INFO' : 'DEBUG'}
                       </span>
                     </td>
                     <td className="py-1.5 font-mono text-xs text-gray-400">{log.unit || '-'}</td>
