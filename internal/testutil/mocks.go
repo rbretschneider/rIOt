@@ -210,6 +210,18 @@ func (m *MockDeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*mode
 	return m.GetByID(ctx, id)
 }
 
+func (m *MockDeviceRepo) UpdateTags(_ context.Context, id string, tags []string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d, ok := m.Devices[id]; ok {
+		d.Tags = tags
+	}
+	return nil
+}
+
 // --- MockTelemetryRepo ---
 
 type MockTelemetryRepo struct {
@@ -1097,6 +1109,45 @@ func (m *MockCARepo) DeleteBootstrapKey(_ context.Context, keyHash string) error
 	return fmt.Errorf("not found")
 }
 
+// --- MockDeviceLogRepo ---
+
+type MockDeviceLogRepo struct {
+	Logs map[string][]models.LogEntry
+	Err  error
+}
+
+func NewMockDeviceLogRepo() *MockDeviceLogRepo {
+	return &MockDeviceLogRepo{Logs: make(map[string][]models.LogEntry)}
+}
+
+func (m *MockDeviceLogRepo) InsertBatch(_ context.Context, deviceID string, entries []models.LogEntry) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.Logs[deviceID] = append(m.Logs[deviceID], entries...)
+	return nil
+}
+
+func (m *MockDeviceLogRepo) List(_ context.Context, deviceID string, maxPriority, limit int) ([]models.LogEntry, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []models.LogEntry
+	for _, e := range m.Logs[deviceID] {
+		if e.Priority <= maxPriority {
+			result = append(result, e)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (m *MockDeviceLogRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
+	return 0, m.Err
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -1109,4 +1160,5 @@ var (
 	_ db.AdminRepository     = (*MockAdminRepo)(nil)
 	_ db.TerminalRepository  = (*MockTerminalRepo)(nil)
 	_ db.CARepository        = (*MockCARepo)(nil)
+	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
 )

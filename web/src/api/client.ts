@@ -1,4 +1,4 @@
-import type { Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -179,6 +179,27 @@ export const api = {
       window.location.reload()
       throw new Error('Unauthorized')
     }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  getDeviceAlertRules: (id: string) =>
+    fetchJSON<AlertRule[]>(`${BASE}/devices/${id}/alert-rules`),
+
+  getHeartbeatHistory: (id: string, hours = 24) =>
+    fetchJSON<import('../types/models').Heartbeat[]>(`${BASE}/devices/${id}/heartbeats?hours=${hours}`),
+
+  getDeviceLogs: (id: string, priority = 4, limit = 100) =>
+    fetchJSON<import('../types/models').LogEntry[]>(`${BASE}/devices/${id}/logs?priority=${priority}&limit=${limit}`),
+
+  updateDeviceTags: async (id: string, tags: string[]): Promise<{ tags: string[] }> => {
+    const res = await fetch(`${BASE}/devices/${id}/tags`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.json()
   },

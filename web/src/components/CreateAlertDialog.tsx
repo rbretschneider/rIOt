@@ -33,6 +33,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     service_state: 'Service State',
     nic_state: 'NIC State',
     process_missing: 'Process Missing',
+    log_errors: 'Log Errors',
   }
 
   // Use provided targetState or sensible defaults

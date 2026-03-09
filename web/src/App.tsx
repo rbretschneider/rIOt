@@ -8,6 +8,7 @@ import type { WSMessage } from './types/models'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
 import DeviceContainers from './pages/DeviceContainers'
+import ContainerDetailPage from './pages/ContainerDetailPage'
 import Alerts from './pages/Alerts'
 import Login from './pages/Login'
 import Setup from './pages/Setup'
@@ -291,6 +292,7 @@ export default function App() {
           <Route path="/" element={<FleetOverview />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/devices/:id/containers" element={<DeviceContainers />} />
+          <Route path="/devices/:id/containers/:cid" element={<ContainerDetailPage />} />
           <Route path="/devices/:id/terminal" element={<DeviceTerminal />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/probes" element={<Probes />} />

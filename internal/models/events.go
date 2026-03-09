@@ -25,6 +25,7 @@ const (
 	EventAgentUpdateStarted   EventType = "agent_update_started"
 	EventAgentUpdateCompleted EventType = "agent_update_completed"
 	EventAgentUpdateFailed    EventType = "agent_update_failed"
+	EventLogErrors            EventType = "log_errors"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

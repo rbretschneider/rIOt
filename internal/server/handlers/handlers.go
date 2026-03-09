@@ -44,6 +44,7 @@ type HandlerDeps struct {
 	ProbeRepo         db.ProbeRepository
 	ProbeRunner       *probes.Runner
 	LogRepo           db.LogRepository
+	DeviceLogRepo     db.DeviceLogRepository
 	JWTSecret         []byte
 	AdminPasswordHash string
 }
@@ -64,6 +65,7 @@ type Handlers struct {
 	probeRepo          db.ProbeRepository
 	probeRunner        *probes.Runner
 	logRepo            db.LogRepository
+	deviceLogRepo      db.DeviceLogRepository
 	jwtSecret          []byte
 	adminPasswordHash  string
 
@@ -89,6 +91,7 @@ func New(deps HandlerDeps) *Handlers {
 		probeRepo:         deps.ProbeRepo,
 		probeRunner:       deps.ProbeRunner,
 		logRepo:           deps.LogRepo,
+		deviceLogRepo:     deps.DeviceLogRepo,
 		jwtSecret:         deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
 	}
@@ -287,6 +290,14 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		h.serverHostID.Store(deviceID)
 	}
 
+	// Extract and store device logs
+	if len(snap.Data.Logs) > 0 && h.deviceLogRepo != nil {
+		if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.Logs); err != nil {
+			slog.Error("store device logs", "error", err)
+		}
+		snap.Data.Logs = nil // Don't persist logs in the telemetry snapshot
+	}
+
 	// Check thresholds
 	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, &snap.Data)
 
@@ -351,6 +362,91 @@ func (h *Handlers) GetDeviceHistory(w http.ResponseWriter, r *http.Request) {
 		snapshots = []models.TelemetrySnapshot{}
 	}
 	writeJSON(w, http.StatusOK, snapshots)
+}
+
+func (h *Handlers) GetHeartbeatHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 {
+		hours = 24
+	}
+	if hours > 168 {
+		hours = 168
+	}
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	heartbeats, err := h.telemetry.GetHeartbeatHistory(r.Context(), id, since)
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch heartbeat history"}`, http.StatusInternalServerError)
+		return
+	}
+	if heartbeats == nil {
+		heartbeats = []models.Heartbeat{}
+	}
+	writeJSON(w, http.StatusOK, heartbeats)
+}
+
+func (h *Handlers) GetDeviceLogs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	priority, _ := strconv.Atoi(r.URL.Query().Get("priority"))
+	if priority <= 0 {
+		priority = 4
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	entries, err := h.deviceLogRepo.List(r.Context(), id, priority, limit)
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch logs"}`, http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []models.LogEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+func (h *Handlers) GetDeviceAlertRules(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	device, err := h.devices.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"device not found"}`, http.StatusNotFound)
+		return
+	}
+	rules, err := h.alertRuleRepo.List(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch alert rules"}`, http.StatusInternalServerError)
+		return
+	}
+	var matching []models.AlertRule
+	for _, rule := range rules {
+		if events.MatchesDeviceFilter(rule.DeviceFilter, id, device.Tags) {
+			matching = append(matching, rule)
+		}
+	}
+	if matching == nil {
+		matching = []models.AlertRule{}
+	}
+	writeJSON(w, http.StatusOK, matching)
+}
+
+func (h *Handlers) UpdateDeviceTags(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Tags []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Tags == nil {
+		body.Tags = []string{}
+	}
+	if err := h.devices.UpdateTags(r.Context(), id, body.Tags); err != nil {
+		http.Error(w, `{"error":"failed to update tags"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"tags": body.Tags})
 }
 
 func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {

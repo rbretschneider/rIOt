@@ -52,6 +52,7 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 		CheckUpdates: opts.CheckUpdates,
 	})
 	r.Register(&SecurityCollector{})
+	r.Register(&LogsCollector{})
 }
 
 func (r *Registry) FilterEnabled(enabled []string) {

@@ -1,15 +1,15 @@
 import { useState, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import ContainerGroup from '../components/ContainerGroup'
-import ContainerDetail from '../components/ContainerDetail'
 import type { ContainerInfo } from '../types/models'
 import { groupContainers, displayName } from '../utils/docker'
 
 export default function DeviceContainers() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { wsConnected } = useDevices()
   const { data, isLoading } = useQuery({
     queryKey: ['device', id],
@@ -18,7 +18,6 @@ export default function DeviceContainers() {
     enabled: !!id,
   })
 
-  const [selectedContainer, setSelectedContainer] = useState<ContainerInfo | null>(null)
   const [containerSearch, setContainerSearch] = useState('')
 
   const checkUpdatesMutation = useMutation({
@@ -41,6 +40,10 @@ export default function DeviceContainers() {
         <p className="text-gray-500">Docker is not available on this device.</p>
       </div>
     )
+  }
+
+  function handleContainerClick(c: ContainerInfo) {
+    navigate(`/devices/${id}/containers/${c.short_id}`)
   }
 
   return (
@@ -90,18 +93,9 @@ export default function DeviceContainers() {
       <ContainerList
         docker={docker}
         search={containerSearch}
-        onContainerClick={setSelectedContainer}
+        onContainerClick={handleContainerClick}
         deviceId={id}
       />
-
-      {/* Container Detail Panel */}
-      {selectedContainer && (
-        <ContainerDetail
-          container={selectedContainer}
-          onClose={() => setSelectedContainer(null)}
-          deviceId={id}
-        />
-      )}
     </div>
   )
 }

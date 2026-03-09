@@ -122,5 +122,18 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when a Docker container is killed by the OOM killer",
 		},
+		// Logs
+		{
+			ID:              "log_errors",
+			Name:            "Log Errors Detected",
+			Category:        "system",
+			Metric:          "log_errors",
+			Operator:        ">",
+			Threshold:       0,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: false,
+			Description:     "Fires when a device reports error-level or higher log entries",
+		},
 	}
 }

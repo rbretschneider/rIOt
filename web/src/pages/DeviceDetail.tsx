@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
+import MetricChart from '../components/MetricChart'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 
@@ -31,8 +32,37 @@ export default function DeviceDetail() {
     staleTime: 60 * 60 * 1000,
   })
 
+  const { data: alertRules } = useQuery({
+    queryKey: ['device-alert-rules', id],
+    queryFn: () => api.getDeviceAlertRules(id!),
+    enabled: !!id,
+  })
+
+  const queryClient = useQueryClient()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
+  const [tagInput, setTagInput] = useState('')
+  const [metricHours, setMetricHours] = useState(24)
+  const [logPriority, setLogPriority] = useState(4)
+  const { data: deviceLogs } = useQuery({
+    queryKey: ['device-logs', id, logPriority],
+    queryFn: () => api.getDeviceLogs(id!, logPriority, 100),
+    enabled: !!id,
+    refetchInterval: 60_000,
+  })
+  const { data: heartbeats } = useQuery({
+    queryKey: ['heartbeat-history', id, metricHours],
+    queryFn: () => api.getHeartbeatHistory(id!, metricHours),
+    enabled: !!id,
+    refetchInterval: 60_000,
+  })
+  const tagsMutation = useMutation({
+    mutationFn: (tags: string[]) => api.updateDeviceTags(id!, tags),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device', id] })
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+    },
+  })
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
       api.sendCommand(id!, action, params || {}),
@@ -55,7 +85,8 @@ export default function DeviceDetail() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        {/* Left: name, subtitle, navigation links */}
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
           <p className="text-sm text-gray-500 font-mono">
@@ -72,63 +103,97 @@ export default function DeviceDetail() {
               </>
             )}
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex gap-2">
+          <div className="flex items-center gap-4 mt-2">
             {tel?.docker?.available && tel.docker.total_containers > 0 && (
               <Link
                 to={`/devices/${id}/containers`}
-                className="px-3 py-1.5 text-xs text-blue-400 hover:text-blue-300 border border-blue-800/50 rounded-md transition-colors"
+                className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
               >
                 Docker ({tel.docker.total_containers})
               </Link>
             )}
             {device.status === 'online' && (
-              <>
-                {canCommand ? (
-                  <Link
-                    to={`/devices/${id}/terminal`}
-                    className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors cursor-pointer"
-                  >
-                    Terminal
-                  </Link>
-                ) : (
-                  <span className="px-3 py-1.5 text-xs text-gray-600 border border-gray-700/50 rounded-md opacity-50 cursor-not-allowed">
-                    Terminal
-                  </span>
-                )}
-                <button
-                  onClick={() => setConfirmAction('agent_update')}
-                  disabled={!agentOutdated || commandMutation.isPending}
-                  className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    agentOutdated
-                      ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
-                      : 'text-gray-600 border border-gray-700/50'
-                  }`}
+              canCommand ? (
+                <Link
+                  to={`/devices/${id}/terminal`}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
                 >
-                  Update Agent
-                </button>
-                {tel?.updates && tel.updates.pending_updates > 0 && (
-                  <button
-                    onClick={() => setConfirmAction('os_update')}
-                    disabled={commandMutation.isPending}
-                    className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Patch ({tel.updates.pending_updates})
-                  </button>
-                )}
-                <button
-                  onClick={() => setConfirmAction('reboot')}
-                  disabled={commandMutation.isPending}
-                  className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Reboot
-                </button>
-              </>
+                  Terminal
+                </Link>
+              ) : (
+                <span className="text-sm text-gray-600 cursor-not-allowed">
+                  Terminal
+                </span>
+              )
             )}
           </div>
-          <StatusBadge status={device.status} />
         </div>
+        {/* Right: status badge + action buttons */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <StatusBadge status={device.status} />
+          {device.status === 'online' && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmAction('agent_update')}
+                disabled={!agentOutdated || commandMutation.isPending}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                  agentOutdated
+                    ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
+                    : 'text-gray-600 border border-gray-700/50'
+                }`}
+              >
+                Update Agent
+              </button>
+              {tel?.updates && tel.updates.pending_updates > 0 && (
+                <button
+                  onClick={() => setConfirmAction('os_update')}
+                  disabled={commandMutation.isPending}
+                  className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Patch ({tel.updates.pending_updates})
+                </button>
+              )}
+              <button
+                onClick={() => setConfirmAction('reboot')}
+                disabled={commandMutation.isPending}
+                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Reboot
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tags */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {(device.tags ?? []).map(tag => (
+          <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-800 text-xs text-gray-300">
+            {tag}
+            <button
+              onClick={() => tagsMutation.mutate((device.tags ?? []).filter(t => t !== tag))}
+              className="text-gray-500 hover:text-red-400 transition-colors"
+            >
+              &times;
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={tagInput}
+          onChange={e => setTagInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && tagInput.trim()) {
+              const newTag = tagInput.trim()
+              if (!(device.tags ?? []).includes(newTag)) {
+                tagsMutation.mutate([...(device.tags ?? []), newTag])
+              }
+              setTagInput('')
+            }
+          }}
+          placeholder="Add tag..."
+          className="px-2 py-0.5 bg-transparent border border-gray-700 rounded text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500 w-24"
+        />
       </div>
 
       {/* Agent not connected warning */}
@@ -208,6 +273,81 @@ export default function DeviceDetail() {
               {tel.os && <InfoItem label="Uptime" value={formatUptime(tel.os.uptime)} />}
             </div>
           )}
+        </Section>
+      )}
+
+      {/* Metric History */}
+      {heartbeats && heartbeats.length > 0 && (
+        <Section title="Metric History">
+          <div className="flex gap-2 mb-4">
+            {([1, 6, 24, 168] as const).map(h => (
+              <button
+                key={h}
+                onClick={() => setMetricHours(h)}
+                className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                  metricHours === h ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                }`}
+              >
+                {h <= 24 ? `${h}h` : '7d'}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <MetricChart heartbeats={heartbeats} metricKey="cpu_percent" label="CPU %" color="#3b82f6" />
+            <MetricChart heartbeats={heartbeats} metricKey="mem_percent" label="Memory %" color="#8b5cf6" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_root_percent" label="Disk %" color="#f59e0b" />
+          </div>
+        </Section>
+      )}
+
+      {/* Device Logs */}
+      {deviceLogs && deviceLogs.length > 0 && (
+        <Section title="Device Logs">
+          <div className="flex gap-2 mb-3">
+            {([
+              { label: 'Crit', value: 2 },
+              { label: 'Error', value: 3 },
+              { label: 'Warning', value: 4 },
+            ] as const).map(p => (
+              <button
+                key={p.value}
+                onClick={() => setLogPriority(p.value)}
+                className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                  logPriority === p.value ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2">Time</th>
+                  <th className="text-left py-2">Priority</th>
+                  <th className="text-left py-2">Unit</th>
+                  <th className="text-left py-2">Message</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {deviceLogs.map((log, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5 font-mono text-xs text-gray-400 whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
+                    <td className="py-1.5">
+                      <span className={`text-xs ${
+                        log.priority <= 2 ? 'text-red-400' : log.priority === 3 ? 'text-amber-400' : 'text-yellow-400'
+                      }`}>
+                        {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : 'WARN'}
+                      </span>
+                    </td>
+                    <td className="py-1.5 font-mono text-xs text-gray-400">{log.unit || '-'}</td>
+                    <td className="py-1.5 text-xs text-gray-300 max-w-md truncate">{log.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Section>
       )}
 
@@ -388,6 +528,29 @@ export default function DeviceDetail() {
                 <p className="text-sm text-gray-200 font-mono">{tel.security.open_ports.join(', ')}</p>
               </div>
             )}
+          </div>
+        </Section>
+      )}
+
+      {/* Alert Rules */}
+      {alertRules && alertRules.length > 0 && (
+        <Section title="Alert Rules">
+          <div className="space-y-2">
+            {alertRules.map(rule => (
+              <div key={rule.id} className="flex items-center gap-3 text-sm">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                <span className="text-gray-200">{rule.name}</span>
+                <span className="text-gray-500 text-xs">{rule.metric}</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                  rule.severity === 'critical' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'
+                }`}>
+                  {rule.severity}
+                </span>
+              </div>
+            ))}
+            <Link to="/settings/alert-rules" className="text-xs text-blue-400 hover:text-blue-300 mt-2 inline-block">
+              Edit rules
+            </Link>
           </div>
         </Section>
       )}

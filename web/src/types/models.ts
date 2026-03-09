@@ -34,6 +34,21 @@ export interface HeartbeatData {
   load_avg_1m: number
   disk_root_percent: number
   agent_version?: string
+  log_errors?: number
+}
+
+export interface LogEntry {
+  timestamp: string
+  priority: number
+  unit: string
+  message: string
+}
+
+export interface Heartbeat {
+  id: number
+  device_id: string
+  timestamp: string
+  data: HeartbeatData
 }
 
 export interface TelemetrySnapshot {

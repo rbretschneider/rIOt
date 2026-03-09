@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ type Agent struct {
 	buffer     *Buffer
 	client     *HTTPClient
 	wsClient   *agentWSClient
+	logErrors  atomic.Int64
 }
 
 func New(configPath, version string) (*Agent, error) {

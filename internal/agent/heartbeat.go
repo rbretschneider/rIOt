@@ -44,6 +44,9 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 		data.DiskRootPercent = usage.UsedPercent
 	}
 
+	// Log errors since last heartbeat
+	data.LogErrors = int(a.logErrors.Swap(0))
+
 	hb := &models.Heartbeat{
 		DeviceID:  a.config.Agent.DeviceID,
 		Timestamp: time.Now().UTC(),

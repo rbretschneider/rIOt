@@ -210,6 +210,11 @@ func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID strin
 
 	g.evaluateMetric(ctx, deviceID, "disk_percent", data.DiskRootPercent, "", models.EventDiskHigh,
 		func(val float64) string { return fmt.Sprintf("Root disk usage at %.1f%%", val) })
+
+	if data.LogErrors > 0 {
+		g.evaluateMetric(ctx, deviceID, "log_errors", float64(data.LogErrors), "", models.EventLogErrors,
+			func(val float64) string { return fmt.Sprintf("%d log errors detected since last heartbeat", int(val)) })
+	}
 }
 
 func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
@@ -531,12 +536,24 @@ func matchesTargetState(targetState, actualState string) bool {
 // matchesDeviceFilter checks if a device matches the rule's filter.
 // Empty filter matches all devices.
 func matchesDeviceFilter(filter, deviceID string) bool {
+	return MatchesDeviceFilter(filter, deviceID, nil)
+}
+
+// MatchesDeviceFilter checks if a device matches a comma-separated filter
+// of device IDs and/or tags. Empty filter matches all devices.
+func MatchesDeviceFilter(filter, deviceID string, tags []string) bool {
 	if filter == "" {
 		return true
 	}
 	for _, f := range strings.Split(filter, ",") {
-		if strings.TrimSpace(f) == deviceID {
+		f = strings.TrimSpace(f)
+		if f == deviceID {
 			return true
+		}
+		for _, tag := range tags {
+			if f == tag {
+				return true
+			}
 		}
 	}
 	return false

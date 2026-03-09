@@ -25,6 +25,7 @@ type DeviceRepository interface {
 	LookupAPIKey(ctx context.Context, plaintextKey string) (string, error)
 	DeleteAPIKeysByDevice(ctx context.Context, deviceID string) error
 	FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error)
+	UpdateTags(ctx context.Context, id string, tags []string) error
 }
 
 // TelemetryRepository defines the interface for telemetry database operations.
@@ -138,6 +139,13 @@ type CARepository interface {
 	DeleteBootstrapKey(ctx context.Context, keyHash string) error
 }
 
+// DeviceLogRepository defines the interface for device log operations.
+type DeviceLogRepository interface {
+	InsertBatch(ctx context.Context, deviceID string, entries []models.LogEntry) error
+	List(ctx context.Context, deviceID string, maxPriority, limit int) ([]models.LogEntry, error)
+	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository    = (*DeviceRepo)(nil)
@@ -151,4 +159,5 @@ var (
 	_ AdminRepository     = (*AdminRepo)(nil)
 	_ TerminalRepository  = (*TerminalRepo)(nil)
 	_ CARepository        = (*CARepo)(nil)
+	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
 )

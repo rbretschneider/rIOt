@@ -10,6 +10,7 @@ type HeartbeatData struct {
 	LoadAvg1m       float64 `json:"load_avg_1m"`
 	DiskRootPercent float64 `json:"disk_root_percent"`
 	AgentVersion    string  `json:"agent_version,omitempty"`
+	LogErrors       int     `json:"log_errors,omitempty"`
 }
 
 // Heartbeat wraps a heartbeat with metadata.
@@ -18,6 +19,14 @@ type Heartbeat struct {
 	DeviceID  string        `json:"device_id"`
 	Timestamp time.Time     `json:"timestamp"`
 	Data      HeartbeatData `json:"data"`
+}
+
+// LogEntry represents a single journal log entry from a device.
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Priority  int       `json:"priority"`
+	Unit      string    `json:"unit"`
+	Message   string    `json:"message"`
 }
 
 // FullTelemetryData contains all collected system information.
@@ -33,6 +42,7 @@ type FullTelemetryData struct {
 	Procs    *ProcessInfo  `json:"processes,omitempty"`
 	Docker   *DockerInfo   `json:"docker,omitempty"`
 	Security *SecurityInfo `json:"security,omitempty"`
+	Logs     []LogEntry    `json:"logs,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.

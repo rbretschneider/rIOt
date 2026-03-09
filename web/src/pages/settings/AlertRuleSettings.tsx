@@ -12,6 +12,7 @@ const METRICS = [
   { value: 'service_state', label: 'Service State' },
   { value: 'nic_state', label: 'NIC State' },
   { value: 'process_missing', label: 'Process Missing' },
+  { value: 'log_errors', label: 'Log Errors' },
 ]
 
 const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']

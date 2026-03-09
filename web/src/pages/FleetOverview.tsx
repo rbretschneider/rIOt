@@ -188,12 +188,14 @@ export default function FleetOverview() {
               Update Agents ({outdatedCount})
             </button>
           )}
-          <button
-            onClick={handleOpenPatchReview}
-            className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
-          >
-            Review Patches
-          </button>
+          {patchMap.size > 0 && (
+            <button
+              onClick={handleOpenPatchReview}
+              className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
+            >
+              Review Patches ({patchMap.size})
+            </button>
+          )}
           <button
             onClick={() => setShowGuide(true)}
             className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors whitespace-nowrap"

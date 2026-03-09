@@ -7,16 +7,10 @@ import ContainerStatusBadge from './ContainerStatusBadge'
 import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
 
-interface Props {
-  container: ContainerInfo
-  onClose: () => void
-  terminalEnabled?: boolean
-  deviceId?: string
-}
-
 type Tab = 'general' | 'network' | 'volumes' | 'terminal'
 
-export default function ContainerDetail({ container: c, onClose, terminalEnabled, deviceId }: Props) {
+/** Reusable content (tabs + actions) for a container — used both in the full page and any other context. */
+export function ContainerDetailContent({ container: c, deviceId, terminalEnabled }: { container: ContainerInfo; deviceId?: string; terminalEnabled?: boolean }) {
   const [tab, setTab] = useState<Tab>('general')
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const name = displayName(c.riot, c.name)
@@ -34,13 +28,119 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
   ]
 
   return (
+    <div>
+      {/* Header bar with status + actions */}
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <ContainerStatusBadge state={c.state} />
+          <span className="text-xs text-gray-500 font-mono">{c.image}</span>
+        </div>
+        {deviceId && (
+          <div className="flex gap-1">
+            {c.update_available && (
+              <ActionBtn label="Update" onClick={() => setConfirmAction('docker_update')} pending={commandMutation.isPending} />
+            )}
+            {c.state === 'running' && (
+              <ActionBtn
+                label={commandMutation.isSuccess && commandMutation.variables?.action === 'docker_check_updates' ? 'Queued' : 'Check'}
+                onClick={() => commandMutation.mutate({ action: 'docker_check_updates', params: {} })}
+                pending={commandMutation.isPending}
+              />
+            )}
+            {c.state === 'running' ? (
+              <>
+                <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
+                <ActionBtn label="Stop" variant="danger" onClick={() => setConfirmAction('docker_stop')} pending={commandMutation.isPending} />
+              </>
+            ) : (
+              <ActionBtn label="Start" onClick={() => setConfirmAction('docker_start')} pending={commandMutation.isPending} />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4">
+        {tabs.filter(t => t.show).map(t => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+              tab === t.key
+                ? 'bg-gray-700 text-white'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Command feedback */}
+      {commandMutation.isSuccess && (
+        <div className="mb-4 px-3 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
+          Command sent ({commandMutation.data?.status})
+        </div>
+      )}
+      {commandMutation.isError && (
+        <div className="mb-4 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
+          {(commandMutation.error as Error).message}
+        </div>
+      )}
+
+      {/* Confirm modal */}
+      {confirmAction && (
+        <ConfirmModal
+          title={`${confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())} Container`}
+          message={`Are you sure you want to ${confirmAction.replace('docker_', '')} "${name}"?`}
+          confirmLabel={confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())}
+          confirmVariant={confirmAction === 'docker_stop' ? 'danger' : 'primary'}
+          onConfirm={() => {
+            commandMutation.mutate({ action: confirmAction, params: { container_id: c.id } })
+            setConfirmAction(null)
+          }}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+
+      {/* Tab content */}
+      <div className="space-y-5">
+        {tab === 'general' && <GeneralTab container={c} />}
+        {tab === 'network' && <NetworkTab container={c} />}
+        {tab === 'volumes' && <VolumesTab container={c} />}
+        {tab === 'terminal' && deviceId && c.state === 'running' && (
+          <div className="h-96">
+            <Terminal deviceId={deviceId} containerId={c.id} />
+          </div>
+        )}
+        {tab === 'terminal' && (!deviceId || c.state !== 'running') && (
+          <p className="text-sm text-gray-500">
+            {c.state !== 'running' ? 'Container must be running to open a terminal.' : 'Terminal requires device context.'}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface Props {
+  container: ContainerInfo
+  onClose: () => void
+  terminalEnabled?: boolean
+  deviceId?: string
+}
+
+/** Slide-out panel wrapper — kept for backwards compatibility but no longer used by DeviceContainers. */
+export default function ContainerDetail({ container: c, onClose, terminalEnabled, deviceId }: Props) {
+  const name = displayName(c.riot, c.name)
+
+  return (
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50" />
       <div
         className="relative w-full max-w-2xl bg-gray-900 border-l border-gray-800 overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-5 z-10">
           <div className="flex items-start justify-between">
             <div className="min-w-0">
@@ -48,97 +148,14 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
                 {c.riot?.icon && <span className="text-xl">{c.riot.icon}</span>}
                 <h2 className="text-lg font-bold text-white truncate">{name}</h2>
               </div>
-              <p className="text-xs text-gray-500 font-mono mt-1">{c.image}</p>
               <p className="text-xs text-gray-600 font-mono">{c.short_id}</p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <ContainerStatusBadge state={c.state} />
-              {deviceId && (
-                <div className="flex gap-1 ml-2">
-                  {c.update_available && (
-                    <ActionBtn label="Update" onClick={() => setConfirmAction('docker_update')} pending={commandMutation.isPending} />
-                  )}
-                  {c.state === 'running' && (
-                    <ActionBtn
-                      label={commandMutation.isSuccess && commandMutation.variables?.action === 'docker_check_updates' ? 'Queued' : 'Check'}
-                      onClick={() => commandMutation.mutate({ action: 'docker_check_updates', params: {} })}
-                      pending={commandMutation.isPending}
-                    />
-                  )}
-                  {c.state === 'running' ? (
-                    <>
-                      <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
-                      <ActionBtn label="Stop" variant="danger" onClick={() => setConfirmAction('docker_stop')} pending={commandMutation.isPending} />
-                    </>
-                  ) : (
-                    <ActionBtn label="Start" onClick={() => setConfirmAction('docker_start')} pending={commandMutation.isPending} />
-                  )}
-                </div>
-              )}
-              <button onClick={onClose} className="text-gray-500 hover:text-white text-xl ml-1">&times;</button>
-            </div>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-1 mt-4">
-            {tabs.filter(t => t.show).map(t => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
-                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                  tab === t.key
-                    ? 'bg-gray-700 text-white'
-                    : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+            <button onClick={onClose} className="text-gray-500 hover:text-white text-xl ml-1">&times;</button>
           </div>
         </div>
 
-        {/* Command feedback */}
-        {commandMutation.isSuccess && (
-          <div className="mx-5 mt-3 px-3 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
-            Command sent ({commandMutation.data?.status})
-          </div>
-        )}
-        {commandMutation.isError && (
-          <div className="mx-5 mt-3 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
-            {(commandMutation.error as Error).message}
-          </div>
-        )}
-
-        {/* Confirm modal */}
-        {confirmAction && (
-          <ConfirmModal
-            title={`${confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())} Container`}
-            message={`Are you sure you want to ${confirmAction.replace('docker_', '')} "${name}"?`}
-            confirmLabel={confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())}
-            confirmVariant={confirmAction === 'docker_stop' ? 'danger' : 'primary'}
-            onConfirm={() => {
-              commandMutation.mutate({ action: confirmAction, params: { container_id: c.id } })
-              setConfirmAction(null)
-            }}
-            onCancel={() => setConfirmAction(null)}
-          />
-        )}
-
-        {/* Content */}
-        <div className="p-5 space-y-5">
-          {tab === 'general' && <GeneralTab container={c} />}
-          {tab === 'network' && <NetworkTab container={c} />}
-          {tab === 'volumes' && <VolumesTab container={c} />}
-          {tab === 'terminal' && deviceId && c.state === 'running' && (
-            <div className="h-96">
-              <Terminal deviceId={deviceId} containerId={c.id} />
-            </div>
-          )}
-          {tab === 'terminal' && (!deviceId || c.state !== 'running') && (
-            <p className="text-sm text-gray-500">
-              {c.state !== 'running' ? 'Container must be running to open a terminal.' : 'Terminal requires device context.'}
-            </p>
-          )}
+        <div className="p-5">
+          <ContainerDetailContent container={c} deviceId={deviceId} terminalEnabled={terminalEnabled} />
         </div>
       </div>
     </div>
@@ -168,7 +185,7 @@ function GeneralTab({ container: c }: { container: ContainerInfo }) {
             {c.mem_usage > 0 && (
               <DetailItem
                 label="Memory"
-                value={`${formatBytes(c.mem_usage)} / ${c.mem_limit > 0 ? formatBytes(c.mem_limit) : '∞'}`}
+                value={`${formatBytes(c.mem_usage)} / ${c.mem_limit > 0 ? formatBytes(c.mem_limit) : '\u221E'}`}
               />
             )}
           </div>

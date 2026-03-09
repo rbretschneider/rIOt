@@ -45,13 +45,18 @@ export function displayName(riot: RiotLabels | undefined, containerName: string)
   return containerName
 }
 
-export function groupName(riot: RiotLabels | undefined): string {
-  if (riot?.group) return riot.group
-  return 'Ungrouped'
+export type GroupSource = 'riot' | 'compose' | 'ungrouped'
+
+export function groupName(riot: RiotLabels | undefined, labels?: Record<string, string>): { name: string; source: GroupSource } {
+  if (riot?.group) return { name: riot.group, source: 'riot' }
+  const composeProject = labels?.['com.docker.compose.project']
+  if (composeProject) return { name: composeProject, source: 'compose' }
+  return { name: 'Ungrouped', source: 'ungrouped' }
 }
 
 export interface ContainerGroup {
   name: string
+  source: GroupSource
   icon?: string
   priority: number
   containers: ContainerInfo[]
@@ -62,11 +67,12 @@ export function groupContainers(containers: ContainerInfo[]): ContainerGroup[] {
 
   for (const c of containers) {
     if (c.riot?.hide) continue
-    const gName = groupName(c.riot)
+    const { name: gName, source } = groupName(c.riot, c.labels)
     let group = map.get(gName)
     if (!group) {
       group = {
         name: gName,
+        source,
         icon: c.riot?.icon,
         priority: c.riot?.priority ?? 50,
         containers: [],

@@ -223,3 +223,11 @@ func (r *DeviceRepo) DeleteAPIKeysByDevice(ctx context.Context, deviceID string)
 func (r *DeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error) {
 	return r.GetByID(ctx, id)
 }
+
+// UpdateTags replaces the tags for a device.
+func (r *DeviceRepo) UpdateTags(ctx context.Context, id string, tags []string) error {
+	tagsJSON, _ := json.Marshal(tags)
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE devices SET tags=$2, updated_at=NOW() WHERE id=$1`, id, tagsJSON)
+	return err
+}
