@@ -13,7 +13,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
-// LogsCollector gathers recent warning/error/critical journal entries.
+// LogsCollector gathers recent journal entries (info and above).
 // Linux-only; returns empty on other platforms.
 type LogsCollector struct {
 	mu       sync.Mutex
@@ -38,10 +38,10 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
 	out, err := exec.CommandContext(ctx, "journalctl",
 		"--since", sinceStr,
-		"--priority=0..4",
+		"--priority=0..6",
 		"-o", "json",
 		"--no-pager",
-		"-n", "100",
+		"-n", "500",
 	).Output()
 	if err != nil {
 		return []models.LogEntry{}, nil
