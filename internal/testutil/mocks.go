@@ -1148,6 +1148,61 @@ func (m *MockDeviceLogRepo) Purge(_ context.Context, _ time.Time) (int64, error)
 	return 0, m.Err
 }
 
+// --- MockAutoUpdateRepo ---
+
+type MockAutoUpdateRepo struct {
+	Policies map[string][]models.AutoUpdatePolicy // deviceID → policies
+	NextID   int
+	Err      error
+}
+
+func NewMockAutoUpdateRepo() *MockAutoUpdateRepo {
+	return &MockAutoUpdateRepo{Policies: make(map[string][]models.AutoUpdatePolicy), NextID: 1}
+}
+
+func (m *MockAutoUpdateRepo) ListByDevice(_ context.Context, deviceID string) ([]models.AutoUpdatePolicy, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return m.Policies[deviceID], nil
+}
+
+func (m *MockAutoUpdateRepo) Upsert(_ context.Context, p *models.AutoUpdatePolicy) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	policies := m.Policies[p.DeviceID]
+	for i, existing := range policies {
+		if existing.Target == p.Target {
+			policies[i] = *p
+			m.Policies[p.DeviceID] = policies
+			return nil
+		}
+	}
+	p.ID = m.NextID
+	m.NextID++
+	m.Policies[p.DeviceID] = append(m.Policies[p.DeviceID], *p)
+	return nil
+}
+
+func (m *MockAutoUpdateRepo) Delete(_ context.Context, deviceID, target string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	policies := m.Policies[deviceID]
+	for i, p := range policies {
+		if p.Target == target {
+			m.Policies[deviceID] = append(policies[:i], policies[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+func (m *MockAutoUpdateRepo) SetLastTriggered(_ context.Context, id int) error {
+	return m.Err
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -1161,4 +1216,5 @@ var (
 	_ db.TerminalRepository  = (*MockTerminalRepo)(nil)
 	_ db.CARepository        = (*MockCARepo)(nil)
 	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
+	_ db.AutoUpdateRepository = (*MockAutoUpdateRepo)(nil)
 )

@@ -391,6 +391,18 @@ export interface NotificationLog {
   created_at: string
 }
 
+// Auto-update policies
+export interface AutoUpdatePolicy {
+  id: number
+  device_id: string
+  target: string
+  is_stack: boolean
+  compose_work_dir: string
+  enabled: boolean
+  last_triggered_at?: string
+  created_at: string
+}
+
 // Commands
 export interface Command {
   id: string

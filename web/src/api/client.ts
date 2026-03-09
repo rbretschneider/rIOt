@@ -1,4 +1,4 @@
-import type { AlertRule, Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -198,6 +198,31 @@ export const api = {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tags }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  getAutoUpdates: (id: string) =>
+    fetchJSON<AutoUpdatePolicy[]>(`${BASE}/devices/${id}/auto-updates`),
+
+  setAutoUpdate: async (deviceId: string, target: string, isStack: boolean, composeWorkDir: string, enabled: boolean) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/auto-updates`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, is_stack: isStack, compose_work_dir: composeWorkDir, enabled }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  deleteAutoUpdate: async (deviceId: string, target: string) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/auto-updates/${encodeURIComponent(target)}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)

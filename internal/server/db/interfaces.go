@@ -146,6 +146,14 @@ type DeviceLogRepository interface {
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// AutoUpdateRepository defines the interface for auto-update policy operations.
+type AutoUpdateRepository interface {
+	ListByDevice(ctx context.Context, deviceID string) ([]models.AutoUpdatePolicy, error)
+	Upsert(ctx context.Context, p *models.AutoUpdatePolicy) error
+	Delete(ctx context.Context, deviceID, target string) error
+	SetLastTriggered(ctx context.Context, id int) error
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository    = (*DeviceRepo)(nil)
@@ -160,4 +168,5 @@ var (
 	_ TerminalRepository  = (*TerminalRepo)(nil)
 	_ CARepository        = (*CARepo)(nil)
 	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
+	_ AutoUpdateRepository = (*AutoUpdateRepo)(nil)
 )

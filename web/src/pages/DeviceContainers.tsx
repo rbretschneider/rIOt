@@ -136,7 +136,7 @@ function ContainerList({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {groups.map(g => (
         <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} deviceId={deviceId} />
       ))}

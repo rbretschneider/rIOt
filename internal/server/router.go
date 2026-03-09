@@ -44,6 +44,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		ProbeRunner:       s.ProbeRunner,
 		LogRepo:           s.LogRepo,
 		DeviceLogRepo:     s.DeviceLogRepo,
+		AutoUpdateRepo:    s.AutoUpdateRepo,
 		JWTSecret:         s.JWTSecret,
 		AdminPasswordHash: s.Config.AdminPasswordHash,
 	})
@@ -106,6 +107,9 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Post("/rotate-key", h.RotateKey)
 		r.With(adminAuth).Post("/commands", h.SendCommand)
 		r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
+		r.With(adminAuth).Get("/auto-updates", h.ListAutoUpdates)
+		r.With(adminAuth).Put("/auto-updates", h.SetAutoUpdate)
+		r.With(adminAuth).Delete("/auto-updates/{target}", h.DeleteAutoUpdate)
 	})
 
 	// === ADMIN routes (JWT cookie auth) ===

@@ -27,3 +27,15 @@ type CommandResult struct {
 	Status    string `json:"status"`  // success, error
 	Message   string `json:"message"`
 }
+
+// AutoUpdatePolicy defines an auto-update rule for a container or compose stack.
+type AutoUpdatePolicy struct {
+	ID              int        `json:"id"`
+	DeviceID        string     `json:"device_id"`
+	Target          string     `json:"target"`           // container name or compose project
+	IsStack         bool       `json:"is_stack"`
+	ComposeWorkDir  string     `json:"compose_work_dir"`
+	Enabled         bool       `json:"enabled"`
+	LastTriggeredAt *time.Time `json:"last_triggered_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}

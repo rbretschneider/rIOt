@@ -45,6 +45,7 @@ type HandlerDeps struct {
 	ProbeRunner       *probes.Runner
 	LogRepo           db.LogRepository
 	DeviceLogRepo     db.DeviceLogRepository
+	AutoUpdateRepo    db.AutoUpdateRepository
 	JWTSecret         []byte
 	AdminPasswordHash string
 }
@@ -66,6 +67,7 @@ type Handlers struct {
 	probeRunner        *probes.Runner
 	logRepo            db.LogRepository
 	deviceLogRepo      db.DeviceLogRepository
+	autoUpdateRepo     db.AutoUpdateRepository
 	jwtSecret          []byte
 	adminPasswordHash  string
 
@@ -92,6 +94,7 @@ func New(deps HandlerDeps) *Handlers {
 		probeRunner:       deps.ProbeRunner,
 		logRepo:           deps.LogRepo,
 		deviceLogRepo:     deps.DeviceLogRepo,
+		autoUpdateRepo:    deps.AutoUpdateRepo,
 		jwtSecret:         deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
 	}
@@ -300,6 +303,9 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 
 	// Check thresholds
 	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, &snap.Data)
+
+	// Check auto-update policies
+	h.checkAutoUpdates(r.Context(), deviceID, &snap.Data)
 
 	// Broadcast via WebSocket
 	h.hub.BroadcastTelemetry(deviceID, &snap.Data)

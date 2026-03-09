@@ -47,6 +47,7 @@ type Server struct {
 	CARepo         *db.CARepo
 	LogRepo        *db.LogRepo
 	DeviceLogRepo  *db.DeviceLogRepo
+	AutoUpdateRepo *db.AutoUpdateRepo
 	LogHandler     *logstore.DBHandler
 	CA             *ca.CA
 	ProbeRunner    *probes.Runner
@@ -100,6 +101,7 @@ func (s *Server) Start() error {
 	s.CARepo = db.NewCARepo(s.DB)
 	s.LogRepo = db.NewLogRepo(s.DB)
 	s.DeviceLogRepo = db.NewDeviceLogRepo(s.DB)
+	s.AutoUpdateRepo = db.NewAutoUpdateRepo(s.DB)
 
 	// Set up database log handler (stores WARN+ logs to DB alongside stdout)
 	logStoreLevel := slog.LevelWarn
