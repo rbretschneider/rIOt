@@ -76,7 +76,13 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	target := "stack"
+	if service != "" {
+		target = service
+	}
+
 	slog.Info("docker_update: compose path", "workDir", workDir, "service", service)
+	a.sendDockerLifecycleEvent(updateCtx, target, "", "update_started")
 
 	// Build pull command
 	pullArgs := []string{"compose", "--project-directory", workDir, "pull"}
@@ -86,6 +92,7 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	pullCmd := exec.CommandContext(updateCtx, "docker", pullArgs...)
 	pullOut, err := pullCmd.CombinedOutput()
 	if err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, target, "", "update_failed")
 		return "error", fmt.Sprintf("compose pull failed: %s\n%s", err, truncateOutput(pullOut, 4000))
 	}
 
@@ -98,14 +105,17 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	upOut, err := upCmd.CombinedOutput()
 	combined := append(pullOut, upOut...)
 	if err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, target, "", "update_failed")
 		return "error", fmt.Sprintf("compose up failed: %s\n%s", err, truncateOutput(combined, 4000))
 	}
 
-	target := "stack"
+	a.sendDockerLifecycleEvent(updateCtx, target, "", "update_completed")
+
+	label := "stack"
 	if service != "" {
-		target = "service " + service
+		label = "service " + service
 	}
-	return "success", fmt.Sprintf("updated compose %s\n%s", target, truncateOutput(combined, 4000))
+	return "success", fmt.Sprintf("updated compose %s\n%s", label, truncateOutput(combined, 4000))
 }
 
 // dockerUpdateStandalone updates a standalone container by pulling the new image,
@@ -119,10 +129,12 @@ func (a *Agent) dockerUpdateStandalone(ctx context.Context, cli *client.Client, 
 	oldID := inspect.ID
 
 	slog.Info("docker_update: standalone path", "container", containerName, "image", imageRef)
+	a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_started")
 
 	// Step 1: Pull new image BEFORE stopping (if pull fails, container is untouched)
 	pullOut, err := cli.ImagePull(updateCtx, imageRef, image.PullOptions{})
 	if err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_failed")
 		return "error", fmt.Sprintf("image pull failed: %s", err)
 	}
 	// Must drain the reader to complete the pull
@@ -132,6 +144,7 @@ func (a *Agent) dockerUpdateStandalone(ctx context.Context, cli *client.Client, 
 	// Step 2: Stop old container
 	timeout := 30
 	if err := cli.ContainerStop(updateCtx, oldID, container.StopOptions{Timeout: &timeout}); err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_failed")
 		return "error", fmt.Sprintf("stop failed: %s", err)
 	}
 
@@ -139,6 +152,7 @@ func (a *Agent) dockerUpdateStandalone(ctx context.Context, cli *client.Client, 
 	if err := cli.ContainerRemove(updateCtx, oldID, container.RemoveOptions{}); err != nil {
 		// Try to restart the old container if remove fails
 		cli.ContainerStart(updateCtx, oldID, container.StartOptions{})
+		a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_failed")
 		return "error", fmt.Sprintf("remove failed (restarted old container): %s", err)
 	}
 
@@ -169,15 +183,37 @@ func (a *Agent) dockerUpdateStandalone(ctx context.Context, cli *client.Client, 
 		containerName,
 	)
 	if err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_failed")
 		return "error", fmt.Sprintf("create failed (old container removed): %s", err)
 	}
 
 	// Step 5: Start new container
 	if err := cli.ContainerStart(updateCtx, newContainer.ID, container.StartOptions{}); err != nil {
+		a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_failed")
 		return "error", fmt.Sprintf("start failed: %s", err)
 	}
 
+	a.sendDockerLifecycleEvent(updateCtx, containerName, imageRef, "update_completed")
 	return "success", fmt.Sprintf("updated container %s (%s)", containerName, imageRef)
+}
+
+// sendDockerLifecycleEvent sends a synthetic docker event to the server for update lifecycle tracking.
+func (a *Agent) sendDockerLifecycleEvent(ctx context.Context, containerName, image, action string) {
+	if a.client == nil {
+		return
+	}
+	deviceID := a.config.Agent.DeviceID
+	if deviceID == "" {
+		return
+	}
+	evt := &models.DockerEvent{
+		ContainerName: containerName,
+		Action:        action,
+		Image:         image,
+	}
+	if err := a.client.SendDockerEvent(ctx, deviceID, evt); err != nil {
+		slog.Warn("failed to send docker lifecycle event", "action", action, "container", containerName, "error", err)
+	}
 }
 
 // clearFreshnessCache clears the docker collector's image freshness cache

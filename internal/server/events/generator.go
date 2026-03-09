@@ -436,6 +436,41 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 		} else {
 			g.createEvent(ctx, e)
 		}
+	case "create":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerCreated, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s created (%s)", evt.ContainerName, evt.Image), CreatedAt: now,
+		})
+	case "destroy":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerDestroyed, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s removed", evt.ContainerName), CreatedAt: now,
+		})
+	case "pause":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerPaused, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s paused", evt.ContainerName), CreatedAt: now,
+		})
+	case "unpause":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerUnpaused, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s unpaused", evt.ContainerName), CreatedAt: now,
+		})
+	case "update_started":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerUpdateStarted, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s update started", evt.ContainerName), CreatedAt: now,
+		})
+	case "update_completed":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerUpdateDone, Severity: models.SeverityInfo,
+			Message: fmt.Sprintf("Container %s updated successfully", evt.ContainerName), CreatedAt: now,
+		})
+	case "update_failed":
+		g.createEvent(ctx, &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
+			Message: fmt.Sprintf("Container %s update failed", evt.ContainerName), CreatedAt: now,
+		})
 	}
 }
 
