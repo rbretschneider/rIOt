@@ -548,15 +548,15 @@ export function getServerLogs() {
 
 export function getBootstrapKeys() {
   return [
-    { key_hash: 'demo-key-hash-1', label: 'Install script key', created_at: ago(60 * DAY), expires_at: ago(-30 * DAY), used_count: 3 },
+    { key_hash: 'demo-key-hash-1', label: 'Install script key', created_at: ago(60 * DAY), expires_at: ago(-30 * DAY), used: true, used_by_device: 'proxmox-01' },
   ]
 }
 
 export function getCerts() {
   return [
-    { serial: 'AA:BB:CC:DD:01', subject: 'proxmox-01', issued_at: ago(90 * DAY), expires_at: ago(-275 * DAY), revoked: false },
-    { serial: 'AA:BB:CC:DD:02', subject: 'nas-synology', issued_at: ago(90 * DAY), expires_at: ago(-275 * DAY), revoked: false },
-    { serial: 'AA:BB:CC:DD:03', subject: 'pi-dns', issued_at: ago(60 * DAY), expires_at: ago(-305 * DAY), revoked: false },
+    { id: 1, device_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890', serial_number: 'AABBCCDD01001122', not_before: ago(90 * DAY), not_after: ago(-275 * DAY), revoked: false, created_at: ago(90 * DAY) },
+    { id: 2, device_id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901', serial_number: 'AABBCCDD02003344', not_before: ago(90 * DAY), not_after: ago(-275 * DAY), revoked: false, created_at: ago(90 * DAY) },
+    { id: 3, device_id: 'c3d4e5f6-a7b8-9012-cdef-123456789012', serial_number: 'AABBCCDD03005566', not_before: ago(60 * DAY), not_after: ago(-305 * DAY), revoked: false, created_at: ago(60 * DAY) },
   ]
 }
 

@@ -235,7 +235,7 @@ export default function App() {
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-4 min-w-0">
               <Link to="/" className="flex items-center gap-2 text-xl font-bold text-white tracking-tight shrink-0">
-                <img src="/android-chrome-192x192.png" alt="rIOt" className="w-6 h-6" />
+                <img src={`${import.meta.env.BASE_URL}android-chrome-192x192.png`} alt="rIOt" className="w-6 h-6" />
                 rIOt
               </Link>
               {/* Desktop nav */}
