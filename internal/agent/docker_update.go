@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,7 +77,8 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	target := "stack"
+	stackName := filepath.Base(workDir)
+	target := stackName + " stack"
 	if service != "" {
 		target = service
 	}
@@ -111,7 +113,7 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 
 	a.sendDockerLifecycleEvent(updateCtx, target, "", "update_completed")
 
-	label := "stack"
+	label := stackName + " stack"
 	if service != "" {
 		label = "service " + service
 	}
