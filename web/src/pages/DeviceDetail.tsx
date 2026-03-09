@@ -44,6 +44,7 @@ export default function DeviceDetail() {
   const [tagInput, setTagInput] = useState('')
   const [metricHours, setMetricHours] = useState(24)
   const [logPriority, setLogPriority] = useState(4)
+  const [eventsPage, setEventsPage] = useState(0)
   const { data: deviceLogs } = useQuery({
     queryKey: ['device-logs', id, logPriority],
     queryFn: () => api.getDeviceLogs(id!, logPriority, 100),
@@ -556,21 +557,52 @@ export default function DeviceDetail() {
       )}
 
       {/* Recent Events */}
-      {events && events.filter(e => e.device_id === id).length > 0 && (
-        <Section title="Recent Events">
-          <div className="space-y-2">
-            {events.filter(e => e.device_id === id).slice(0, 10).map(e => (
-              <div key={e.id} className="flex items-center gap-3 text-sm">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  e.severity === 'critical' ? 'bg-red-400' : e.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
-                }`} />
-                <span className="text-gray-400 font-mono text-xs">{new Date(e.created_at).toLocaleString()}</span>
-                <span className="text-gray-200">{e.message}</span>
+      {events && events.filter(e => e.device_id === id).length > 0 && (() => {
+        const EVENTS_PER_PAGE = 10
+        const deviceEvents = events.filter(e => e.device_id === id)
+        const totalEventPages = Math.ceil(deviceEvents.length / EVENTS_PER_PAGE)
+        const safeEventsPage = Math.min(eventsPage, Math.max(0, totalEventPages - 1))
+        const pagedEvents = deviceEvents.slice(safeEventsPage * EVENTS_PER_PAGE, (safeEventsPage + 1) * EVENTS_PER_PAGE)
+        return (
+          <Section title={`Recent Events (${deviceEvents.length})`}>
+            <div className="space-y-2">
+              {pagedEvents.map(e => (
+                <div key={e.id} className="flex items-center gap-3 text-sm">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    e.severity === 'critical' ? 'bg-red-400' : e.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
+                  }`} />
+                  <span className="text-gray-400 font-mono text-xs">{new Date(e.created_at).toLocaleString()}</span>
+                  <span className="text-gray-200">{e.message}</span>
+                </div>
+              ))}
+            </div>
+            {totalEventPages > 1 && (
+              <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
+                <span className="text-xs text-gray-500">
+                  {safeEventsPage * EVENTS_PER_PAGE + 1}–{Math.min((safeEventsPage + 1) * EVENTS_PER_PAGE, deviceEvents.length)} of {deviceEvents.length}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setEventsPage(p => Math.max(0, p - 1))}
+                    disabled={safeEventsPage === 0}
+                    className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-xs text-gray-500 px-1">{safeEventsPage + 1} / {totalEventPages}</span>
+                  <button
+                    onClick={() => setEventsPage(p => Math.min(totalEventPages - 1, p + 1))}
+                    disabled={safeEventsPage >= totalEventPages - 1}
+                    className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
-            ))}
-          </div>
-        </Section>
-      )}
+            )}
+          </Section>
+        )
+      })()}
 
       {/* Create Alert Dialog */}
       {alertDialog && (

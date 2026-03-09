@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import SeverityBadge from '../components/SeverityBadge'
 
+const PAGE_SIZE = 25
+
 export default function Alerts() {
   const [filter, setFilter] = useState<string>('')
   const [showUnackOnly, setShowUnackOnly] = useState(false)
+  const [page, setPage] = useState(0)
   const qc = useQueryClient()
   // useDevices sets up WS that pushes new events into the ['events'] cache
   const { data: devices, wsConnected } = useDevices()
@@ -35,7 +38,7 @@ export default function Alerts() {
 
   const deviceMap = new Map(devices?.map(d => [d.id, d]))
 
-  const filtered = events?.filter(e => {
+  const filtered = useMemo(() => events?.filter(e => {
     if (showUnackOnly && e.acknowledged_at) return false
     if (!filter) return true
     const device = deviceMap.get(e.device_id)
@@ -43,7 +46,12 @@ export default function Alerts() {
       e.severity.includes(filter) ||
       e.message.toLowerCase().includes(filter.toLowerCase()) ||
       device?.hostname.toLowerCase().includes(filter.toLowerCase())
-  }) ?? []
+  }) ?? [], [events, filter, showUnackOnly, deviceMap])
+
+  // Reset to first page when filters change
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const safePage = Math.min(page, Math.max(0, totalPages - 1))
+  const paged = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
 
   const hasUnack = events?.some(e => !e.acknowledged_at) ?? false
 
@@ -56,7 +64,7 @@ export default function Alerts() {
             <input
               type="checkbox"
               checked={showUnackOnly}
-              onChange={(e) => setShowUnackOnly(e.target.checked)}
+              onChange={(e) => { setShowUnackOnly(e.target.checked); setPage(0) }}
               className="rounded bg-gray-800 border-gray-600"
             />
             Unacknowledged only
@@ -74,7 +82,7 @@ export default function Alerts() {
             type="text"
             placeholder="Filter events..."
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            onChange={(e) => { setFilter(e.target.value); setPage(0) }}
             className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
           />
         </div>
@@ -96,7 +104,7 @@ export default function Alerts() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
-              {filtered.map((e) => {
+              {paged.map((e) => {
                 const device = deviceMap.get(e.device_id)
                 const isAcked = !!e.acknowledged_at
                 return (
@@ -150,6 +158,72 @@ export default function Alerts() {
           </table>
         )}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">
+            {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(0)}
+              disabled={safePage === 0}
+              className="px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+            >
+              &laquo;
+            </button>
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={safePage === 0}
+              className="px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+            >
+              &lsaquo;
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i)
+              .filter(i => i === 0 || i === totalPages - 1 || Math.abs(i - safePage) <= 2)
+              .reduce<(number | 'gap')[]>((acc, i) => {
+                if (acc.length > 0) {
+                  const prev = acc[acc.length - 1]
+                  if (typeof prev === 'number' && i - prev > 1) acc.push('gap')
+                }
+                acc.push(i)
+                return acc
+              }, [])
+              .map((item, idx) =>
+                item === 'gap' ? (
+                  <span key={`gap-${idx}`} className="px-1 text-gray-600">...</span>
+                ) : (
+                  <button
+                    key={item}
+                    onClick={() => setPage(item)}
+                    className={`px-2.5 py-1 rounded text-sm ${
+                      item === safePage
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    }`}
+                  >
+                    {item + 1}
+                  </button>
+                )
+              )}
+            <button
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={safePage >= totalPages - 1}
+              className="px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+            >
+              &rsaquo;
+            </button>
+            <button
+              onClick={() => setPage(totalPages - 1)}
+              disabled={safePage >= totalPages - 1}
+              className="px-2 py-1 rounded text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+            >
+              &raquo;
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
