@@ -20,6 +20,7 @@ var validActions = map[string]bool{
 	"reboot":               true,
 	"agent_update":         true,
 	"os_update":            true,
+	"fetch_logs":           true,
 }
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.
