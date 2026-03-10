@@ -36,7 +36,7 @@ export default function DeviceContainers() {
     return (
       <div className="space-y-4">
         <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to {device.hostname}
+          &larr; Back to <span className="uppercase">{device.hostname}</span>
         </Link>
         <p className="text-gray-500">Docker is not available on this device.</p>
       </div>
@@ -52,7 +52,7 @@ export default function DeviceContainers() {
       {/* Header */}
       <div>
         <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to {device.hostname}
+          &larr; Back to <span className="uppercase">{device.hostname}</span>
         </Link>
         <h1 className="text-2xl font-bold text-white mt-2">
           Docker Containers

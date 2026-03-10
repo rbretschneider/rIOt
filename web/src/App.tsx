@@ -40,7 +40,7 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   )
 }
 
-function AlertsNavLink() {
+function AlertsBell() {
   const location = useLocation()
   const active = location.pathname === '/alerts' || location.pathname.startsWith('/alerts')
   const { data } = useQuery({
@@ -53,13 +53,16 @@ function AlertsNavLink() {
   return (
     <Link
       to="/alerts"
-      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap relative ${
+      className={`relative p-2 rounded-md transition-colors ${
         active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
       }`}
+      title="Alerts"
     >
-      Alerts
+      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+      </svg>
       {count > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-red-500 text-white rounded-full leading-none">
+        <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 text-[10px] font-bold bg-red-500 text-white rounded-full leading-none">
           {count > 99 ? '99+' : count}
         </span>
       )}
@@ -257,13 +260,13 @@ export default function App() {
               {/* Desktop nav */}
               <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
-                <AlertsNavLink />
-                <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/security">Security</NavLink>
+                <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <AlertsBell />
               <button
                 onClick={logout}
                 className="hidden sm:block px-3 py-1.5 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
@@ -279,9 +282,9 @@ export default function App() {
         {mobileMenuOpen && (
           <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
             <NavLink to="/">Fleet</NavLink>
-            <AlertsNavLink />
-            <NavLink to="/probes">Probes</NavLink>
             <NavLink to="/security">Security</NavLink>
+            <NavLink to="/probes">Probes</NavLink>
+            <NavLink to="/alerts">Alerts</NavLink>
             <NavLink to="/settings">Settings</NavLink>
             <button
               onClick={logout}

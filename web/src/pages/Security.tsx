@@ -79,7 +79,7 @@ export default function Security() {
             {devices.map(d => (
               <tr key={d.device_id} className="text-gray-300">
                 <td className="px-4 py-3">
-                  <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium">
+                  <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium uppercase">
                     {d.hostname}
                   </Link>
                 </td>

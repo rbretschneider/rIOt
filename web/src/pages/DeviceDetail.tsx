@@ -109,7 +109,7 @@ export default function DeviceDetail() {
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         {/* Left: name, subtitle, navigation links */}
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
+          <h1 className="text-2xl font-bold text-white truncate uppercase">{device.hostname}</h1>
           <p className="text-sm text-gray-500 font-mono">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (

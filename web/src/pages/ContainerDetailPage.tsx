@@ -39,7 +39,7 @@ export default function ContainerDetailPage() {
     <div className="space-y-6">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm">
-        <Link to={`/devices/${id}`} className="text-gray-400 hover:text-white transition-colors">
+        <Link to={`/devices/${id}`} className="text-gray-400 hover:text-white uppercase transition-colors">
           {device.hostname}
         </Link>
         <span className="text-gray-600">/</span>
