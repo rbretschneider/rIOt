@@ -448,18 +448,20 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
                 <td className="px-4 py-3 text-gray-400 font-mono text-xs">{rule.device_filter}</td>
               )}
               <td className="px-4 py-3 text-right">
-                <button
-                  onClick={() => onEdit(rule)}
-                  className="text-gray-400 hover:text-white mr-2"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => onDelete(rule.id)}
-                  className="text-gray-400 hover:text-red-400"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => onEdit(rule)}
+                    className="px-2.5 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded transition-colors"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onDelete(rule.id)}
+                    className="px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

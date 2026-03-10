@@ -105,7 +105,7 @@ export default function NotificationSettings() {
                 </button>
                 <button
                   onClick={() => { if (confirm('Delete this channel?')) deleteMutation.mutate(ch.id) }}
-                  className="px-2 py-1 text-xs text-gray-400 hover:text-red-400 border border-gray-700 rounded transition-colors"
+                  className="px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
                 >
                   Delete
                 </button>

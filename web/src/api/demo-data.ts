@@ -88,6 +88,7 @@ export function getDevices(): Device[] {
     status: d.status,
     agent_connected: d.status !== 'offline',
     tags: d.tags,
+    docker_available: ['proxmox-01', 'k3s-worker-01', 'k3s-worker-02', 'pi-cameras'].includes(d.hostname),
     hardware_profile: { ...d.hw, cpu_threads: d.hw.cpu_threads ?? d.hw.cpu_cores },
     last_heartbeat: d.status === 'offline' ? ago(3 * DAY) : ago((i + 1) * 15_000),
     last_telemetry: d.status === 'offline' ? ago(3 * DAY) : ago((i + 1) * 30_000),

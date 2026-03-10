@@ -19,6 +19,7 @@ type Device struct {
 	PrimaryIP       string            `json:"primary_ip,omitempty"`
 	Status          DeviceStatus      `json:"status"`
 	Tags            []string          `json:"tags"`
+	DockerAvailable bool              `json:"docker_available"`
 	HardwareProfile *HardwareProfile  `json:"hardware_profile,omitempty"`
 	LastHeartbeat   *time.Time        `json:"last_heartbeat,omitempty"`
 	LastTelemetry   *time.Time        `json:"last_telemetry,omitempty"`

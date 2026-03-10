@@ -109,6 +109,10 @@ func (m *MockDeviceRepo) UpdatePrimaryIP(_ context.Context, id, ip string) error
 	return m.Err
 }
 
+func (m *MockDeviceRepo) UpdateDockerAvailable(_ context.Context, id string, available bool) error {
+	return m.Err
+}
+
 func (m *MockDeviceRepo) Summary(_ context.Context) (*models.FleetSummary, error) {
 	if m.Err != nil {
 		return nil, m.Err

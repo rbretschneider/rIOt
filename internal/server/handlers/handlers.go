@@ -291,6 +291,10 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		h.devices.UpdatePrimaryIP(r.Context(), deviceID, ip)
 	}
 
+	// Track whether Docker is available on this device
+	dockerAvail := snap.Data.Docker != nil && snap.Data.Docker.Available
+	h.devices.UpdateDockerAvailable(r.Context(), deviceID, dockerAvail)
+
 	// Detect if this device hosts the rIOt server (check docker containers)
 	if hasRiotServerContainer(&snap.Data) {
 		h.serverHostID.Store(deviceID)

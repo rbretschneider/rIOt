@@ -40,6 +40,9 @@ func (c *ServicesCollector) Collect(ctx context.Context) (interface{}, error) {
 		}
 
 		name := fields[0]
+		if !strings.HasSuffix(name, ".service") {
+			continue
+		}
 		// loadState := fields[1]
 		activeState := fields[2]
 		subState := fields[3]

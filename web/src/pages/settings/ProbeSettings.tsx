@@ -118,29 +118,31 @@ export default function ProbeSettings() {
                 <td className="px-4 py-3 text-gray-400">{probe.interval_seconds}s</td>
                 <td className="px-4 py-3 text-gray-400">{probe.timeout_seconds}s</td>
                 <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => {
-                      setEditing({
-                        id: probe.id,
-                        name: probe.name,
-                        type: probe.type,
-                        enabled: probe.enabled,
-                        interval_seconds: probe.interval_seconds,
-                        timeout_seconds: probe.timeout_seconds,
-                        config: { ...probe.config },
-                      })
-                      setIsNew(false)
-                    }}
-                    className="text-gray-400 hover:text-white mr-2"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => { if (confirm('Delete this probe?')) deleteMutation.mutate(probe.id) }}
-                    className="text-gray-400 hover:text-red-400"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex items-center justify-end gap-3">
+                    <button
+                      onClick={() => {
+                        setEditing({
+                          id: probe.id,
+                          name: probe.name,
+                          type: probe.type,
+                          enabled: probe.enabled,
+                          interval_seconds: probe.interval_seconds,
+                          timeout_seconds: probe.timeout_seconds,
+                          config: { ...probe.config },
+                        })
+                        setIsNew(false)
+                      }}
+                      className="px-2.5 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded transition-colors"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => { if (confirm('Delete this probe?')) deleteMutation.mutate(probe.id) }}
+                      className="px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

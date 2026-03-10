@@ -8,6 +8,7 @@ export interface Device {
   status: 'online' | 'offline' | 'warning'
   agent_connected?: boolean
   tags: string[]
+  docker_available: boolean
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
   last_telemetry?: string

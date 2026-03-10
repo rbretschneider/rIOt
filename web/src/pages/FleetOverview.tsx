@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
-import StatusBadge from '../components/StatusBadge'
+
 import ConfirmModal from '../components/ConfirmModal'
 import SetupGuide from '../components/SetupGuide'
 
@@ -203,20 +203,29 @@ export default function FleetOverview() {
           <table className="w-full min-w-[640px]">
             <thead className="bg-gray-900/50 border-b border-gray-800">
               <tr>
+                <th className="pl-4 pr-0 py-3 w-4" onClick={() => toggleSort('status')} title="Sort by status">
+                  <span className="sr-only">Status</span>
+                </th>
                 <SortHeader k="hostname">Device</SortHeader>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Docker</th>
                 <SortHeader k="short_id">ID</SortHeader>
-                <SortHeader k="status">Status</SortHeader>
                 <SortHeader k="arch">Arch</SortHeader>
                 <SortHeader k="agent_version">Version</SortHeader>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Updates</th>
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Updates</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {filtered.map((d) => (
                 <tr key={d.id} className="hover:bg-gray-800/30 transition-colors">
+                  <td className="pl-4 pr-0 py-3 w-4">
+                    <span
+                      className={`block w-2.5 h-2.5 rounded-full ${d.status === 'online' ? 'bg-emerald-400' : d.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'}`}
+                      title={d.status.charAt(0).toUpperCase() + d.status.slice(1)}
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <Link to={`/devices/${d.id}`} className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5">
                       {d.hostname}
@@ -229,8 +238,19 @@ export default function FleetOverview() {
                       )}
                     </Link>
                   </td>
+                  <td className="px-4 py-3">
+                    {d.docker_available ? (
+                      <Link
+                        to={`/devices/${d.id}/containers`}
+                        className="text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+                      >
+                        Containers
+                      </Link>
+                    ) : (
+                      <span className="text-gray-600">-</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
-                  <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                   <td className="px-4 py-3 text-sm text-gray-400">{d.arch}</td>
                   <td className="px-4 py-3 text-sm font-mono">
                     {d.agent_version ? (
@@ -244,6 +264,8 @@ export default function FleetOverview() {
                       <span className="text-gray-600">-</span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
+                  <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3 text-sm">
                     {(() => {
                       const count = patchMap.get(d.id)
@@ -251,8 +273,6 @@ export default function FleetOverview() {
                       return <span className="text-cyan-400">{count}</span>
                     })()}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
-                  <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
                       {d.tags?.map(t => (
@@ -264,7 +284,7 @@ export default function FleetOverview() {
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                     No devices match your search
                   </td>
                 </tr>
