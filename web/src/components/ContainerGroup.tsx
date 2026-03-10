@@ -77,12 +77,12 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
   const runningCount = group.containers.filter(c => c.state === 'running').length
 
   return (
-    <div className="break-inside-avoid mb-3">
+    <div className="break-inside-avoid mb-4">
       {/* Group Header */}
-      <div className="flex items-center gap-1.5 mb-1 px-1">
-        {group.icon && <span className="text-xs">{group.icon}</span>}
-        <h3 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{group.name}</h3>
-        <span className="text-[10px] text-gray-700">{runningCount}/{group.containers.length}</span>
+      <div className="flex items-center gap-2 mb-1.5 px-1">
+        {group.icon && <span className="text-sm">{group.icon}</span>}
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{group.name}</h3>
+        <span className="text-xs text-gray-700">{runningCount}/{group.containers.length}</span>
 
         <div className="flex-1" />
 
@@ -95,14 +95,14 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
               composeWorkDir: stackInfo.workDir,
               enabled: !isStackAutoUpdate,
             })}
-            className={`flex items-center gap-1 px-1.5 py-0.5 text-[9px] rounded transition-colors ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded transition-colors ${
               isStackAutoUpdate
                 ? 'bg-emerald-500/15 text-emerald-400'
                 : 'text-gray-600 hover:text-gray-400'
             }`}
             title={isStackAutoUpdate ? 'Auto-update enabled for stack' : 'Enable auto-update for stack'}
           >
-            <span className={`w-1 h-1 rounded-full ${isStackAutoUpdate ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${isStackAutoUpdate ? 'bg-emerald-400' : 'bg-gray-600'}`} />
             Auto
           </button>
         )}
@@ -113,7 +113,7 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
             key={stack.workDir}
             onClick={() => setConfirmStack(stack)}
             disabled={stackMutation.isPending}
-            className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
+            className="px-2 py-0.5 text-xs font-medium rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
           >
             {stackMutation.isPending ? '...' : `Update (${stack.updatableCount})`}
           </button>
@@ -121,18 +121,18 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
       </div>
 
       {stackMutation.isSuccess && (
-        <div className="px-2 py-1 mb-1 bg-emerald-900/20 rounded text-[10px] text-emerald-400">
+        <div className="px-2 py-1 mb-1 bg-emerald-900/20 rounded text-xs text-emerald-400">
           Stack update command sent
         </div>
       )}
       {stackMutation.isError && (
-        <div className="px-2 py-1 mb-1 bg-red-900/20 rounded text-[10px] text-red-400">
+        <div className="px-2 py-1 mb-1 bg-red-900/20 rounded text-xs text-red-400">
           {(stackMutation.error as Error).message}
         </div>
       )}
 
       {/* Container List */}
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         {group.containers.map(c => {
           const containerPolicy = !stackInfo ? policyMap.get(c.name) : null
           return (
