@@ -6,6 +6,7 @@ import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
+import BatteryGauge from '../components/BatteryGauge'
 import MetricChart from '../components/MetricChart'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
@@ -361,7 +362,7 @@ export default function DeviceDetail() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {tel.ups.battery_charge != null && (
-              <GaugeBar label="Battery Charge" value={tel.ups.battery_charge} invert />
+              <BatteryGauge label="Battery Charge" value={tel.ups.battery_charge} />
             )}
             {tel.ups.load != null && (
               <GaugeBar label="UPS Load" value={tel.ups.load} />

@@ -3,14 +3,11 @@ interface Props {
   value: number
   max?: number
   unit?: string
-  invert?: boolean
 }
 
-export default function GaugeBar({ label, value, max = 100, unit = '%', invert }: Props) {
+export default function GaugeBar({ label, value, max = 100, unit = '%' }: Props) {
   const pct = Math.min((value / max) * 100, 100)
-  const color = invert
-    ? (pct < 10 ? 'bg-red-500' : pct < 25 ? 'bg-amber-500' : 'bg-emerald-500')
-    : (pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-emerald-500')
+  const color = pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-emerald-500'
 
   return (
     <div className="space-y-1">
