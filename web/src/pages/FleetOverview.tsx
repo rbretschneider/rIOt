@@ -227,7 +227,7 @@ export default function FleetOverview() {
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <Link to={`/devices/${d.id}`} className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5">
+                    <Link to={`/devices/${d.id}`} className="text-blue-400 hover:text-blue-300 font-medium uppercase flex items-center gap-1.5">
                       {d.hostname}
                       {serverUpdate?.server_host_device_id === d.id && (
                         <span title="rIOt Server Host" className="text-violet-400 flex-shrink-0">
@@ -242,7 +242,7 @@ export default function FleetOverview() {
                     {d.docker_available ? (
                       <Link
                         to={`/devices/${d.id}/containers`}
-                        className="text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+                        className="text-blue-400 hover:text-blue-300 text-xs font-medium uppercase transition-colors"
                       >
                         Containers
                       </Link>
