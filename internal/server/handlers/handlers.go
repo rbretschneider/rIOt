@@ -45,8 +45,9 @@ type HandlerDeps struct {
 	ProbeRunner       *probes.Runner
 	LogRepo           db.LogRepository
 	DeviceLogRepo     db.DeviceLogRepository
-	AutoUpdateRepo    db.AutoUpdateRepository
-	JWTSecret         []byte
+	AutoUpdateRepo       db.AutoUpdateRepository
+	ContainerMetricRepo db.ContainerMetricRepository
+	JWTSecret            []byte
 	AdminPasswordHash string
 }
 
@@ -67,8 +68,9 @@ type Handlers struct {
 	probeRunner        *probes.Runner
 	logRepo            db.LogRepository
 	deviceLogRepo      db.DeviceLogRepository
-	autoUpdateRepo     db.AutoUpdateRepository
-	jwtSecret          []byte
+	autoUpdateRepo      db.AutoUpdateRepository
+	containerMetricRepo db.ContainerMetricRepository
+	jwtSecret           []byte
 	adminPasswordHash  string
 
 	// serverHostID tracks which device is hosting the rIOt server.
@@ -94,8 +96,9 @@ func New(deps HandlerDeps) *Handlers {
 		probeRunner:       deps.ProbeRunner,
 		logRepo:           deps.LogRepo,
 		deviceLogRepo:     deps.DeviceLogRepo,
-		autoUpdateRepo:    deps.AutoUpdateRepo,
-		jwtSecret:         deps.JWTSecret,
+		autoUpdateRepo:      deps.AutoUpdateRepo,
+		containerMetricRepo: deps.ContainerMetricRepo,
+		jwtSecret:           deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
 	}
 }
@@ -299,6 +302,29 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 			slog.Error("store device logs", "error", err)
 		}
 		snap.Data.Logs = nil // Don't persist logs in the telemetry snapshot
+	}
+
+	// Extract and store per-container metrics
+	if snap.Data.Docker != nil && snap.Data.Docker.Available && h.containerMetricRepo != nil {
+		var metrics []models.ContainerMetric
+		for _, c := range snap.Data.Docker.Containers {
+			if c.State != "running" {
+				continue
+			}
+			metrics = append(metrics, models.ContainerMetric{
+				ContainerName: c.Name,
+				ContainerID:   c.ID,
+				Timestamp:     snap.Timestamp,
+				CPUPercent:    c.CPUPercent,
+				MemUsage:      c.MemUsage,
+				MemLimit:      c.MemLimit,
+			})
+		}
+		if len(metrics) > 0 {
+			if err := h.containerMetricRepo.StoreBatch(r.Context(), deviceID, metrics); err != nil {
+				slog.Error("store container metrics", "error", err)
+			}
+		}
 	}
 
 	// Check thresholds
@@ -576,6 +602,29 @@ func (h *Handlers) GetContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, `{"error":"container not found"}`, http.StatusNotFound)
+}
+
+// GetContainerMetricHistory returns historical CPU/memory metrics for a container.
+func (h *Handlers) GetContainerMetricHistory(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	containerName := chi.URLParam(r, "cname")
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 {
+		hours = 24
+	}
+	if hours > 168 {
+		hours = 168
+	}
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	metrics, err := h.containerMetricRepo.GetHistory(r.Context(), deviceID, containerName, since)
+	if err != nil {
+		http.Error(w, `{"error":"failed to fetch container metrics"}`, http.StatusInternalServerError)
+		return
+	}
+	if metrics == nil {
+		metrics = []models.ContainerMetric{}
+	}
+	writeJSON(w, http.StatusOK, metrics)
 }
 
 // ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update status).

@@ -1,61 +1,85 @@
 import type { ContainerInfo } from '../types/models'
 import { displayName, formatContainerUptime, formatBytes } from '../utils/docker'
-import ContainerStatusBadge from './ContainerStatusBadge'
 
 interface Props {
   container: ContainerInfo
   onClick: (c: ContainerInfo) => void
   autoUpdate?: boolean
-  onAutoUpdateToggle?: (enabled: boolean) => void
 }
 
-export default function ContainerCard({ container: c, onClick, autoUpdate, onAutoUpdateToggle }: Props) {
+function barColor(pct: number): string {
+  if (pct > 90) return 'bg-red-500'
+  if (pct > 75) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+function statusDotColor(state: string): string {
+  switch (state) {
+    case 'running': return 'bg-emerald-400'
+    case 'paused': return 'bg-amber-400'
+    default: return 'bg-red-400'
+  }
+}
+
+export default function ContainerCard({ container: c, onClick, autoUpdate }: Props) {
   const name = displayName(c.riot, c.name)
-  const memPct = c.mem_limit > 0 ? ((c.mem_usage / c.mem_limit) * 100).toFixed(1) : null
+  const memPct = c.mem_limit > 0 ? (c.mem_usage / c.mem_limit) * 100 : 0
+  const isRunning = c.state === 'running'
+  const imageShort = c.image.split('/').pop() || c.image
 
   return (
     <div
       onClick={() => onClick(c)}
-      className="flex items-center gap-3 px-3 py-2 hover:bg-gray-700/30 rounded transition-colors cursor-pointer group"
+      className="border border-gray-700/50 rounded-lg bg-gray-800/40 hover:bg-gray-700/40 p-3 cursor-pointer transition-colors group flex flex-col h-[140px]"
     >
-      {/* Icon + Name */}
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      {/* Header: icon + name + status dot */}
+      <div className="flex items-center gap-2 mb-1 min-w-0">
         {c.riot?.icon && <span className="text-sm flex-shrink-0">{c.riot.icon}</span>}
-        <span className="text-sm font-medium text-white truncate">{name}</span>
-        <span className="text-xs text-gray-600 truncate hidden sm:inline">{c.image.split('/').pop()}</span>
+        <span className="text-sm font-medium text-white truncate flex-1" title={c.name}>{name}</span>
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} title={c.state} />
       </div>
 
-      {/* Stats (running only) */}
-      {c.state === 'running' && (
-        <div className="hidden md:flex items-center gap-3 text-xs text-gray-500 flex-shrink-0">
-          <span>{formatContainerUptime(c.created)}</span>
-          {c.cpu_percent > 0 && <span>{c.cpu_percent.toFixed(1)}%</span>}
-          {c.mem_usage > 0 && <span>{formatBytes(c.mem_usage)}{memPct ? ` (${memPct}%)` : ''}</span>}
+      {/* Image tag */}
+      <p className="text-[11px] text-gray-600 truncate mb-2" title={c.image}>{imageShort}</p>
+
+      {/* Separator */}
+      <div className="border-t border-gray-700/40 mb-2" />
+
+      {isRunning ? (
+        <div className="flex-1 flex flex-col justify-between">
+          {/* CPU bar */}
+          <div className="flex items-center gap-2 text-[11px]">
+            <span className="text-gray-500 w-7 flex-shrink-0">CPU</span>
+            <div className="flex-1 h-1.5 bg-gray-700/60 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full ${barColor(c.cpu_percent)}`} style={{ width: `${Math.min(c.cpu_percent, 100)}%` }} />
+            </div>
+            <span className="text-gray-400 w-12 text-right font-mono">{c.cpu_percent.toFixed(1)}%</span>
+          </div>
+
+          {/* MEM bar */}
+          <div className="flex items-center gap-2 text-[11px]">
+            <span className="text-gray-500 w-7 flex-shrink-0">MEM</span>
+            <div className="flex-1 h-1.5 bg-gray-700/60 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full ${barColor(memPct)}`} style={{ width: `${Math.min(memPct, 100)}%` }} />
+            </div>
+            <span className="text-gray-400 w-12 text-right font-mono">{memPct.toFixed(1)}%</span>
+          </div>
+
+          {/* Uptime + badges */}
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="text-[10px] text-gray-600">{formatContainerUptime(c.created)}</span>
+            <div className="flex-1" />
+            {c.update_available && !autoUpdate && (
+              <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                Update
+              </span>
+            )}
+          </div>
         </div>
-      )}
-      {c.state === 'exited' && (
-        <span className="text-xs text-red-400/70 flex-shrink-0 hidden md:inline">{c.status}</span>
-      )}
-
-      {/* Badges */}
-      <div className="flex items-center gap-1.5 flex-shrink-0">
-        {c.update_available && !autoUpdate && (
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            Update
-          </span>
-        )}
-        <ContainerStatusBadge state={c.state} />
-      </div>
-
-      {/* Auto-update toggle */}
-      {onAutoUpdateToggle && (
-        <button
-          onClick={e => { e.stopPropagation(); onAutoUpdateToggle(!autoUpdate) }}
-          className={`flex-shrink-0 w-7 h-4 rounded-full transition-colors relative ${autoUpdate ? 'bg-emerald-500' : 'bg-gray-600'}`}
-          title={autoUpdate ? 'Auto-update enabled' : 'Enable auto-update'}
-        >
-          <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${autoUpdate ? 'left-3.5' : 'left-0.5'}`} />
-        </button>
+      ) : (
+        <div className="flex-1 flex flex-col justify-center">
+          <span className="text-xs text-gray-500">{c.status}</span>
+        </div>
       )}
     </div>
   )

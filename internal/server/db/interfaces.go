@@ -146,6 +146,13 @@ type DeviceLogRepository interface {
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// ContainerMetricRepository defines the interface for container metric operations.
+type ContainerMetricRepository interface {
+	StoreBatch(ctx context.Context, deviceID string, metrics []models.ContainerMetric) error
+	GetHistory(ctx context.Context, deviceID, containerName string, since time.Time) ([]models.ContainerMetric, error)
+	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
 // AutoUpdateRepository defines the interface for auto-update policy operations.
 type AutoUpdateRepository interface {
 	ListByDevice(ctx context.Context, deviceID string) ([]models.AutoUpdatePolicy, error)
@@ -168,5 +175,6 @@ var (
 	_ TerminalRepository  = (*TerminalRepo)(nil)
 	_ CARepository        = (*CARepo)(nil)
 	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
-	_ AutoUpdateRepository = (*AutoUpdateRepo)(nil)
+	_ AutoUpdateRepository      = (*AutoUpdateRepo)(nil)
+	_ ContainerMetricRepository = (*ContainerMetricRepo)(nil)
 )

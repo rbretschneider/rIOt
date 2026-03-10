@@ -296,6 +296,18 @@ type UPSInfo struct {
 	Manufacturer   string   `json:"manufacturer,omitempty"`
 }
 
+// ContainerMetric holds a single per-container CPU/memory data point.
+type ContainerMetric struct {
+	ID            int64     `json:"id,omitempty"`
+	DeviceID      string    `json:"device_id"`
+	ContainerName string    `json:"container_name"`
+	ContainerID   string    `json:"container_id"`
+	Timestamp     time.Time `json:"timestamp"`
+	CPUPercent    float64   `json:"cpu_percent"`
+	MemUsage      int64     `json:"mem_usage"`
+	MemLimit      int64     `json:"mem_limit"`
+}
+
 // SecurityInfo holds security-related info.
 type SecurityInfo struct {
 	SELinux        string `json:"selinux,omitempty"`

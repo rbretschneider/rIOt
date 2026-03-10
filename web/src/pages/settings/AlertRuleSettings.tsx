@@ -8,6 +8,8 @@ const METRICS = [
   { value: 'disk_percent', label: 'Disk %' },
   { value: 'container_died', label: 'Container Died' },
   { value: 'container_oom', label: 'Container OOM' },
+  { value: 'container_cpu_percent', label: 'Container CPU %' },
+  { value: 'container_mem_percent', label: 'Container Memory %' },
   { value: 'device_offline', label: 'Device Offline' },
   { value: 'service_state', label: 'Service State' },
   { value: 'nic_state', label: 'NIC State' },
@@ -16,6 +18,9 @@ const METRICS = [
 ]
 
 const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
+
+// Container threshold metrics — require a container name (target_name)
+const CONTAINER_THRESHOLD_METRICS = ['container_cpu_percent', 'container_mem_percent']
 
 // Event-based metrics where threshold is always 1 (fires when the event occurs)
 const EVENT_METRICS = ['container_died', 'container_oom', 'device_offline']
@@ -27,7 +32,9 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   log_errors:      { operator: '>', threshold: 0,  severity: 'warning',  cooldown: 900,  hint: 'Number of error-level log entries since last heartbeat' },
   container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
   container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },
-  device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
+  device_offline:          { operator: '==', threshold: 1,  severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
+  container_cpu_percent:   { operator: '>', threshold: 80, severity: 'warning',  cooldown: 900,  hint: 'Container CPU usage percentage (0–100). Requires container name.' },
+  container_mem_percent:   { operator: '>', threshold: 90, severity: 'warning',  cooldown: 900,  hint: 'Container memory usage percentage (0–100). Requires container name.' },
 }
 
 const TARGET_STATES: Record<string, string[]> = {
@@ -93,6 +100,7 @@ export default function AlertRuleSettings() {
   })
 
   const isStateMetric = editing ? STATE_METRICS.includes(editing.metric || '') : false
+  const isContainerThreshold = editing ? CONTAINER_THRESHOLD_METRICS.includes(editing.metric || '') : false
 
   const globalRules = useMemo(() => rules.filter(r => !r.device_filter), [rules])
   const deviceRules = useMemo(() => rules.filter(r => !!r.device_filter), [rules])
@@ -190,6 +198,7 @@ export default function AlertRuleSettings() {
                     onChange={e => {
                       const m = e.target.value
                       const isState = STATE_METRICS.includes(m)
+                      const isContainerThr = CONTAINER_THRESHOLD_METRICS.includes(m)
                       const defaults = METRIC_DEFAULTS[m]
                       setEditing({
                         ...editing,
@@ -199,7 +208,7 @@ export default function AlertRuleSettings() {
                         severity: defaults?.severity ?? editing.severity,
                         cooldown_seconds: defaults?.cooldown ?? editing.cooldown_seconds,
                         target_state: isState ? (TARGET_STATE_DEFAULTS[m] || []).join(',') : '',
-                        target_name: isState ? editing.target_name : '',
+                        target_name: (isState || isContainerThr) ? editing.target_name : '',
                       })
                     }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
@@ -222,6 +231,26 @@ export default function AlertRuleSettings() {
                         options={TARGET_STATES[editing.metric || ''] || []}
                         selected={(editing.target_state || '').split(',').filter(Boolean)}
                         onChange={states => setEditing({ ...editing, target_state: states.join(',') })}
+                      />
+                    </Field>
+                  </>
+                ) : isContainerThreshold ? (
+                  <>
+                    <Field label="Operator">
+                      <select
+                        value={editing.operator}
+                        onChange={e => setEditing({ ...editing, operator: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                      >
+                        {OPERATORS.map(op => <option key={op} value={op}>{op}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Threshold">
+                      <input
+                        type="number"
+                        value={editing.threshold ?? 0}
+                        onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       />
                     </Field>
                   </>
@@ -254,6 +283,17 @@ export default function AlertRuleSettings() {
                   </>
                 )}
               </div>
+              {isContainerThreshold && (
+                <Field label="Container Name (required)">
+                  <input
+                    value={editing.target_name || ''}
+                    onChange={e => setEditing({ ...editing, target_name: e.target.value })}
+                    placeholder="e.g. nginx, postgres"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">{METRIC_DEFAULTS[editing.metric || '']?.hint}</p>
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Severity">
                   <select

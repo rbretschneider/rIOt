@@ -284,6 +284,17 @@ export interface RiotLabels {
   tags?: string[]
 }
 
+export interface ContainerMetric {
+  id?: number
+  device_id: string
+  container_name: string
+  container_id: string
+  timestamp: string
+  cpu_percent: number
+  mem_usage: number
+  mem_limit: number
+}
+
 export interface DockerEvent {
   container_id: string
   container_name: string

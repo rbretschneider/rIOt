@@ -243,6 +243,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 	if data.UPS != nil {
 		g.CheckUPSAlerts(ctx, deviceID, data.UPS)
 	}
+	if data.Docker != nil && data.Docker.Available {
+		g.CheckContainerThresholds(ctx, deviceID, data.Docker.Containers)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -462,6 +465,76 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 	if ups.BatteryCharge != nil {
 		g.evaluateMetric(ctx, deviceID, "ups_battery_percent", *ups.BatteryCharge, "", models.EventUPSLowBattery,
 			func(val float64) string { return fmt.Sprintf("UPS %s battery at %.0f%%", ups.Name, val) })
+	}
+}
+
+// CheckContainerThresholds checks per-container CPU and memory against alert rules.
+func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID string, containers []models.ContainerInfo) {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		slog.Error("check container thresholds", "error", err)
+		return
+	}
+
+	for i := range rules {
+		r := &rules[i]
+		if r.TargetName == "" {
+			continue // container threshold rules require a target name
+		}
+		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+			continue
+		}
+
+		var metricName string
+		var eventType models.EventType
+		switch r.Metric {
+		case "container_cpu_percent":
+			metricName = "CPU"
+			eventType = models.EventContainerHighCPU
+		case "container_mem_percent":
+			metricName = "Memory"
+			eventType = models.EventContainerHighMem
+		default:
+			continue
+		}
+
+		for _, c := range containers {
+			if c.State != "running" {
+				continue
+			}
+			if !strings.EqualFold(c.Name, r.TargetName) {
+				continue
+			}
+
+			var value float64
+			if r.Metric == "container_cpu_percent" {
+				value = c.CPUPercent
+			} else {
+				if c.MemLimit <= 0 {
+					continue
+				}
+				value = float64(c.MemUsage) / float64(c.MemLimit) * 100
+			}
+
+			if !compareValue(value, r.Operator, r.Threshold) {
+				continue
+			}
+
+			key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, c.Name)
+			cd := time.Duration(r.CooldownSeconds) * time.Second
+			if g.onCooldown(key, cd) {
+				continue
+			}
+
+			e := &models.Event{
+				DeviceID:  deviceID,
+				Type:      eventType,
+				Severity:  models.EventSeverity(r.Severity),
+				Message:   fmt.Sprintf("Container %s %s at %.1f%%", c.Name, metricName, value),
+				CreatedAt: time.Now().UTC(),
+			}
+			g.createEventAndNotify(ctx, e, r, "", value)
+		}
 	}
 }
 

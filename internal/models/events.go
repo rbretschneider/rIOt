@@ -33,6 +33,8 @@ const (
 	EventAgentUpdateCompleted EventType = "agent_update_completed"
 	EventAgentUpdateFailed    EventType = "agent_update_failed"
 	EventLogErrors            EventType = "log_errors"
+	EventContainerHighCPU     EventType = "container_high_cpu"
+	EventContainerHighMem     EventType = "container_high_mem"
 	EventUPSOnBattery         EventType = "ups_on_battery"
 	EventUPSLowBattery        EventType = "ups_low_battery"
 	EventUPSRestored          EventType = "ups_restored"

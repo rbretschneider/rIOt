@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -72,6 +72,9 @@ export const api = {
 
   getContainerDetail: (id: string, cid: string) =>
     fetchJSON<ContainerInfo>(`${BASE}/devices/${id}/containers/${cid}`),
+
+  getContainerMetricHistory: (deviceId: string, containerName: string, hours = 24) =>
+    fetchJSON<ContainerMetric[]>(`${BASE}/devices/${deviceId}/containers/${encodeURIComponent(containerName)}/metrics?hours=${hours}`),
 
   sendCommand: async (deviceId: string, action: string, params: Record<string, unknown> = {}): Promise<Command> => {
     const res = await fetch(`${BASE}/devices/${deviceId}/commands`, {

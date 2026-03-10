@@ -1203,6 +1203,46 @@ func (m *MockAutoUpdateRepo) SetLastTriggered(_ context.Context, id int) error {
 	return m.Err
 }
 
+// --- MockContainerMetricRepo ---
+
+type MockContainerMetricRepo struct {
+	Metrics map[string][]models.ContainerMetric // "deviceID:containerName" → metrics
+	Err     error
+}
+
+func NewMockContainerMetricRepo() *MockContainerMetricRepo {
+	return &MockContainerMetricRepo{Metrics: make(map[string][]models.ContainerMetric)}
+}
+
+func (m *MockContainerMetricRepo) StoreBatch(_ context.Context, deviceID string, metrics []models.ContainerMetric) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for _, met := range metrics {
+		key := deviceID + ":" + met.ContainerName
+		m.Metrics[key] = append(m.Metrics[key], met)
+	}
+	return nil
+}
+
+func (m *MockContainerMetricRepo) GetHistory(_ context.Context, deviceID, containerName string, since time.Time) ([]models.ContainerMetric, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	key := deviceID + ":" + containerName
+	var result []models.ContainerMetric
+	for _, met := range m.Metrics[key] {
+		if !met.Timestamp.Before(since) {
+			result = append(result, met)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockContainerMetricRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
+	return 0, m.Err
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -1216,5 +1256,6 @@ var (
 	_ db.TerminalRepository  = (*MockTerminalRepo)(nil)
 	_ db.CARepository        = (*MockCARepo)(nil)
 	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
-	_ db.AutoUpdateRepository = (*MockAutoUpdateRepo)(nil)
+	_ db.AutoUpdateRepository      = (*MockAutoUpdateRepo)(nil)
+	_ db.ContainerMetricRepository = (*MockContainerMetricRepo)(nil)
 )

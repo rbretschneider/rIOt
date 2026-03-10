@@ -122,6 +122,31 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when a Docker container is killed by the OOM killer",
 		},
+		// Container Thresholds
+		{
+			ID:              "container_high_cpu",
+			Name:            "Container High CPU",
+			Category:        "container",
+			Metric:          "container_cpu_percent",
+			Operator:        ">",
+			Threshold:       80,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: true,
+			Description:     "Fires when a container's CPU usage exceeds the threshold",
+		},
+		{
+			ID:              "container_high_memory",
+			Name:            "Container High Memory",
+			Category:        "container",
+			Metric:          "container_mem_percent",
+			Operator:        ">",
+			Threshold:       90,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: true,
+			Description:     "Fires when a container's memory usage exceeds the threshold",
+		},
 		// UPS
 		{
 			ID:              "ups_on_battery",

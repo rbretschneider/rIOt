@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { ContainerInfo } from '../types/models'
+import type { ContainerInfo, AlertRule } from '../types/models'
 import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, statusColor } from '../utils/docker'
 import ContainerStatusBadge from './ContainerStatusBadge'
+import ContainerMetricChart from './ContainerMetricChart'
+import GaugeBar from './GaugeBar'
 import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
 
-type Tab = 'general' | 'network' | 'volumes' | 'terminal'
+type Tab = 'general' | 'metrics' | 'network' | 'volumes' | 'terminal'
 
 /** Reusable content (tabs + actions) for a container — used both in the full page and any other context. */
 export function ContainerDetailContent({ container: c, deviceId, terminalEnabled }: { container: ContainerInfo; deviceId?: string; terminalEnabled?: boolean }) {
@@ -22,6 +24,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'general', label: 'General', show: true },
+    { key: 'metrics', label: 'Metrics', show: !!deviceId },
     { key: 'network', label: 'Network', show: true },
     { key: 'volumes', label: 'Volumes', show: true },
     { key: 'terminal', label: 'Terminal', show: !!terminalEnabled },
@@ -106,6 +109,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
       {/* Tab content */}
       <div className="space-y-5">
         {tab === 'general' && <GeneralTab container={c} />}
+        {tab === 'metrics' && deviceId && <MetricsTab container={c} deviceId={deviceId} />}
         {tab === 'network' && <NetworkTab container={c} />}
         {tab === 'volumes' && <VolumesTab container={c} />}
         {tab === 'terminal' && deviceId && c.state === 'running' && (
@@ -158,6 +162,120 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
           <ContainerDetailContent container={c} deviceId={deviceId} terminalEnabled={terminalEnabled} />
         </div>
       </div>
+    </div>
+  )
+}
+
+function MetricsTab({ container: c, deviceId }: { container: ContainerInfo; deviceId: string }) {
+  const [hours, setHours] = useState(24)
+  const memPct = c.mem_limit > 0 ? (c.mem_usage / c.mem_limit) * 100 : 0
+
+  const { data: metrics = [] } = useQuery({
+    queryKey: ['container-metrics', deviceId, c.name, hours],
+    queryFn: () => api.getContainerMetricHistory(deviceId, c.name, hours),
+    refetchInterval: 60000,
+  })
+
+  const { data: events = [] } = useQuery({
+    queryKey: ['container-events', deviceId, c.name],
+    queryFn: async () => {
+      const allEvents = await api.getEvents(50, 0)
+      return allEvents.filter(e =>
+        e.device_id === deviceId &&
+        e.message.toLowerCase().includes(c.name.toLowerCase())
+      )
+    },
+  })
+
+  const { data: alertRules = [] } = useQuery({
+    queryKey: ['container-alert-rules', deviceId, c.name],
+    queryFn: async () => {
+      const rules = await api.getDeviceAlertRules(deviceId)
+      return rules.filter((r: AlertRule) =>
+        (r.metric === 'container_cpu_percent' || r.metric === 'container_mem_percent') &&
+        r.target_name.toLowerCase() === c.name.toLowerCase()
+      )
+    },
+  })
+
+  const timeRanges = [
+    { label: '1h', value: 1 },
+    { label: '6h', value: 6 },
+    { label: '24h', value: 24 },
+    { label: '7d', value: 168 },
+  ]
+
+  return (
+    <div className="space-y-5">
+      {/* Time range selector */}
+      <div className="flex gap-1">
+        {timeRanges.map(tr => (
+          <button
+            key={tr.value}
+            onClick={() => setHours(tr.value)}
+            className={`px-3 py-1 text-xs rounded-md transition-colors ${
+              hours === tr.value
+                ? 'bg-gray-700 text-white'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+            }`}
+          >
+            {tr.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Charts */}
+      <ContainerMetricChart metrics={metrics} mode="cpu" label="CPU Usage" color="#3b82f6" />
+      <ContainerMetricChart metrics={metrics} mode="memory" label="Memory Usage" color="#8b5cf6" />
+
+      {/* Current values */}
+      {c.state === 'running' && (
+        <div className="grid grid-cols-2 gap-4">
+          <GaugeBar label="CPU" value={c.cpu_percent} />
+          <GaugeBar label="Memory" value={memPct} />
+        </div>
+      )}
+
+      {/* Alert rules for this container */}
+      {alertRules.length > 0 && (
+        <DetailSection title="Alert Rules">
+          <div className="space-y-1">
+            {alertRules.map((rule: AlertRule) => (
+              <div key={rule.id} className="flex items-center gap-2 text-xs">
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                <span className="text-gray-300">{rule.name}</span>
+                <span className="text-gray-500 font-mono">{rule.operator} {rule.threshold}%</span>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                  rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
+                  rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
+                  'bg-blue-900/50 text-blue-400'
+                }`}>
+                  {rule.severity}
+                </span>
+              </div>
+            ))}
+          </div>
+        </DetailSection>
+      )}
+
+      {/* Recent events for this container */}
+      {events.length > 0 && (
+        <DetailSection title="Recent Events">
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {events.slice(0, 20).map(evt => (
+              <div key={evt.id} className="flex items-start gap-2 text-xs">
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${
+                  evt.severity === 'critical' ? 'bg-red-400' :
+                  evt.severity === 'warning' ? 'bg-amber-400' :
+                  'bg-blue-400'
+                }`} />
+                <span className="text-gray-400 flex-shrink-0">{new Date(evt.created_at).toLocaleString()}</span>
+                <span className="text-gray-300">{evt.message}</span>
+              </div>
+            ))}
+          </div>
+        </DetailSection>
+      )}
     </div>
   )
 }

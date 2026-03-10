@@ -129,8 +129,8 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
         </div>
       )}
 
-      {/* Container Rows */}
-      <div className="divide-y divide-gray-700/30">
+      {/* Container Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 p-2">
         {group.containers.map(c => {
           const containerPolicy = !stackInfo ? policyMap.get(c.name) : null
           return (
@@ -139,14 +139,6 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
               container={c}
               onClick={onContainerClick}
               autoUpdate={isStackAutoUpdate || (containerPolicy?.enabled ?? false)}
-              onAutoUpdateToggle={deviceId && !stackInfo ? (enabled) => {
-                autoUpdateMutation.mutate({
-                  target: c.name,
-                  isStack: false,
-                  composeWorkDir: '',
-                  enabled,
-                })
-              } : undefined}
             />
           )
         })}
