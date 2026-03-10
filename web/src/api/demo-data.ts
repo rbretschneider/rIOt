@@ -70,7 +70,7 @@ const deviceDefs = [
     os: { name: 'Fedora Linux', id: 'fedora', version: '41', kernel: '6.11.4-301.fc41.x86_64' },
   },
   {
-    hostname: 'backup-server', arch: 'amd64', status: 'online' as const,
+    hostname: 'backup-server', arch: 'amd64', status: 'warning' as const,
     ip: '10.0.10.30', version: '0.9.2', tags: ['backup', 'restic'],
     hw: { cpu_model: 'Intel Core i3-12100', cpu_cores: 4, cpu_threads: 8, total_ram_mb: 16384 },
     os: { name: 'Ubuntu', id: 'ubuntu', version: '22.04', kernel: '5.15.0-125-generic' },
@@ -112,6 +112,13 @@ function makeUPS(hostname: string): UPSInfo | undefined {
       name: 'eaton', status: 'OL', on_battery: false, low_battery: false,
       battery_charge: 95, battery_runtime: 1680, input_voltage: 231.2,
       output_voltage: 231.2, load: 42, model: '5E 1500i', manufacturer: 'EATON',
+    }
+  }
+  if (hostname === 'backup-server') {
+    return {
+      name: 'cyberpower', status: 'OB', on_battery: true, low_battery: false,
+      battery_charge: 72, battery_runtime: 1140, input_voltage: 0,
+      output_voltage: 120.0, load: 34, model: 'CP1500AVRLCD', manufacturer: 'CyberPower',
     }
   }
   return undefined
@@ -299,6 +306,7 @@ export function getContainers(): ContainerInfo[] {
 // ── Events ───────────────────────────────────────────────────────────────────
 
 const eventDefs: { device: string; type: string; severity: 'info' | 'warning' | 'critical'; message: string; ageMs: number; acked: boolean }[] = [
+  { device: 'backup-server', type: 'ups_on_battery', severity: 'warning', message: 'UPS cyberpower switched to battery power', ageMs: 3 * MIN, acked: false },
   { device: 'pi-cameras', type: 'cpu_high', severity: 'critical', message: 'CPU usage above 85% for 10 minutes', ageMs: 8 * MIN, acked: false },
   { device: 'proxmox-01', type: 'container_update', severity: 'info', message: 'Container update available: plex (plexinc/pms-docker:latest)', ageMs: 25 * MIN, acked: false },
   { device: 'proxmox-01', type: 'failed_login', severity: 'warning', message: '14 failed SSH login attempts in the last 24h', ageMs: 1 * HOUR, acked: false },
@@ -439,6 +447,22 @@ export function getAlertRules(): AlertRule[] {
       severity: 'warning', device_filter: '*', cooldown_seconds: 3600,
       notify: false, template_id: 'disk_high',
       created_at: ago(45 * DAY), updated_at: ago(45 * DAY),
+    },
+    {
+      id: 4, name: 'UPS On Battery', enabled: true,
+      metric: 'ups_on_battery', operator: '==', threshold: 1,
+      target_name: '', target_state: '',
+      severity: 'warning', device_filter: '*', cooldown_seconds: 900,
+      notify: true, template_id: 'ups_on_battery',
+      created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
+    },
+    {
+      id: 5, name: 'UPS Low Battery', enabled: true,
+      metric: 'ups_battery_percent', operator: '<', threshold: 20,
+      target_name: '', target_state: '',
+      severity: 'critical', device_filter: '*', cooldown_seconds: 300,
+      notify: true, template_id: 'ups_low_battery',
+      created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
     },
   ]
 }

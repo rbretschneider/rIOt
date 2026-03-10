@@ -13,6 +13,8 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
+> **README last updated for v2.16.4**
+
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
@@ -24,7 +26,7 @@
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
 - **Open registration** — devices register automatically; optionally require a registration key via Settings
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
-- **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery
+- **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery; fleet status dot turns yellow when a device is on battery power
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, and UPS power events; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
@@ -325,7 +327,7 @@ Pre-built templates are available in Settings > Alert Rules > "Create from Templ
 
 ### One-Click Alert Creation
 
-From the device detail view, click the alert icon next to any service, process, or network interface to instantly create a targeted alert rule.
+From the device detail view, click the alert icon next to any service, process, network interface, or UPS to instantly create a targeted alert rule.
 
 ### Event Acknowledgement
 

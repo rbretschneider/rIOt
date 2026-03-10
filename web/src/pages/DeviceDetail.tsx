@@ -361,7 +361,7 @@ export default function DeviceDetail() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {tel.ups.battery_charge != null && (
-              <GaugeBar label="Battery Charge" value={tel.ups.battery_charge} />
+              <GaugeBar label="Battery Charge" value={tel.ups.battery_charge} invert />
             )}
             {tel.ups.load != null && (
               <GaugeBar label="UPS Load" value={tel.ups.load} />
