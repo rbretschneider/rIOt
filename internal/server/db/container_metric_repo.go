@@ -22,9 +22,9 @@ func (r *ContainerMetricRepo) StoreBatch(ctx context.Context, deviceID string, m
 	}
 	for _, m := range metrics {
 		_, err := r.db.Pool.Exec(ctx,
-			`INSERT INTO container_metrics (device_id, container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			deviceID, m.ContainerName, m.ContainerID, m.Timestamp, m.CPUPercent, m.MemUsage, m.MemLimit,
+			`INSERT INTO container_metrics (device_id, container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit, cpu_limit)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			deviceID, m.ContainerName, m.ContainerID, m.Timestamp, m.CPUPercent, m.MemUsage, m.MemLimit, m.CPULimit,
 		)
 		if err != nil {
 			return err
@@ -35,7 +35,7 @@ func (r *ContainerMetricRepo) StoreBatch(ctx context.Context, deviceID string, m
 
 func (r *ContainerMetricRepo) GetHistory(ctx context.Context, deviceID, containerName string, since time.Time) ([]models.ContainerMetric, error) {
 	rows, err := r.db.Pool.Query(ctx,
-		`SELECT container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit
+		`SELECT container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit, cpu_limit
 		 FROM container_metrics
 		 WHERE device_id=$1 AND container_name=$2 AND timestamp>=$3
 		 ORDER BY timestamp ASC`,
@@ -49,7 +49,7 @@ func (r *ContainerMetricRepo) GetHistory(ctx context.Context, deviceID, containe
 	var result []models.ContainerMetric
 	for rows.Next() {
 		var m models.ContainerMetric
-		if err := rows.Scan(&m.ContainerName, &m.ContainerID, &m.Timestamp, &m.CPUPercent, &m.MemUsage, &m.MemLimit); err != nil {
+		if err := rows.Scan(&m.ContainerName, &m.ContainerID, &m.Timestamp, &m.CPUPercent, &m.MemUsage, &m.MemLimit, &m.CPULimit); err != nil {
 			return nil, err
 		}
 		m.DeviceID = deviceID

@@ -10,6 +10,7 @@ const METRICS = [
   { value: 'container_oom', label: 'Container OOM' },
   { value: 'container_cpu_percent', label: 'Container CPU %' },
   { value: 'container_mem_percent', label: 'Container Memory %' },
+  { value: 'container_cpu_limit_percent', label: 'Container CPU % of Limit' },
   { value: 'device_offline', label: 'Device Offline' },
   { value: 'service_state', label: 'Service State' },
   { value: 'nic_state', label: 'NIC State' },
@@ -20,7 +21,7 @@ const METRICS = [
 const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
 
 // Container threshold metrics — require a container name (target_name)
-const CONTAINER_THRESHOLD_METRICS = ['container_cpu_percent', 'container_mem_percent']
+const CONTAINER_THRESHOLD_METRICS = ['container_cpu_percent', 'container_mem_percent', 'container_cpu_limit_percent']
 
 // Event-based metrics where threshold is always 1 (fires when the event occurs)
 const EVENT_METRICS = ['container_died', 'container_oom', 'device_offline']
@@ -35,6 +36,7 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   device_offline:          { operator: '==', threshold: 1,  severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
   container_cpu_percent:   { operator: '>', threshold: 80, severity: 'warning',  cooldown: 900,  hint: 'Container CPU usage percentage (0–100). Requires container name.' },
   container_mem_percent:   { operator: '>', threshold: 90, severity: 'warning',  cooldown: 900,  hint: 'Container memory usage percentage (0–100). Requires container name.' },
+  container_cpu_limit_percent: { operator: '>', threshold: 90, severity: 'warning', cooldown: 900, hint: 'CPU usage as % of compose CPU limit. Requires container name and cpus: in compose.' },
 }
 
 const TARGET_STATES: Record<string, string[]> = {

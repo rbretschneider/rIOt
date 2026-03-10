@@ -228,6 +228,7 @@ type ContainerInfo struct {
 	CPUPercent    float64           `json:"cpu_percent"`
 	MemUsage      int64             `json:"mem_usage"`
 	MemLimit      int64             `json:"mem_limit"`
+	CPULimit      int64             `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
 	RestartPolicy string            `json:"restart_policy,omitempty"`
 	RestartCount  int               `json:"restart_count,omitempty"`
 	Mounts        []MountInfo       `json:"mounts,omitempty"`
@@ -306,6 +307,7 @@ type ContainerMetric struct {
 	CPUPercent    float64   `json:"cpu_percent"`
 	MemUsage      int64     `json:"mem_usage"`
 	MemLimit      int64     `json:"mem_limit"`
+	CPULimit      int64     `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
 }
 
 // SecurityInfo holds security-related info.

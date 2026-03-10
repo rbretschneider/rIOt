@@ -494,6 +494,9 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID strin
 		case "container_mem_percent":
 			metricName = "Memory"
 			eventType = models.EventContainerHighMem
+		case "container_cpu_limit_percent":
+			metricName = "CPU (of limit)"
+			eventType = models.EventContainerCPUOverLimit
 		default:
 			continue
 		}
@@ -507,13 +510,21 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID strin
 			}
 
 			var value float64
-			if r.Metric == "container_cpu_percent" {
+			switch r.Metric {
+			case "container_cpu_percent":
 				value = c.CPUPercent
-			} else {
+			case "container_mem_percent":
 				if c.MemLimit <= 0 {
 					continue
 				}
 				value = float64(c.MemUsage) / float64(c.MemLimit) * 100
+			case "container_cpu_limit_percent":
+				if c.CPULimit <= 0 {
+					continue // no CPU limit configured
+				}
+				// CPULimit is NanoCPUs; convert to max CPU% = NanoCPUs / 1e9 * 100
+				cpuLimitPercent := float64(c.CPULimit) / 1e9 * 100
+				value = c.CPUPercent / cpuLimitPercent * 100
 			}
 
 			if !compareValue(value, r.Operator, r.Threshold) {

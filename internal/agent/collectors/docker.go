@@ -247,6 +247,12 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 
 		containers[i].MemUsage = int64(stats.MemoryStats.Usage - stats.MemoryStats.Stats.Cache)
 		containers[i].MemLimit = int64(stats.MemoryStats.Limit)
+
+		// Read CPU limit (NanoCPUs) from container inspect
+		inspect, err := cli.ContainerInspect(ctx, containers[i].ID)
+		if err == nil && inspect.HostConfig != nil && inspect.HostConfig.NanoCPUs > 0 {
+			containers[i].CPULimit = inspect.HostConfig.NanoCPUs
+		}
 	}
 }
 

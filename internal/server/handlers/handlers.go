@@ -318,6 +318,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 				CPUPercent:    c.CPUPercent,
 				MemUsage:      c.MemUsage,
 				MemLimit:      c.MemLimit,
+				CPULimit:      c.CPULimit,
 			})
 		}
 		if len(metrics) > 0 {

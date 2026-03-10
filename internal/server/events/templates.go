@@ -147,6 +147,18 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: true,
 			Description:     "Fires when a container's memory usage exceeds the threshold",
 		},
+		{
+			ID:              "container_cpu_over_limit",
+			Name:            "Container CPU Over Limit",
+			Category:        "container",
+			Metric:          "container_cpu_limit_percent",
+			Operator:        ">",
+			Threshold:       90,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: true,
+			Description:     "Fires when a container's CPU usage exceeds its compose CPU limit (requires cpus: in compose)",
+		},
 		// UPS
 		{
 			ID:              "ups_on_battery",

@@ -236,6 +236,7 @@ export interface ContainerInfo {
   cpu_percent: number
   mem_usage: number
   mem_limit: number
+  cpu_limit?: number
   restart_policy?: string
   restart_count?: number
   mounts?: MountInfo[]
@@ -293,6 +294,7 @@ export interface ContainerMetric {
   cpu_percent: number
   mem_usage: number
   mem_limit: number
+  cpu_limit?: number
 }
 
 export interface DockerEvent {
