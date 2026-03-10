@@ -26,8 +26,9 @@ type Generator struct {
 	dispatcher    Dispatcher
 	commandRepo   db.CommandRepository
 
-	mu       sync.Mutex
-	lastSent map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
+	mu            sync.Mutex
+	lastSent      map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
+	activeUpdates map[string]int       // key: deviceID → count of in-progress container updates
 }
 
 func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.AlertRuleRepository, dispatcher Dispatcher, commandRepo db.CommandRepository) *Generator {
@@ -38,6 +39,7 @@ func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.
 		dispatcher:    dispatcher,
 		commandRepo:   commandRepo,
 		lastSent:      make(map[string]time.Time),
+		activeUpdates: make(map[string]int),
 	}
 }
 
@@ -564,19 +566,31 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 			Message: fmt.Sprintf("Container %s stopped", evt.ContainerName), CreatedAt: now,
 		})
 	case "die":
-		e := &models.Event{
-			DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
-			Message: fmt.Sprintf("Container %s died", evt.ContainerName), CreatedAt: now,
-		}
-		rule := g.findMatchingRule(ctx, "container_died", deviceID, 1)
-		if rule != nil {
-			key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
-			if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
-				e.Severity = models.EventSeverity(rule.Severity)
-				g.createEventAndNotify(ctx, e, rule, "", 1)
-			}
+		g.mu.Lock()
+		updating := g.activeUpdates[deviceID] > 0
+		g.mu.Unlock()
+
+		if updating {
+			// Container died as part of a running update — expected, downgrade to info
+			g.createEvent(ctx, &models.Event{
+				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityInfo,
+				Message: fmt.Sprintf("Container %s died (update in progress)", evt.ContainerName), CreatedAt: now,
+			})
 		} else {
-			g.createEvent(ctx, e)
+			e := &models.Event{
+				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
+				Message: fmt.Sprintf("Container %s died", evt.ContainerName), CreatedAt: now,
+			}
+			rule := g.findMatchingRule(ctx, "container_died", deviceID, 1)
+			if rule != nil {
+				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
+				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
+					e.Severity = models.EventSeverity(rule.Severity)
+					g.createEventAndNotify(ctx, e, rule, "", 1)
+				}
+			} else {
+				g.createEvent(ctx, e)
+			}
 		}
 	case "oom":
 		e := &models.Event{
@@ -614,16 +628,35 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 			Message: fmt.Sprintf("Container %s unpaused", evt.ContainerName), CreatedAt: now,
 		})
 	case "update_started":
+		g.mu.Lock()
+		g.activeUpdates[deviceID]++
+		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateStarted, Severity: models.SeverityInfo,
 			Message: fmt.Sprintf("Container %s update started", evt.ContainerName), CreatedAt: now,
 		})
 	case "update_completed":
+		g.mu.Lock()
+		if g.activeUpdates[deviceID] > 0 {
+			g.activeUpdates[deviceID]--
+		}
+		if g.activeUpdates[deviceID] == 0 {
+			delete(g.activeUpdates, deviceID)
+		}
+		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateDone, Severity: models.SeverityInfo,
 			Message: fmt.Sprintf("Container %s updated successfully", evt.ContainerName), CreatedAt: now,
 		})
 	case "update_failed":
+		g.mu.Lock()
+		if g.activeUpdates[deviceID] > 0 {
+			g.activeUpdates[deviceID]--
+		}
+		if g.activeUpdates[deviceID] == 0 {
+			delete(g.activeUpdates, deviceID)
+		}
+		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
 			Message: fmt.Sprintf("Container %s update failed", evt.ContainerName), CreatedAt: now,

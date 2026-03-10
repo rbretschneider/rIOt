@@ -159,6 +159,88 @@ func TestCheckDockerEvent_Die(t *testing.T) {
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventContainerDied, eventRepo.Events[0].Type)
+	assert.Equal(t, models.SeverityWarning, eventRepo.Events[0].Severity)
+}
+
+func TestCheckDockerEvent_DieDowngradedDuringUpdate(t *testing.T) {
+	gen, eventRepo, _, _ := setupGenerator(t)
+	ctx := context.Background()
+
+	// Simulate an update in progress
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "bookstack stack",
+		Action:        "update_started",
+	})
+
+	// Container dies during the update — should be info, not warning
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "bookstack_db",
+		Action:        "die",
+	})
+
+	require.Len(t, eventRepo.Events, 2) // update_started + die
+	dieEvt := eventRepo.Events[1]
+	assert.Equal(t, models.EventContainerDied, dieEvt.Type)
+	assert.Equal(t, models.SeverityInfo, dieEvt.Severity)
+	assert.Contains(t, dieEvt.Message, "update in progress")
+}
+
+func TestCheckDockerEvent_DieWarningAfterUpdateCompletes(t *testing.T) {
+	gen, eventRepo, _, _ := setupGenerator(t)
+	ctx := context.Background()
+
+	// Start and complete an update
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "bookstack stack",
+		Action:        "update_started",
+	})
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "bookstack stack",
+		Action:        "update_completed",
+	})
+
+	// Container dies after update finished — should be warning
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "bookstack_db",
+		Action:        "die",
+	})
+
+	require.Len(t, eventRepo.Events, 3)
+	dieEvt := eventRepo.Events[2]
+	assert.Equal(t, models.EventContainerDied, dieEvt.Type)
+	assert.Equal(t, models.SeverityWarning, dieEvt.Severity)
+}
+
+func TestCheckDockerEvent_DieNoNotifyDuringUpdate(t *testing.T) {
+	gen, eventRepo, alertRuleRepo, dispatcher := setupGenerator(t)
+	ctx := context.Background()
+
+	alertRuleRepo.Rules = []models.AlertRule{{
+		ID:              1,
+		Enabled:         true,
+		Metric:          "container_died",
+		Operator:        "==",
+		Threshold:       1,
+		Severity:        "warning",
+		CooldownSeconds: 900,
+		Notify:          true,
+	}}
+
+	// Update in progress
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "myapp",
+		Action:        "update_started",
+	})
+
+	// Die during update — should NOT dispatch notification
+	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+		ContainerName: "myapp_web",
+		Action:        "die",
+	})
+
+	require.Len(t, eventRepo.Events, 2)
+	assert.Equal(t, models.SeverityInfo, eventRepo.Events[1].Severity)
+	assert.Empty(t, dispatcher.Alerts, "no notification should be dispatched during update")
 }
 
 func TestCheckDockerEvent_OOM(t *testing.T) {
