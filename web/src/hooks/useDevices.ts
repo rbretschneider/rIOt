@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
-import type { Device, HeartbeatData, WSMessage } from '../types/models'
+import type { Device, HeartbeatData, FullTelemetryData, WSMessage } from '../types/models'
 
 export function useDevices() {
   const queryClient = useQueryClient()
@@ -55,12 +55,31 @@ export function useDevices() {
         }
       })
     } else if (msg.type === 'telemetry' && msg.device_id) {
+      const telData = msg.data as FullTelemetryData
+      const upsOnBattery = telData?.ups?.on_battery === true
+
+      // If UPS is on battery, set fleet list status to warning (yellow dot)
+      if (upsOnBattery) {
+        queryClient.setQueryData<Device[]>(['devices'], (old) => {
+          if (!old) return old
+          const idx = old.findIndex((d) => d.id === msg.device_id)
+          if (idx < 0) return old
+          const updated = [...old]
+          updated[idx] = { ...updated[idx], status: 'warning' }
+          return updated
+        })
+      }
+
       // Push full telemetry directly into device detail cache
       queryClient.setQueryData(['device', msg.device_id], (old: any) => {
         if (!old) return old
         return {
           ...old,
-          device: { ...old.device, last_telemetry: new Date().toISOString() },
+          device: {
+            ...old.device,
+            ...(upsOnBattery ? { status: 'warning' as const } : {}),
+            last_telemetry: new Date().toISOString(),
+          },
           latest_telemetry: { device_id: msg.device_id, timestamp: new Date().toISOString(), data: msg.data },
         }
       })

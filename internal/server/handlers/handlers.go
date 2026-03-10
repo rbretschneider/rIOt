@@ -335,6 +335,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// Check thresholds
 	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, &snap.Data)
 
+	// Set device status to "warning" if UPS is on battery power
+	if snap.Data.UPS != nil && snap.Data.UPS.OnBattery {
+		h.devices.SetStatus(r.Context(), deviceID, models.DeviceStatusWarning)
+	}
+
 	// Check auto-update policies
 	h.checkAutoUpdates(r.Context(), deviceID, &snap.Data)
 
