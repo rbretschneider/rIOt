@@ -359,7 +359,7 @@ export default function DeviceDetail() {
             {tel.ups.model && <InfoItem label="Model" value={tel.ups.model} />}
             {tel.ups.manufacturer && <InfoItem label="Manufacturer" value={tel.ups.manufacturer} />}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {tel.ups.battery_charge != null && (
               <GaugeBar label="Battery Charge" value={tel.ups.battery_charge} />
             )}
