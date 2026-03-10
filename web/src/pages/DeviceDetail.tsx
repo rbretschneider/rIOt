@@ -68,6 +68,8 @@ export default function DeviceDetail() {
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
       api.sendCommand(id!, action, params || {}),
+    onSuccess: () => { setTimeout(() => commandMutation.reset(), 5000) },
+    onError: () => { setTimeout(() => commandMutation.reset(), 5000) },
   })
   const fetchLogsMutation = useMutation({
     mutationFn: (params: { hours: number; priority: number }) =>
@@ -75,7 +77,9 @@ export default function DeviceDetail() {
     onSuccess: () => {
       // Refetch logs after a short delay to let the agent push them
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['device-logs', id] }), 3000)
+      setTimeout(() => fetchLogsMutation.reset(), 5000)
     },
+    onError: () => { setTimeout(() => fetchLogsMutation.reset(), 5000) },
   })
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteDevice(id!, data?.device.status === 'online'),
@@ -158,14 +162,14 @@ export default function DeviceDetail() {
             <div className="flex gap-2">
               <button
                 onClick={() => setConfirmAction('agent_update')}
-                disabled={!agentOutdated || commandMutation.isPending}
+                disabled={!agentOutdated || commandMutation.isPending || (commandMutation.isSuccess && commandMutation.variables?.action === 'agent_update')}
                 className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                   agentOutdated
                     ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
                     : 'text-gray-600 border border-gray-700/50'
                 }`}
               >
-                Update Agent
+                {commandMutation.isSuccess && commandMutation.variables?.action === 'agent_update' ? 'Update Sent' : 'Update Agent'}
               </button>
               {tel?.updates && tel.updates.pending_updates > 0 && (
                 <button

@@ -59,6 +59,8 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
   const stackMutation = useMutation({
     mutationFn: ({ workDir }: { workDir: string }) =>
       api.sendCommand(deviceId!, 'docker_update', { compose_work_dir: workDir }),
+    onSuccess: () => { setTimeout(() => stackMutation.reset(), 5000) },
+    onError: () => { setTimeout(() => stackMutation.reset(), 5000) },
   })
 
   const autoUpdateMutation = useMutation({

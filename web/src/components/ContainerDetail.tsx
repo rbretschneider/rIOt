@@ -21,6 +21,8 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params: Record<string, unknown> }) =>
       api.sendCommand(deviceId!, action, params),
+    onSuccess: () => { setTimeout(() => commandMutation.reset(), 5000) },
+    onError: () => { setTimeout(() => commandMutation.reset(), 5000) },
   })
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [

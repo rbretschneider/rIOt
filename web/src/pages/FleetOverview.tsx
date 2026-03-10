@@ -62,6 +62,7 @@ export default function FleetOverview() {
     onSuccess: (data) => {
       setUpdateResult(data)
       queryClient.invalidateQueries({ queryKey: ['agent-versions'] })
+      setTimeout(() => setUpdateResult(null), 8000)
     },
   })
 
@@ -79,6 +80,7 @@ export default function FleetOverview() {
     try {
       const result = await api.bulkPatchDevices('full')
       setPatchResult(result)
+      setTimeout(() => setPatchResult(null), 8000)
     } catch { /* ignore */ }
     setShowPatchReview(false)
     setPatchDetail(null)

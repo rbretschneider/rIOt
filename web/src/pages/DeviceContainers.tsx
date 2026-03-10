@@ -22,6 +22,7 @@ export default function DeviceContainers() {
 
   const checkUpdatesMutation = useMutation({
     mutationFn: () => api.sendCommand(id!, 'docker_check_updates', {}),
+    onSuccess: () => { setTimeout(() => checkUpdatesMutation.reset(), 5000) },
   })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
@@ -136,7 +137,7 @@ function ContainerList({
   }
 
   return (
-    <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-3">
+    <div className="columns-1 md:columns-2 xl:columns-3 gap-4">
       {groups.map(g => (
         <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} deviceId={deviceId} />
       ))}

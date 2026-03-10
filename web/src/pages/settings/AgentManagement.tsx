@@ -23,6 +23,7 @@ export default function AgentManagement() {
     onSuccess: (data) => {
       setUpdateResult(data)
       qc.invalidateQueries({ queryKey: ['agent-versions'] })
+      setTimeout(() => setUpdateResult(null), 8000)
     },
   })
 

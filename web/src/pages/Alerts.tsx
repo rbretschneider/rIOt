@@ -9,7 +9,7 @@ const PAGE_SIZE = 25
 
 export default function Alerts() {
   const [filter, setFilter] = useState<string>('')
-  const [showUnackOnly, setShowUnackOnly] = useState(false)
+  const [showUnackOnly, setShowUnackOnly] = useState(() => localStorage.getItem('alerts-unack-only') === 'true')
   const [page, setPage] = useState(0)
   const qc = useQueryClient()
   // useDevices sets up WS that pushes new events into the ['events'] cache
@@ -64,7 +64,7 @@ export default function Alerts() {
             <input
               type="checkbox"
               checked={showUnackOnly}
-              onChange={(e) => { setShowUnackOnly(e.target.checked); setPage(0) }}
+              onChange={(e) => { setShowUnackOnly(e.target.checked); localStorage.setItem('alerts-unack-only', String(e.target.checked)); setPage(0) }}
               className="rounded bg-gray-800 border-gray-600"
             />
             Unacknowledged only
