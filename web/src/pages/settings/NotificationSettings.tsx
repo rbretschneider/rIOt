@@ -209,7 +209,22 @@ export default function NotificationSettings() {
   )
 }
 
+const NTFY_PRIORITIES = ['min', 'low', 'default', 'high', 'urgent'] as const
+
+const DEFAULT_PRIORITY_MAP: Record<string, string> = {
+  info: 'default',
+  warning: 'high',
+  critical: 'high',
+}
+
 function NtfyConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+  const priority = (config.priority as string) || 'default'
+  const priorityMap = (config.priority_map as Record<string, string>) || DEFAULT_PRIORITY_MAP
+
+  const updatePriorityMap = (severity: string, value: string) => {
+    onChange({ ...config, priority_map: { ...priorityMap, [severity]: value } })
+  }
+
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
       <Field label="Server URL">
@@ -239,19 +254,36 @@ function NtfyConfig({ config, onChange }: { config: Record<string, unknown>; onC
         </Field>
         <Field label="Priority">
           <select
-            value={(config.priority as string) || 'default'}
+            value={priority}
             onChange={e => onChange({ ...config, priority: e.target.value })}
             className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
           >
             <option value="default">Default (auto from severity)</option>
             <option value="min">Min</option>
             <option value="low">Low</option>
-            <option value="default">Default</option>
             <option value="high">High</option>
             <option value="urgent">Urgent</option>
           </select>
         </Field>
       </div>
+      {priority === 'default' && (
+        <div className="space-y-2 pt-1">
+          <label className="block text-xs text-gray-400">Severity → ntfy Priority</label>
+          <div className="grid grid-cols-3 gap-2">
+            {(['info', 'warning', 'critical'] as const).map(severity => (
+              <Field key={severity} label={severity.charAt(0).toUpperCase() + severity.slice(1)}>
+                <select
+                  value={priorityMap[severity] || DEFAULT_PRIORITY_MAP[severity]}
+                  onChange={e => updatePriorityMap(severity, e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+                >
+                  {NTFY_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </Field>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -22,6 +22,9 @@ func TestNewNtfy_Defaults(t *testing.T) {
 	assert.Equal(t, "alerts", n.topic)
 	assert.Equal(t, "default", n.priority)
 	assert.Empty(t, n.token)
+	assert.Equal(t, map[string]string{
+		"info": "default", "warning": "high", "critical": "high",
+	}, n.priorityMap)
 }
 
 func TestNewNtfy_CustomConfig(t *testing.T) {
@@ -50,14 +53,20 @@ func TestNtfy_Send_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := &Ntfy{serverURL: srv.URL, topic: "test", token: "mytoken", priority: "default"}
+	n := &Ntfy{
+		serverURL:   srv.URL,
+		topic:       "test",
+		token:       "mytoken",
+		priority:    "default",
+		priorityMap: map[string]string{"info": "default", "warning": "high", "critical": "high"},
+	}
 	err := n.Send(context.Background(), models.Alert{
 		Rule:  &models.AlertRule{Name: "High Memory"},
 		Event: &models.Event{Message: "RAM at 95%", Severity: models.SeverityCrit},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "High Memory", gotTitle)
-	assert.Equal(t, "urgent", gotPriority, "crit severity maps to urgent")
+	assert.Equal(t, "high", gotPriority, "crit severity maps to high by default")
 	assert.Equal(t, "Bearer mytoken", gotAuth)
 }
 
@@ -83,22 +92,27 @@ func TestNtfy_Send_NoTopic(t *testing.T) {
 }
 
 func TestNtfy_MapPriority(t *testing.T) {
+	defaultMap := map[string]string{"info": "default", "warning": "high", "critical": "high"}
+
 	tests := []struct {
-		name     string
-		priority string
-		severity models.EventSeverity
-		want     string
+		name        string
+		priority    string
+		priorityMap map[string]string
+		severity    models.EventSeverity
+		want        string
 	}{
-		{"override priority", "max", models.SeverityCrit, "max"},
-		{"crit default", "default", models.SeverityCrit, "urgent"},
-		{"warning default", "default", models.SeverityWarning, "high"},
-		{"info default", "default", models.SeverityInfo, "default"},
-		{"nil event", "default", "", "default"},
+		{"override priority", "max", defaultMap, models.SeverityCrit, "max"},
+		{"crit default", "default", defaultMap, models.SeverityCrit, "high"},
+		{"warning default", "default", defaultMap, models.SeverityWarning, "high"},
+		{"info default", "default", defaultMap, models.SeverityInfo, "default"},
+		{"nil event", "default", defaultMap, "", "default"},
+		{"custom map crit→urgent", "default", map[string]string{"info": "low", "warning": "default", "critical": "urgent"}, models.SeverityCrit, "urgent"},
+		{"custom map info→min", "default", map[string]string{"info": "min", "warning": "high", "critical": "high"}, models.SeverityInfo, "min"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			n := &Ntfy{priority: tt.priority}
+			n := &Ntfy{priority: tt.priority, priorityMap: tt.priorityMap}
 			alert := models.Alert{}
 			if tt.severity != "" {
 				alert.Event = &models.Event{Severity: tt.severity}
@@ -106,4 +120,20 @@ func TestNtfy_MapPriority(t *testing.T) {
 			assert.Equal(t, tt.want, n.mapPriority(alert))
 		})
 	}
+}
+
+func TestNewNtfy_CustomPriorityMap(t *testing.T) {
+	ch := models.NotificationChannel{
+		Config: map[string]interface{}{
+			"topic": "alerts",
+			"priority_map": map[string]interface{}{
+				"info":     "min",
+				"critical": "urgent",
+			},
+		},
+	}
+	n := NewNtfy(ch)
+	assert.Equal(t, "min", n.priorityMap["info"], "overridden from config")
+	assert.Equal(t, "high", n.priorityMap["warning"], "kept default")
+	assert.Equal(t, "urgent", n.priorityMap["critical"], "overridden from config")
 }

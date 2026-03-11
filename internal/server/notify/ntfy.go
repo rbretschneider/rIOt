@@ -13,11 +13,12 @@ import (
 
 // Ntfy sends notifications via ntfy.sh or a self-hosted ntfy server.
 type Ntfy struct {
-	serverURL string
-	topic     string
-	token     string
-	priority  string
-	client    *http.Client
+	serverURL   string
+	topic       string
+	token       string
+	priority    string
+	priorityMap map[string]string
+	client      *http.Client
 }
 
 // NewNtfy creates an Ntfy channel from a NotificationChannel config.
@@ -26,6 +27,11 @@ func NewNtfy(ch models.NotificationChannel) *Ntfy {
 	n := &Ntfy{
 		serverURL: "https://ntfy.sh",
 		priority:  "default",
+		priorityMap: map[string]string{
+			"info":     "default",
+			"warning":  "high",
+			"critical": "high",
+		},
 	}
 	if v, ok := ch.Config["server_url"].(string); ok && v != "" {
 		n.serverURL = strings.TrimRight(v, "/")
@@ -38,6 +44,13 @@ func NewNtfy(ch models.NotificationChannel) *Ntfy {
 	}
 	if v, ok := ch.Config["priority"].(string); ok && v != "" {
 		n.priority = v
+	}
+	if pm, ok := ch.Config["priority_map"].(map[string]interface{}); ok {
+		for k, v := range pm {
+			if s, ok := v.(string); ok {
+				n.priorityMap[k] = s
+			}
+		}
 	}
 	return n
 }
@@ -102,12 +115,8 @@ func (n *Ntfy) mapPriority(alert models.Alert) string {
 	if alert.Event == nil {
 		return "default"
 	}
-	switch alert.Event.Severity {
-	case models.SeverityCrit:
-		return "urgent"
-	case models.SeverityWarning:
-		return "high"
-	default:
-		return "default"
+	if p, ok := n.priorityMap[string(alert.Event.Severity)]; ok {
+		return p
 	}
+	return "default"
 }
