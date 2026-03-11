@@ -510,10 +510,11 @@ export default function DeviceDetail() {
       )}
 
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
-        <Section title="Top Processes (by CPU)">
-          <div className="overflow-x-auto scrollbar-thin">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 h-96 flex flex-col">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">Top Processes (by CPU)</h2>
+          <div className="flex-1 min-h-0 overflow-auto scrollbar-thin">
           <table className="w-full text-sm min-w-[480px]">
-            <thead>
+            <thead className="sticky top-0 bg-gray-900">
               <tr className="text-gray-500 text-xs uppercase">
                 <th className="text-left py-2">PID</th>
                 <th className="text-left py-2">Name</th>
@@ -545,7 +546,7 @@ export default function DeviceDetail() {
             </tbody>
           </table>
           </div>
-        </Section>
+        </div>
       )}
       </div>
 
