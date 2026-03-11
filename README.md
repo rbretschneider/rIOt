@@ -13,12 +13,12 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.16.4**
+> **README last updated for v2.17.3**
 
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -35,6 +35,7 @@
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, agent update, system reboot (with per-command permission controls)
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent)
+- **Web server monitoring** — auto-detects nginx and Caddy reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Server log viewer** — browse and search server logs directly from the dashboard
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
@@ -246,6 +247,37 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
 
 Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbretschneider/rIOt/releases) and create a config file at `%PROGRAMDATA%\riot\agent.yaml` with the same format as above. Run from a terminal or set up as a Windows service using [NSSM](https://nssm.cc/) or `sc.exe`.
 
+### Sudoers Rules
+
+The installer creates `/etc/sudoers.d/riot-agent` with least-privilege rules that let the `riot` user perform specific operations as root without a password. Each rule is locked to an exact command — no shell access, no wildcard escalation.
+
+| Rule | Used By | Purpose |
+|---|---|---|
+| `/usr/bin/apt-get update` | Remote patching | Refresh APT package index |
+| `/usr/bin/apt-get -y upgrade ...` | Remote patching | Install available package updates (Debian/Ubuntu) |
+| `/usr/bin/apt-get -y dist-upgrade ...` | Remote patching | Install updates including dependency changes |
+| `/usr/bin/dnf makecache` | Remote patching | Refresh DNF package cache (Fedora/RHEL) |
+| `/usr/bin/dnf -y update` | Remote patching | Install available package updates |
+| `/usr/bin/dnf -y --security update` | Remote patching | Install security-only updates |
+| `/usr/bin/systemctl reboot` | Remote reboot | Reboot the device from the dashboard |
+| `/bin/sh -c mv ... && cp ... && chmod ...` | Agent self-update | Atomically swap the agent binary on disk |
+| `/usr/bin/systemd-run --unit=riot-agent-update sh -c *` | Agent self-update | Run the update in a transient systemd unit |
+| `/usr/bin/systemctl reset-failed riot-agent-update` | Agent self-update | Clear failed state from a previous update unit |
+| `/usr/sbin/nginx -t` | Web server collector | Test nginx config validity and extract config path |
+| `/usr/sbin/nginx -T` | Web server collector | Dump full resolved nginx config (needed to read SSL cert references) |
+
+**Existing installs**: If you add the `webservers` collector to an existing device, add the nginx sudoers rules manually:
+
+```bash
+sudo tee -a /etc/sudoers.d/riot-agent > /dev/null << 'EOF'
+riot ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+riot ALL=(root) NOPASSWD: /usr/sbin/nginx -T
+EOF
+sudo visudo -cf /etc/sudoers.d/riot-agent
+```
+
+New installs via `install.sh` include all rules automatically.
+
 ### Agent Config Reference
 
 | Field | Default | Description |
@@ -322,6 +354,7 @@ Monitor service, network, process, and UPS state changes:
 - **Network interface monitoring** — alert when a NIC goes down
 - **Process monitoring** — alert when a named process is not running
 - **UPS monitoring** — alert when UPS switches to battery or battery charge drops below threshold
+- **Certificate expiry** — warning when an SSL certificate has fewer than 30 days remaining; critical when expired
 
 ### Alert Templates
 
