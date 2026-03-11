@@ -2,6 +2,7 @@ package collectors
 
 import (
 	"context"
+	"log/slog"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -79,13 +80,14 @@ func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) err
 		return nil
 	}
 
-	// nginx -T dumps the full resolved configuration
-	out, err := exec.CommandContext(ctx, path, "-T").CombinedOutput()
-	if err != nil {
+	// nginx -T dumps the full resolved configuration.
+	// It may exit non-zero if config test fails (e.g. cert permission errors)
+	// but still outputs the config, so parse regardless.
+	out, _ := exec.CommandContext(ctx, path, "-T").CombinedOutput()
+	config := string(out)
+	if len(config) == 0 {
 		return nil
 	}
-
-	config := string(out)
 	server.Sites = parseNginxSites(config)
 	server.Upstreams = parseNginxUpstreams(config)
 	server.SecurityConfig = parseNginxSecurity(config)
@@ -100,6 +102,7 @@ func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) err
 	for path := range certPaths {
 		cert, err := parseCertFile(path)
 		if err != nil {
+			slog.Debug("failed to parse certificate", "path", path, "error", err)
 			continue
 		}
 		server.Certs = append(server.Certs, *cert)

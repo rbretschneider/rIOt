@@ -218,6 +218,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - security
        - logs
        - ups
+       - webservers
 
    docker:
      enabled: "auto"               # "auto" (detect), "true", or "false"
@@ -296,6 +297,7 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
+| `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config |
 
 ---
 

@@ -38,6 +38,14 @@ export const api = {
   getSecurityDevices: () => Promise.resolve(demo.getSecurityDevices()),
   bulkUpdateAgents: async () => { await delay(); return { sent: 2, skipped: 6, total: 8 } },
   bulkPatchDevices: async () => { await delay(); return { sent: 3, queued: 0, skipped: 5, total: 8 } },
+  getDeviceAlertRules: () => Promise.resolve(demo.getAlertRules()),
+  getHeartbeatHistory: (id: string) => Promise.resolve(demo.getDeviceHistory(id).map(s => ({ id: s.id, device_id: s.device_id, timestamp: s.timestamp, data: { uptime: s.data.os?.uptime ?? 0, cpu_percent: s.data.cpu?.usage_percent ?? 0, mem_percent: s.data.memory?.usage_percent ?? 0, load_avg_1m: s.data.cpu?.load_avg_1m ?? 0, disk_root_percent: s.data.disks?.filesystems?.[0]?.usage_percent ?? 0 } }))),
+  getDeviceLogs: () => Promise.resolve([]),
+  updateDeviceTags: async () => { await delay(); },
+  getContainerMetricHistory: () => Promise.resolve([]),
+  getAutoUpdates: () => Promise.resolve([]),
+  setAutoUpdate: async () => { await delay(); },
+  deleteAutoUpdate: async () => { await delay(); },
 }
 
 export const authApi = {
