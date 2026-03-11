@@ -465,11 +465,10 @@ export default function DeviceDetail() {
       )}
 
       {/* Services & Top Processes — side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {tel?.services && tel.services.length > 0 && (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 flex flex-col">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">Services</h2>
-          <div className="flex-1 overflow-auto scrollbar-thin">
+        <Section title="Services">
+          <div className="h-64 overflow-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
@@ -485,7 +484,7 @@ export default function DeviceDetail() {
                   return rank(a.state) - rank(b.state)
                 }).map((svc) => (
                   <tr key={svc.name}>
-                    <td className="py-1.5 font-mono text-xs">{svc.name}</td>
+                    <td className="py-1.5 font-mono text-xs break-all">{svc.name}</td>
                     <td className="py-1.5">
                       <span className={svc.state.includes('running') ? 'text-emerald-400' : svc.state.includes('failed') ? 'text-red-400' : 'text-gray-400'}>
                         {svc.state}
@@ -506,7 +505,7 @@ export default function DeviceDetail() {
               </tbody>
             </table>
           </div>
-        </div>
+        </Section>
       )}
 
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
