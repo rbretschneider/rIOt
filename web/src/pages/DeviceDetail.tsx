@@ -431,7 +431,7 @@ export default function DeviceDetail() {
       {/* Filesystems */}
       {tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
         <Section title="Filesystems">
-          <div className="max-h-64 overflow-auto">
+          <div className="max-h-64 overflow-auto scrollbar-thin">
             <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
@@ -465,10 +465,11 @@ export default function DeviceDetail() {
       )}
 
       {/* Services & Top Processes — side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
       {tel?.services && tel.services.length > 0 && (
-        <Section title="Services">
-          <div className="h-64 overflow-auto scrollbar-thin">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 flex flex-col min-h-0">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4 shrink-0">Services</h2>
+          <div className="flex-1 min-h-0 overflow-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
@@ -505,12 +506,12 @@ export default function DeviceDetail() {
               </tbody>
             </table>
           </div>
-        </Section>
+        </div>
       )}
 
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
         <Section title="Top Processes (by CPU)">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto scrollbar-thin">
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="text-gray-500 text-xs uppercase">
@@ -551,7 +552,7 @@ export default function DeviceDetail() {
       {/* Updates */}
       {tel?.updates && tel.updates.pending_updates > 0 && (
         <Section title={`Pending Updates (${tel.updates.pending_updates})`}>
-          <div className="max-h-48 overflow-y-auto">
+          <div className="max-h-48 overflow-y-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
@@ -696,7 +697,7 @@ export default function DeviceDetail() {
           <p className="text-xs text-red-400 mb-2">Failed to fetch logs: {(fetchLogsMutation.error as Error).message}</p>
         )}
         {deviceLogs && deviceLogs.length > 0 ? (
-          <div className="max-h-96 overflow-y-auto">
+          <div className="max-h-96 overflow-y-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
@@ -815,7 +816,7 @@ function AlertIcon() {
 
 function NicTable({ interfaces, onCreateAlert }: { interfaces: import('../types/models').NetworkInterface[]; onCreateAlert?: (name: string) => void }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto scrollbar-thin">
     <table className="w-full text-sm min-w-[480px]">
       <thead>
         <tr className="text-gray-500 text-xs uppercase">
@@ -876,7 +877,7 @@ function NetworkSection({ interfaces, onCreateAlert }: { interfaces: import('../
             {showVirtual ? ' \u25B2' : ' \u25BC'}
           </button>
           {showVirtual && (
-            <div className="mt-2 max-h-48 overflow-y-auto">
+            <div className="mt-2 max-h-48 overflow-y-auto scrollbar-thin">
               <NicTable interfaces={virtual} />
             </div>
           )}
