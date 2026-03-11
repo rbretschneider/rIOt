@@ -3,7 +3,9 @@ package collectors
 import (
 	"context"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,7 +29,7 @@ func (p *NginxParser) Detect(ctx context.Context) *models.ProxyServer {
 		Status: "unknown",
 	}
 
-	// Version
+	// Version — nginx -v doesn't need elevated privileges
 	if out, err := exec.CommandContext(ctx, path, "-v").CombinedOutput(); err == nil {
 		// nginx -v writes to stderr: "nginx version: nginx/1.24.0"
 		s := strings.TrimSpace(string(out))
@@ -53,9 +55,9 @@ func (p *NginxParser) Detect(ctx context.Context) *models.ProxyServer {
 		}
 	}
 
-	// Config path
-	if out, err := exec.CommandContext(ctx, path, "-t").CombinedOutput(); err == nil {
-		// Output: "nginx: the configuration file /etc/nginx/nginx.conf syntax is ok"
+	// Config path + validation via sudo nginx -t.
+	// Requires sudoers rule for the agent user.
+	if out, err := exec.CommandContext(ctx, "sudo", path, "-t").CombinedOutput(); err == nil {
 		s := string(out)
 		if i := strings.Index(s, "configuration file "); i >= 0 {
 			rest := s[i+len("configuration file "):]
@@ -68,7 +70,15 @@ func (p *NginxParser) Detect(ctx context.Context) *models.ProxyServer {
 	} else {
 		valid := false
 		srv.ConfigValid = &valid
-		srv.ConfigError = strings.TrimSpace(string(out))
+		s := string(out)
+		srv.ConfigError = strings.TrimSpace(s)
+		// Still extract config path from error output
+		if i := strings.Index(s, "configuration file "); i >= 0 {
+			rest := s[i+len("configuration file "):]
+			if j := strings.IndexAny(rest, " \n"); j >= 0 {
+				srv.ConfigPath = rest[:j]
+			}
+		}
 	}
 
 	return srv
@@ -80,14 +90,23 @@ func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) err
 		return nil
 	}
 
-	// nginx -T dumps the full resolved configuration.
-	// It may exit non-zero if config test fails (e.g. cert permission errors)
-	// but still outputs the config, so parse regardless.
-	out, _ := exec.CommandContext(ctx, path, "-T").CombinedOutput()
+	// nginx -T dumps the full resolved configuration. Uses sudo so the agent
+	// can read SSL cert files owned by root (e.g. /etc/letsencrypt/live/).
+	out, _ := exec.CommandContext(ctx, "sudo", path, "-T").CombinedOutput()
 	config := string(out)
+
+	// Check if nginx -T produced actual config content (not just error messages).
+	// Real config output contains "# configuration file" markers.
+	if !strings.Contains(config, "# configuration file ") {
+		// Fallback: read config files directly from disk.
+		slog.Debug("nginx -T produced no config, falling back to disk read", "output_len", len(config))
+		config = p.readConfigFromDisk(server.ConfigPath)
+	}
+
 	if len(config) == 0 {
 		return nil
 	}
+
 	server.Sites = parseNginxSites(config)
 	server.Upstreams = parseNginxUpstreams(config)
 	server.SecurityConfig = parseNginxSecurity(config)
@@ -99,16 +118,106 @@ func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) err
 			certPaths[site.SSLCert] = true
 		}
 	}
-	for path := range certPaths {
-		cert, err := parseCertFile(path)
+	for certPath := range certPaths {
+		cert, err := parseCertFile(certPath)
 		if err != nil {
-			slog.Debug("failed to parse certificate", "path", path, "error", err)
+			slog.Debug("failed to parse certificate", "path", certPath, "error", err)
 			continue
 		}
 		server.Certs = append(server.Certs, *cert)
 	}
 
 	return nil
+}
+
+// readConfigFromDisk reads nginx config files directly from disk as a fallback
+// when nginx -T is unavailable (e.g. agent lacks permission to load SSL certs).
+// It produces output in the same format as nginx -T: each file prefixed with
+// "# configuration file <path>:" so existing parsers work unchanged.
+func (p *NginxParser) readConfigFromDisk(mainConfig string) string {
+	if mainConfig == "" {
+		// Try common default locations
+		for _, path := range []string{"/etc/nginx/nginx.conf", "/usr/local/etc/nginx/nginx.conf"} {
+			if _, err := os.Stat(path); err == nil {
+				mainConfig = path
+				break
+			}
+		}
+	}
+	if mainConfig == "" {
+		return ""
+	}
+
+	visited := make(map[string]bool)
+	var buf strings.Builder
+	p.readConfigFile(mainConfig, visited, &buf)
+	return buf.String()
+}
+
+// readConfigFile recursively reads a config file and follows include directives.
+// Includes are inlined at the point of the directive (matching nginx -T behavior)
+// so that server blocks remain inside their parent http {} context.
+func (p *NginxParser) readConfigFile(path string, visited map[string]bool, buf *strings.Builder) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	if visited[absPath] {
+		return
+	}
+	visited[absPath] = true
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		slog.Debug("failed to read nginx config file", "path", absPath, "error", err)
+		return
+	}
+
+	// Write the marker that nginx -T would produce
+	buf.WriteString("# configuration file ")
+	buf.WriteString(absPath)
+	buf.WriteString(":\n")
+
+	// Process line by line, inlining includes where they appear
+	baseDir := filepath.Dir(absPath)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		stripped := strings.TrimSuffix(trimmed, ";")
+
+		if strings.HasPrefix(stripped, "include ") {
+			pattern := strings.TrimSpace(strings.TrimPrefix(stripped, "include"))
+			if pattern == "" {
+				buf.WriteString(line)
+				buf.WriteString("\n")
+				continue
+			}
+
+			// Resolve relative paths against the config file's directory
+			if !filepath.IsAbs(pattern) {
+				pattern = filepath.Join(baseDir, pattern)
+			}
+
+			// Glob expand and inline each matched file
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				slog.Debug("failed to glob nginx include", "pattern", pattern, "error", err)
+				buf.WriteString(line)
+				buf.WriteString("\n")
+				continue
+			}
+
+			for _, match := range matches {
+				info, err := os.Stat(match)
+				if err != nil || info.IsDir() {
+					continue
+				}
+				p.readConfigFile(match, visited, buf)
+			}
+		} else {
+			buf.WriteString(line)
+			buf.WriteString("\n")
+		}
+	}
 }
 
 // parseNginxSites extracts server blocks from nginx -T output.

@@ -386,6 +386,9 @@ riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
 riot ALL=(root) NOPASSWD: /bin/sh -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old
 riot ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=riot-agent-update sh -c *
 riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
+# Web server config inspection (read-only)
+riot ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+riot ALL=(root) NOPASSWD: /usr/sbin/nginx -T
 SUDOEOF
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then

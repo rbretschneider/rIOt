@@ -201,3 +201,52 @@ func TestParseNginxSecurity_Empty(t *testing.T) {
 	sec := parseNginxSecurity("server { listen 80; }")
 	assert.Nil(t, sec)
 }
+
+func TestNginxReadConfigFromDisk(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a sites-enabled directory with a site config
+	sitesDir := filepath.Join(tmpDir, "sites-enabled")
+	os.MkdirAll(sitesDir, 0755)
+
+	siteConf := `server {
+    listen 80;
+    listen 443 ssl;
+    server_name example.com;
+    ssl_certificate /etc/ssl/certs/example.pem;
+    proxy_pass http://127.0.0.1:3000;
+}
+`
+	os.WriteFile(filepath.Join(sitesDir, "example.conf"), []byte(siteConf), 0644)
+
+	// Create main nginx.conf that includes the sites directory
+	mainConf := `events { worker_connections 768; }
+http {
+    include ` + filepath.ToSlash(filepath.Join(sitesDir, "*")) + `;
+}
+`
+	mainPath := filepath.Join(tmpDir, "nginx.conf")
+	os.WriteFile(mainPath, []byte(mainConf), 0644)
+
+	parser := &NginxParser{}
+	config := parser.readConfigFromDisk(mainPath)
+
+	// Should contain both files' markers
+	assert.Contains(t, config, "# configuration file ")
+	assert.Contains(t, config, "nginx.conf")
+	assert.Contains(t, config, "example.conf")
+
+	// Parse sites from the disk-read config
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"example.com"}, sites[0].ServerNames)
+	assert.Equal(t, "/etc/ssl/certs/example.pem", sites[0].SSLCert)
+	assert.Equal(t, "http://127.0.0.1:3000", sites[0].ProxyPass)
+}
+
+func TestNginxReadConfigFromDisk_EmptyPath(t *testing.T) {
+	parser := &NginxParser{}
+	// With no path and no default config file, should return empty
+	config := parser.readConfigFromDisk("")
+	assert.Empty(t, config)
+}
