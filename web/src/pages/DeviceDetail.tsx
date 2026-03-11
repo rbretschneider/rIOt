@@ -49,7 +49,7 @@ export default function DeviceDetail() {
   const [eventsPage, setEventsPage] = useState(0)
   const { data: deviceLogs } = useQuery({
     queryKey: ['device-logs', id, logPriority],
-    queryFn: () => api.getDeviceLogs(id!, logPriority, 500),
+    queryFn: () => api.getDeviceLogs(id!, logPriority, 500, logPriority !== 7),
     enabled: !!id,
     refetchInterval: 60_000,
   })
@@ -578,60 +578,46 @@ export default function DeviceDetail() {
 
       {/* Alert Rules */}
       {alertRules && alertRules.length > 0 && (() => {
-        const globalRules = alertRules.filter(r => !r.device_filter)
         const deviceRules = alertRules.filter(r => !!r.device_filter)
-        const RulesTable = ({ rules }: { rules: typeof alertRules }) => (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-2 w-6"></th>
-                <th className="text-left py-2">Name</th>
-                <th className="text-left py-2">Metric</th>
-                <th className="text-left py-2">Condition</th>
-                <th className="text-left py-2">Severity</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {rules.map(rule => (
-                <tr key={rule.id}>
-                  <td className="py-1.5">
-                    <span className={`w-2 h-2 rounded-full inline-block ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-                  </td>
-                  <td className="py-1.5 text-gray-200">{rule.name}</td>
-                  <td className="py-1.5 text-gray-400 font-mono text-xs">{rule.metric}</td>
-                  <td className="py-1.5 text-gray-400 font-mono text-xs">
-                    {rule.target_state
-                      ? `state in [${rule.target_state}]`
-                      : `${rule.operator} ${rule.threshold}`}
-                  </td>
-                  <td className="py-1.5">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                      rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
-                        : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
-                        : 'bg-amber-500/20 text-amber-400'
-                    }`}>
-                      {rule.severity}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )
+        if (deviceRules.length === 0) return null
         return (
           <Section title="Alert Rules">
-            {deviceRules.length > 0 && (
-              <div className={globalRules.length > 0 ? 'mb-4' : ''}>
-                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-1">Device-Specific</h3>
-                <RulesTable rules={deviceRules} />
-              </div>
-            )}
-            {globalRules.length > 0 && (
-              <div>
-                <h3 className="text-xs text-gray-500 uppercase tracking-wider mb-1">Global</h3>
-                <RulesTable rules={globalRules} />
-              </div>
-            )}
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2 w-6"></th>
+                  <th className="text-left py-2">Name</th>
+                  <th className="text-left py-2">Metric</th>
+                  <th className="text-left py-2">Condition</th>
+                  <th className="text-left py-2">Severity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {deviceRules.map(rule => (
+                  <tr key={rule.id}>
+                    <td className="py-1.5">
+                      <span className={`w-2 h-2 rounded-full inline-block ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                    </td>
+                    <td className="py-1.5 text-gray-200">{rule.name}</td>
+                    <td className="py-1.5 text-gray-400 font-mono text-xs">{rule.metric}</td>
+                    <td className="py-1.5 text-gray-400 font-mono text-xs">
+                      {rule.target_state
+                        ? `state in [${rule.target_state}]`
+                        : `${rule.operator} ${rule.threshold}`}
+                    </td>
+                    <td className="py-1.5">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                        rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
+                          : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {rule.severity}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             <Link to="/settings/alert-rules" className="text-xs text-blue-400 hover:text-blue-300 mt-3 inline-block">
               Edit rules
             </Link>

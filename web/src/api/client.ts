@@ -192,8 +192,8 @@ export const api = {
   getHeartbeatHistory: (id: string, hours = 24) =>
     fetchJSON<import('../types/models').Heartbeat[]>(`${BASE}/devices/${id}/heartbeats?hours=${hours}`),
 
-  getDeviceLogs: (id: string, priority = 7, limit = 100) =>
-    fetchJSON<import('../types/models').LogEntry[]>(`${BASE}/devices/${id}/logs?priority=${priority}&limit=${limit}`),
+  getDeviceLogs: (id: string, priority = 7, limit = 100, exact = false) =>
+    fetchJSON<import('../types/models').LogEntry[]>(`${BASE}/devices/${id}/logs?priority=${priority}&limit=${limit}${exact ? '&exact=1' : ''}`),
 
   updateDeviceTags: async (id: string, tags: string[]): Promise<{ tags: string[] }> => {
     const res = await fetch(`${BASE}/devices/${id}/tags`, {

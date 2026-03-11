@@ -143,7 +143,7 @@ type CARepository interface {
 // DeviceLogRepository defines the interface for device log operations.
 type DeviceLogRepository interface {
 	InsertBatch(ctx context.Context, deviceID string, entries []models.LogEntry) error
-	List(ctx context.Context, deviceID string, maxPriority, limit int) ([]models.LogEntry, error)
+	List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error)
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 

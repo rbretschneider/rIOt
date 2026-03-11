@@ -1132,13 +1132,13 @@ func (m *MockDeviceLogRepo) InsertBatch(_ context.Context, deviceID string, entr
 	return nil
 }
 
-func (m *MockDeviceLogRepo) List(_ context.Context, deviceID string, maxPriority, limit int) ([]models.LogEntry, error) {
+func (m *MockDeviceLogRepo) List(_ context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
 	var result []models.LogEntry
 	for _, e := range m.Logs[deviceID] {
-		if e.Priority <= maxPriority {
+		if exact && e.Priority == priority || !exact && e.Priority <= priority {
 			result = append(result, e)
 		}
 	}

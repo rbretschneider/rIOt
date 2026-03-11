@@ -431,13 +431,14 @@ func (h *Handlers) GetDeviceLogs(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	priority, _ := strconv.Atoi(r.URL.Query().Get("priority"))
 	if priority <= 0 {
-		priority = 4
+		priority = 7
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 100
 	}
-	entries, err := h.deviceLogRepo.List(r.Context(), id, priority, limit)
+	exact := r.URL.Query().Get("exact") == "1"
+	entries, err := h.deviceLogRepo.List(r.Context(), id, priority, limit, exact)
 	if err != nil {
 		http.Error(w, `{"error":"failed to fetch logs"}`, http.StatusInternalServerError)
 		return

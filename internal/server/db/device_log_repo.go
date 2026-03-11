@@ -33,15 +33,19 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 	return nil
 }
 
-func (r *DeviceLogRepo) List(ctx context.Context, deviceID string, maxPriority, limit int) ([]models.LogEntry, error) {
+func (r *DeviceLogRepo) List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+	op := "<="
+	if exact {
+		op = "="
+	}
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT timestamp, priority, unit, message FROM device_logs
-		 WHERE device_id=$1 AND priority<=$2
+		 WHERE device_id=$1 AND priority`+op+`$2
 		 ORDER BY timestamp DESC LIMIT $3`,
-		deviceID, maxPriority, limit,
+		deviceID, priority, limit,
 	)
 	if err != nil {
 		return nil, err
