@@ -244,9 +244,8 @@ http {
 	assert.Equal(t, "http://127.0.0.1:3000", sites[0].ProxyPass)
 }
 
-func TestNginxReadConfigFromDisk_EmptyPath(t *testing.T) {
+func TestNginxReadConfigFromDisk_NonexistentPath(t *testing.T) {
 	parser := &NginxParser{}
-	// With no path and no default config file, should return empty
-	config := parser.readConfigFromDisk("")
+	config := parser.readConfigFromDisk("/tmp/nonexistent-riot-test/nginx.conf")
 	assert.Empty(t, config)
 }
