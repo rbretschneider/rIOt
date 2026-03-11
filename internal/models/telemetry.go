@@ -41,9 +41,10 @@ type FullTelemetryData struct {
 	Services []ServiceInfo `json:"services,omitempty"`
 	Procs    *ProcessInfo  `json:"processes,omitempty"`
 	Docker   *DockerInfo   `json:"docker,omitempty"`
-	Security *SecurityInfo `json:"security,omitempty"`
-	Logs     []LogEntry    `json:"logs,omitempty"`
-	UPS      *UPSInfo      `json:"ups,omitempty"`
+	Security   *SecurityInfo  `json:"security,omitempty"`
+	Logs       []LogEntry     `json:"logs,omitempty"`
+	UPS        *UPSInfo       `json:"ups,omitempty"`
+	WebServers *WebServerInfo `json:"web_servers,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.
@@ -318,4 +319,86 @@ type SecurityInfo struct {
 	FailedLogins24h int   `json:"failed_logins_24h"`
 	LoggedInUsers  int    `json:"logged_in_users"`
 	OpenPorts      []int  `json:"open_ports,omitempty"`
+}
+
+// WebServerInfo holds discovered reverse proxy / web server details.
+type WebServerInfo struct {
+	Servers []ProxyServer `json:"servers,omitempty"`
+}
+
+// ProxyServer represents a single detected proxy server (nginx, Caddy, etc.).
+type ProxyServer struct {
+	Name           string            `json:"name"`
+	Version        string            `json:"version,omitempty"`
+	Status         string            `json:"status"`
+	PID            int               `json:"pid,omitempty"`
+	ConfigPath     string            `json:"config_path,omitempty"`
+	ConfigValid    *bool             `json:"config_valid,omitempty"`
+	ConfigError    string            `json:"config_error,omitempty"`
+	Sites          []ProxySite       `json:"sites,omitempty"`
+	Certs          []ProxyCert       `json:"certs,omitempty"`
+	Upstreams      []ProxyUpstream   `json:"upstreams,omitempty"`
+	SecurityConfig *ProxySecurityCfg `json:"security_config,omitempty"`
+}
+
+// ProxySite represents a virtual host / site block.
+type ProxySite struct {
+	ServerNames []string `json:"server_names,omitempty"`
+	Listen      []string `json:"listen,omitempty"`
+	Root        string   `json:"root,omitempty"`
+	ProxyPass   string   `json:"proxy_pass,omitempty"`
+	SSLCert     string   `json:"ssl_cert,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	ConfigFile  string   `json:"config_file,omitempty"`
+}
+
+// ProxyCert represents an SSL/TLS certificate found in proxy configuration.
+type ProxyCert struct {
+	FilePath    string   `json:"file_path"`
+	Subject     string   `json:"subject,omitempty"`
+	Issuer      string   `json:"issuer,omitempty"`
+	SANs        []string `json:"sans,omitempty"`
+	NotBefore   string   `json:"not_before,omitempty"`
+	NotAfter    string   `json:"not_after,omitempty"`
+	DaysLeft    int      `json:"days_left"`
+	KeyType     string   `json:"key_type,omitempty"`
+	IsCA        bool     `json:"is_ca,omitempty"`
+	Fingerprint string   `json:"fingerprint,omitempty"`
+}
+
+// ProxyUpstream represents a named upstream/backend group.
+type ProxyUpstream struct {
+	Name    string           `json:"name"`
+	Servers []UpstreamServer `json:"servers,omitempty"`
+}
+
+// UpstreamServer represents a single backend server in an upstream group.
+type UpstreamServer struct {
+	Address string `json:"address"`
+	Weight  int    `json:"weight,omitempty"`
+	Backup  bool   `json:"backup,omitempty"`
+	Down    bool   `json:"down,omitempty"`
+}
+
+// ProxySecurityCfg holds security-related proxy configuration.
+type ProxySecurityCfg struct {
+	RateLimiting    []RateLimitRule    `json:"rate_limiting,omitempty"`
+	AccessControls  []AccessRule       `json:"access_controls,omitempty"`
+	SecurityHeaders map[string]string  `json:"security_headers,omitempty"`
+	AllowedMethods  []string           `json:"allowed_methods,omitempty"`
+	CORSOrigins     []string           `json:"cors_origins,omitempty"`
+}
+
+// RateLimitRule represents a rate limiting configuration.
+type RateLimitRule struct {
+	Zone  string `json:"zone"`
+	Rate  string `json:"rate"`
+	Burst int    `json:"burst,omitempty"`
+}
+
+// AccessRule represents an allow/deny access control rule.
+type AccessRule struct {
+	Directive string `json:"directive"`
+	Value     string `json:"value"`
+	Location  string `json:"location,omitempty"`
 }

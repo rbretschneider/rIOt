@@ -6,7 +6,7 @@ import type {
   Device, DeviceDetailResponse, TelemetrySnapshot, FullTelemetryData,
   ContainerInfo, Event, FleetSummary, ProbeWithResult, ProbeResult,
   AlertRule, AlertTemplate, NotificationChannel, NotificationLog,
-  Command, UPSInfo,
+  Command, UPSInfo, WebServerInfo,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
 
@@ -124,6 +124,108 @@ function makeUPS(hostname: string): UPSInfo | undefined {
   return undefined
 }
 
+function makeWebServers(hostname: string): WebServerInfo | undefined {
+  if (hostname === 'proxmox-01') {
+    const now = Date.now()
+    return {
+      servers: [{
+        name: 'nginx',
+        version: '1.24.0',
+        status: 'running',
+        pid: 1892,
+        config_path: '/etc/nginx/nginx.conf',
+        config_valid: true,
+        sites: [
+          {
+            server_names: ['home.example.com'],
+            listen: ['443 ssl', '80'],
+            proxy_pass: 'http://127.0.0.1:8080',
+            ssl_cert: '/etc/letsencrypt/live/home.example.com/fullchain.pem',
+            enabled: true,
+            config_file: '/etc/nginx/sites-enabled/home.conf',
+          },
+          {
+            server_names: ['grafana.example.com'],
+            listen: ['443 ssl'],
+            proxy_pass: 'http://127.0.0.1:3000',
+            ssl_cert: '/etc/letsencrypt/live/grafana.example.com/fullchain.pem',
+            enabled: true,
+            config_file: '/etc/nginx/sites-enabled/grafana.conf',
+          },
+          {
+            server_names: ['media.example.com'],
+            listen: ['443 ssl'],
+            proxy_pass: 'http://10.0.10.50:8096',
+            ssl_cert: '/etc/letsencrypt/live/media.example.com/fullchain.pem',
+            enabled: true,
+            config_file: '/etc/nginx/sites-enabled/media.conf',
+          },
+        ],
+        certs: [
+          {
+            file_path: '/etc/letsencrypt/live/home.example.com/fullchain.pem',
+            subject: 'home.example.com',
+            issuer: "Let's Encrypt",
+            sans: ['home.example.com', 'www.home.example.com'],
+            not_before: new Date(now - 60 * DAY).toISOString(),
+            not_after: new Date(now + 30 * DAY).toISOString(),
+            days_left: 30,
+            key_type: 'ECDSA',
+            fingerprint: 'a1b2c3d4e5f6',
+          },
+          {
+            file_path: '/etc/letsencrypt/live/grafana.example.com/fullchain.pem',
+            subject: 'grafana.example.com',
+            issuer: "Let's Encrypt",
+            sans: ['grafana.example.com'],
+            not_before: new Date(now - 80 * DAY).toISOString(),
+            not_after: new Date(now + 10 * DAY).toISOString(),
+            days_left: 10,
+            key_type: 'ECDSA',
+            fingerprint: 'b2c3d4e5f6g7',
+          },
+          {
+            file_path: '/etc/letsencrypt/live/media.example.com/fullchain.pem',
+            subject: 'media.example.com',
+            issuer: "Let's Encrypt",
+            sans: ['media.example.com'],
+            not_before: new Date(now - 30 * DAY).toISOString(),
+            not_after: new Date(now + 60 * DAY).toISOString(),
+            days_left: 60,
+            key_type: 'RSA',
+            fingerprint: 'c3d4e5f6g7h8',
+          },
+        ],
+        upstreams: [
+          {
+            name: 'backend_app',
+            servers: [
+              { address: '127.0.0.1:8080', weight: 1 },
+              { address: '127.0.0.1:8081', weight: 1, backup: true },
+            ],
+          },
+        ],
+        security_config: {
+          security_headers: {
+            'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+            'X-Frame-Options': 'DENY',
+            'X-Content-Type-Options': 'nosniff',
+            'Referrer-Policy': 'strict-origin-when-cross-origin',
+          },
+          rate_limiting: [
+            { zone: 'api', rate: '10r/s', burst: 20 },
+          ],
+          access_controls: [
+            { directive: 'allow', value: '10.0.10.0/24' },
+            { directive: 'deny', value: 'all', location: '/admin' },
+          ],
+        },
+      }],
+    }
+  }
+  return undefined
+}
+
 function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
   const cpuUsage = d.hostname === 'pi-cameras' ? 87 : d.hostname === 'proxmox-01' ? 34 : 15 + Math.floor(Math.random() * 20)
   const memUsed = Math.floor(d.hw.total_ram_mb * (d.hostname === 'proxmox-01' ? 0.72 : 0.45))
@@ -216,6 +318,7 @@ function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
       apparmor: d.os.id === 'ubuntu' || d.os.id === 'debian' ? 'enabled' : undefined,
     },
     ups: makeUPS(d.hostname),
+    web_servers: makeWebServers(d.hostname),
     updates: {
       package_manager: 'apt',
       total_installed: 340,

@@ -39,6 +39,8 @@ const (
 	EventUPSOnBattery         EventType = "ups_on_battery"
 	EventUPSLowBattery        EventType = "ups_low_battery"
 	EventUPSRestored          EventType = "ups_restored"
+	EventCertExpiring         EventType = "cert_expiring"
+	EventCertExpired          EventType = "cert_expired"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

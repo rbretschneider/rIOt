@@ -72,6 +72,7 @@ export interface FullTelemetryData {
   docker?: DockerInfo
   security?: SecurityInfo
   ups?: UPSInfo
+  web_servers?: WebServerInfo
 }
 
 export interface SystemInfo {
@@ -326,6 +327,79 @@ export interface SecurityInfo {
   failed_logins_24h: number
   logged_in_users: number
   open_ports?: number[]
+}
+
+export interface WebServerInfo {
+  servers?: ProxyServer[]
+}
+
+export interface ProxyServer {
+  name: string
+  version?: string
+  status: string
+  pid?: number
+  config_path?: string
+  config_valid?: boolean
+  config_error?: string
+  sites?: ProxySite[]
+  certs?: ProxyCert[]
+  upstreams?: ProxyUpstream[]
+  security_config?: ProxySecurityCfg
+}
+
+export interface ProxySite {
+  server_names?: string[]
+  listen?: string[]
+  root?: string
+  proxy_pass?: string
+  ssl_cert?: string
+  enabled: boolean
+  config_file?: string
+}
+
+export interface ProxyCert {
+  file_path: string
+  subject?: string
+  issuer?: string
+  sans?: string[]
+  not_before?: string
+  not_after?: string
+  days_left: number
+  key_type?: string
+  is_ca?: boolean
+  fingerprint?: string
+}
+
+export interface ProxyUpstream {
+  name: string
+  servers?: UpstreamServer[]
+}
+
+export interface UpstreamServer {
+  address: string
+  weight?: number
+  backup?: boolean
+  down?: boolean
+}
+
+export interface ProxySecurityCfg {
+  rate_limiting?: RateLimitRule[]
+  access_controls?: AccessRule[]
+  security_headers?: Record<string, string>
+  allowed_methods?: string[]
+  cors_origins?: string[]
+}
+
+export interface RateLimitRule {
+  zone: string
+  rate: string
+  burst?: number
+}
+
+export interface AccessRule {
+  directive: string
+  value: string
+  location?: string
 }
 
 export interface Event {

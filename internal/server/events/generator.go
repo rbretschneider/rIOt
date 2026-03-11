@@ -248,6 +248,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 	if data.Docker != nil && data.Docker.Available {
 		g.CheckContainerThresholds(ctx, deviceID, data.Docker.Containers)
 	}
+	if data.WebServers != nil {
+		g.CheckWebServerAlerts(ctx, deviceID, data.WebServers)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -661,6 +664,27 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
 			Message: fmt.Sprintf("Container %s update failed", evt.ContainerName), CreatedAt: now,
 		})
+	}
+}
+
+// CheckWebServerAlerts checks SSL certificates across all proxy servers for expiry.
+func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID string, ws *models.WebServerInfo) {
+	for _, srv := range ws.Servers {
+		for _, cert := range srv.Certs {
+			if cert.DaysLeft <= 0 {
+				// Expired
+				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), "", models.EventCertExpired,
+					func(val float64) string {
+						return fmt.Sprintf("SSL certificate %s (%s) has expired", cert.Subject, srv.Name)
+					})
+			} else if cert.DaysLeft < 30 {
+				// Expiring soon
+				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), "", models.EventCertExpiring,
+					func(val float64) string {
+						return fmt.Sprintf("SSL certificate %s (%s) expires in %d days", cert.Subject, srv.Name, cert.DaysLeft)
+					})
+			}
+		}
 	}
 }
 

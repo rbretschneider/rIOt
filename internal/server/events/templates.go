@@ -197,5 +197,30 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when a device reports error-level or higher log entries",
 		},
+		// Web Server
+		{
+			ID:              "cert_expiring",
+			Name:            "Certificate Expiring",
+			Category:        "webserver",
+			Metric:          "cert_days_left",
+			Operator:        "<",
+			Threshold:       30,
+			Severity:        "warning",
+			CooldownSeconds: 86400,
+			NeedsTargetName: false,
+			Description:     "Fires when an SSL certificate expires within 30 days",
+		},
+		{
+			ID:              "cert_expired",
+			Name:            "Certificate Expired",
+			Category:        "webserver",
+			Metric:          "cert_days_left",
+			Operator:        "<=",
+			Threshold:       0,
+			Severity:        "critical",
+			CooldownSeconds: 86400,
+			NeedsTargetName: false,
+			Description:     "Fires when an SSL certificate has expired",
+		},
 	}
 }

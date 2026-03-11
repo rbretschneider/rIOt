@@ -1,9 +1,15 @@
 package events
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 )
 
 func TestCompareValue(t *testing.T) {
@@ -65,3 +71,170 @@ func TestMatchesDeviceFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckWebServerAlerts(t *testing.T) {
+	tests := []struct {
+		name       string
+		daysLeft   int
+		wantEvents int
+		wantType   models.EventType
+	}{
+		{"cert healthy (90 days)", 90, 0, ""},
+		{"cert healthy (30 days)", 30, 0, ""},
+		{"cert expiring (29 days)", 29, 1, models.EventCertExpiring},
+		{"cert expiring (7 days)", 7, 1, models.EventCertExpiring},
+		{"cert expiring (1 day)", 1, 1, models.EventCertExpiring},
+		{"cert expired (0 days)", 0, 1, models.EventCertExpired},
+		{"cert expired (-5 days)", -5, 1, models.EventCertExpired},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eventRepo := &mockEventRepo{}
+			alertRepo := &mockAlertRuleRepo{rules: []models.AlertRule{
+				{
+					ID:              1,
+					Enabled:         true,
+					Metric:          "cert_days_left",
+					Operator:        "<",
+					Threshold:       30,
+					Severity:        "warning",
+					CooldownSeconds: 86400,
+				},
+				{
+					ID:              2,
+					Enabled:         true,
+					Metric:          "cert_days_left",
+					Operator:        "<=",
+					Threshold:       0,
+					Severity:        "critical",
+					CooldownSeconds: 86400,
+				},
+			}}
+
+			hub := websocket.NewHub()
+			go hub.Run()
+			gen := NewGenerator(eventRepo, hub, alertRepo, nil, nil)
+
+			ws := &models.WebServerInfo{
+				Servers: []models.ProxyServer{
+					{
+						Name: "nginx",
+						Certs: []models.ProxyCert{
+							{
+								Subject:  "test.example.com",
+								DaysLeft: tt.daysLeft,
+							},
+						},
+					},
+				},
+			}
+
+			gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+
+			require.Len(t, eventRepo.events, tt.wantEvents)
+			if tt.wantEvents > 0 {
+				assert.Equal(t, tt.wantType, eventRepo.events[0].Type)
+				assert.Contains(t, eventRepo.events[0].Message, "test.example.com")
+				assert.Contains(t, eventRepo.events[0].Message, "nginx")
+			}
+		})
+	}
+}
+
+func TestCheckWebServerAlerts_NoCerts(t *testing.T) {
+	eventRepo := &mockEventRepo{}
+	alertRepo := &mockAlertRuleRepo{}
+	hub := websocket.NewHub()
+	go hub.Run()
+	gen := NewGenerator(eventRepo, hub, alertRepo, nil, nil)
+
+	ws := &models.WebServerInfo{
+		Servers: []models.ProxyServer{
+			{Name: "nginx"},
+		},
+	}
+
+	gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+	assert.Empty(t, eventRepo.events)
+}
+
+func TestCheckWebServerAlerts_MultipleCerts(t *testing.T) {
+	eventRepo := &mockEventRepo{}
+	alertRepo := &mockAlertRuleRepo{rules: []models.AlertRule{
+		{
+			ID: 1, Enabled: true, Metric: "cert_days_left",
+			Operator: "<", Threshold: 30, Severity: "warning", CooldownSeconds: 86400,
+		},
+		{
+			ID: 2, Enabled: true, Metric: "cert_days_left",
+			Operator: "<=", Threshold: 0, Severity: "critical", CooldownSeconds: 86400,
+		},
+	}}
+	hub := websocket.NewHub()
+	go hub.Run()
+	gen := NewGenerator(eventRepo, hub, alertRepo, nil, nil)
+
+	ws := &models.WebServerInfo{
+		Servers: []models.ProxyServer{
+			{
+				Name: "nginx",
+				Certs: []models.ProxyCert{
+					{Subject: "ok.example.com", DaysLeft: 60},
+					{Subject: "expiring.example.com", DaysLeft: 10},
+					{Subject: "expired.example.com", DaysLeft: -1},
+				},
+			},
+		},
+	}
+
+	gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+	// The first matching cert fires on rule 1 (< 30); the second cert matches the same
+	// rule but is on cooldown. The expired cert is evaluated separately via rule 2 (<= 0)
+	// but rule 1 matches first (since -1 < 30), so it shares the cooldown key.
+	// Net result: 1 event for the first cert that triggers rule 1.
+	require.Len(t, eventRepo.events, 1)
+	assert.Contains(t, eventRepo.events[0].Message, "expiring.example.com")
+}
+
+// Minimal mock types for generator tests.
+type mockEventRepo struct {
+	events []models.Event
+}
+
+func (m *mockEventRepo) Create(_ context.Context, e *models.Event) error {
+	e.ID = int64(len(m.events) + 1)
+	m.events = append(m.events, *e)
+	return nil
+}
+func (m *mockEventRepo) ListByDevice(context.Context, string, int) ([]models.Event, error) {
+	return nil, nil
+}
+func (m *mockEventRepo) ListAll(context.Context, int, int) ([]models.Event, error) {
+	return nil, nil
+}
+func (m *mockEventRepo) Purge(context.Context, time.Time) (int64, error) { return 0, nil }
+func (m *mockEventRepo) CountUnacknowledged(context.Context) (int, error) { return 0, nil }
+func (m *mockEventRepo) Acknowledge(context.Context, int64) error         { return nil }
+func (m *mockEventRepo) AcknowledgeAll(context.Context) error             { return nil }
+
+type mockAlertRuleRepo struct {
+	rules []models.AlertRule
+}
+
+func (m *mockAlertRuleRepo) List(context.Context) ([]models.AlertRule, error) { return m.rules, nil }
+func (m *mockAlertRuleRepo) ListEnabled(context.Context) ([]models.AlertRule, error) {
+	var out []models.AlertRule
+	for _, r := range m.rules {
+		if r.Enabled {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (m *mockAlertRuleRepo) GetByID(context.Context, int64) (*models.AlertRule, error) {
+	return nil, nil
+}
+func (m *mockAlertRuleRepo) Create(context.Context, *models.AlertRule) error  { return nil }
+func (m *mockAlertRuleRepo) Update(context.Context, *models.AlertRule) error  { return nil }
+func (m *mockAlertRuleRepo) Delete(context.Context, int64) error { return nil }
