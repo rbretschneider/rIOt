@@ -16,7 +16,7 @@ type NginxParser struct{}
 func (p *NginxParser) Name() string { return "nginx" }
 
 func (p *NginxParser) Detect(ctx context.Context) *models.ProxyServer {
-	path, err := exec.LookPath("nginx")
+	path, err := lookBinary("nginx", "/usr/sbin/nginx", "/usr/local/sbin/nginx", "/usr/bin/nginx", "/usr/local/bin/nginx")
 	if err != nil {
 		return nil
 	}
@@ -74,8 +74,8 @@ func (p *NginxParser) Detect(ctx context.Context) *models.ProxyServer {
 }
 
 func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) error {
-	path, _ := exec.LookPath("nginx")
-	if path == "" {
+	path, err := lookBinary("nginx", "/usr/sbin/nginx", "/usr/local/sbin/nginx", "/usr/bin/nginx", "/usr/local/bin/nginx")
+	if err != nil {
 		return nil
 	}
 

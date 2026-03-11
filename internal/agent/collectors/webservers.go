@@ -6,8 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -42,15 +44,33 @@ func (c *WebServersCollector) Collect(ctx context.Context) (interface{}, error) 
 	for _, p := range parsers {
 		srv := p.Detect(ctx)
 		if srv == nil {
+			slog.Debug("web server not found", "parser", p.Name())
 			continue
 		}
-		_ = p.Parse(ctx, srv)
+		slog.Debug("web server detected", "parser", p.Name(), "version", srv.Version, "status", srv.Status)
+		if err := p.Parse(ctx, srv); err != nil {
+			slog.Warn("web server parse failed", "parser", p.Name(), "error", err)
+		}
 		// Deduplicate certs by fingerprint
 		srv.Certs = deduplicateCerts(srv.Certs)
 		servers = append(servers, *srv)
 	}
 
 	return &models.WebServerInfo{Servers: servers}, nil
+}
+
+// lookBinary finds a binary by name using LookPath, falling back to common
+// system paths that may not be in the systemd service PATH.
+func lookBinary(name string, fallbackPaths ...string) (string, error) {
+	if path, err := exec.LookPath(name); err == nil {
+		return path, nil
+	}
+	for _, p := range fallbackPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s not found", name)
 }
 
 // parseCertFile reads a PEM certificate file and extracts metadata.

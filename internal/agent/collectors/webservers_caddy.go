@@ -22,7 +22,7 @@ type CaddyParser struct{}
 func (p *CaddyParser) Name() string { return "caddy" }
 
 func (p *CaddyParser) Detect(ctx context.Context) *models.ProxyServer {
-	path, err := exec.LookPath("caddy")
+	path, err := lookBinary("caddy", "/usr/bin/caddy", "/usr/local/bin/caddy", "/usr/sbin/caddy")
 	if err != nil {
 		return nil
 	}
