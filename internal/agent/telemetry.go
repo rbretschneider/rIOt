@@ -6,7 +6,13 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/shirou/gopsutil/v3/host"
 )
+
+// bootGracePeriod is the duration after system boot during which log errors
+// are collected and displayed but not counted toward the heartbeat error metric.
+// This prevents harmless boot-time noise (e.g. ACPI BIOS errors) from firing alerts.
+const bootGracePeriod = 10 * time.Minute
 
 func (a *Agent) sendTelemetry(ctx context.Context) {
 	data := a.collectAll(ctx)
@@ -68,10 +74,19 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.UPS = v
 		case []models.LogEntry:
 			data.Logs = v
-			// Count priority<=3 entries (error and above) for heartbeat metric
+			// Count priority<=3 entries (error and above) for heartbeat metric,
+			// but skip entries that fall within the boot grace period to avoid
+			// alerting on harmless boot-time noise (ACPI errors, etc.).
+			var bootTime time.Time
+			if uptime, err := host.UptimeWithContext(ctx); err == nil {
+				bootTime = time.Now().Add(-time.Duration(uptime) * time.Second)
+			}
 			var errCount int64
 			for _, e := range v {
 				if e.Priority <= 3 {
+					if !bootTime.IsZero() && e.Timestamp.Before(bootTime.Add(bootGracePeriod)) {
+						continue
+					}
 					errCount++
 				}
 			}
