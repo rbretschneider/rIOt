@@ -464,7 +464,8 @@ export default function DeviceDetail() {
         </Section>
       )}
 
-      {/* Services */}
+      {/* Services & Top Processes — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {tel?.services && tel.services.length > 0 && (
         <Section title="Services">
           <div className="max-h-64 overflow-auto">
@@ -507,7 +508,6 @@ export default function DeviceDetail() {
         </Section>
       )}
 
-      {/* Top Processes */}
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
         <Section title="Top Processes (by CPU)">
           <div className="overflow-x-auto">
@@ -546,6 +546,7 @@ export default function DeviceDetail() {
           </div>
         </Section>
       )}
+      </div>
 
       {/* Updates */}
       {tel?.updates && tel.updates.pending_updates > 0 && (
