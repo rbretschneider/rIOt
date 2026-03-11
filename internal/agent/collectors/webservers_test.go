@@ -202,6 +202,176 @@ func TestParseNginxSecurity_Empty(t *testing.T) {
 	assert.Nil(t, sec)
 }
 
+func TestParseNginxSites_RealisticDebian(t *testing.T) {
+	config := `# configuration file /etc/nginx/nginx.conf:
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    types_hash_max_size 2048;
+
+    # configuration file /etc/nginx/mime.types:
+    types {
+        text/html html htm shtml;
+        text/css css;
+        application/javascript js;
+    }
+
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    gzip on;
+
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        '' close;
+    }
+
+    # configuration file /etc/nginx/sites-enabled/default:
+    server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+        root /var/www/html;
+    }
+
+    # configuration file /etc/nginx/sites-enabled/app.conf:
+    server {
+        listen 443 ssl;
+        server_name app.example.com;
+        ssl_certificate /etc/letsencrypt/live/app.example.com/fullchain.pem;
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+        }
+
+        location /api {
+            proxy_pass http://127.0.0.1:8080;
+        }
+    }
+
+    # configuration file /etc/nginx/sites-enabled/static.conf:
+    server {
+        listen 443 ssl;
+        server_name static.example.com;
+        ssl_certificate /etc/letsencrypt/live/static.example.com/fullchain.pem;
+        root /var/www/static;
+    }
+}`
+
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 3)
+
+	// Default server (catch-all, server_name _ is excluded)
+	assert.Empty(t, sites[0].ServerNames)
+	assert.Contains(t, sites[0].Listen, "80 default_server")
+	assert.Equal(t, "/var/www/html", sites[0].Root)
+
+	// App server with nested locations
+	assert.Equal(t, []string{"app.example.com"}, sites[1].ServerNames)
+	assert.Equal(t, "/etc/letsencrypt/live/app.example.com/fullchain.pem", sites[1].SSLCert)
+
+	// Static server
+	assert.Equal(t, []string{"static.example.com"}, sites[2].ServerNames)
+	assert.Equal(t, "/var/www/static", sites[2].Root)
+}
+
+func TestParseNginxSites_SplitLineHTTP(t *testing.T) {
+	config := `# configuration file /etc/nginx/nginx.conf:
+events {
+    worker_connections 768;
+}
+
+http
+{
+    server {
+        listen 80;
+        server_name split.example.com;
+    }
+}`
+
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"split.example.com"}, sites[0].ServerNames)
+}
+
+func TestParseNginxSites_SplitLineServer(t *testing.T) {
+	config := `http {
+    server
+    {
+        listen 80;
+        server_name split-server.example.com;
+    }
+}`
+
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"split-server.example.com"}, sites[0].ServerNames)
+}
+
+func TestParseNginxSites_NestedLocations(t *testing.T) {
+	config := `http {
+    server {
+        listen 443 ssl;
+        server_name nested.example.com;
+        ssl_certificate /etc/ssl/nested.pem;
+
+        location / {
+            proxy_pass http://127.0.0.1:3000;
+        }
+
+        location /api {
+            proxy_pass http://127.0.0.1:8080;
+
+            location /api/v2 {
+                proxy_pass http://127.0.0.1:9090;
+            }
+        }
+
+        location ~ \.php$ {
+            fastcgi_pass unix:/run/php/php-fpm.sock;
+        }
+    }
+    server {
+        listen 80;
+        server_name other.example.com;
+    }
+}`
+
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 2)
+
+	assert.Equal(t, []string{"nested.example.com"}, sites[0].ServerNames)
+	assert.Equal(t, "/etc/ssl/nested.pem", sites[0].SSLCert)
+
+	assert.Equal(t, []string{"other.example.com"}, sites[1].ServerNames)
+}
+
+func TestParseNginxSites_CommentsWithBraces(t *testing.T) {
+	config := `http {
+    # This is a comment about server {
+    # } end of comment
+    #server {
+    #    listen 9999;
+    #}
+    server {
+        listen 80;
+        server_name real.example.com;
+    }
+}`
+
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"real.example.com"}, sites[0].ServerNames)
+}
+
 func TestNginxReadConfigFromDisk(t *testing.T) {
 	tmpDir := t.TempDir()
 

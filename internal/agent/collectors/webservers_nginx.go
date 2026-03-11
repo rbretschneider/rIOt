@@ -231,7 +231,6 @@ func parseNginxSites(config string) []models.ProxySite {
 
 	// Simple state machine: track brace depth to find server blocks
 	type serverBlock struct {
-		startLine  int
 		configFile string
 		lines      []string
 		depth      int
@@ -240,6 +239,8 @@ func parseNginxSites(config string) []models.ProxySite {
 	var current *serverBlock
 	httpDepth := 0
 	inHTTP := false
+	pendingHTTP := false
+	pendingServer := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -252,12 +253,63 @@ func parseNginxSites(config string) []models.ProxySite {
 			continue
 		}
 
-		// Track http block
-		if !inHTTP && strings.HasPrefix(trimmed, "http") && strings.Contains(trimmed, "{") {
-			inHTTP = true
-			httpDepth = 1
+		// Handle pending http block (split-line "http\n{")
+		if pendingHTTP {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			pendingHTTP = false
+			if strings.Contains(trimmed, "{") {
+				inHTTP = true
+				httpDepth = 1
+				continue
+			}
+			// Not a "{" line — fall through to process normally
+		}
+
+		// Handle pending server block (split-line "server\n{")
+		if pendingServer {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			pendingServer = false
+			if strings.Contains(trimmed, "{") {
+				current = &serverBlock{
+					configFile: currentFile,
+					depth:      1,
+				}
+				continue
+			}
+			// Not a "{" line — fall through to process normally
+		}
+
+		// Track http block start
+		if !inHTTP && isNginxBlockKeyword(trimmed, "http") {
+			if strings.Contains(trimmed, "{") {
+				inHTTP = true
+				httpDepth = 1
+				continue
+			}
+			pendingHTTP = true
 			continue
 		}
+
+		// Detect server block start (inside http context) — BEFORE httpDepth
+		// counting so the "{" in "server {" is only tracked in current.depth,
+		// not double-counted in httpDepth.
+		if inHTTP && current == nil && isNginxBlockKeyword(trimmed, "server") {
+			if strings.Contains(trimmed, "{") {
+				current = &serverBlock{
+					configFile: currentFile,
+					depth:      1,
+				}
+				continue
+			}
+			pendingServer = true
+			continue
+		}
+
+		// Track brace depth within the http block (non-server lines only)
 		if inHTTP && current == nil {
 			for _, ch := range trimmed {
 				if ch == '{' {
@@ -271,16 +323,7 @@ func parseNginxSites(config string) []models.ProxySite {
 			}
 		}
 
-		// Detect server block start (inside http context)
-		if inHTTP && current == nil && strings.HasPrefix(trimmed, "server") && strings.Contains(trimmed, "{") {
-			current = &serverBlock{
-				configFile: currentFile,
-				depth:      1,
-			}
-			// Don't include the "server {" line itself
-			continue
-		}
-
+		// Collect lines inside server block and track depth
 		if current != nil {
 			for _, ch := range trimmed {
 				if ch == '{' {
@@ -291,7 +334,6 @@ func parseNginxSites(config string) []models.ProxySite {
 			}
 
 			if current.depth <= 0 {
-				// End of server block
 				site := parseNginxServerBlock(current.lines, current.configFile)
 				sites = append(sites, site)
 				current = nil
@@ -302,6 +344,20 @@ func parseNginxSites(config string) []models.ProxySite {
 	}
 
 	return sites
+}
+
+// isNginxBlockKeyword checks if trimmed starts with keyword as a standalone
+// block directive (followed by whitespace, '{', or end of line).
+// This prevents "server_name" from matching "server", etc.
+func isNginxBlockKeyword(trimmed, keyword string) bool {
+	if !strings.HasPrefix(trimmed, keyword) {
+		return false
+	}
+	if len(trimmed) == len(keyword) {
+		return true
+	}
+	next := trimmed[len(keyword)]
+	return next == ' ' || next == '\t' || next == '{'
 }
 
 func parseNginxServerBlock(lines []string, configFile string) models.ProxySite {
