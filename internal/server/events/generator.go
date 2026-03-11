@@ -211,7 +211,7 @@ func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID strin
 		func(val float64) string { return fmt.Sprintf("RAM usage at %.1f%%", val) })
 
 	g.evaluateMetric(ctx, deviceID, "disk_percent", data.DiskRootPercent, "", models.EventDiskHigh,
-		func(val float64) string { return fmt.Sprintf("Root disk usage at %.1f%%", val) })
+		func(val float64) string { return fmt.Sprintf("Disk usage at %.1f%%", val) })
 
 	if data.LogErrors > 0 {
 		g.evaluateMetric(ctx, deviceID, "log_errors", float64(data.LogErrors), "", models.EventLogErrors,

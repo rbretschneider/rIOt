@@ -39,9 +39,19 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 		data.LoadAvg1m = l.Load1
 	}
 
-	// Root disk usage
-	if usage, err := disk.UsageWithContext(ctx, "/"); err == nil {
-		data.DiskRootPercent = usage.UsedPercent
+	// Max disk usage across all physical, non-network filesystems
+	if partitions, err := disk.PartitionsWithContext(ctx, false); err == nil {
+		netFS := map[string]bool{"nfs": true, "nfs4": true, "cifs": true, "smb": true, "sshfs": true, "fuse.sshfs": true}
+		for _, p := range partitions {
+			if netFS[p.Fstype] {
+				continue
+			}
+			if usage, err := disk.UsageWithContext(ctx, p.Mountpoint); err == nil && usage.Total > 0 {
+				if usage.UsedPercent > data.DiskRootPercent {
+					data.DiskRootPercent = usage.UsedPercent
+				}
+			}
+		}
 	}
 
 	// Log errors since last heartbeat
