@@ -465,12 +465,13 @@ export default function DeviceDetail() {
       )}
 
       {/* Services & Top Processes — side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
       {tel?.services && tel.services.length > 0 && (
-        <Section title="Services">
-          <div className="max-h-64 overflow-auto">
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 flex flex-col">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">Services</h2>
+          <div className="flex-1 overflow-auto scrollbar-thin">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
                   <th className="text-left py-2">Name</th>
                   <th className="text-left py-2">State</th>
@@ -505,7 +506,7 @@ export default function DeviceDetail() {
               </tbody>
             </table>
           </div>
-        </Section>
+        </div>
       )}
 
       {tel?.processes?.top_by_cpu && tel.processes.top_by_cpu.length > 0 && (
