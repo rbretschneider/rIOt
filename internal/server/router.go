@@ -112,6 +112,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Get("/auto-updates", h.ListAutoUpdates)
 		r.With(adminAuth).Put("/auto-updates", h.SetAutoUpdate)
 		r.With(adminAuth).Delete("/auto-updates/{target}", h.DeleteAutoUpdate)
+		r.With(adminAuth).Get("/security-score", h.GetSecurityScore)
 	})
 
 	// === ADMIN routes (JWT cookie auth) ===

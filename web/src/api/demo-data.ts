@@ -6,7 +6,7 @@ import type {
   Device, DeviceDetailResponse, TelemetrySnapshot, FullTelemetryData,
   ContainerInfo, Event, FleetSummary, ProbeWithResult, ProbeResult,
   AlertRule, AlertTemplate, NotificationChannel, NotificationLog,
-  Command, UPSInfo, WebServerInfo,
+  Command, UPSInfo, WebServerInfo, SecurityScoreResult,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
 
@@ -715,4 +715,136 @@ export function getServerCert() {
 
 export function getHealth() {
   return { status: 'ok', database: true }
+}
+
+export function getSecurityScore(deviceId: string): SecurityScoreResult {
+  // Different scores per device for realistic demo
+  const scores: Record<string, SecurityScoreResult> = {
+    [uuid('proxmox-01')]: {
+      overall_score: 72,
+      max_score: 100,
+      grade: 'C',
+      evaluated_at: ago(MIN),
+      categories: [
+        {
+          category: 'access_control', label: 'Access Control', score: 18, max_score: 22,
+          findings: [
+            { id: 'fw-active', category: 'access_control', severity: 'pass', title: 'Firewall enabled', description: 'Firewall is active', remediation: 'Enable UFW or iptables: sudo ufw enable', weight: 8, passed: true },
+            { id: 'mac-enabled', category: 'access_control', severity: 'pass', title: 'Mandatory access control', description: 'AppArmor is enabled', remediation: 'Enable AppArmor or SELinux for process sandboxing', weight: 5, passed: true },
+            { id: 'failed-logins-low', category: 'access_control', severity: 'pass', title: 'Failed login attempts', description: 'Low failed login count in last 24h', remediation: 'Investigate failed logins; consider fail2ban or SSH key-only auth', weight: 5, passed: true },
+            { id: 'logged-in-users', category: 'access_control', severity: 'warning', title: 'Active user sessions', description: '4 active sessions — more than expected', remediation: "Review active sessions with 'who' and terminate unexpected ones", weight: 4, passed: false },
+          ],
+        },
+        {
+          category: 'patching', label: 'Patching', score: 15, max_score: 25,
+          findings: [
+            { id: 'no-security-updates', category: 'patching', severity: 'critical', title: 'Pending security updates', description: '3 pending security update(s)', remediation: 'Apply security updates: sudo apt upgrade or equivalent', weight: 10, passed: false },
+            { id: 'pending-updates-low', category: 'patching', severity: 'warning', title: 'Pending package updates', description: '12 pending updates — system is behind', remediation: 'Run system updates regularly to stay current', weight: 5, passed: false },
+            { id: 'no-kernel-update', category: 'patching', severity: 'pass', title: 'Kernel update pending', description: 'Kernel is up to date', remediation: 'Apply kernel update and reboot to activate', weight: 5, passed: true },
+            { id: 'auto-updates', category: 'patching', severity: 'pass', title: 'Automatic security updates', description: 'Unattended upgrades enabled', remediation: 'Enable unattended-upgrades for automatic security patches', weight: 5, passed: true },
+          ],
+        },
+        {
+          category: 'network', label: 'Network', score: 17, max_score: 25,
+          findings: [
+            { id: 'minimal-open-ports', category: 'network', severity: 'warning', title: 'Open port count', description: '8 open ports — review for unnecessary services', remediation: 'Close unused ports and services to reduce attack surface', weight: 5, passed: false },
+            { id: 'no-risky-ports', category: 'network', severity: 'pass', title: 'Insecure service ports', description: 'No insecure service ports open', remediation: 'Disable legacy protocols (FTP, Telnet) and use secure alternatives', weight: 5, passed: true },
+            { id: 'tls-certs-valid', category: 'network', severity: 'critical', title: 'TLS certificate status', description: 'Certificate issues: media.home.lab (10d left)', remediation: 'Renew expiring certificates; consider automated renewal with certbot', weight: 5, passed: false },
+            { id: 'proxy-config-valid', category: 'network', severity: 'pass', title: 'Web server configuration', description: 'All web server configs are valid', remediation: 'Fix configuration errors shown in web server details', weight: 3, passed: true },
+            { id: 'security-headers', category: 'network', severity: 'pass', title: 'Security headers configured', description: 'Security headers present (HSTS, X-Frame-Options, etc.)', remediation: 'Add HSTS, X-Frame-Options, X-Content-Type-Options, and CSP headers', weight: 4, passed: true },
+            { id: 'rate-limiting', category: 'network', severity: 'pass', title: 'Rate limiting configured', description: 'Rate limiting is configured', remediation: 'Add rate limiting to protect against brute force and abuse', weight: 3, passed: true },
+          ],
+        },
+        {
+          category: 'docker', label: 'Docker', score: 7, max_score: 15,
+          findings: [
+            { id: 'container-restart-policy', category: 'docker', severity: 'pass', title: 'Container restart policies', description: 'All running containers have restart policies', remediation: "Set restart policy to 'unless-stopped' or 'on-failure' for all containers", weight: 4, passed: true },
+            { id: 'container-health-checks', category: 'docker', severity: 'info', title: 'Container health checks', description: 'Some containers lack health checks', remediation: 'Add HEALTHCHECK to Dockerfiles or docker-compose health check config', weight: 3, passed: false },
+            { id: 'container-mem-limits', category: 'docker', severity: 'warning', title: 'Container memory limits', description: 'Some containers have no memory limit set', remediation: 'Set memory limits in docker-compose or with --memory flag to prevent OOM issues', weight: 4, passed: false },
+            { id: 'no-sensitive-mounts', category: 'docker', severity: 'warning', title: 'Sensitive volume mounts', description: 'Docker socket or other sensitive paths mounted read-write', remediation: 'Mount docker.sock read-only (:ro) or use a Docker socket proxy', weight: 4, passed: false },
+          ],
+        },
+        {
+          category: 'system', label: 'System', score: 10, max_score: 10,
+          findings: [
+            { id: 'no-failed-services', category: 'system', severity: 'pass', title: 'Failed systemd services', description: 'No failed services', remediation: "Investigate and fix failed services with 'systemctl status <service>'", weight: 5, passed: true },
+            { id: 'reasonable-uptime', category: 'system', severity: 'pass', title: 'System uptime', description: 'Uptime: 14 days', remediation: 'Reboot to apply pending kernel updates', weight: 3, passed: true },
+            { id: 'dns-configured', category: 'system', severity: 'pass', title: 'DNS configured', description: 'DNS servers: 10.0.10.2', remediation: 'Configure DNS servers in /etc/resolv.conf or systemd-resolved', weight: 2, passed: true },
+          ],
+        },
+      ],
+    },
+    [uuid('pi-dns')]: {
+      overall_score: 93,
+      max_score: 100,
+      grade: 'A',
+      evaluated_at: ago(MIN),
+      categories: [
+        {
+          category: 'access_control', label: 'Access Control', score: 22, max_score: 22,
+          findings: [
+            { id: 'fw-active', category: 'access_control', severity: 'pass', title: 'Firewall enabled', description: 'Firewall is active', remediation: 'Enable UFW or iptables', weight: 8, passed: true },
+            { id: 'mac-enabled', category: 'access_control', severity: 'pass', title: 'Mandatory access control', description: 'AppArmor is enabled', remediation: 'Enable AppArmor or SELinux', weight: 5, passed: true },
+            { id: 'failed-logins-low', category: 'access_control', severity: 'pass', title: 'Failed login attempts', description: 'Low failed login count in last 24h', remediation: 'Investigate failed logins', weight: 5, passed: true },
+            { id: 'logged-in-users', category: 'access_control', severity: 'pass', title: 'Active user sessions', description: '1 active session(s)', remediation: 'Review active sessions', weight: 4, passed: true },
+          ],
+        },
+        {
+          category: 'patching', label: 'Patching', score: 25, max_score: 25,
+          findings: [
+            { id: 'no-security-updates', category: 'patching', severity: 'pass', title: 'Pending security updates', description: 'No pending security updates', remediation: 'Apply security updates', weight: 10, passed: true },
+            { id: 'pending-updates-low', category: 'patching', severity: 'pass', title: 'Pending package updates', description: '2 pending update(s)', remediation: 'Run system updates regularly', weight: 5, passed: true },
+            { id: 'no-kernel-update', category: 'patching', severity: 'pass', title: 'Kernel update pending', description: 'Kernel is up to date', remediation: 'Apply kernel update and reboot', weight: 5, passed: true },
+            { id: 'auto-updates', category: 'patching', severity: 'pass', title: 'Automatic security updates', description: 'Unattended upgrades enabled', remediation: 'Enable unattended-upgrades', weight: 5, passed: true },
+          ],
+        },
+        {
+          category: 'system', label: 'System', score: 8, max_score: 10,
+          findings: [
+            { id: 'no-failed-services', category: 'system', severity: 'pass', title: 'Failed systemd services', description: 'No failed services', remediation: 'Investigate and fix failed services', weight: 5, passed: true },
+            { id: 'reasonable-uptime', category: 'system', severity: 'info', title: 'System uptime', description: 'Uptime: 45 days', remediation: 'Reboot to apply pending kernel updates', weight: 3, passed: true },
+            { id: 'dns-configured', category: 'system', severity: 'warning', title: 'DNS configured', description: 'No DNS servers configured', remediation: 'Configure DNS servers', weight: 2, passed: false },
+          ],
+        },
+      ],
+    },
+  }
+
+  // Default score for devices not explicitly defined
+  const defaultScore: SecurityScoreResult = {
+    overall_score: 68,
+    max_score: 100,
+    grade: 'C',
+    evaluated_at: ago(MIN),
+    categories: [
+      {
+        category: 'access_control', label: 'Access Control', score: 17, max_score: 22,
+        findings: [
+          { id: 'fw-active', category: 'access_control', severity: 'pass', title: 'Firewall enabled', description: 'Firewall is active', remediation: 'Enable UFW or iptables', weight: 8, passed: true },
+          { id: 'mac-enabled', category: 'access_control', severity: 'warning', title: 'Mandatory access control', description: 'No mandatory access control detected', remediation: 'Enable AppArmor or SELinux', weight: 5, passed: false },
+          { id: 'failed-logins-low', category: 'access_control', severity: 'pass', title: 'Failed login attempts', description: 'Low failed login count in last 24h', remediation: 'Investigate failed logins', weight: 5, passed: true },
+          { id: 'logged-in-users', category: 'access_control', severity: 'pass', title: 'Active user sessions', description: '1 active session(s)', remediation: 'Review active sessions', weight: 4, passed: true },
+        ],
+      },
+      {
+        category: 'patching', label: 'Patching', score: 15, max_score: 25,
+        findings: [
+          { id: 'no-security-updates', category: 'patching', severity: 'pass', title: 'Pending security updates', description: 'No pending security updates', remediation: 'Apply security updates', weight: 10, passed: true },
+          { id: 'pending-updates-low', category: 'patching', severity: 'pass', title: 'Pending package updates', description: '3 pending update(s)', remediation: 'Run system updates regularly', weight: 5, passed: true },
+          { id: 'no-kernel-update', category: 'patching', severity: 'warning', title: 'Kernel update pending', description: 'Kernel update available', remediation: 'Apply kernel update and reboot', weight: 5, passed: false },
+          { id: 'auto-updates', category: 'patching', severity: 'info', title: 'Automatic security updates', description: 'Automatic updates not configured', remediation: 'Enable unattended-upgrades', weight: 5, passed: false },
+        ],
+      },
+      {
+        category: 'system', label: 'System', score: 10, max_score: 10,
+        findings: [
+          { id: 'no-failed-services', category: 'system', severity: 'pass', title: 'Failed systemd services', description: 'No failed services', remediation: 'Investigate and fix failed services', weight: 5, passed: true },
+          { id: 'reasonable-uptime', category: 'system', severity: 'pass', title: 'System uptime', description: 'Uptime: 7 days', remediation: 'Reboot to apply pending kernel updates', weight: 3, passed: true },
+          { id: 'dns-configured', category: 'system', severity: 'pass', title: 'DNS configured', description: 'DNS servers: 10.0.10.2', remediation: 'Configure DNS servers', weight: 2, passed: true },
+        ],
+      },
+    ],
+  }
+
+  return scores[deviceId] ?? defaultScore
 }

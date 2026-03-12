@@ -402,6 +402,34 @@ export interface AccessRule {
   location?: string
 }
 
+// Security Score
+export interface SecurityFinding {
+  id: string
+  category: string
+  severity: 'critical' | 'warning' | 'info' | 'pass'
+  title: string
+  description: string
+  remediation: string
+  weight: number
+  passed: boolean
+}
+
+export interface SecurityCategoryScore {
+  category: string
+  label: string
+  score: number
+  max_score: number
+  findings: SecurityFinding[]
+}
+
+export interface SecurityScoreResult {
+  overall_score: number
+  max_score: number
+  grade: string
+  categories: SecurityCategoryScore[]
+  evaluated_at: string
+}
+
 export interface Event {
   id: number
   device_id: string

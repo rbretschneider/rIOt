@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -231,6 +231,9 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.json()
   },
+
+  getSecurityScore: (id: string) =>
+    fetchJSON<SecurityScoreResult>(`${BASE}/devices/${id}/security-score`),
 
   bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number }> => {
     const res = await fetch(`${BASE}/fleet/bulk-patch`, {

@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"net/http"
+
+	"github.com/DesyncTheThird/rIOt/internal/server/scoring"
+	"github.com/go-chi/chi/v5"
 )
 
 type securityOverview struct {
@@ -115,4 +118,19 @@ func (h *Handlers) SecurityDevices(w http.ResponseWriter, r *http.Request) {
 		result = []deviceSecurityInfo{}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// GetSecurityScore handles GET /api/v1/devices/{id}/security-score.
+func (h *Handlers) GetSecurityScore(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	snap, err := h.telemetry.GetLatestSnapshot(r.Context(), deviceID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
+		return
+	}
+	if snap == nil {
+		http.Error(w, `{"error":"no telemetry available"}`, http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, scoring.Score(&snap.Data))
 }

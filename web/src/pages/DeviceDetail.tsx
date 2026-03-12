@@ -10,6 +10,8 @@ import BatteryGauge from '../components/BatteryGauge'
 import MetricChart from '../components/MetricChart'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
+import SecurityScoreGauge from '../components/SecurityScoreGauge'
+import SecurityScoreModal from '../components/SecurityScoreModal'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -45,6 +47,7 @@ export default function DeviceDetail() {
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
   const [tagInput, setTagInput] = useState('')
   const [metricHours, setMetricHours] = useState(24)
+  const [showSecurityModal, setShowSecurityModal] = useState(false)
   const [logPriority, setLogPriority] = useState(7)
   const [eventsPage, setEventsPage] = useState(0)
   const { data: deviceLogs } = useQuery({
@@ -58,6 +61,12 @@ export default function DeviceDetail() {
     queryFn: () => api.getHeartbeatHistory(id!, metricHours),
     enabled: !!id,
     refetchInterval: 60_000,
+  })
+  const { data: securityScore } = useQuery({
+    queryKey: ['security-score', id],
+    queryFn: () => api.getSecurityScore(id!),
+    enabled: !!id,
+    staleTime: 5 * 60_000,
   })
   const tagsMutation = useMutation({
     mutationFn: (tags: string[]) => api.updateDeviceTags(id!, tags),
@@ -156,8 +165,11 @@ export default function DeviceDetail() {
             </button>
           </div>
         </div>
-        {/* Right: status badge + action buttons */}
+        {/* Right: security gauge + status badge + action buttons */}
         <div className="flex items-center gap-3 flex-shrink-0">
+          {securityScore && (
+            <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
+          )}
           <StatusBadge status={device.status} />
           {device.status === 'online' && (
             <div className="flex gap-2">
@@ -241,6 +253,11 @@ export default function DeviceDetail() {
         <div className="px-4 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
           {(commandMutation.error as Error).message}
         </div>
+      )}
+
+      {/* Security score modal */}
+      {showSecurityModal && securityScore && (
+        <SecurityScoreModal score={securityScore} onClose={() => setShowSecurityModal(false)} />
       )}
 
       {/* Confirm modal */}
@@ -688,22 +705,22 @@ export default function DeviceDetail() {
                     <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Sites</h3>
                     <div className="max-h-64 overflow-auto scrollbar-thin">
                       <table className="w-full text-sm min-w-[600px]">
-                        <thead className="sticky top-0 bg-gray-900">
+                        <thead className="sticky top-0 bg-gray-900 z-10">
                           <tr className="text-gray-500 text-xs uppercase">
-                            <th className="text-left py-2">Server Name(s)</th>
-                            <th className="text-left py-2">Listen</th>
-                            <th className="text-left py-2">Target</th>
-                            <th className="text-left py-2">SSL</th>
+                            <th className="text-left py-2 pr-4">Server Name(s)</th>
+                            <th className="text-left py-2 pr-4 max-w-[180px]">Listen</th>
+                            <th className="text-left py-2 pr-4">Target</th>
+                            <th className="text-left py-2 pr-4">SSL</th>
                             <th className="text-left py-2">Config</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-800/50">
                           {srv.sites.map((site, i) => (
                             <tr key={i}>
-                              <td className="py-1.5 font-mono text-xs">{site.server_names?.join(', ') || '-'}</td>
-                              <td className="py-1.5 font-mono text-xs text-gray-400">{site.listen?.join(', ') || '-'}</td>
-                              <td className="py-1.5 font-mono text-xs text-gray-400">{site.proxy_pass || site.root || '-'}</td>
-                              <td className="py-1.5">
+                              <td className="py-1.5 pr-4 font-mono text-xs">{site.server_names?.join(', ') || '-'}</td>
+                              <td className="py-1.5 pr-4 font-mono text-xs text-gray-400 max-w-[180px] break-words">{site.listen?.join(', ') || '-'}</td>
+                              <td className="py-1.5 pr-4 font-mono text-xs text-gray-400">{site.proxy_pass || site.root || '-'}</td>
+                              <td className="py-1.5 pr-4">
                                 {site.ssl_cert ? (
                                   <span className="text-emerald-400 text-xs">Yes</span>
                                 ) : (
@@ -922,8 +939,8 @@ export default function DeviceDetail() {
         {deviceLogs && deviceLogs.length > 0 ? (
           <div className="max-h-96 overflow-y-auto scrollbar-thin">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-gray-900">
-                <tr className="text-gray-500 text-xs uppercase">
+              <thead className="sticky top-0 bg-gray-900 z-10">
+                <tr className="text-gray-500 text-xs uppercase border-b border-gray-700">
                   <th className="text-left py-2">Time</th>
                   <th className="text-left py-2">Priority</th>
                   <th className="text-left py-2">Unit</th>
