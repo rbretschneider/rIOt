@@ -31,6 +31,7 @@ type SecurityFinding struct {
 	Title       string           `json:"title"`
 	Description string           `json:"description"`
 	Remediation string           `json:"remediation"`
+	RefURL      string           `json:"ref_url,omitempty"`
 	Weight      int              `json:"weight"`
 	Passed      bool             `json:"passed"`
 }

@@ -162,6 +162,11 @@ function CategorySection({ cat, onRunCommand, canCommand }: { cat: SecurityCateg
                     )}
                   </div>
                 )}
+                {f.ref_url && (
+                  <a href={f.ref_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors mt-0.5 inline-block">
+                    Learn more &rarr;
+                  </a>
+                )}
               </div>
             </div>
           ))}

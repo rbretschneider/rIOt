@@ -410,6 +410,7 @@ export interface SecurityFinding {
   title: string
   description: string
   remediation: string
+  ref_url?: string
   weight: number
   passed: boolean
 }
