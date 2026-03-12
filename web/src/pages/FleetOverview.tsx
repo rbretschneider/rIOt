@@ -4,8 +4,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
+import type { SecurityScoreResult } from '../types/models'
 
 import ConfirmModal from '../components/ConfirmModal'
+import SecurityScoreModal from '../components/SecurityScoreModal'
 import SetupGuide from '../components/SetupGuide'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
@@ -99,6 +101,7 @@ export default function FleetOverview() {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [scoreModal, setScoreModal] = useState<SecurityScoreResult | null>(null)
 
   const filtered = useMemo(() => {
     if (!devices) return []
@@ -207,7 +210,12 @@ export default function FleetOverview() {
                   <span className="sr-only">Status</span>
                 </th>
                 <SortHeader k="hostname">Device</SortHeader>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Docker</th>
+                <th className="px-2 py-3 text-center text-xs font-medium text-gray-400 w-10" title="Docker">
+                  <svg className="w-5 h-5 mx-auto text-gray-400" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.186.186 0 00-.185.186v1.887c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.186.186 0 00-.185.185v1.888c0 .102.082.186.185.186m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.186.186 0 00-.185.185v1.887c0 .102.082.186.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.186.186 0 00-.185.185v1.887c0 .102.083.186.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.186.186 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.186.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.186.186 0 00-.185.186v1.887c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.186v1.887c0 .102.083.185.185.185m-2.964 0h2.119a.186.186 0 00.185-.185V9.006a.186.186 0 00-.185-.186H5.136a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288z" />
+                  </svg>
+                </th>
+                <th className="px-2 py-3 text-center text-xs font-medium text-gray-400 uppercase w-12">Score</th>
                 <SortHeader k="short_id">ID</SortHeader>
                 <SortHeader k="arch">Arch</SortHeader>
                 <SortHeader k="agent_version">Version</SortHeader>
@@ -238,17 +246,23 @@ export default function FleetOverview() {
                       )}
                     </Link>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-2 py-3 text-center">
                     {d.docker_available ? (
                       <Link
                         to={`/devices/${d.id}/containers`}
-                        className="text-blue-400 hover:text-blue-300 text-xs font-medium uppercase transition-colors"
+                        className="inline-block text-blue-400 hover:text-blue-300 transition-colors"
+                        title="Containers"
                       >
-                        Containers
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.186.186 0 00-.185.186v1.887c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.186.186 0 00-.185.185v1.888c0 .102.082.186.185.186m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.186.186 0 00-.185.185v1.887c0 .102.082.186.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.186.186 0 00-.185.185v1.887c0 .102.083.186.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.186.186 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.186.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.186.186 0 00-.185.186v1.887c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.186v1.887c0 .102.083.185.185.185m-2.964 0h2.119a.186.186 0 00.185-.185V9.006a.186.186 0 00-.185-.186H5.136a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288z" />
+                        </svg>
                       </Link>
                     ) : (
-                      <span className="text-gray-600">-</span>
+                      <span className="text-gray-700">-</span>
                     )}
+                  </td>
+                  <td className="px-2 py-3 text-center">
+                    <MiniScore deviceId={d.id} onShowModal={setScoreModal} />
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
                   <td className="px-4 py-3 text-sm text-gray-400">{d.arch}</td>
@@ -284,7 +298,7 @@ export default function FleetOverview() {
               ))}
               {filtered.length === 0 && search && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={11} className="px-4 py-8 text-center text-gray-500">
                     No devices match your search
                   </td>
                 </tr>
@@ -332,6 +346,10 @@ export default function FleetOverview() {
           onConfirm={() => { bulkUpdateMutation.mutate(); setShowUpdateConfirm(false) }}
           onCancel={() => setShowUpdateConfirm(false)}
         />
+      )}
+
+      {scoreModal && (
+        <SecurityScoreModal score={scoreModal} onClose={() => setScoreModal(null)} />
       )}
 
     </div>
@@ -456,5 +474,55 @@ function StatCard({ label, value, color = 'text-white' }: { label: string; value
       <p className="text-sm text-gray-400">{label}</p>
       <p className={`text-2xl font-bold ${color}`}>{value}</p>
     </div>
+  )
+}
+
+function miniScoreColor(grade: string): string {
+  switch (grade) {
+    case 'A': return 'text-emerald-400'
+    case 'B': return 'text-blue-400'
+    case 'C': return 'text-amber-400'
+    case 'D': return 'text-orange-400'
+    default:  return 'text-red-400'
+  }
+}
+
+function miniStrokeColor(grade: string): string {
+  switch (grade) {
+    case 'A': return 'stroke-emerald-500'
+    case 'B': return 'stroke-blue-500'
+    case 'C': return 'stroke-amber-500'
+    case 'D': return 'stroke-orange-500'
+    default:  return 'stroke-red-500'
+  }
+}
+
+function MiniScore({ deviceId, onShowModal }: { deviceId: string; onShowModal: (s: SecurityScoreResult) => void }) {
+  const { data: score } = useQuery({
+    queryKey: ['security-score', deviceId],
+    queryFn: () => api.getSecurityScore(deviceId),
+    staleTime: 5 * 60_000,
+  })
+
+  if (!score) return <span className="text-gray-700">-</span>
+
+  const r = 10
+  const circ = 2 * Math.PI * r
+  const offset = circ * (1 - Math.max(0, Math.min(100, score.overall_score)) / 100)
+
+  return (
+    <button
+      onClick={() => onShowModal(score)}
+      className="inline-flex items-center gap-1 group cursor-pointer"
+      title={`Security: ${score.overall_score}/100 (${score.grade})`}
+    >
+      <svg viewBox="0 0 24 24" className="w-6 h-6 -rotate-90 flex-shrink-0">
+        <circle cx="12" cy="12" r={r} fill="none" className="stroke-gray-700" strokeWidth="3" />
+        <circle cx="12" cy="12" r={r} fill="none" className={`${miniStrokeColor(score.grade)} transition-all duration-500`} strokeWidth="3" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
+      </svg>
+      <span className={`text-xs font-semibold ${miniScoreColor(score.grade)} group-hover:brightness-125 transition`}>
+        {score.overall_score}
+      </span>
+    </button>
   )
 }
