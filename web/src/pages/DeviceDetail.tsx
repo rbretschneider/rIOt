@@ -257,7 +257,12 @@ export default function DeviceDetail() {
 
       {/* Security score modal */}
       {showSecurityModal && securityScore && (
-        <SecurityScoreModal score={securityScore} onClose={() => setShowSecurityModal(false)} />
+        <SecurityScoreModal
+          score={securityScore}
+          onClose={() => setShowSecurityModal(false)}
+          canCommand={canCommand}
+          onRunCommand={(action, params) => commandMutation.mutate({ action, params })}
+        />
       )}
 
       {/* Confirm modal */}

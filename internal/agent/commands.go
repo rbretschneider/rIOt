@@ -49,6 +49,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.handleUninstall()
 	case "fetch_logs":
 		status, message = a.handleFetchLogs(ctx, payload)
+	case "enable_auto_updates":
+		status, message = a.handleEnableAutoUpdates(ctx)
 	default:
 		status = "error"
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
@@ -190,6 +192,82 @@ func (a *Agent) handleOSUpdate(ctx context.Context, payload models.CommandPayloa
 	}
 
 	return "success", truncateOutput(combined, 4000)
+}
+
+// handleEnableAutoUpdates installs and configures unattended-upgrades (Debian/Ubuntu)
+// or dnf-automatic (RHEL/Fedora) for automatic security patching.
+func (a *Agent) handleEnableAutoUpdates(ctx context.Context) (string, string) {
+	if !a.config.Commands.AllowPatching {
+		return "error", "patching not allowed by agent config (set commands.allow_patching: true)"
+	}
+	if runtime.GOOS != "linux" {
+		return "error", "enable_auto_updates is only supported on Linux"
+	}
+
+	cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	aptPath, aptErr := exec.LookPath("apt-get")
+	dnfPath, dnfErr := exec.LookPath("dnf")
+
+	switch {
+	case aptErr == nil:
+		return a.enableUnattendedUpgrades(cmdCtx, aptPath)
+	case dnfErr == nil:
+		return a.enableDNFAutomatic(cmdCtx, dnfPath)
+	default:
+		return "error", "no supported package manager found (apt-get or dnf)"
+	}
+}
+
+func (a *Agent) enableUnattendedUpgrades(ctx context.Context, aptPath string) (string, string) {
+	// Install unattended-upgrades package
+	slog.Info("enable_auto_updates: installing unattended-upgrades")
+	out, err := exec.CommandContext(ctx, "sudo", aptPath, "-y", "install", "unattended-upgrades").CombinedOutput()
+	if err != nil {
+		return "error", fmt.Sprintf("failed to install unattended-upgrades: %s\n%s", err, truncateOutput(out, 2000))
+	}
+
+	// Enable via dpkg-reconfigure (non-interactive)
+	slog.Info("enable_auto_updates: enabling via dpkg-reconfigure")
+	reconfigOut, err := exec.CommandContext(ctx, "sudo", "dpkg-reconfigure", "-plow", "unattended-upgrades").CombinedOutput()
+	if err != nil {
+		// Fallback: write the config file directly
+		slog.Warn("enable_auto_updates: dpkg-reconfigure failed, writing config directly", "error", err)
+		configContent := `APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+`
+		writeCmd := exec.CommandContext(ctx, "sudo", "tee", "/etc/apt/apt.conf.d/20auto-upgrades")
+		writeCmd.Stdin = strings.NewReader(configContent)
+		if wout, werr := writeCmd.CombinedOutput(); werr != nil {
+			return "error", fmt.Sprintf("failed to write auto-upgrades config: %s\n%s", werr, truncateOutput(wout, 2000))
+		}
+	}
+	_ = reconfigOut
+
+	// Verify it's enabled
+	checkOut, _ := exec.CommandContext(ctx, "apt-config", "dump", "APT::Periodic::Unattended-Upgrade").Output()
+	if strings.Contains(string(checkOut), `"1"`) {
+		return "success", "unattended-upgrades installed and enabled"
+	}
+	return "success", "unattended-upgrades installed; verify /etc/apt/apt.conf.d/20auto-upgrades"
+}
+
+func (a *Agent) enableDNFAutomatic(ctx context.Context, dnfPath string) (string, string) {
+	// Install dnf-automatic
+	slog.Info("enable_auto_updates: installing dnf-automatic")
+	out, err := exec.CommandContext(ctx, "sudo", dnfPath, "-y", "install", "dnf-automatic").CombinedOutput()
+	if err != nil {
+		return "error", fmt.Sprintf("failed to install dnf-automatic: %s\n%s", err, truncateOutput(out, 2000))
+	}
+
+	// Enable and start the timer
+	slog.Info("enable_auto_updates: enabling dnf-automatic timer")
+	if enableOut, err := exec.CommandContext(ctx, "sudo", "systemctl", "enable", "--now", "dnf-automatic.timer").CombinedOutput(); err != nil {
+		return "error", fmt.Sprintf("failed to enable dnf-automatic timer: %s\n%s", err, truncateOutput(enableOut, 2000))
+	}
+
+	return "success", "dnf-automatic installed and timer enabled"
 }
 
 // truncateOutput returns the last maxLen characters of output.

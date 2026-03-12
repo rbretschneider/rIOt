@@ -1,9 +1,32 @@
 import { useState } from 'react'
 import type { SecurityScoreResult, SecurityCategoryScore, SecurityFinding } from '../types/models'
 
+// Map finding IDs to the command action that can fix them
+const fixableActions: Record<string, { action: string; params?: Record<string, unknown>; label: string; confirm: string }> = {
+  'auto-updates': {
+    action: 'enable_auto_updates',
+    label: 'Enable',
+    confirm: 'This will install and enable unattended-upgrades (Debian/Ubuntu) or dnf-automatic (RHEL/Fedora) on this device.',
+  },
+  'no-security-updates': {
+    action: 'os_update',
+    params: { mode: 'security' },
+    label: 'Patch Now',
+    confirm: 'This will install pending security updates on this device.',
+  },
+  'pending-updates-low': {
+    action: 'os_update',
+    params: { mode: 'full' },
+    label: 'Update All',
+    confirm: 'This will run a full system update on this device.',
+  },
+}
+
 interface Props {
   score: SecurityScoreResult
   onClose: () => void
+  onRunCommand?: (action: string, params?: Record<string, unknown>) => void
+  canCommand?: boolean
 }
 
 function severityBadge(severity: SecurityFinding['severity']) {
@@ -39,7 +62,47 @@ function barColor(score: number, max: number): string {
   return 'bg-red-500'
 }
 
-function CategorySection({ cat }: { cat: SecurityCategoryScore }) {
+function FixButton({ finding, onRunCommand }: { finding: SecurityFinding; onRunCommand: (action: string, params?: Record<string, unknown>) => void }) {
+  const [confirming, setConfirming] = useState(false)
+  const [sent, setSent] = useState(false)
+  const fix = fixableActions[finding.id]
+  if (!fix) return null
+
+  if (sent) {
+    return <span className="text-[10px] text-emerald-400 font-medium whitespace-nowrap">Sent</span>
+  }
+
+  if (confirming) {
+    return (
+      <span className="flex items-center gap-1.5 flex-shrink-0">
+        <span className="text-[10px] text-gray-400 max-w-[200px]">{fix.confirm}</span>
+        <button
+          onClick={() => { onRunCommand(fix.action, fix.params); setSent(true) }}
+          className="px-2 py-0.5 text-[10px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded transition-colors whitespace-nowrap cursor-pointer"
+        >
+          Yes
+        </button>
+        <button
+          onClick={() => setConfirming(false)}
+          className="px-2 py-0.5 text-[10px] text-gray-400 hover:text-white transition-colors cursor-pointer"
+        >
+          No
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => setConfirming(true)}
+      className="px-2 py-0.5 text-[10px] font-medium text-emerald-400 hover:text-emerald-300 border border-emerald-700/50 hover:border-emerald-600/50 rounded transition-colors whitespace-nowrap flex-shrink-0 cursor-pointer"
+    >
+      {fix.label}
+    </button>
+  )
+}
+
+function CategorySection({ cat, onRunCommand, canCommand }: { cat: SecurityCategoryScore; onRunCommand?: (action: string, params?: Record<string, unknown>) => void; canCommand?: boolean }) {
   const [expanded, setExpanded] = useState(true)
   const pct = cat.max_score > 0 ? Math.round((cat.score / cat.max_score) * 100) : 0
 
@@ -92,7 +155,12 @@ function CategorySection({ cat }: { cat: SecurityCategoryScore }) {
                 </div>
                 <p className="text-xs text-gray-400">{f.description}</p>
                 {!f.passed && f.remediation && (
-                  <p className="text-xs text-gray-500 mt-1 italic">{f.remediation}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs text-gray-500 italic">{f.remediation}</p>
+                    {canCommand && fixableActions[f.id] && (
+                      <FixButton finding={f} onRunCommand={onRunCommand!} />
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -103,7 +171,7 @@ function CategorySection({ cat }: { cat: SecurityCategoryScore }) {
   )
 }
 
-export default function SecurityScoreModal({ score, onClose }: Props) {
+export default function SecurityScoreModal({ score, onClose, onRunCommand, canCommand }: Props) {
   const failCount = score.categories.reduce(
     (acc, cat) => acc + cat.findings.filter(f => !f.passed).length, 0
   )
@@ -141,7 +209,7 @@ export default function SecurityScoreModal({ score, onClose }: Props) {
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-4 space-y-3">
           {score.categories.map(cat => (
-            <CategorySection key={cat.category} cat={cat} />
+            <CategorySection key={cat.category} cat={cat} onRunCommand={onRunCommand} canCommand={canCommand} />
           ))}
         </div>
       </div>

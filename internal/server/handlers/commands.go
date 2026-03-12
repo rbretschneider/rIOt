@@ -21,6 +21,7 @@ var validActions = map[string]bool{
 	"agent_update":         true,
 	"os_update":            true,
 	"fetch_logs":           true,
+	"enable_auto_updates":  true,
 }
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.
