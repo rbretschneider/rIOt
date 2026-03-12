@@ -33,9 +33,10 @@
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
 - **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
-- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, agent update, system reboot (with per-command permission controls)
+- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls)
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent)
 - **Web server monitoring** — auto-detects nginx and Caddy reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
+- **Security scoring** — per-device 0–100 hardening score based on CIS-inspired checks across access control, patching, network, Docker, and system categories; interactive detail modal with per-finding remediation guidance and one-click fix buttons for actionable issues (enable auto-updates, apply patches)
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Server log viewer** — browse and search server logs directly from the dashboard
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
@@ -229,7 +230,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
 
    commands:
      allow_reboot: false            # set to true to allow remote reboot
-     allow_patching: false          # set to true to allow remote OS updates
+     allow_patching: false          # set to true to allow remote OS updates and enable auto-updates
 
    host_terminal:
      enabled: false                 # set to true to allow host shell access
@@ -302,7 +303,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard |
-| `commands.allow_patching` | `false` | Allow remote OS patching command from the dashboard |
+| `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
 | `host_terminal.shell` | auto-detect | Override default shell (e.g., `/bin/bash`) |
 | `dns_cache.refresh_interval_seconds` | `1800` | How often to refresh cached DNS entries (seconds) |
@@ -714,6 +715,36 @@ The terminal uses a WebSocket relay: the browser connects to the server, which p
 ### Real-time Container Events
 
 When Docker is available, the agent watches the Docker event stream and forwards container lifecycle events (start, stop, die, OOM, pause, unpause, create, destroy) to the server in real-time. These appear in the dashboard event feed and trigger alerts for OOM kills.
+
+---
+
+## Security Score
+
+Each device receives a 0–100 security hardening score computed from its telemetry. The score appears as a circular gauge in the device header and clicking it opens a detail modal with per-finding explanations, severity levels, and remediation guidance.
+
+### Categories & Checks
+
+| Category | Checks | Weight |
+|---|---|---|
+| **Access Control** | Firewall active, mandatory access control (AppArmor/SELinux), failed login count, active sessions | 22 pts |
+| **Patching** | Pending security updates, total pending updates, kernel update pending, automatic updates enabled | 25 pts |
+| **Network** | Open port count, insecure ports (FTP/Telnet), TLS certificate validity, web server config, security headers, rate limiting | 25 pts |
+| **Docker** | Restart policies, health checks, memory limits, sensitive volume mounts | 15 pts (skipped if no Docker) |
+| **System** | Failed services, system uptime, DNS configuration | 10 pts |
+
+Scores are normalized to 0–100 and assigned a letter grade: **A** (≥90), **B** (≥75), **C** (≥60), **D** (≥40), **F** (<40). Categories are omitted when the corresponding collector data is absent, so the score only reflects what can actually be evaluated.
+
+### One-Click Fixes
+
+Certain failing checks can be fixed directly from the modal:
+
+| Finding | Button | Command Sent | Requires |
+|---|---|---|---|
+| Automatic updates not configured | **Enable** | `enable_auto_updates` — installs and configures `unattended-upgrades` (Debian/Ubuntu) or `dnf-automatic` (RHEL/Fedora) | `commands.allow_patching: true` |
+| Pending security updates | **Patch Now** | `os_update` with `mode: security` | `commands.allow_patching: true` |
+| Pending package updates | **Update All** | `os_update` with `mode: full` | `commands.allow_patching: true` |
+
+Fix buttons only appear when the device is online and connected. Each button requires confirmation before executing.
 
 ---
 
