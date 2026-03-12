@@ -395,7 +395,7 @@ function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-6 py-4">
           {loading ? (
             <div className="text-center text-gray-500 py-8">Loading patch details...</div>
           ) : !patches || patches.length === 0 ? (
@@ -421,7 +421,7 @@ function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
                     </div>
                   </button>
                   {expanded.has(d.device_id) && d.updates && (
-                    <div className="border-t border-gray-800 max-h-64 overflow-y-auto">
+                    <div className="border-t border-gray-800 max-h-64 overflow-y-auto scrollbar-thin">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-gray-500 text-xs uppercase">

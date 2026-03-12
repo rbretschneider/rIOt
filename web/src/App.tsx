@@ -24,6 +24,7 @@ import LogSettings from './pages/settings/LogSettings'
 import Security from './pages/Security'
 import Probes from './pages/Probes'
 import ProbeDetail from './pages/ProbeDetail'
+import LearnMore from './pages/LearnMore'
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation()
@@ -317,6 +318,7 @@ export default function App() {
           <Route path="/probes" element={<Probes />} />
           <Route path="/probes/:id" element={<ProbeDetail />} />
           <Route path="/security" element={<Security />} />
+          <Route path="/learn/:findingId" element={<LearnMore />} />
           <Route path="/settings" element={<SettingsLayout />}>
             <Route index element={<Navigate to="/settings/alert-rules" replace />} />
             <Route path="alert-rules" element={<AlertRuleSettings />} />

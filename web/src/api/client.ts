@@ -195,6 +195,18 @@ export const api = {
   getDeviceLogs: (id: string, priority = 7, limit = 100, exact = false) =>
     fetchJSON<import('../types/models').LogEntry[]>(`${BASE}/devices/${id}/logs?priority=${priority}&limit=${limit}${exact ? '&exact=1' : ''}`),
 
+  updateDeviceLocation: async (id: string, location: string): Promise<{ location: string }> => {
+    const res = await fetch(`${BASE}/devices/${id}/location`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
   updateDeviceTags: async (id: string, tags: string[]): Promise<{ tags: string[] }> => {
     const res = await fetch(`${BASE}/devices/${id}/tags`, {
       method: 'PUT',

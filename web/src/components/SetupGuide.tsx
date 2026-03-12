@@ -212,7 +212,7 @@ export default function SetupGuide({ inline, onClose }: Props) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onClose}>
       <div
-        className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 p-6 max-h-[85vh] overflow-y-auto"
+        className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 p-6 max-h-[85vh] overflow-y-auto scrollbar-thin"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

@@ -144,7 +144,7 @@ export default function NotificationSettings() {
                 </svg>
               </button>
             </div>
-            <div className="overflow-y-auto px-6">
+            <div className="overflow-y-auto scrollbar-thin px-6">
             <div className="space-y-4">
               <Field label="Name">
                 <input

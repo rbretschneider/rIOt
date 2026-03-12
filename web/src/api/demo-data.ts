@@ -87,6 +87,7 @@ export function getDevices(): Device[] {
     primary_ip: d.ip,
     status: d.status,
     agent_connected: d.status !== 'offline',
+    location: '',
     tags: d.tags,
     docker_available: d.hostname === 'proxmox-01',
     hardware_profile: { ...d.hw, cpu_threads: d.hw.cpu_threads ?? d.hw.cpu_cores },

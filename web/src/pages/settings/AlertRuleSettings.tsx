@@ -184,7 +184,7 @@ export default function AlertRuleSettings() {
                 </svg>
               </button>
             </div>
-            <div className="overflow-y-auto px-6">
+            <div className="overflow-y-auto scrollbar-thin px-6">
             <div className="space-y-4">
               <Field label="Name">
                 <input
@@ -497,7 +497,7 @@ function TemplatePicker({ onSelect, onClose }: { onSelect: (t: AlertTemplate) =>
             </svg>
           </button>
         </div>
-        <div className="overflow-y-auto px-6 pb-6">
+        <div className="overflow-y-auto scrollbar-thin px-6 pb-6">
           {categories.map(cat => (
             <div key={cat} className="mb-4">
               <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>

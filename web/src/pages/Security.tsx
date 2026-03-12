@@ -161,7 +161,7 @@ function PortsList({ ports }: { ports: number[] }) {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-50 w-72 max-h-64 overflow-y-auto bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-3"
+            className="fixed z-50 w-72 max-h-64 overflow-y-auto scrollbar-thin bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-3"
             style={{ top: rect.bottom + 4, right: window.innerWidth - rect.right }}
           >
             <div className="flex items-center justify-between mb-2">

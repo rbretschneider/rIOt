@@ -498,6 +498,22 @@ func (h *Handlers) GetDeviceAlertRules(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, matching)
 }
 
+func (h *Handlers) UpdateDeviceLocation(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Location string `json:"location"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.devices.UpdateLocation(r.Context(), id, body.Location); err != nil {
+		http.Error(w, `{"error":"failed to update location"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"location": body.Location})
+}
+
 func (h *Handlers) UpdateDeviceTags(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {

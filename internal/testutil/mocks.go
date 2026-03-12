@@ -214,6 +214,18 @@ func (m *MockDeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*mode
 	return m.GetByID(ctx, id)
 }
 
+func (m *MockDeviceRepo) UpdateLocation(_ context.Context, id, location string) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d, ok := m.Devices[id]; ok {
+		d.Location = location
+	}
+	return nil
+}
+
 func (m *MockDeviceRepo) UpdateTags(_ context.Context, id string, tags []string) error {
 	if m.Err != nil {
 		return m.Err

@@ -143,7 +143,7 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
     <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50" />
       <div
-        className="relative w-full max-w-2xl bg-gray-900 border-l border-gray-800 overflow-y-auto"
+        className="relative w-full max-w-2xl bg-gray-900 border-l border-gray-800 overflow-y-auto scrollbar-thin"
         onClick={e => e.stopPropagation()}
       >
         <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-5 z-10">
@@ -295,7 +295,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
       {/* Recent events */}
       {deviceId && events.length > 0 && (
         <DetailSection title="Recent Events">
-          <div className="space-y-1 max-h-48 overflow-y-auto">
+          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
             {events.slice(0, 20).map(evt => (
               <div key={evt.id} className="flex items-start gap-2 text-xs">
                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${
@@ -327,7 +327,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
 
       {c.env && c.env.length > 0 && (
         <DetailSection title="Environment">
-          <div className="space-y-1 max-h-48 overflow-y-auto">
+          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
             {c.env.map((e, i) => (
               <div key={i} className="flex gap-2 text-xs font-mono">
                 <span className="text-gray-400 flex-shrink-0">{e.key}=</span>
@@ -342,7 +342,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
 
       {c.labels && Object.keys(c.labels).length > 0 && (
         <DetailSection title="Labels">
-          <div className="space-y-1 max-h-48 overflow-y-auto">
+          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
             {Object.entries(c.labels).map(([k, v]) => (
               <div key={k} className="flex gap-2 text-xs font-mono">
                 <span className="text-gray-400 flex-shrink-0">{k}=</span>

@@ -7,6 +7,7 @@ export interface Device {
   primary_ip?: string
   status: 'online' | 'offline' | 'warning'
   agent_connected?: boolean
+  location: string
   tags: string[]
   docker_available: boolean
   hardware_profile?: HardwareProfile

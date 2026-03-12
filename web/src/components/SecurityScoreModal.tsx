@@ -162,11 +162,9 @@ function CategorySection({ cat, onRunCommand, canCommand }: { cat: SecurityCateg
                     )}
                   </div>
                 )}
-                {f.ref_url && (
-                  <a href={f.ref_url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors mt-0.5 inline-block">
-                    Learn more &rarr;
-                  </a>
-                )}
+                <a href={`/learn/${f.id}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors mt-0.5 inline-block">
+                  Learn more &rarr;
+                </a>
               </div>
             </div>
           ))}
@@ -212,7 +210,7 @@ export default function SecurityScoreModal({ score, onClose, onRunCommand, canCo
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-3">
+        <div className="overflow-y-auto scrollbar-thin flex-1 px-6 py-4 space-y-3">
           {score.categories.map(cat => (
             <CategorySection key={cat.category} cat={cat} onRunCommand={onRunCommand} canCommand={canCommand} />
           ))}

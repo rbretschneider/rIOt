@@ -18,6 +18,7 @@ type Device struct {
 	AgentVersion    string            `json:"agent_version,omitempty"`
 	PrimaryIP       string            `json:"primary_ip,omitempty"`
 	Status          DeviceStatus      `json:"status"`
+	Location        string            `json:"location"`
 	Tags            []string          `json:"tags"`
 	DockerAvailable bool              `json:"docker_available"`
 	HardwareProfile *HardwareProfile  `json:"hardware_profile,omitempty"`

@@ -89,7 +89,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
             </svg>
           </button>
         </div>
-        <div className="overflow-y-auto p-6 pt-4">
+        <div className="overflow-y-auto scrollbar-thin p-6 pt-4">
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-400 mb-1">Name</label>

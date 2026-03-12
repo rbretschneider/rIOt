@@ -23,9 +23,9 @@ func (r *DeviceRepo) Create(ctx context.Context, d *models.Device) error {
 	tagsJSON, _ := json.Marshal(d.Tags)
 	hwJSON, _ := json.Marshal(d.HardwareProfile)
 	_, err := r.db.Pool.Exec(ctx,
-		`INSERT INTO devices (id, short_id, hostname, arch, agent_version, primary_ip, status, tags, hardware_profile, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		d.ID, d.ShortID, d.Hostname, d.Arch, d.AgentVersion, d.PrimaryIP, d.Status, tagsJSON, hwJSON, d.CreatedAt, d.UpdatedAt,
+		`INSERT INTO devices (id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, hardware_profile, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		d.ID, d.ShortID, d.Hostname, d.Arch, d.AgentVersion, d.PrimaryIP, d.Status, d.Location, tagsJSON, hwJSON, d.CreatedAt, d.UpdatedAt,
 	)
 	return err
 }
@@ -34,9 +34,9 @@ func (r *DeviceRepo) Update(ctx context.Context, d *models.Device) error {
 	tagsJSON, _ := json.Marshal(d.Tags)
 	hwJSON, _ := json.Marshal(d.HardwareProfile)
 	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE devices SET hostname=$2, arch=$3, agent_version=$4, primary_ip=$5, status=$6, tags=$7, hardware_profile=$8,
-		 last_heartbeat=$9, last_telemetry=$10, updated_at=$11 WHERE id=$1`,
-		d.ID, d.Hostname, d.Arch, d.AgentVersion, d.PrimaryIP, d.Status, tagsJSON, hwJSON,
+		`UPDATE devices SET hostname=$2, arch=$3, agent_version=$4, primary_ip=$5, status=$6, location=$7, tags=$8, hardware_profile=$9,
+		 last_heartbeat=$10, last_telemetry=$11, updated_at=$12 WHERE id=$1`,
+		d.ID, d.Hostname, d.Arch, d.AgentVersion, d.PrimaryIP, d.Status, d.Location, tagsJSON, hwJSON,
 		d.LastHeartbeat, d.LastTelemetry, time.Now().UTC(),
 	)
 	return err
@@ -46,9 +46,9 @@ func (r *DeviceRepo) GetByID(ctx context.Context, id string) (*models.Device, er
 	d := &models.Device{}
 	var tagsJSON, hwJSON []byte
 	err := r.db.Pool.QueryRow(ctx,
-		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, tags, docker_available, hardware_profile,
+		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices WHERE id=$1`, id,
-	).Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &tagsJSON, &d.DockerAvailable, &hwJSON,
+	).Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
 		&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (r *DeviceRepo) GetByID(ctx context.Context, id string) (*models.Device, er
 
 func (r *DeviceRepo) List(ctx context.Context) ([]models.Device, error) {
 	rows, err := r.db.Pool.Query(ctx,
-		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, tags, docker_available, hardware_profile,
+		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices ORDER BY hostname`)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (r *DeviceRepo) List(ctx context.Context) ([]models.Device, error) {
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
-		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &tagsJSON, &d.DockerAvailable, &hwJSON,
+		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
 			&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func (r *DeviceRepo) AgentVersionSummary(ctx context.Context) ([]AgentVersionCou
 
 // ListByVersion returns devices with a specific agent_version.
 func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]models.Device, error) {
-	query := `SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, tags, docker_available, hardware_profile,
+	query := `SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices WHERE COALESCE(agent_version, 'unknown') = $1 ORDER BY hostname`
 	rows, err := r.db.Pool.Query(ctx, query, version)
 	if err != nil {
@@ -186,7 +186,7 @@ func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]model
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
-		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &tagsJSON, &d.DockerAvailable, &hwJSON,
+		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
 			&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -228,6 +228,13 @@ func (r *DeviceRepo) DeleteAPIKeysByDevice(ctx context.Context, deviceID string)
 // FindByDeviceUUID finds a device by its existing UUID (for re-registration).
 func (r *DeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error) {
 	return r.GetByID(ctx, id)
+}
+
+// UpdateLocation sets the location for a device.
+func (r *DeviceRepo) UpdateLocation(ctx context.Context, id, location string) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE devices SET location=$2, updated_at=NOW() WHERE id=$1`, id, location)
+	return err
 }
 
 // UpdateTags replaces the tags for a device.

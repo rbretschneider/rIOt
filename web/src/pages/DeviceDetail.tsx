@@ -46,6 +46,7 @@ export default function DeviceDetail() {
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
   const [tagInput, setTagInput] = useState('')
+  const [locationEdit, setLocationEdit] = useState<string | null>(null)
   const [metricHours, setMetricHours] = useState(24)
   const [showSecurityModal, setShowSecurityModal] = useState(false)
   const [logPriority, setLogPriority] = useState(7)
@@ -73,6 +74,14 @@ export default function DeviceDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['device', id] })
       queryClient.invalidateQueries({ queryKey: ['devices'] })
+    },
+  })
+  const locationMutation = useMutation({
+    mutationFn: (location: string) => api.updateDeviceLocation(id!, location),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device', id] })
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setLocationEdit(null)
     },
   })
   const commandMutation = useMutation({
@@ -205,7 +214,43 @@ export default function DeviceDetail() {
         </div>
       </div>
 
-      {/* Tags */}
+      {/* Location & Tags */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-500">Location:</span>
+          {locationEdit !== null ? (
+            <input
+              type="text"
+              autoFocus
+              value={locationEdit}
+              onChange={e => setLocationEdit(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  locationMutation.mutate(locationEdit)
+                } else if (e.key === 'Escape') {
+                  setLocationEdit(null)
+                }
+              }}
+              onBlur={() => {
+                if (locationEdit !== (device.location || '')) {
+                  locationMutation.mutate(locationEdit)
+                } else {
+                  setLocationEdit(null)
+                }
+              }}
+              className="px-2 py-0.5 bg-transparent border border-gray-600 rounded text-xs text-gray-300 focus:outline-none focus:border-gray-400 w-40"
+            />
+          ) : (
+            <button
+              onClick={() => setLocationEdit(device.location || '')}
+              className="text-xs text-gray-300 hover:text-white transition-colors cursor-pointer"
+              title="Click to edit location"
+            >
+              {device.location || <span className="text-gray-600 italic">not set</span>}
+            </button>
+          )}
+        </div>
+        <span className="text-gray-700">|</span>
       <div className="flex items-center gap-2 flex-wrap">
         {(device.tags ?? []).map(tag => (
           <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-800 text-xs text-gray-300">
@@ -234,6 +279,7 @@ export default function DeviceDetail() {
           placeholder="Add tag..."
           className="px-2 py-0.5 bg-transparent border border-gray-700 rounded text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500 w-24"
         />
+      </div>
       </div>
 
       {/* Agent not connected warning */}

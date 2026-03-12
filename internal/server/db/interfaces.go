@@ -26,6 +26,7 @@ type DeviceRepository interface {
 	LookupAPIKey(ctx context.Context, plaintextKey string) (string, error)
 	DeleteAPIKeysByDevice(ctx context.Context, deviceID string) error
 	FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error)
+	UpdateLocation(ctx context.Context, id, location string) error
 	UpdateTags(ctx context.Context, id string, tags []string) error
 }
 
