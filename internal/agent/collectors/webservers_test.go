@@ -414,6 +414,61 @@ http {
 	assert.Equal(t, "http://127.0.0.1:3000", sites[0].ProxyPass)
 }
 
+// TestParseNginxSites_NginxTSeparateFiles tests the real nginx -T output format
+// where included files are listed as separate sections AFTER the http block closes,
+// rather than inlined within the http {} braces.
+func TestParseNginxSites_NginxTSeparateFiles(t *testing.T) {
+	config := `# configuration file /etc/nginx/nginx.conf:
+user www-data;
+worker_processes auto;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+
+    include /etc/nginx/mime.types;
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
+
+# configuration file /etc/nginx/mime.types:
+types {
+    text/html html;
+    text/css css;
+}
+
+# configuration file /etc/nginx/sites-enabled/site1:
+server {
+    listen 80;
+    server_name site1.example.com;
+    proxy_pass http://127.0.0.1:3000;
+}
+
+# configuration file /etc/nginx/sites-enabled/site2:
+server {
+    listen 443 ssl;
+    server_name site2.example.com;
+    ssl_certificate /etc/ssl/certs/site2.pem;
+    root /var/www/site2;
+}
+`
+	sites := parseNginxSites(config)
+	require.Len(t, sites, 2, "should find server blocks listed after http {} closes")
+
+	assert.Equal(t, []string{"site1.example.com"}, sites[0].ServerNames)
+	assert.Equal(t, "http://127.0.0.1:3000", sites[0].ProxyPass)
+	assert.Equal(t, "/etc/nginx/sites-enabled/site1", sites[0].ConfigFile)
+
+	assert.Equal(t, []string{"site2.example.com"}, sites[1].ServerNames)
+	assert.Equal(t, "/var/www/site2", sites[1].Root)
+	assert.Equal(t, "/etc/ssl/certs/site2.pem", sites[1].SSLCert)
+	assert.Equal(t, "/etc/nginx/sites-enabled/site2", sites[1].ConfigFile)
+}
+
 func TestNginxReadConfigFromDisk_NonexistentPath(t *testing.T) {
 	parser := &NginxParser{}
 	config := parser.readConfigFromDisk("/tmp/nonexistent-riot-test/nginx.conf")

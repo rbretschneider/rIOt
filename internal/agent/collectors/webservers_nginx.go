@@ -239,6 +239,7 @@ func parseNginxSites(config string) []models.ProxySite {
 	var current *serverBlock
 	httpDepth := 0
 	inHTTP := false
+	seenHTTP := false // stays true after first http block — catches server blocks from included files listed separately in nginx -T output
 	pendingHTTP := false
 	pendingServer := false
 
@@ -261,6 +262,7 @@ func parseNginxSites(config string) []models.ProxySite {
 			pendingHTTP = false
 			if strings.Contains(trimmed, "{") {
 				inHTTP = true
+				seenHTTP = true
 				httpDepth = 1
 				continue
 			}
@@ -287,6 +289,7 @@ func parseNginxSites(config string) []models.ProxySite {
 		if !inHTTP && isNginxBlockKeyword(trimmed, "http") {
 			if strings.Contains(trimmed, "{") {
 				inHTTP = true
+				seenHTTP = true
 				httpDepth = 1
 				continue
 			}
@@ -294,10 +297,12 @@ func parseNginxSites(config string) []models.ProxySite {
 			continue
 		}
 
-		// Detect server block start (inside http context) — BEFORE httpDepth
+		// Detect server block start (inside or after http context). Uses seenHTTP
+		// to catch server blocks from included files listed separately in nginx -T
+		// output (they appear after the http {} block closes). BEFORE httpDepth
 		// counting so the "{" in "server {" is only tracked in current.depth,
 		// not double-counted in httpDepth.
-		if inHTTP && current == nil && isNginxBlockKeyword(trimmed, "server") {
+		if (inHTTP || seenHTTP) && current == nil && isNginxBlockKeyword(trimmed, "server") {
 			if strings.Contains(trimmed, "{") {
 				current = &serverBlock{
 					configFile: currentFile,
