@@ -366,8 +366,13 @@ func (s *Server) applyTLSAndRestart() {
 		}
 	}
 
+	// Rebuild router so mTLS enrollment routes are registered
+	s.router = s.setupRouter()
+
 	if !s.Config.TLSEnabled {
 		slog.Info("setup complete, TLS not enabled — continuing on HTTP")
+		// Update the running server's handler to use the rebuilt router
+		s.httpServer.Handler = s.router
 		return
 	}
 
