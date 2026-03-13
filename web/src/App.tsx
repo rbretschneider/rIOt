@@ -261,9 +261,10 @@ export default function App() {
               {/* Desktop nav */}
               <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
-                <NavLink to="/security">Security</NavLink>
-                <NavLink to="/probes">Probes</NavLink>
+                <NavLink to="/alert-rules">Alert Rules</NavLink>
                 <NavLink to="/alerts">Alerts</NavLink>
+                <NavLink to="/probes">Probes</NavLink>
+                <NavLink to="/security">Security</NavLink>
                 <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
@@ -284,9 +285,10 @@ export default function App() {
         {mobileMenuOpen && (
           <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
             <NavLink to="/">Fleet</NavLink>
-            <NavLink to="/security">Security</NavLink>
-            <NavLink to="/probes">Probes</NavLink>
+            <NavLink to="/alert-rules">Alert Rules</NavLink>
             <NavLink to="/alerts">Alerts</NavLink>
+            <NavLink to="/probes">Probes</NavLink>
+            <NavLink to="/security">Security</NavLink>
             <NavLink to="/settings">Settings</NavLink>
             <button
               onClick={logout}
@@ -316,13 +318,14 @@ export default function App() {
           <Route path="/devices/:id/containers/:cid" element={<ContainerDetailPage />} />
           <Route path="/devices/:id/terminal" element={<DeviceTerminal />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/alert-rules" element={<AlertRuleSettings />} />
           <Route path="/probes" element={<Probes />} />
           <Route path="/probes/:id" element={<ProbeDetail />} />
           <Route path="/security" element={<Security />} />
           <Route path="/learn/:findingId" element={<LearnMore />} />
           <Route path="/settings" element={<SettingsLayout />}>
-            <Route index element={<Navigate to="/settings/alert-rules" replace />} />
-            <Route path="alert-rules" element={<AlertRuleSettings />} />
+            <Route index element={<Navigate to="/settings/notifications" replace />} />
+            <Route path="alert-rules" element={<Navigate to="/alert-rules" replace />} />
             <Route path="notifications" element={<NotificationSettings />} />
             <Route path="agents" element={<AgentManagement />} />
             <Route path="certificates" element={<CertificateSettings />} />
