@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 
@@ -154,18 +154,7 @@ export default function CertificateSettings() {
 
         {/* Created key banner — shown once */}
         {createdKey && (
-          <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4">
-            <p className="text-sm text-green-300 font-medium mb-1">Bootstrap key created — copy it now, it won't be shown again:</p>
-            <code className="block bg-gray-900 text-green-400 p-2 rounded text-xs font-mono break-all select-all">
-              {createdKey.key}
-            </code>
-            <button
-              onClick={() => setCreatedKey(null)}
-              className="mt-2 text-xs text-gray-400 hover:text-white"
-            >
-              Dismiss
-            </button>
-          </div>
+          <CreatedKeyBanner keyData={createdKey} onDismiss={() => setCreatedKey(null)} />
         )}
 
         {/* Create key form */}
@@ -256,6 +245,63 @@ export default function CertificateSettings() {
           </div>
         )}
       </section>
+    </div>
+  )
+}
+
+function CreatedKeyBanner({ keyData, onDismiss }: { keyData: CreateKeyResponse; onDismiss: () => void }) {
+  const [copiedKey, setCopiedKey] = useState(false)
+  const [copiedCmd, setCopiedCmd] = useState(false)
+
+  const serverUrl = `${window.location.protocol}//${window.location.host}`
+  const installCmd = `curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- ${serverUrl} --bootstrap-key ${keyData.key}`
+
+  const copy = useCallback((text: string, setter: (v: boolean) => void) => {
+    navigator.clipboard.writeText(text)
+    setter(true)
+    setTimeout(() => setter(false), 2000)
+  }, [])
+
+  return (
+    <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 mb-4 space-y-3">
+      <p className="text-sm text-green-300 font-medium">Bootstrap key created — copy it now, it won't be shown again.</p>
+
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Bootstrap Key</label>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 bg-gray-900 text-green-400 px-3 py-2 rounded text-xs font-mono break-all select-all">
+            {keyData.key}
+          </code>
+          <button
+            onClick={() => copy(keyData.key, setCopiedKey)}
+            className="shrink-0 px-3 py-2 text-xs bg-gray-800 text-gray-300 hover:text-white rounded-md transition-colors"
+          >
+            {copiedKey ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Install Command — run this on the device</label>
+        <div className="flex items-start gap-2">
+          <code className="flex-1 bg-gray-900 text-emerald-400 px-3 py-2 rounded text-xs font-mono break-all select-all">
+            {installCmd}
+          </code>
+          <button
+            onClick={() => copy(installCmd, setCopiedCmd)}
+            className="shrink-0 px-3 py-2 text-xs bg-gray-800 text-gray-300 hover:text-white rounded-md transition-colors"
+          >
+            {copiedCmd ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      <button
+        onClick={onDismiss}
+        className="text-xs text-gray-400 hover:text-white"
+      >
+        Dismiss
+      </button>
     </div>
   )
 }

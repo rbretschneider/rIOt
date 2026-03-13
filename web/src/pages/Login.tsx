@@ -39,10 +39,22 @@ export default function Login({ onLogin }: LoginProps) {
             Demo mode — type anything and click Sign in
           </div>
         )}
-        <form onSubmit={handleSubmit}>
-          <input type="hidden" name="username" autoComplete="username" value="admin" />
+        <form onSubmit={handleSubmit} autoComplete="on">
+          <label className="block text-sm text-gray-400 mb-2" htmlFor="username">
+            Username
+          </label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autoComplete="username"
+            value="admin"
+            readOnly
+            tabIndex={-1}
+            className="w-full px-3 py-2 mb-4 bg-gray-800 border border-gray-700 rounded-md text-gray-400 cursor-default focus:outline-none"
+          />
           <label className="block text-sm text-gray-400 mb-2" htmlFor="password">
-            Admin Password
+            Password
           </label>
           <input
             id="password"
