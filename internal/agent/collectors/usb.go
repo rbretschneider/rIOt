@@ -2,7 +2,10 @@ package collectors
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	_ "embed"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +15,9 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
+
+//go:embed data/usb.ids
+var embeddedUSBIDs []byte
 
 // USBCollector gathers USB device information from sysfs.
 // Linux-only; returns empty USBInfo on other platforms.
@@ -177,34 +183,38 @@ var usbIDPaths = []string{
 }
 
 // getUSBIDDB lazily loads and caches the usb.ids database.
+// Prefers a system-installed usb.ids file, falls back to the embedded copy.
 func getUSBIDDB() *usbIDDB {
 	usbIDDBOnce.Do(func() {
 		for _, path := range usbIDPaths {
-			if db, err := parseUSBIDFile(path); err == nil {
-				usbIDDBInstance = db
-				return
+			if f, err := os.Open(path); err == nil {
+				if db, err := parseUSBIDReader(f); err == nil {
+					usbIDDBInstance = db
+				}
+				f.Close()
+				if usbIDDBInstance != nil {
+					return
+				}
 			}
+		}
+		// Fall back to embedded database
+		if db, err := parseUSBIDReader(bytes.NewReader(embeddedUSBIDs)); err == nil {
+			usbIDDBInstance = db
 		}
 	})
 	return usbIDDBInstance
 }
 
-// parseUSBIDFile parses the standard usb.ids file format.
+// parseUSBIDReader parses the standard usb.ids file format from any reader.
 // Vendor lines start at column 0: "1a6e  Global Unichip Corp."
 // Product lines start with a tab: "\t089a  Coral USB Accelerator"
-func parseUSBIDFile(path string) (*usbIDDB, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
+func parseUSBIDReader(r io.Reader) (*usbIDDB, error) {
 	db := &usbIDDB{
 		vendors:  make(map[string]string),
 		products: make(map[string]string),
 	}
 
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	var currentVendor string
 
 	for scanner.Scan() {
