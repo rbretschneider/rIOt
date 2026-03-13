@@ -24,6 +24,7 @@ const fixableActions: Record<string, { action: string; params?: Record<string, u
 
 interface Props {
   score: SecurityScoreResult
+  hostname?: string
   onClose: () => void
   onRunCommand?: (action: string, params?: Record<string, unknown>) => void
   canCommand?: boolean
@@ -174,7 +175,7 @@ function CategorySection({ cat, onRunCommand, canCommand }: { cat: SecurityCateg
   )
 }
 
-export default function SecurityScoreModal({ score, onClose, onRunCommand, canCommand }: Props) {
+export default function SecurityScoreModal({ score, hostname, onClose, onRunCommand, canCommand }: Props) {
   const failCount = score.categories.reduce(
     (acc, cat) => acc + cat.findings.filter(f => !f.passed).length, 0
   )
@@ -196,7 +197,7 @@ export default function SecurityScoreModal({ score, onClose, onRunCommand, canCo
               <span className="text-lg text-gray-500">/100</span>
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-white">Security Score</h3>
+              <h3 className="text-lg font-semibold text-white">Security Score{hostname && <span className="text-gray-400 font-normal"> — {hostname}</span>}</h3>
               <p className="text-xs text-gray-500">
                 {passCount} passed · {failCount} {failCount === 1 ? 'issue' : 'issues'} found
               </p>

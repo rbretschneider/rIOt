@@ -143,6 +143,22 @@ func (r *ProbeRepo) LatestResult(ctx context.Context, probeID int64) (*models.Pr
 	return &pr, nil
 }
 
+// SuccessRate returns the success rate (0.0–1.0) and total count for a probe over the last 24h.
+func (r *ProbeRepo) SuccessRate(ctx context.Context, probeID int64) (float64, int, error) {
+	var total, successes int
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*), COUNT(*) FILTER (WHERE success = true)
+		 FROM probe_results WHERE probe_id=$1 AND created_at > NOW() - INTERVAL '24 hours'`,
+		probeID).Scan(&total, &successes)
+	if err != nil {
+		return 0, 0, err
+	}
+	if total == 0 {
+		return 0, 0, nil
+	}
+	return float64(successes) / float64(total), total, nil
+}
+
 // PurgeResults deletes probe results older than the given time.
 func (r *ProbeRepo) PurgeResults(ctx context.Context, olderThan time.Time) (int64, error) {
 	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM probe_results WHERE created_at < $1`, olderThan)

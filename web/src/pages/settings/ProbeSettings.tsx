@@ -32,7 +32,7 @@ function defaultConfig(type: string): Record<string, unknown> {
   switch (type) {
     case 'http': return { url: '', method: 'GET', expected_status: 200 }
     case 'ping': return { target: '', count: 3 }
-    case 'dns': return { name: '', server: '', expected_ips: '' }
+    case 'dns': return { hostname: '', server: '', expected_ips: '' }
     default: return {}
   }
 }
@@ -278,8 +278,8 @@ export default function ProbeSettings() {
                 <>
                   <Field label="Domain Name">
                     <input
-                      value={(editing.config.name as string) || ''}
-                      onChange={e => setEditing({ ...editing, config: { ...editing.config, name: e.target.value } })}
+                      value={(editing.config.hostname as string) || ''}
+                      onChange={e => setEditing({ ...editing, config: { ...editing.config, hostname: e.target.value } })}
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       placeholder="example.com"
                     />
@@ -349,7 +349,7 @@ function getTarget(probe: Probe): string {
   switch (probe.type) {
     case 'http': return (probe.config.url as string) || '-'
     case 'ping': return (probe.config.target as string) || '-'
-    case 'dns': return (probe.config.name as string) || '-'
+    case 'dns': return (probe.config.hostname as string) || '-'
     default: return '-'
   }
 }

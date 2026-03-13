@@ -28,6 +28,8 @@ type DeviceRepository interface {
 	FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error)
 	UpdateLocation(ctx context.Context, id, location string) error
 	UpdateTags(ctx context.Context, id string, tags []string) error
+	UpdateAutoPatch(ctx context.Context, id string, enabled bool) error
+	GetAutoPatch(ctx context.Context, id string) (bool, error)
 }
 
 // TelemetryRepository defines the interface for telemetry database operations.
@@ -96,6 +98,7 @@ type ProbeRepository interface {
 	StoreResult(ctx context.Context, result *models.ProbeResult) error
 	ListResults(ctx context.Context, probeID int64, limit int) ([]models.ProbeResult, error)
 	LatestResult(ctx context.Context, probeID int64) (*models.ProbeResult, error)
+	SuccessRate(ctx context.Context, probeID int64) (float64, int, error)
 	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
 }
 

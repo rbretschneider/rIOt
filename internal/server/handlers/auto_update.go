@@ -173,3 +173,81 @@ func (h *Handlers) dispatchAutoUpdate(ctx context.Context, deviceID string, pol 
 	h.autoUpdateRepo.SetLastTriggered(ctx, pol.ID)
 	slog.Info("auto-update triggered", "device", deviceID, "target", pol.Target, "is_stack", pol.IsStack)
 }
+
+// SetAutoPatch handles PUT /api/v1/devices/{id}/auto-patch.
+func (h *Handlers) SetAutoPatch(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.devices.UpdateAutoPatch(r.Context(), deviceID, body.Enabled); err != nil {
+		slog.Error("update auto-patch", "error", err)
+		http.Error(w, `{"error":"failed to update auto-patch setting"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"auto_patch": body.Enabled})
+}
+
+// checkAutoPatch checks if a device has auto-patch enabled and pending OS updates,
+// and dispatches an os_update command if so. Uses a 6-hour cooldown to avoid
+// sending duplicate patch commands.
+func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
+	if h.commandRepo == nil || data.Updates == nil || data.Updates.PendingUpdates == 0 {
+		return
+	}
+
+	autoPatch, err := h.devices.GetAutoPatch(ctx, deviceID)
+	if err != nil || !autoPatch {
+		return
+	}
+
+	// Check for recent os_update commands to avoid duplicates (6h cooldown)
+	cmds, err := h.commandRepo.ListByDevice(ctx, deviceID, 10)
+	if err != nil {
+		return
+	}
+	for _, cmd := range cmds {
+		if cmd.Action == "os_update" && time.Since(cmd.CreatedAt) < 6*time.Hour {
+			return // Already sent recently
+		}
+	}
+
+	cmd := &models.Command{
+		ID:       uuid.New().String(),
+		DeviceID: deviceID,
+		Action:   "os_update",
+		Params:   map[string]interface{}{"mode": "full"},
+		Status:   "pending",
+	}
+	if err := h.commandRepo.Create(ctx, cmd); err != nil {
+		slog.Error("auto-patch: create command", "error", err)
+		return
+	}
+
+	// Try WS delivery
+	agentConnections.RLock()
+	ac := agentConnections.m[deviceID]
+	agentConnections.RUnlock()
+
+	if ac != nil {
+		payload := models.CommandPayload{
+			CommandID: cmd.ID,
+			Action:    cmd.Action,
+			Params:    cmd.Params,
+		}
+		payloadJSON, _ := json.Marshal(payload)
+		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
+			h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-patch: ws send failed")
+		} else {
+			h.commandRepo.UpdateStatus(ctx, cmd.ID, "sent", "auto-patch")
+		}
+	} else {
+		h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-patch: agent not connected")
+	}
+
+	slog.Info("auto-patch triggered", "device", deviceID, "pending_updates", data.Updates.PendingUpdates)
+}

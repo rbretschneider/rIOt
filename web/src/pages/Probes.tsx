@@ -68,6 +68,19 @@ function ProbeCard({ probe, onRun, running }: { probe: ProbeWithResult; onRun: (
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {probe.success_rate != null && (
+            <div className="text-right">
+              <p className={`text-sm font-mono font-semibold ${
+                probe.success_rate >= 0.95 ? 'text-emerald-400' :
+                probe.success_rate >= 0.8 ? 'text-amber-400' : 'text-red-400'
+              }`}>
+                {(probe.success_rate * 100).toFixed(1)}%
+              </p>
+              <p className="text-xs text-gray-500">
+                {probe.total_checks} checks / 24h
+              </p>
+            </div>
+          )}
           {lr && (
             <div className="text-right">
               <p className={`text-sm font-mono ${lr.success ? 'text-emerald-400' : 'text-red-400'}`}>

@@ -20,16 +20,22 @@ func (h *Handlers) ListProbes(w http.ResponseWriter, r *http.Request) {
 		probes = []models.Probe{}
 	}
 
-	// Attach latest result for each probe
+	// Attach latest result and success rate for each probe
 	type probeWithResult struct {
 		models.Probe
 		LatestResult *models.ProbeResult `json:"latest_result,omitempty"`
+		SuccessRate  *float64            `json:"success_rate,omitempty"`
+		TotalChecks  int                 `json:"total_checks"`
 	}
 	results := make([]probeWithResult, len(probes))
 	for i, p := range probes {
 		results[i] = probeWithResult{Probe: p}
 		if lr, err := h.probeRepo.LatestResult(r.Context(), p.ID); err == nil {
 			results[i].LatestResult = lr
+		}
+		if rate, total, err := h.probeRepo.SuccessRate(r.Context(), p.ID); err == nil && total > 0 {
+			results[i].SuccessRate = &rate
+			results[i].TotalChecks = total
 		}
 	}
 	writeJSON(w, http.StatusOK, results)

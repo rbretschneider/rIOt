@@ -90,6 +90,7 @@ export function getDevices(): Device[] {
     location: '',
     tags: d.tags,
     docker_available: d.hostname === 'proxmox-01',
+    auto_patch: false,
     hardware_profile: { ...d.hw, cpu_threads: d.hw.cpu_threads ?? d.hw.cpu_cores },
     last_heartbeat: d.status === 'offline' ? ago(3 * DAY) : ago((i + 1) * 15_000),
     last_telemetry: d.status === 'offline' ? ago(3 * DAY) : ago((i + 1) * 30_000),
@@ -487,24 +488,28 @@ export function getProbes(): ProbeWithResult[] {
       config: { target: '8.8.8.8' }, interval_seconds: 60, timeout_seconds: 5,
       created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
       latest_result: { id: 1, probe_id: 1, success: true, latency_ms: 12, error_msg: '', metadata: {}, created_at: now },
+      success_rate: 0.993, total_checks: 1440,
     },
     {
       id: 2, name: 'Home Assistant', type: 'http', enabled: true,
       config: { url: 'http://10.0.10.5:8123', method: 'GET', expected_status: 200 }, interval_seconds: 30, timeout_seconds: 10,
       created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
       latest_result: { id: 2, probe_id: 2, success: true, latency_ms: 45, status_code: 200, error_msg: '', metadata: {}, created_at: now },
+      success_rate: 1.0, total_checks: 2880,
     },
     {
       id: 3, name: 'Pi-hole DNS', type: 'dns', enabled: true,
       config: { target: '10.0.10.2', query: 'google.com', record_type: 'A' }, interval_seconds: 60, timeout_seconds: 5,
       created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
       latest_result: { id: 3, probe_id: 3, success: true, latency_ms: 3, error_msg: '', metadata: { answer: '142.250.80.46' }, created_at: now },
+      success_rate: 0.978, total_checks: 1440,
     },
     {
       id: 4, name: 'External API', type: 'http', enabled: true,
       config: { url: 'https://api.example.com/health', method: 'GET', expected_status: 200 }, interval_seconds: 120, timeout_seconds: 15,
       created_at: ago(20 * DAY), updated_at: ago(20 * DAY),
       latest_result: { id: 4, probe_id: 4, success: false, latency_ms: 0, status_code: 0, error_msg: 'connection timed out', metadata: {}, created_at: now },
+      success_rate: 0.72, total_checks: 720,
     },
   ]
 }

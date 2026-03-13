@@ -132,5 +132,6 @@ func (h *Handlers) GetSecurityScore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"no telemetry available"}`, http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusOK, scoring.Score(&snap.Data))
+	autoPatch, _ := h.devices.GetAutoPatch(r.Context(), deviceID)
+	writeJSON(w, http.StatusOK, scoring.Score(&snap.Data, scoring.ScoreOptions{AutoPatch: autoPatch}))
 }

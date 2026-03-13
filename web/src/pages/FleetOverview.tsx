@@ -101,7 +101,7 @@ export default function FleetOverview() {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [scoreModal, setScoreModal] = useState<SecurityScoreResult | null>(null)
+  const [scoreModal, setScoreModal] = useState<{ score: SecurityScoreResult; hostname?: string } | null>(null)
 
   const filtered = useMemo(() => {
     if (!devices) return []
@@ -262,7 +262,7 @@ export default function FleetOverview() {
                     )}
                   </td>
                   <td className="px-2 py-3 text-center">
-                    <MiniScore deviceId={d.id} onShowModal={setScoreModal} />
+                    <MiniScore deviceId={d.id} onShowModal={(score) => setScoreModal({ score, hostname: d.hostname })} />
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
                   <td className="px-4 py-3 text-sm text-gray-400">{d.arch}</td>
@@ -349,7 +349,7 @@ export default function FleetOverview() {
       )}
 
       {scoreModal && (
-        <SecurityScoreModal score={scoreModal} onClose={() => setScoreModal(null)} />
+        <SecurityScoreModal score={scoreModal.score} hostname={scoreModal.hostname} onClose={() => setScoreModal(null)} />
       )}
 
     </div>

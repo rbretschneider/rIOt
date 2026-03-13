@@ -1,8 +1,11 @@
 package collectors
 
 import (
+	"bufio"
 	"context"
 	gonet "net"
+	"os"
+	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	psnet "github.com/shirou/gopsutil/v3/net"
@@ -64,5 +67,39 @@ func (c *NetworkCollector) Collect(ctx context.Context) (interface{}, error) {
 		info.Interfaces = append(info.Interfaces, ni)
 	}
 
+	info.DNSServers = parseDNSServers()
+
 	return info, nil
+}
+
+// parseDNSServers reads nameserver entries from /etc/resolv.conf.
+func parseDNSServers() []string {
+	return parseDNSServersFrom("/etc/resolv.conf")
+}
+
+func parseDNSServersFrom(path string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	var servers []string
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "nameserver" {
+			addr := fields[1]
+			if !seen[addr] {
+				seen[addr] = true
+				servers = append(servers, addr)
+			}
+		}
+	}
+	return servers
 }

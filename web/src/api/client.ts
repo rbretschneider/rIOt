@@ -219,6 +219,18 @@ export const api = {
     return res.json()
   },
 
+  setAutoPatch: async (deviceId: string, enabled: boolean): Promise<{ auto_patch: boolean }> => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/auto-patch`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
   getAutoUpdates: (id: string) =>
     fetchJSON<AutoUpdatePolicy[]>(`${BASE}/devices/${id}/auto-updates`),
 

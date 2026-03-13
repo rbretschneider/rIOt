@@ -100,6 +100,13 @@ export default function DeviceDetail() {
     },
     onError: () => { setTimeout(() => fetchLogsMutation.reset(), 5000) },
   })
+  const autoPatchMutation = useMutation({
+    mutationFn: (enabled: boolean) => api.setAutoPatch(id!, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['device', id] })
+      queryClient.invalidateQueries({ queryKey: ['security-score', id] })
+    },
+  })
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteDevice(id!, data?.device.status === 'online'),
     onSuccess: () => {
@@ -209,6 +216,22 @@ export default function DeviceDetail() {
               >
                 Reboot
               </button>
+              <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
+                <span className="text-xs text-gray-500">Auto-patch</span>
+                <button
+                  role="switch"
+                  aria-checked={device.auto_patch}
+                  onClick={() => autoPatchMutation.mutate(!device.auto_patch)}
+                  disabled={autoPatchMutation.isPending}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                    device.auto_patch ? 'bg-cyan-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                    device.auto_patch ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </label>
             </div>
           )}
         </div>
@@ -305,6 +328,7 @@ export default function DeviceDetail() {
       {showSecurityModal && securityScore && (
         <SecurityScoreModal
           score={securityScore}
+          hostname={device.hostname}
           onClose={() => setShowSecurityModal(false)}
           canCommand={canCommand}
           onRunCommand={(action, params) => commandMutation.mutate({ action, params })}

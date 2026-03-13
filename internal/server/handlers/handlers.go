@@ -340,8 +340,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		h.devices.SetStatus(r.Context(), deviceID, models.DeviceStatusWarning)
 	}
 
-	// Check auto-update policies
+	// Check auto-update policies (Docker containers)
 	h.checkAutoUpdates(r.Context(), deviceID, &snap.Data)
+
+	// Check auto-patch (OS updates)
+	h.checkAutoPatch(r.Context(), deviceID, &snap.Data)
 
 	// Broadcast via WebSocket
 	h.hub.BroadcastTelemetry(deviceID, &snap.Data)

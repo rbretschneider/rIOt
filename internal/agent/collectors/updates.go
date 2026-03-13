@@ -37,6 +37,13 @@ func (c *UpdatesCollector) Collect(ctx context.Context) (interface{}, error) {
 }
 
 func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateInfo) {
+	// Detect unattended-upgrades
+	if out, err := exec.CommandContext(ctx, "dpkg-query", "-W", "-f=${Status}", "unattended-upgrades").Output(); err == nil {
+		if strings.Contains(string(out), "install ok installed") {
+			info.UnattendedUpgrades = true
+		}
+	}
+
 	// Count installed packages
 	out, err := exec.CommandContext(ctx, "dpkg", "--get-selections").Output()
 	if err == nil {

@@ -14,6 +14,9 @@ import (
 func executeDNS(ctx context.Context, probe models.Probe) *models.ProbeResult {
 	hostname, _ := probe.Config["hostname"].(string)
 	if hostname == "" {
+		hostname, _ = probe.Config["name"].(string) // legacy frontend compat
+	}
+	if hostname == "" {
 		return &models.ProbeResult{
 			ProbeID:  probe.ID,
 			Success:  false,

@@ -21,6 +21,7 @@ type Device struct {
 	Location        string            `json:"location"`
 	Tags            []string          `json:"tags"`
 	DockerAvailable bool              `json:"docker_available"`
+	AutoPatch       bool              `json:"auto_patch"`
 	HardwareProfile *HardwareProfile  `json:"hardware_profile,omitempty"`
 	LastHeartbeat   *time.Time        `json:"last_heartbeat,omitempty"`
 	LastTelemetry   *time.Time        `json:"last_telemetry,omitempty"`

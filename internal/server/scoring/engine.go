@@ -7,15 +7,25 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
+// ScoreOptions provides extra device-level context for scoring.
+type ScoreOptions struct {
+	AutoPatch bool // rIOt-managed automatic OS patching enabled
+}
+
 // Score evaluates the security posture of a device from its telemetry.
 // Categories with no telemetry data are omitted from scoring.
-func Score(data *models.FullTelemetryData) *models.SecurityScore {
+func Score(data *models.FullTelemetryData, opts ...ScoreOptions) *models.SecurityScore {
+	var opt ScoreOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	var categories []models.SecurityCategoryScore
 
 	if cat := accessControl(data.Security); cat != nil {
 		categories = append(categories, *cat)
 	}
-	if cat := patching(data.Updates); cat != nil {
+	if cat := patching(data.Updates, opt.AutoPatch); cat != nil {
 		categories = append(categories, *cat)
 	}
 	if cat := network(data.Security, data.WebServers); cat != nil {
@@ -147,7 +157,7 @@ func accessControl(sec *models.SecurityInfo) *models.SecurityCategoryScore {
 
 // ── Patching ─────────────────────────────────────────────────────────────────
 
-func patching(upd *models.UpdateInfo) *models.SecurityCategoryScore {
+func patching(upd *models.UpdateInfo, autoPatch bool) *models.SecurityCategoryScore {
 	if upd == nil {
 		return nil
 	}
@@ -209,17 +219,26 @@ func patching(upd *models.UpdateInfo) *models.SecurityCategoryScore {
 		Passed:      noKernel,
 	})
 
-	// Unattended upgrades
+	// Unattended upgrades — pass if OS-level unattended-upgrades OR rIOt auto-patch is enabled
+	hasAutoUpdates := upd.UnattendedUpgrades || autoPatch
+	autoDesc := "Automatic updates not configured"
+	if upd.UnattendedUpgrades && autoPatch {
+		autoDesc = "Unattended upgrades enabled + rIOt auto-patch enabled"
+	} else if autoPatch {
+		autoDesc = "rIOt auto-patch enabled"
+	} else if upd.UnattendedUpgrades {
+		autoDesc = "Unattended upgrades enabled"
+	}
 	cat.Findings = append(cat.Findings, models.SecurityFinding{
 		ID:          "auto-updates",
 		Category:    models.CategoryPatching,
 		Title:       "Automatic security updates",
-		Description: descIf(upd.UnattendedUpgrades, "Unattended upgrades enabled", "Automatic updates not configured"),
-		Remediation: "Enable unattended-upgrades for automatic security patches",
+		Description: autoDesc,
+		Remediation: "Enable rIOt auto-patch or unattended-upgrades for automatic security patches",
 		RefURL:      "https://wiki.debian.org/UnattendedUpgrades",
-		Severity:    severityIf(upd.UnattendedUpgrades, models.SecSeverityInfo),
+		Severity:    severityIf(hasAutoUpdates, models.SecSeverityInfo),
 		Weight:      5,
-		Passed:      upd.UnattendedUpgrades,
+		Passed:      hasAutoUpdates,
 	})
 
 	tally(cat)

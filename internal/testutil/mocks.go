@@ -238,6 +238,30 @@ func (m *MockDeviceRepo) UpdateTags(_ context.Context, id string, tags []string)
 	return nil
 }
 
+func (m *MockDeviceRepo) UpdateAutoPatch(_ context.Context, id string, enabled bool) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d, ok := m.Devices[id]; ok {
+		d.AutoPatch = enabled
+	}
+	return nil
+}
+
+func (m *MockDeviceRepo) GetAutoPatch(_ context.Context, id string) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if d, ok := m.Devices[id]; ok {
+		return d.AutoPatch, nil
+	}
+	return false, nil
+}
+
 // --- MockTelemetryRepo ---
 
 type MockTelemetryRepo struct {
@@ -814,6 +838,25 @@ func (m *MockProbeRepo) LatestResult(_ context.Context, probeID int64) (*models.
 		return nil, fmt.Errorf("not found")
 	}
 	return latest, nil
+}
+
+func (m *MockProbeRepo) SuccessRate(_ context.Context, probeID int64) (float64, int, error) {
+	if m.Err != nil {
+		return 0, 0, m.Err
+	}
+	var total, successes int
+	for _, r := range m.Results {
+		if r.ProbeID == probeID {
+			total++
+			if r.Success {
+				successes++
+			}
+		}
+	}
+	if total == 0 {
+		return 0, 0, nil
+	}
+	return float64(successes) / float64(total), total, nil
 }
 
 func (m *MockProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int64, error) {

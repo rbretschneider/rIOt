@@ -46,9 +46,9 @@ func (r *DeviceRepo) GetByID(ctx context.Context, id string) (*models.Device, er
 	d := &models.Device{}
 	var tagsJSON, hwJSON []byte
 	err := r.db.Pool.QueryRow(ctx,
-		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
+		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, auto_patch, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices WHERE id=$1`, id,
-	).Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
+	).Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &d.AutoPatch, &hwJSON,
 		&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (r *DeviceRepo) GetByID(ctx context.Context, id string) (*models.Device, er
 
 func (r *DeviceRepo) List(ctx context.Context) ([]models.Device, error) {
 	rows, err := r.db.Pool.Query(ctx,
-		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
+		`SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, auto_patch, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices ORDER BY hostname`)
 	if err != nil {
 		return nil, err
@@ -74,7 +74,7 @@ func (r *DeviceRepo) List(ctx context.Context) ([]models.Device, error) {
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
-		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
+		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &d.AutoPatch, &hwJSON,
 			&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func (r *DeviceRepo) AgentVersionSummary(ctx context.Context) ([]AgentVersionCou
 
 // ListByVersion returns devices with a specific agent_version.
 func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]models.Device, error) {
-	query := `SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, hardware_profile,
+	query := `SELECT id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, docker_available, auto_patch, hardware_profile,
 		 last_heartbeat, last_telemetry, created_at, updated_at FROM devices WHERE COALESCE(agent_version, 'unknown') = $1 ORDER BY hostname`
 	rows, err := r.db.Pool.Query(ctx, query, version)
 	if err != nil {
@@ -186,7 +186,7 @@ func (r *DeviceRepo) ListByVersion(ctx context.Context, version string) ([]model
 	for rows.Next() {
 		var d models.Device
 		var tagsJSON, hwJSON []byte
-		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &hwJSON,
+		if err := rows.Scan(&d.ID, &d.ShortID, &d.Hostname, &d.Arch, &d.AgentVersion, &d.PrimaryIP, &d.Status, &d.Location, &tagsJSON, &d.DockerAvailable, &d.AutoPatch, &hwJSON,
 			&d.LastHeartbeat, &d.LastTelemetry, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -243,4 +243,18 @@ func (r *DeviceRepo) UpdateTags(ctx context.Context, id string, tags []string) e
 	_, err := r.db.Pool.Exec(ctx,
 		`UPDATE devices SET tags=$2, updated_at=NOW() WHERE id=$1`, id, tagsJSON)
 	return err
+}
+
+// UpdateAutoPatch sets the auto_patch flag for a device.
+func (r *DeviceRepo) UpdateAutoPatch(ctx context.Context, id string, enabled bool) error {
+	_, err := r.db.Pool.Exec(ctx,
+		`UPDATE devices SET auto_patch=$2, updated_at=NOW() WHERE id=$1`, id, enabled)
+	return err
+}
+
+// GetAutoPatch returns the auto_patch flag for a device.
+func (r *DeviceRepo) GetAutoPatch(ctx context.Context, id string) (bool, error) {
+	var enabled bool
+	err := r.db.Pool.QueryRow(ctx, `SELECT auto_patch FROM devices WHERE id=$1`, id).Scan(&enabled)
+	return enabled, err
 }

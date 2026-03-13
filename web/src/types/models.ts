@@ -10,6 +10,7 @@ export interface Device {
   location: string
   tags: string[]
   docker_available: boolean
+  auto_patch: boolean
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
   last_telemetry?: string
@@ -569,6 +570,8 @@ export interface Probe {
 
 export interface ProbeWithResult extends Probe {
   latest_result?: ProbeResult
+  success_rate?: number
+  total_checks: number
 }
 
 export interface ProbeResult {
