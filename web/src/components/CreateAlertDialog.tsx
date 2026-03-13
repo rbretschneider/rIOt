@@ -34,7 +34,7 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
   container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },
   device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
-  ups_on_battery:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when UPS switches to battery power' },
+  ups_on_battery:  { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when UPS switches to battery power' },
   ups_battery_percent: { operator: '<', threshold: 20, severity: 'critical', cooldown: 300, hint: 'UPS battery charge percentage (0–100)' },
   usb_missing:     { operator: '==', threshold: 1, severity: 'critical', cooldown: 300, hint: 'Fires when the USB device is not found' },
 }

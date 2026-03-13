@@ -167,7 +167,7 @@ func AlertTemplates() []models.AlertTemplate {
 			Metric:          "ups_on_battery",
 			Operator:        "==",
 			Threshold:       1,
-			Severity:        "warning",
+			Severity:        "critical",
 			CooldownSeconds: 900,
 			NeedsTargetName: false,
 			Description:     "Fires when the UPS switches to battery power",

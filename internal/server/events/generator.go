@@ -415,33 +415,53 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 	wasOnBatteryKey := deviceID + ":ups_was_on_battery"
 
 	if ups.OnBattery {
-		// On battery — fire warning event
+		// On battery — fire critical event
 		if ups.LowBattery {
 			// Low battery is more urgent
-			key := deviceID + ":" + string(models.EventUPSLowBattery)
-			if !g.onCooldown(key, 5*time.Minute) {
-				charge := ""
-				if ups.BatteryCharge != nil {
-					charge = fmt.Sprintf(" (%.0f%%)", *ups.BatteryCharge)
+			charge := ""
+			if ups.BatteryCharge != nil {
+				charge = fmt.Sprintf(" (%.0f%%)", *ups.BatteryCharge)
+			}
+			e := &models.Event{
+				DeviceID:  deviceID,
+				Type:      models.EventUPSLowBattery,
+				Severity:  models.SeverityCrit,
+				Message:   fmt.Sprintf("UPS %s low battery%s", ups.Name, charge),
+				CreatedAt: time.Now().UTC(),
+			}
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			if rule != nil {
+				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
+				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
+					e.Severity = models.EventSeverity(rule.Severity)
+					g.createEventAndNotify(ctx, e, rule, "", 1)
 				}
-				g.createEvent(ctx, &models.Event{
-					DeviceID:  deviceID,
-					Type:      models.EventUPSLowBattery,
-					Severity:  models.SeverityCrit,
-					Message:   fmt.Sprintf("UPS %s low battery%s", ups.Name, charge),
-					CreatedAt: time.Now().UTC(),
-				})
+			} else {
+				key := deviceID + ":" + string(models.EventUPSLowBattery)
+				if !g.onCooldown(key, 5*time.Minute) {
+					g.createEvent(ctx, e)
+				}
 			}
 		} else {
-			key := deviceID + ":" + string(models.EventUPSOnBattery)
-			if !g.onCooldown(key, 15*time.Minute) {
-				g.createEvent(ctx, &models.Event{
-					DeviceID:  deviceID,
-					Type:      models.EventUPSOnBattery,
-					Severity:  models.SeverityWarning,
-					Message:   fmt.Sprintf("UPS %s running on battery", ups.Name),
-					CreatedAt: time.Now().UTC(),
-				})
+			e := &models.Event{
+				DeviceID:  deviceID,
+				Type:      models.EventUPSOnBattery,
+				Severity:  models.SeverityCrit,
+				Message:   fmt.Sprintf("UPS %s running on battery", ups.Name),
+				CreatedAt: time.Now().UTC(),
+			}
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			if rule != nil {
+				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
+				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
+					e.Severity = models.EventSeverity(rule.Severity)
+					g.createEventAndNotify(ctx, e, rule, "", 1)
+				}
+			} else {
+				key := deviceID + ":" + string(models.EventUPSOnBattery)
+				if !g.onCooldown(key, 15*time.Minute) {
+					g.createEvent(ctx, e)
+				}
 			}
 		}
 
@@ -459,13 +479,19 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 		g.mu.Unlock()
 
 		if wasOnBattery {
-			g.createEvent(ctx, &models.Event{
+			e := &models.Event{
 				DeviceID:  deviceID,
 				Type:      models.EventUPSRestored,
 				Severity:  models.SeverityInfo,
 				Message:   fmt.Sprintf("UPS %s restored to line power", ups.Name),
 				CreatedAt: time.Now().UTC(),
-			})
+			}
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			if rule != nil {
+				g.createEventAndNotify(ctx, e, rule, "", 0)
+			} else {
+				g.createEvent(ctx, e)
+			}
 		}
 	}
 

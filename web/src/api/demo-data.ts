@@ -457,7 +457,7 @@ export function getContainers(): ContainerInfo[] {
 // ── Events ───────────────────────────────────────────────────────────────────
 
 const eventDefs: { device: string; type: string; severity: 'info' | 'warning' | 'critical'; message: string; ageMs: number; acked: boolean }[] = [
-  { device: 'backup-server', type: 'ups_on_battery', severity: 'warning', message: 'UPS cyberpower switched to battery power', ageMs: 3 * MIN, acked: false },
+  { device: 'backup-server', type: 'ups_on_battery', severity: 'critical', message: 'UPS cyberpower switched to battery power', ageMs: 3 * MIN, acked: false },
   { device: 'pi-cameras', type: 'cpu_high', severity: 'critical', message: 'CPU usage above 85% for 10 minutes', ageMs: 8 * MIN, acked: false },
   { device: 'proxmox-01', type: 'container_update', severity: 'info', message: 'Container update available: plex (plexinc/pms-docker:latest)', ageMs: 25 * MIN, acked: false },
   { device: 'proxmox-01', type: 'failed_login', severity: 'warning', message: '14 failed SSH login attempts in the last 24h', ageMs: 1 * HOUR, acked: false },
@@ -629,7 +629,7 @@ export function getAlertTemplates(): AlertTemplate[] {
     { id: 'disk_high', name: 'High Disk Usage', category: 'resource', metric: 'disk_usage', operator: '>', threshold: 80, severity: 'warning', cooldown_seconds: 3600, needs_target_name: true, description: 'Fires when disk usage exceeds threshold' },
     { id: 'memory_high', name: 'High Memory', category: 'resource', metric: 'memory_usage', operator: '>', threshold: 90, severity: 'critical', cooldown_seconds: 600, needs_target_name: false, description: 'Fires when memory usage exceeds threshold' },
     { id: 'container_stopped', name: 'Container Stopped', category: 'docker', metric: 'container_state', operator: '==', threshold: 0, target_state: 'exited', severity: 'warning', cooldown_seconds: 300, needs_target_name: true, description: 'Fires when a named container stops' },
-    { id: 'ups_on_battery', name: 'UPS On Battery', category: 'ups', metric: 'ups_on_battery', operator: '==', threshold: 1, severity: 'warning', cooldown_seconds: 900, needs_target_name: false, description: 'Fires when the UPS switches to battery power' },
+    { id: 'ups_on_battery', name: 'UPS On Battery', category: 'ups', metric: 'ups_on_battery', operator: '==', threshold: 1, severity: 'critical', cooldown_seconds: 900, needs_target_name: false, description: 'Fires when the UPS switches to battery power' },
     { id: 'ups_low_battery', name: 'UPS Low Battery', category: 'ups', metric: 'ups_battery_percent', operator: '<', threshold: 20, severity: 'critical', cooldown_seconds: 300, needs_target_name: false, description: 'Fires when UPS battery charge drops below the threshold' },
   ]
 }
