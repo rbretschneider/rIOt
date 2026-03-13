@@ -10,6 +10,7 @@ set -euo pipefail
 #   $1                   — rIOt server URL (required)
 #   --fingerprint SHA256:xxx  — verify server cert fingerprint on first connect
 #   --key mykey          — registration key (if server requires one)
+#   --bootstrap-key KEY  — mTLS bootstrap key for certificate enrollment
 #   --version 1.2.3      — install a specific version (default: latest)
 #   -y, --yes            — non-interactive: enable all remote features
 #   --non-interactive    — non-interactive: use defaults (all remote features disabled)
@@ -18,6 +19,7 @@ set -euo pipefail
 RIOT_SERVER=""
 RIOT_KEY=""
 RIOT_FINGERPRINT=""
+RIOT_BOOTSTRAP_KEY=""
 RIOT_VERSION="latest"
 RIOT_INTERACTIVE="auto"  # auto, yes-all, defaults
 
@@ -29,6 +31,10 @@ while [ $# -gt 0 ]; do
             ;;
         --key)
             RIOT_KEY="${2:-}"
+            shift 2
+            ;;
+        --bootstrap-key)
+            RIOT_BOOTSTRAP_KEY="${2:-}"
             shift 2
             ;;
         --version)
@@ -260,6 +266,12 @@ if [ -n "$RIOT_FINGERPRINT" ]; then
   server_cert_pin: \"${RIOT_FINGERPRINT}\""
 fi
 
+BOOTSTRAP_KEY_LINE=""
+if [ -n "$RIOT_BOOTSTRAP_KEY" ]; then
+    BOOTSTRAP_KEY_LINE="
+  bootstrap_key: \"${RIOT_BOOTSTRAP_KEY}\""
+fi
+
 # ── Interactive feature configuration ────────────────────────────────
 ALLOW_REBOOT="false"
 ALLOW_PATCHING="false"
@@ -325,7 +337,7 @@ if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
     cat > "$RIOT_CONFIG_DIR/agent.yaml" <<EOF
 server:
   url: "${RIOT_SERVER}"
-  tls_verify: true${API_KEY_LINE}${CERT_PIN_LINE}
+  tls_verify: true${API_KEY_LINE}${CERT_PIN_LINE}${BOOTSTRAP_KEY_LINE}
 
 agent:
   poll_interval: 60

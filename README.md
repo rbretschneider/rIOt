@@ -13,7 +13,7 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.21.1**
+> **README last updated for v2.22.0**
 
 ## Features
 
@@ -30,8 +30,8 @@
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
-- **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
-- **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
+- **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
+- **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls)
@@ -155,6 +155,9 @@ This will:
 **Optional flags:**
 
 ```bash
+# mTLS: enroll the agent with a bootstrap key (required when mTLS is enabled on the server)
+curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY>
+
 # Verify server cert fingerprint on first connect (shown in Settings > General)
 curl ... | sudo bash -s -- https://server:7331 --fingerprint SHA256:xxxx
 
@@ -163,6 +166,9 @@ curl ... | sudo bash -s -- https://server:7331 --key mykey
 
 # Install a specific version
 curl ... | sudo bash -s -- https://server:7331 --version 2.3.0
+
+# Combine flags as needed
+curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY> --key mykey --fingerprint SHA256:xxxx
 ```
 
 By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration.
@@ -381,64 +387,110 @@ The Alerts tab in the navigation bar shows a red badge with the count of unackno
 
 ## mTLS Device Authentication
 
-rIOt supports optional mTLS (mutual TLS) for certificate-based device authentication. The entire process is managed through the dashboard — no external tools like `openssl` are required.
+mTLS (mutual TLS) makes every agent prove its identity with a certificate before the server accepts any data. When enabled, agents need **both** a valid client certificate **and** their API key — if either is missing or revoked, the server rejects the request. No external tools like `openssl` are needed; the server runs its own CA and the agent handles enrollment automatically.
 
-### How It Works
+### Step-by-Step Setup
 
-1. The server runs a private ECDSA P-256 Certificate Authority, auto-generated on first start and stored in the database
-2. Admins create time-limited bootstrap keys from the dashboard
-3. Agents enroll by presenting a bootstrap key — the server signs a client certificate and returns it
-4. All subsequent agent communication uses the client certificate for authentication
-5. Certificates can be viewed and revoked from the dashboard
+#### Step 1: Enable mTLS during server setup
 
-### Setup
+When you first open the rIOt dashboard, the setup wizard asks whether to enable mTLS. **Check the box.** That's it for the server side.
 
-**1. Enable mTLS on the server:**
-
-Add the environment variable to your Docker Compose or server startup:
+If you're using environment variables instead of the wizard:
 
 ```yaml
 environment:
   - RIOT_MTLS_ENABLED=true
-  - RIOT_TLS_ENABLED=true
-  - RIOT_TLS_CERT_FILE=/path/to/server.crt
-  - RIOT_TLS_KEY_FILE=/path/to/server.key
+  - RIOT_TLS_ENABLED=true    # mTLS requires TLS
 ```
 
-The server automatically generates and stores a CA on first start. No manual CA creation needed.
+The server automatically generates a private Certificate Authority (CA) on first start. You don't need to create any certificates yourself.
 
-**2. Create a bootstrap key in the dashboard:**
+#### Step 2: Create a bootstrap key
 
-Navigate to **Settings > Certificates > Bootstrap Keys** and click **Create Key**. Set an optional label and expiry (default: 24 hours). The plaintext key is shown exactly once — copy it.
+A bootstrap key is a one-time password that lets a new agent request a certificate. Each key can only be used once.
 
-**3. Configure the agent:**
+1. Open the dashboard
+2. Go to **Settings > Certificates**
+3. Click **Create Key**
+4. Give it a label (e.g. "pi-cameras") and set an expiry (default: 24 hours)
+5. **Copy the key** — it's shown exactly once, you can't retrieve it later
+
+You need **one key per device**. If you're installing 5 agents, create 5 keys.
+
+#### Step 3: Install the agent with the bootstrap key
+
+Use the install script with the `--bootstrap-key` flag:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh \
+  | sudo bash -s -- https://<server-ip>:7331 --bootstrap-key <YOUR-KEY>
+```
+
+That's it. On first boot, the agent will automatically:
+
+1. Generate a cryptographic key pair
+2. Send a certificate request to the server using your bootstrap key
+3. Receive a signed certificate back from the server's CA
+4. Save the certificate and CA cert to `/etc/riot/`
+5. Clear the bootstrap key from the config (it's single-use)
+6. Connect using the certificate + API key for all future communication
+
+You'll see the device appear in the dashboard within seconds.
+
+#### Step 4: Verify it worked
+
+Go to **Settings > Certificates** in the dashboard. You should see:
+
+- Your device listed under **Device Certificates** with a serial number and expiry date
+- The bootstrap key you used marked as **Used**
+
+#### What happens if I don't use a bootstrap key?
+
+If mTLS is enabled on the server and you install an agent **without** `--bootstrap-key`, the agent will register with an API key only but the server will **reject all data** (heartbeats, telemetry, etc.) because it requires a client certificate. The device will show as offline.
+
+**Fix:** Uninstall the agent, create a new bootstrap key, and reinstall with `--bootstrap-key`.
+
+### Manual Install with mTLS
+
+If you're not using the install script, add the bootstrap key to your agent config:
 
 ```yaml
 server:
   url: "https://<server-ip>:7331"
+  tls_verify: true
   bootstrap_key: "<key-from-dashboard>"
 ```
 
-**4. Start the agent:**
+Start the agent. After enrollment completes, the config is automatically updated to:
 
-On first run, the agent automatically:
-- Generates an ECDSA P-256 key pair
-- Creates a Certificate Signing Request (CSR)
-- Sends the CSR + bootstrap key to the server
-- Receives and saves the signed certificate and CA cert
-- Updates its config file (clears the bootstrap key, sets cert paths)
-- Connects using mTLS for all future communication
+```yaml
+server:
+  url: "https://<server-ip>:7331"
+  tls_verify: true
+  client_cert: "/etc/riot/client.crt"
+  client_key: "/etc/riot/client.key"
+  ca_cert_file: "/etc/riot/ca.crt"
+```
 
-No manual steps required after writing the initial config — the agent handles everything.
+The `bootstrap_key` line is removed automatically.
+
+### Revoking a Device
+
+If a device is compromised or decommissioned:
+
+1. Go to **Settings > Certificates**
+2. Find the device's certificate
+3. Click **Revoke**
+
+The server immediately stops accepting requests from that certificate. The device will need to be re-enrolled with a new bootstrap key to reconnect.
 
 ### Certificate Management
 
-From the dashboard (**Settings > Certificates**):
+From **Settings > Certificates**:
 
-- **CA info** — download the CA certificate
-- **Device certificates** — view all issued certs with device ID, serial, expiry, and status
-- **Revoke** — immediately revoke a device certificate
-- **Bootstrap keys** — create, list, and delete enrollment keys
+- **CA certificate** — view and download the server's CA cert
+- **Device certificates** — all issued certs with device ID, serial number, expiry, and revocation status
+- **Bootstrap keys** — create, list, and delete enrollment keys; see which keys have been used and by which device
 
 ---
 
@@ -474,6 +526,7 @@ On consecutive failures, the agent increases retry frequency. When connectivity 
 
 Alert delivery is supported via:
 
+- **Email (SMTP)** — send alerts via any SMTP server (Gmail, Mailgun, self-hosted, etc.) with STARTTLS support
 - **ntfy** — push notifications via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server
 - **Webhooks** — JSON POST to any URL with custom headers
 
@@ -483,7 +536,7 @@ Configure channels in **Settings > Notifications**. Each channel can be tested w
 
 ## API
 
-All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header (or mTLS client certificate). Dashboard endpoints require admin authentication (JWT cookie).
+All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. When mTLS is enabled, agent endpoints additionally require a valid client certificate (both are checked). Dashboard endpoints require admin authentication (JWT cookie).
 
 ### Public
 

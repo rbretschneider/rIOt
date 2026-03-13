@@ -78,7 +78,11 @@ func (s *Server) setupRouter() *chi.Mux {
 	// === AGENT routes (device key auth via X-rIOt-Key) ===
 	r.With(registerLimiter.Middleware()).Post("/api/v1/devices/register", h.RegisterDevice)
 	r.Get("/api/v1/update/check", h.AgentUpdateCheck)
-	r.Get("/ws/agent", h.HandleAgentWS)
+	if s.Config.MTLSEnabled && s.CA != nil {
+		r.With(middleware.MTLSDeviceAuth(s.DeviceRepo, s.CARepo)).Get("/ws/agent", h.HandleAgentWS)
+	} else {
+		r.Get("/ws/agent", h.HandleAgentWS)
+	}
 
 	// mTLS enrollment routes (public, bootstrap key auth)
 	if enrollH != nil {
@@ -86,13 +90,22 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Get("/api/v1/ca.pem", enrollH.CACert)
 	}
 
+	// Build device auth middleware stack: API key always required,
+	// client cert also required when mTLS is enabled.
+	deviceAuth := []func(http.Handler) http.Handler{middleware.DeviceAuth(s.DeviceRepo)}
+	if s.Config.MTLSEnabled && s.CA != nil {
+		deviceAuth = append([]func(http.Handler) http.Handler{
+			middleware.MTLSDeviceAuth(s.DeviceRepo, s.CARepo),
+		}, deviceAuth...)
+	}
+
 	r.Route("/api/v1/devices/{id}", func(r chi.Router) {
-		// Agent-authenticated endpoints
-		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/heartbeat", h.Heartbeat)
-		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/telemetry", h.Telemetry)
-		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/docker-events", h.ReceiveDockerEvent)
-		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/events", h.ReceiveAgentEvent)
-		r.With(middleware.DeviceAuth(s.DeviceRepo)).Post("/logs", h.ReceiveDeviceLogs)
+		// Agent-authenticated endpoints (mTLS + API key when mTLS enabled)
+		r.With(deviceAuth...).Post("/heartbeat", h.Heartbeat)
+		r.With(deviceAuth...).Post("/telemetry", h.Telemetry)
+		r.With(deviceAuth...).Post("/docker-events", h.ReceiveDockerEvent)
+		r.With(deviceAuth...).Post("/events", h.ReceiveAgentEvent)
+		r.With(deviceAuth...).Post("/logs", h.ReceiveDeviceLogs)
 
 		// Admin-authenticated endpoints
 		adminAuth := middleware.AdminAuth(s.JWTSecret)
