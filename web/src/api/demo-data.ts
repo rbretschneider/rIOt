@@ -126,6 +126,23 @@ function makeUSB(hostname: string): USBInfo | undefined {
       ],
     }
   }
+  if (hostname === 'backup-server') {
+    return {
+      devices: [
+        { bus: '1', device: '2', vendor_id: '0bc2', product_id: '2322', vendor: 'Seagate', product: 'Backup Plus Slim', serial: 'NA8DXYZ1', description: 'Seagate Backup Plus Slim', device_class: 'Mass Storage', speed_mbps: 5000, sys_path: '1-2' },
+        { bus: '1', device: '3', vendor_id: '0bc2', product_id: '2322', vendor: 'Seagate', product: 'Backup Plus Slim', serial: 'NA8DXYZ2', description: 'Seagate Backup Plus Slim', device_class: 'Mass Storage', speed_mbps: 5000, sys_path: '1-3' },
+        { bus: '2', device: '1', vendor_id: '0764', product_id: '0601', vendor: 'Cyber Power System', product: 'CP1500 UPS', serial: 'CPS-9876', description: 'Cyber Power System CP1500 UPS', device_class: 'HID', speed_mbps: 1.5, sys_path: '2-1' },
+      ],
+    }
+  }
+  if (hostname === 'pi-cameras') {
+    return {
+      devices: [
+        { bus: '1', device: '2', vendor_id: '1415', product_id: '2000', vendor: 'Nam Tai E&E Products', product: 'Sony PS3 Eye Camera', serial: '', description: 'Nam Tai E&E Products Sony PS3 Eye Camera', device_class: 'Miscellaneous', speed_mbps: 480, sys_path: '1-1.2' },
+        { bus: '1', device: '3', vendor_id: '0c45', product_id: '636d', vendor: 'Microdia', product: 'USB 2.0 Camera', serial: '', description: 'Microdia USB 2.0 Camera', device_class: 'Miscellaneous', speed_mbps: 480, sys_path: '1-1.3' },
+      ],
+    }
+  }
   return undefined
 }
 
