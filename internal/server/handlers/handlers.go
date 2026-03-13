@@ -158,11 +158,24 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			}
 			device = existing
 
-			// Return existing API key info (device already has one)
+			// If the agent doesn't have an API key (e.g. device was created by
+			// mTLS enrollment which doesn't generate one), issue a new key now.
+			apiKey := ""
+			agentKey := r.Header.Get("X-rIOt-Key")
+			if agentKey == "" {
+				apiKey = generateAPIKey()
+				if err := h.devices.StoreAPIKey(r.Context(), apiKey, device.ID); err != nil {
+					slog.Error("store API key for enrolled device", "error", err)
+					http.Error(w, `{"error":"failed to store API key"}`, http.StatusInternalServerError)
+					return
+				}
+				slog.Info("generated API key for enrolled device", "device_id", device.ID)
+			}
+
 			writeJSON(w, http.StatusOK, models.DeviceRegistrationResponse{
 				DeviceID: device.ID,
 				ShortID:  device.ShortID,
-				APIKey:   "", // Agent should already have its key
+				APIKey:   apiKey,
 			})
 			h.hub.BroadcastDeviceUpdate(device)
 			h.eventGen.DeviceOnline(r.Context(), device.ID, device.Hostname)

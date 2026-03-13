@@ -34,7 +34,7 @@ func NewHTTPClient(baseURL, apiKey string) *HTTPClient {
 
 // buildCertPool loads all trusted CA/server certificates into a single pool.
 // This includes the TOFU-pinned server cert and the mTLS CA cert (if present).
-func buildCertPool(serverCfg ServerConfig) *x509.CertPool {
+func buildCertPool(serverCfg ServerConfig, logLoads bool) *x509.CertPool {
 	pool := x509.NewCertPool()
 	loaded := 0
 
@@ -43,7 +43,9 @@ func buildCertPool(serverCfg ServerConfig) *x509.CertPool {
 	if data, err := os.ReadFile(serverCertPath); err == nil {
 		if pool.AppendCertsFromPEM(data) {
 			loaded++
-			slog.Info("loaded TOFU-pinned server certificate", "path", serverCertPath)
+			if logLoads {
+				slog.Info("loaded TOFU-pinned server certificate", "path", serverCertPath)
+			}
 		}
 	}
 
@@ -52,7 +54,9 @@ func buildCertPool(serverCfg ServerConfig) *x509.CertPool {
 		if data, err := os.ReadFile(serverCfg.CACertFile); err == nil {
 			if pool.AppendCertsFromPEM(data) {
 				loaded++
-				slog.Info("loaded mTLS CA certificate", "path", serverCfg.CACertFile)
+				if logLoads {
+					slog.Info("loaded mTLS CA certificate", "path", serverCfg.CACertFile)
+				}
 			}
 		} else {
 			slog.Error("failed to read CA cert file", "path", serverCfg.CACertFile, "error", err)
@@ -74,7 +78,7 @@ func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 		tlsCfg.InsecureSkipVerify = true
 	}
 
-	if pool := buildCertPool(serverCfg); pool != nil {
+	if pool := buildCertPool(serverCfg, true); pool != nil {
 		tlsCfg.RootCAs = pool
 	}
 
@@ -110,7 +114,7 @@ func TLSConfigFromServerConfig(serverCfg ServerConfig) *tls.Config {
 		tlsCfg.InsecureSkipVerify = true
 	}
 
-	if pool := buildCertPool(serverCfg); pool != nil {
+	if pool := buildCertPool(serverCfg, false); pool != nil {
 		tlsCfg.RootCAs = pool
 	}
 
