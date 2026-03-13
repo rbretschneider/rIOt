@@ -246,11 +246,11 @@ export default function FleetOverview() {
                       )}
                     </Link>
                   </td>
-                  <td className="px-2 py-3 text-center">
+                  <td className="px-2 py-3 pr-4 text-center">
                     {d.docker_available ? (
                       <Link
                         to={`/devices/${d.id}/containers`}
-                        className="inline-block text-blue-400 hover:text-blue-300 transition-colors"
+                        className="inline-flex items-center justify-center p-1.5 rounded hover:bg-gray-800 text-blue-400 hover:text-blue-300 transition-colors"
                         title="Containers"
                       >
                         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">

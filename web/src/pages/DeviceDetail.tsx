@@ -568,7 +568,7 @@ export default function DeviceDetail() {
                   <th className="text-left py-2">Name</th>
                   <th className="text-left py-2">State</th>
                   <th className="text-left py-2">Enabled</th>
-                  <th className="py-2 w-8"></th>
+                  <th className="py-2 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
@@ -584,14 +584,11 @@ export default function DeviceDetail() {
                       </span>
                     </td>
                     <td className="py-1.5 text-gray-400">{svc.enabled ? 'Yes' : 'No'}</td>
-                    <td className="py-1.5">
-                      <button
+                    <td className="py-1.5 text-right">
+                      <AlertButton
                         onClick={() => setAlertDialog({ metric: 'service_state', targetName: svc.name })}
-                        className="text-gray-600 hover:text-amber-400 transition-colors"
                         title="Create alert for this service"
-                      >
-                        <AlertIcon />
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -613,7 +610,7 @@ export default function DeviceDetail() {
                 <th className="text-right py-2">CPU %</th>
                 <th className="text-right py-2">MEM %</th>
                 <th className="text-left py-2">User</th>
-                <th className="py-2 w-8"></th>
+                <th className="py-2 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -624,14 +621,11 @@ export default function DeviceDetail() {
                   <td className="py-1.5 text-right font-mono">{p.cpu_percent.toFixed(1)}</td>
                   <td className="py-1.5 text-right font-mono">{p.mem_percent.toFixed(1)}</td>
                   <td className="py-1.5 text-gray-400">{p.user}</td>
-                  <td className="py-1.5">
-                    <button
+                  <td className="py-1.5 text-right">
+                    <AlertButton
                       onClick={() => setAlertDialog({ metric: 'process_missing', targetName: p.name })}
-                      className="text-gray-600 hover:text-amber-400 transition-colors"
                       title="Create alert for this process"
-                    >
-                      <AlertIcon />
-                    </button>
+                    />
                   </td>
                 </tr>
               ))}
@@ -748,7 +742,7 @@ export default function DeviceDetail() {
                   <th className="text-left py-2">Serial</th>
                   <th className="text-left py-2">Class</th>
                   <th className="text-right py-2">Speed</th>
-                  <th className="py-2 w-8"></th>
+                  <th className="py-2 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
@@ -761,17 +755,14 @@ export default function DeviceDetail() {
                     <td className="py-2 text-right font-mono text-gray-400">
                       {dev.speed_mbps ? `${dev.speed_mbps} Mbps` : '-'}
                     </td>
-                    <td className="py-2">
-                      <button
+                    <td className="py-2 text-right">
+                      <AlertButton
                         onClick={() => setAlertDialog({
                           metric: 'usb_missing',
                           targetName: dev.serial || `${dev.vendor_id}:${dev.product_id}`,
                         })}
-                        className="text-gray-600 hover:text-amber-400 transition-colors"
                         title="Alert if this device disconnects"
-                      >
-                        <AlertIcon />
-                      </button>
+                      />
                     </td>
                   </tr>
                 ))}
@@ -1170,9 +1161,21 @@ function isVirtualInterface(name: string) {
 
 function AlertIcon() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" />
     </svg>
+  )
+}
+
+function AlertButton({ onClick, title }: { onClick: () => void; title: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="p-1.5 rounded hover:bg-gray-800 text-gray-600 hover:text-amber-400 transition-colors"
+      title={title}
+    >
+      <AlertIcon />
+    </button>
   )
 }
 
@@ -1187,7 +1190,7 @@ function NicTable({ interfaces, onCreateAlert }: { interfaces: import('../types/
           <th className="text-left py-2">IPv4</th>
           <th className="text-left py-2">MAC</th>
           <th className="text-right py-2">TX / RX</th>
-          {onCreateAlert && <th className="py-2 w-8"></th>}
+          {onCreateAlert && <th className="py-2 w-10"></th>}
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-800/50">
@@ -1203,14 +1206,11 @@ function NicTable({ interfaces, onCreateAlert }: { interfaces: import('../types/
               {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
             </td>
             {onCreateAlert && (
-              <td className="py-2">
-                <button
+              <td className="py-2 text-right">
+                <AlertButton
                   onClick={() => onCreateAlert(iface.name)}
-                  className="text-gray-600 hover:text-amber-400 transition-colors"
                   title="Create alert for this interface"
-                >
-                  <AlertIcon />
-                </button>
+                />
               </td>
             )}
           </tr>
