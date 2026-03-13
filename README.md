@@ -13,12 +13,12 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.17.3**
+> **README last updated for v2.21.1**
 
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -27,7 +27,8 @@
 - **Open registration** — devices register automatically; optionally require a registration key via Settings
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
 - **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery; fleet status dot turns yellow when a device is on battery power
-- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, and UPS power events; one-click alert creation from device view; pre-built templates
+- **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
+- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via ntfy and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, and zero external tooling
@@ -221,6 +222,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - logs
        - ups
        - webservers
+       - usb
 
    docker:
      enabled: "auto"               # "auto" (detect), "true", or "false"
@@ -321,16 +323,21 @@ New installs via `install.sh` include all rules automatically.
 | `cpu` | Usage %, per-core, load average, temperature, frequency |
 | `memory` | RAM total/used/free/cached/buffers, swap, usage % |
 | `disk` | Block devices, mounted filesystems with usage |
-| `network` | Interfaces, IPs, MACs, state, bytes tx/rx |
-| `os_info` | OS name/version, kernel, uptime, timezone |
-| `updates` | Package manager, pending updates, security updates |
-| `services` | systemd services — name, state, enabled |
-| `processes` | Top 15 by CPU, top 15 by memory |
-| `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events |
-| `security` | SELinux/AppArmor, firewall, open ports, failed logins |
+| `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
+| `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
+| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status |
+| `services` | systemd services — name, state, enabled, PID, memory usage |
+| `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
+| `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
+| `security` | SELinux/AppArmor, firewall, open ports, failed logins, logged-in users |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
-| `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config |
+| `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
+| `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
+
+**Note:** The `usb` collector is Linux-only. It reads from `/sys/bus/usb/devices/` and uses the system `usb.ids` database (shipped with `usbutils` or `hwdata`) to resolve vendor/product names for devices that don't self-report (e.g., Google Coral TPU). No additional packages or permissions are required.
+
+**Note:** Existing agent installs use a whitelist from the installer — new collectors like `usb` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
 
 ---
 
@@ -349,11 +356,12 @@ Traditional numeric alerts — fire when a metric crosses a threshold:
 
 ### State Alerts
 
-Monitor service, network, process, and UPS state changes:
+Monitor service, network, process, USB, and UPS state changes:
 
 - **Service monitoring** — alert when a systemd service enters a specific state (stopped, failed, etc.)
 - **Network interface monitoring** — alert when a NIC goes down
 - **Process monitoring** — alert when a named process is not running
+- **USB device monitoring** — alert when a USB device disappears (matched by vendor:product ID, serial number, or device description)
 - **UPS monitoring** — alert when UPS switches to battery or battery charge drops below threshold
 - **Certificate expiry** — warning when an SSL certificate has fewer than 30 days remaining; critical when expired
 
@@ -363,7 +371,7 @@ Pre-built templates are available in Settings > Alert Rules > "Create from Templ
 
 ### One-Click Alert Creation
 
-From the device detail view, click the alert icon next to any service, process, network interface, or UPS to instantly create a targeted alert rule.
+From the device detail view, click the alert icon next to any service, process, network interface, USB device, or UPS to instantly create a targeted alert rule.
 
 ### Event Acknowledgement
 
