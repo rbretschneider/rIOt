@@ -331,6 +331,17 @@ docker:
   terminal_enabled: ${ALLOW_DOCKER_TERMINAL}"
 fi
 
+# ── Handle re-install with bootstrap key ──────────────────────────────
+# If a bootstrap key is provided and a config already exists, the user is
+# re-enrolling. Wipe old enrollment state so the agent starts fresh.
+if [ -n "$RIOT_BOOTSTRAP_KEY" ] && [ -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
+    echo "==> Bootstrap key provided — resetting agent for fresh enrollment"
+    rm -f "$RIOT_CONFIG_DIR/agent.yaml"
+    rm -f "$RIOT_CONFIG_DIR/client.crt" "$RIOT_CONFIG_DIR/client.key" "$RIOT_CONFIG_DIR/ca.crt"
+    rm -f "$RIOT_CONFIG_DIR/server.crt"
+    rm -f "$RIOT_DATA_DIR/device-id"
+fi
+
 # ── Write config (skip if already exists) ─────────────────────────────
 if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
     echo "==> Writing config to ${RIOT_CONFIG_DIR}/agent.yaml"
