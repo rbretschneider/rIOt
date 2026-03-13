@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useEffect, useCallback } from 'react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { settingsApi } from '../api/settings'
 
 const INSTALL_SCRIPT_URL = 'https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh'
 const RELEASES_URL = 'https://github.com/rbretschneider/rIOt/releases/latest'
@@ -12,14 +13,15 @@ const OS_LABELS: Record<OS, string> = {
   windows: 'Windows',
 }
 
-function buildCommand(serverUrl: string, fingerprint?: string, regKey?: string): string {
+function buildCommand(serverUrl: string, opts: { fingerprint?: string; regKey?: string; bootstrapKey?: string }): string {
   const parts = [
     `curl -sSL ${INSTALL_SCRIPT_URL} |`,
     'sudo bash -s --',
     serverUrl,
   ]
-  if (fingerprint) parts.push(`--fingerprint ${fingerprint}`)
-  if (regKey) parts.push(`--key ${regKey}`)
+  if (opts.bootstrapKey) parts.push(`--bootstrap-key ${opts.bootstrapKey}`)
+  if (opts.fingerprint) parts.push(`--fingerprint ${opts.fingerprint}`)
+  if (opts.regKey) parts.push(`--key ${opts.regKey}`)
   return parts.join(' ')
 }
 
@@ -32,6 +34,18 @@ export default function SetupGuide({ inline, onClose }: Props) {
   const { data: certInfo } = useQuery({
     queryKey: ['server-cert'],
     queryFn: () => fetch('/api/v1/server-cert', { credentials: 'same-origin' }).then(r => r.json()),
+    staleTime: 60 * 1000,
+  })
+
+  // Detect mTLS: if /api/v1/ca.pem returns 200, mTLS is enabled
+  const { data: mtlsEnabled } = useQuery({
+    queryKey: ['mtls-check'],
+    queryFn: async () => {
+      try {
+        const r = await fetch('/api/v1/ca.pem', { credentials: 'same-origin' })
+        return r.ok
+      } catch { return false }
+    },
     staleTime: 60 * 1000,
   })
 
@@ -48,18 +62,66 @@ export default function SetupGuide({ inline, onClose }: Props) {
   const serverUrl = window.location.origin
   const fingerprint = certInfo?.fingerprint
 
+  // Auto-generate bootstrap key when mTLS is enabled
+  const [bootstrapKey, setBootstrapKey] = useState<string | null>(null)
+  const [keyError, setKeyError] = useState('')
+
+  const generateKeyMut = useMutation({
+    mutationFn: () => settingsApi.createBootstrapKey({ label: 'Add Device', expires_in_hours: 24 }),
+    onSuccess: (data) => {
+      setBootstrapKey(data.key)
+      setKeyError('')
+    },
+    onError: () => setKeyError('Failed to generate bootstrap key'),
+  })
+
+  // Auto-generate key when modal opens and mTLS is enabled
+  useEffect(() => {
+    if (mtlsEnabled && !bootstrapKey && !generateKeyMut.isPending) {
+      generateKeyMut.mutate()
+    }
+  }, [mtlsEnabled]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function handleCopy(text: string) {
     navigator.clipboard.writeText(text)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const linuxCommand = buildCommand(serverUrl, fingerprint, regKey)
+  const linuxCommand = buildCommand(serverUrl, {
+    fingerprint,
+    regKey,
+    bootstrapKey: mtlsEnabled ? (bootstrapKey ?? undefined) : undefined,
+  })
 
-  const macConfigYaml = `server:\n  url: "${serverUrl}"${fingerprint ? `\n  server_cert_pin: "${fingerprint}"` : ''}${regKey ? `\n  api_key: "${regKey}"` : ''}`
+  const macConfigYaml = [
+    `server:`,
+    `  url: "${serverUrl}"`,
+    fingerprint ? `  server_cert_pin: "${fingerprint}"` : '',
+    regKey ? `  api_key: "${regKey}"` : '',
+    mtlsEnabled && bootstrapKey ? `  bootstrap_key: "${bootstrapKey}"` : '',
+  ].filter(Boolean).join('\n')
 
   const content = (
     <div className="space-y-5">
+      {/* mTLS notice */}
+      {mtlsEnabled && (
+        <div className="bg-blue-900/20 border border-blue-800/40 rounded-lg px-4 py-3">
+          <p className="text-xs text-blue-300">
+            <span className="font-medium">mTLS is enabled.</span>{' '}
+            A one-time bootstrap key has been generated and included in the install command below. Each device needs its own key — click "New Key" to generate another.
+          </p>
+          {keyError && <p className="text-xs text-red-400 mt-1">{keyError}</p>}
+          <button
+            onClick={() => { setBootstrapKey(null); generateKeyMut.mutate() }}
+            disabled={generateKeyMut.isPending}
+            className="mt-2 px-2 py-1 text-xs bg-blue-800/40 text-blue-300 hover:text-white rounded transition-colors"
+          >
+            {generateKeyMut.isPending ? 'Generating...' : 'New Key'}
+          </button>
+        </div>
+      )}
+
       {/* OS Tabs */}
       <div className="flex gap-1 bg-gray-800/50 rounded-lg p-1">
         {(Object.keys(OS_LABELS) as OS[]).map(os => (
@@ -83,21 +145,26 @@ export default function SetupGuide({ inline, onClose }: Props) {
           <div>
             <h4 className="text-sm font-medium text-white mb-2">Install Command</h4>
             <p className="text-xs text-gray-500 mb-2">Run this on the target device to install and register the agent:</p>
-            <div className="relative bg-gray-800 rounded-lg p-4 group">
-              <code className="text-xs text-emerald-400 break-all select-all leading-relaxed">{linuxCommand}</code>
-              <button
-                onClick={() => handleCopy(linuxCommand)}
-                className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors"
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
+            {mtlsEnabled && !bootstrapKey && generateKeyMut.isPending ? (
+              <div className="bg-gray-800 rounded-lg p-4 text-xs text-gray-500">Generating bootstrap key...</div>
+            ) : (
+              <div className="relative bg-gray-800 rounded-lg p-4 group">
+                <code className="text-xs text-emerald-400 break-all select-all leading-relaxed">{linuxCommand}</code>
+                <button
+                  onClick={() => handleCopy(linuxCommand)}
+                  className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors"
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            )}
           </div>
           <div>
             <h4 className="text-sm font-medium text-white mb-2">What this does</h4>
             <ul className="text-xs text-gray-400 space-y-1 list-disc list-inside">
               <li>Downloads and installs the rIOt agent binary</li>
               <li>Creates a systemd service for automatic startup</li>
+              {mtlsEnabled && <li>Enrolls the device with a client certificate (mTLS)</li>}
               <li>Registers the device with this server</li>
               <li>Pins the server TLS certificate via TOFU (trust on first use)</li>
             </ul>
@@ -105,27 +172,6 @@ export default function SetupGuide({ inline, onClose }: Props) {
           <div>
             <h4 className="text-sm font-medium text-white mb-2">Requirements</h4>
             <p className="text-xs text-gray-400">Linux with systemd, root/sudo access, and curl installed.</p>
-          </div>
-          <div>
-            <h4 className="text-sm font-medium text-white mb-2">Flags Reference</h4>
-            <div className="text-xs">
-              <table className="w-full">
-                <tbody className="divide-y divide-gray-800">
-                  <tr>
-                    <td className="py-1.5 pr-4 font-mono text-gray-300 whitespace-nowrap">--fingerprint</td>
-                    <td className="py-1.5 text-gray-500">Pin server cert on install (skips TOFU prompt)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1.5 pr-4 font-mono text-gray-300 whitespace-nowrap">--key</td>
-                    <td className="py-1.5 text-gray-500">Registration key (if server requires one)</td>
-                  </tr>
-                  <tr>
-                    <td className="py-1.5 pr-4 font-mono text-gray-300 whitespace-nowrap">--version</td>
-                    <td className="py-1.5 text-gray-500">Install a specific agent version (default: latest)</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
           </div>
         </>
       )}
@@ -136,15 +182,19 @@ export default function SetupGuide({ inline, onClose }: Props) {
           <div>
             <h4 className="text-sm font-medium text-white mb-2">Install Command</h4>
             <p className="text-xs text-gray-500 mb-2">The install script works on macOS too — it downloads the correct binary and prints manual run instructions:</p>
-            <div className="relative bg-gray-800 rounded-lg p-4 group">
-              <code className="text-xs text-emerald-400 break-all select-all leading-relaxed">{linuxCommand}</code>
-              <button
-                onClick={() => handleCopy(linuxCommand)}
-                className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors"
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-            </div>
+            {mtlsEnabled && !bootstrapKey && generateKeyMut.isPending ? (
+              <div className="bg-gray-800 rounded-lg p-4 text-xs text-gray-500">Generating bootstrap key...</div>
+            ) : (
+              <div className="relative bg-gray-800 rounded-lg p-4 group">
+                <code className="text-xs text-emerald-400 break-all select-all leading-relaxed">{linuxCommand}</code>
+                <button
+                  onClick={() => handleCopy(linuxCommand)}
+                  className="absolute top-2 right-2 px-2 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors"
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            )}
           </div>
           <div>
             <h4 className="text-sm font-medium text-white mb-2">What this does</h4>
@@ -152,6 +202,7 @@ export default function SetupGuide({ inline, onClose }: Props) {
               <li>Detects Intel or Apple Silicon architecture</li>
               <li>Downloads the correct agent binary to <code className="text-gray-300">/usr/local/bin</code></li>
               <li>Writes a default config to <code className="text-gray-300">/etc/riot/agent.yaml</code></li>
+              {mtlsEnabled && <li>Enrolls the device with a client certificate (mTLS)</li>}
               <li>Prints instructions for running the agent manually or as a launchd service</li>
             </ul>
           </div>
@@ -182,7 +233,11 @@ export default function SetupGuide({ inline, onClose }: Props) {
             <p className="text-xs text-gray-500 mb-2">
               Create <code className="text-gray-300">%ProgramData%\riot\agent.yaml</code> with the following content:
             </p>
-            <CodeBlock text={macConfigYaml} copied={copied} onCopy={handleCopy} />
+            {mtlsEnabled && !bootstrapKey && generateKeyMut.isPending ? (
+              <div className="bg-gray-800 rounded-lg p-4 text-xs text-gray-500">Generating bootstrap key...</div>
+            ) : (
+              <CodeBlock text={macConfigYaml} copied={copied} onCopy={handleCopy} />
+            )}
           </div>
           <div>
             <h4 className="text-sm font-medium text-white mb-1">4. Run the agent</h4>
@@ -202,7 +257,10 @@ export default function SetupGuide({ inline, onClose }: Props) {
   if (inline) {
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-        <h3 className="text-base font-semibold text-white mb-4">Add Your First Device</h3>
+        <h3 className="text-base font-semibold text-white mb-1">Add Your First Device</h3>
+        {mtlsEnabled && (
+          <p className="text-xs text-blue-400 mb-4">mTLS is enabled — the install command below includes a bootstrap key for certificate enrollment.</p>
+        )}
         {content}
       </div>
     )
