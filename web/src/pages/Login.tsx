@@ -39,7 +39,7 @@ export default function Login({ onLogin }: LoginProps) {
             Demo mode — type anything and click Sign in
           </div>
         )}
-        <form onSubmit={handleSubmit} autoComplete="on">
+        <form onSubmit={handleSubmit} action="/api/v1/auth/login" method="POST" autoComplete="on">
           <label className="block text-sm text-gray-400 mb-2" htmlFor="username">
             Username
           </label>
@@ -48,8 +48,7 @@ export default function Login({ onLogin }: LoginProps) {
             name="username"
             type="text"
             autoComplete="username"
-            value="admin"
-            readOnly
+            defaultValue="admin"
             tabIndex={-1}
             className="w-full px-3 py-2 mb-4 bg-gray-800 border border-gray-700 rounded-md text-gray-400 cursor-default focus:outline-none"
           />
