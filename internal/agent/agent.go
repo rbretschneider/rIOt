@@ -62,13 +62,6 @@ func (a *Agent) Run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// mTLS enrollment: if no client cert exists but a bootstrap key is set, enroll first
-	if a.config.Server.ClientCert == "" && a.config.Server.BootstrapKey != "" {
-		if err := a.enroll(); err != nil {
-			return fmt.Errorf("mTLS enrollment failed: %w", err)
-		}
-	}
-
 	// Auto-detect HTTP→HTTPS upgrade: if server is running TLS but config has http://,
 	// upgrade the URL automatically so TOFU and registration work.
 	if strings.HasPrefix(a.config.Server.URL, "http://") {
@@ -81,10 +74,18 @@ func (a *Agent) Run() error {
 		}
 	}
 
-	// TOFU: pin server cert on first HTTPS connection
+	// TOFU: pin server cert on first HTTPS connection (must happen before enrollment)
 	if strings.HasPrefix(a.config.Server.URL, "https://") {
 		if err := a.trustServerCert(); err != nil {
 			slog.Warn("TOFU cert pinning failed, continuing with current TLS settings", "error", err)
+		}
+	}
+
+	// mTLS enrollment: if no client cert exists but a bootstrap key is set, enroll now
+	// (runs after TOFU so the enrollment request trusts the server's certificate)
+	if a.config.Server.ClientCert == "" && a.config.Server.BootstrapKey != "" {
+		if err := a.enroll(); err != nil {
+			return fmt.Errorf("mTLS enrollment failed: %w", err)
 		}
 	}
 

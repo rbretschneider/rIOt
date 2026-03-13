@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -55,7 +57,20 @@ func (a *Agent) enroll() error {
 	}
 	body, _ := json.Marshal(enrollReq)
 
-	resp, err := http.Post(a.config.Server.URL+"/api/v1/enroll", "application/json", bytes.NewReader(body))
+	// Build a TLS-aware client using the pinned server cert (from TOFU) if available
+	client := &http.Client{Timeout: 30 * time.Second}
+	if a.config.Server.CACertFile != "" {
+		caCert, err := os.ReadFile(a.config.Server.CACertFile)
+		if err == nil {
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(caCert)
+			client.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{RootCAs: pool},
+			}
+		}
+	}
+
+	resp, err := client.Post(a.config.Server.URL+"/api/v1/enroll", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("enrollment request: %w", err)
 	}
