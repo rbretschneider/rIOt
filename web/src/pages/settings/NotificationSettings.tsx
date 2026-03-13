@@ -6,6 +6,7 @@ import type { NotificationChannel } from '../../types/models'
 const CHANNEL_TYPES = [
   { value: 'ntfy', label: 'ntfy' },
   { value: 'webhook', label: 'Webhook' },
+  { value: 'smtp', label: 'Email (SMTP)' },
 ]
 
 const emptyChannel: Partial<NotificationChannel> = {
@@ -120,6 +121,12 @@ export default function NotificationSettings() {
               {ch.type === 'webhook' && (
                 <>{(ch.config.url as string) || '(no URL)'}</>
               )}
+              {ch.type === 'smtp' && (
+                <>
+                  {(ch.config.host as string) || 'localhost'}:{(ch.config.port as number) || 587}
+                  {' → '}{(ch.config.to as string) || '(no recipients)'}
+                </>
+              )}
             </div>
           </div>
         ))}
@@ -181,6 +188,12 @@ export default function NotificationSettings() {
               )}
               {editing.type === 'webhook' && (
                 <WebhookConfig
+                  config={(editing.config || {}) as Record<string, unknown>}
+                  onChange={config => setEditing({ ...editing, config })}
+                />
+              )}
+              {editing.type === 'smtp' && (
+                <SmtpConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
                 />
@@ -299,6 +312,80 @@ function WebhookConfig({ config, onChange }: { config: Record<string, unknown>; 
           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
         />
       </Field>
+    </div>
+  )
+}
+
+function SmtpConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+  return (
+    <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
+      <div className="grid grid-cols-3 gap-3">
+        <div className="col-span-2">
+          <Field label="SMTP Host">
+            <input
+              value={(config.host as string) || ''}
+              onChange={e => onChange({ ...config, host: e.target.value })}
+              placeholder="smtp.gmail.com"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+            />
+          </Field>
+        </div>
+        <Field label="Port">
+          <input
+            type="number"
+            value={(config.port as number) || 587}
+            onChange={e => onChange({ ...config, port: parseInt(e.target.value) || 587 })}
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+          />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Username">
+          <input
+            value={(config.username as string) || ''}
+            onChange={e => onChange({ ...config, username: e.target.value })}
+            placeholder="user@example.com"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+          />
+        </Field>
+        <Field label="Password">
+          <input
+            type="password"
+            value={(config.password as string) || ''}
+            onChange={e => onChange({ ...config, password: e.target.value })}
+            placeholder="App password"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+          />
+        </Field>
+      </div>
+      <Field label="From Address">
+        <input
+          value={(config.from as string) || ''}
+          onChange={e => onChange({ ...config, from: e.target.value })}
+          placeholder="riot@example.com"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <Field label="To (comma-separated)">
+        <input
+          value={(config.to as string) || ''}
+          onChange={e => onChange({ ...config, to: e.target.value })}
+          placeholder="admin@example.com, ops@example.com"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-gray-300">
+        <input
+          type="checkbox"
+          checked={config.starttls !== false}
+          onChange={e => onChange({ ...config, starttls: e.target.checked })}
+          className="rounded bg-gray-800 border-gray-600"
+        />
+        Use STARTTLS
+      </label>
+      <p className="text-xs text-gray-500">
+        For Gmail, use smtp.gmail.com:587 with an App Password. For local relays, disable STARTTLS and leave credentials empty.
+      </p>
     </div>
   )
 }
