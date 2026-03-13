@@ -9,6 +9,11 @@ export const FEATURES = {
   web_servers: { label: 'Web Servers', description: 'Web server section on device detail' },
   ups: { label: 'UPS', description: 'UPS section on device detail' },
   security: { label: 'Security Details', description: 'Security details section on device detail (firewall, SELinux, etc.)' },
+  network: { label: 'Network', description: 'Network interfaces section on device detail' },
+  disk: { label: 'Filesystems', description: 'Filesystem / disk usage section on device detail' },
+  services: { label: 'Services & Processes', description: 'Services and top processes sections on device detail' },
+  updates: { label: 'Updates', description: 'Pending updates section on device detail' },
+  logs: { label: 'Device Logs', description: 'Device log viewer on device detail' },
 } as const
 
 export type FeatureKey = keyof typeof FEATURES

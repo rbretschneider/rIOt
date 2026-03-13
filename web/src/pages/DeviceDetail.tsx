@@ -515,7 +515,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Network */}
-      {tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
+      {isEnabled('network') && tel?.network?.interfaces && tel.network.interfaces.length > 0 && (
         <NetworkSection
           interfaces={tel.network.interfaces}
           onCreateAlert={(name) => setAlertDialog({ metric: 'nic_state', targetName: name })}
@@ -523,7 +523,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Filesystems */}
-      {tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
+      {isEnabled('disk') && tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
         <Section title="Filesystems">
           <div className="max-h-64 overflow-auto scrollbar-thin">
             <table className="w-full text-sm min-w-[480px]">
@@ -559,6 +559,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Services & Top Processes — side by side */}
+      {isEnabled('services') && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {tel?.services && tel.services.length > 0 && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-5 h-96 flex flex-col">
@@ -637,9 +638,10 @@ export default function DeviceDetail() {
         </div>
       )}
       </div>
+      )}
 
       {/* Updates */}
-      {tel?.updates && tel.updates.pending_updates > 0 && (
+      {isEnabled('updates') && tel?.updates && tel.updates.pending_updates > 0 && (
         <Section title={`Pending Updates (${tel.updates.pending_updates})`}>
           <div className="max-h-48 overflow-y-auto scrollbar-thin">
             <table className="w-full text-sm">
@@ -1013,6 +1015,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Device Logs */}
+      {isEnabled('logs') && (
       <Section title="Device Logs">
         <div className="flex items-center justify-between mb-3">
           <div className="flex gap-2">
@@ -1092,6 +1095,7 @@ export default function DeviceDetail() {
           </div>
         )}
       </Section>
+      )}
 
       {/* Recent Events */}
       {events && events.filter(e => e.device_id === id).length > 0 && (() => {

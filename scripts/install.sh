@@ -367,6 +367,10 @@ collectors:
     - processes
     - docker
     - security
+    - logs
+    - ups
+    - webservers
+    - usb
 ${COMMANDS_SECTION}
 ${TERMINAL_SECTION}
 ${DOCKER_SECTION}
