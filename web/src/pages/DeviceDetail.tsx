@@ -785,7 +785,18 @@ export default function DeviceDetail() {
       {tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
         <Section title="Web Servers">
           <div className="space-y-6">
-            {tel.web_servers.servers.map((srv) => (
+            {tel.web_servers.servers.map((srv, srvIdx) => {
+              const hasSecurityConfig = srv.security_config && (
+                (srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0) ||
+                (srv.security_config.rate_limiting && srv.security_config.rate_limiting.length > 0) ||
+                (srv.security_config.access_controls && srv.security_config.access_controls.length > 0) ||
+                (srv.security_config.allowed_methods && srv.security_config.allowed_methods.length > 0) ||
+                (srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0)
+              )
+              const hasRightColumn = (srv.certs && srv.certs.length > 0) ||
+                (srv.upstreams && srv.upstreams.length > 0) || hasSecurityConfig
+
+              return (
               <div key={srv.name} className="space-y-4">
                 {/* Header */}
                 <div className="flex items-center gap-3 flex-wrap">
@@ -819,113 +830,101 @@ export default function DeviceDetail() {
                   </div>
                 )}
 
-                {/* Sites */}
-                {srv.sites && srv.sites.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Sites</h3>
-                    <div className="max-h-64 overflow-auto scrollbar-thin">
-                      <table className="w-full text-sm min-w-[600px]">
-                        <thead className="sticky top-0 bg-gray-900 z-10">
-                          <tr className="text-gray-500 text-xs uppercase">
-                            <th className="text-left py-2 pr-4">Server Name(s)</th>
-                            <th className="text-left py-2 pr-4 max-w-[180px]">Listen</th>
-                            <th className="text-left py-2 pr-4">Target</th>
-                            <th className="text-left py-2 pr-4">SSL</th>
-                            <th className="text-left py-2">Config</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-800/50">
-                          {srv.sites.map((site, i) => (
-                            <tr key={i}>
-                              <td className="py-1.5 pr-4 font-mono text-xs">{site.server_names?.join(', ') || '-'}</td>
-                              <td className="py-1.5 pr-4 font-mono text-xs text-gray-400 max-w-[180px] break-words">{site.listen?.join(', ') || '-'}</td>
-                              <td className="py-1.5 pr-4 font-mono text-xs text-gray-400">{site.proxy_pass || site.root || '-'}</td>
-                              <td className="py-1.5 pr-4">
-                                {site.ssl_cert ? (
-                                  <span className="text-emerald-400 text-xs">Yes</span>
-                                ) : (
-                                  <span className="text-gray-500 text-xs">No</span>
-                                )}
-                              </td>
-                              <td className="py-1.5 font-mono text-xs text-gray-500 max-w-[200px] truncate" title={site.config_file}>
-                                {site.config_file ? site.config_file.split('/').pop() : '-'}
-                              </td>
+                {/* Two-column layout: Sites (left) | Certs + Upstreams + Security (right) */}
+                <div className={`grid gap-4 ${hasRightColumn ? 'grid-cols-1 xl:grid-cols-[1fr_1fr]' : ''}`}>
+                  {/* Sites */}
+                  {srv.sites && srv.sites.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Sites</h3>
+                      <div className="max-h-80 overflow-auto scrollbar-thin">
+                        <table className="w-full text-sm min-w-[480px]">
+                          <thead className="sticky top-0 bg-gray-900 z-10">
+                            <tr className="text-gray-500 text-xs uppercase">
+                              <th className="text-left py-2 pr-3">Server Name(s)</th>
+                              <th className="text-left py-2 pr-3">Listen</th>
+                              <th className="text-left py-2 pr-3">Target</th>
+                              <th className="text-left py-2 pr-3">SSL</th>
+                              <th className="text-left py-2">Config</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                {/* Certificates */}
-                {srv.certs && srv.certs.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Certificates</h3>
-                    <div className="max-h-64 overflow-auto scrollbar-thin">
-                      <table className="w-full text-sm min-w-[700px]">
-                        <thead className="sticky top-0 bg-gray-900">
-                          <tr className="text-gray-500 text-xs uppercase">
-                            <th className="text-left py-2">Subject</th>
-                            <th className="text-left py-2">Issuer</th>
-                            <th className="text-left py-2">SANs</th>
-                            <th className="text-left py-2">Expires</th>
-                            <th className="text-left py-2">Days Left</th>
-                            <th className="text-left py-2">Key</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-800/50">
-                          {srv.certs.map((cert, i) => {
-                            const expiryColor = cert.days_left <= 0 ? 'text-red-400'
-                              : cert.days_left <= 7 ? 'text-red-400'
-                              : cert.days_left <= 30 ? 'text-amber-400'
-                              : 'text-emerald-400'
-                            return (
+                          </thead>
+                          <tbody className="divide-y divide-gray-800/50">
+                            {srv.sites.map((site, i) => (
                               <tr key={i}>
-                                <td className="py-1.5 font-mono text-xs">{cert.subject || '-'}</td>
-                                <td className="py-1.5 text-xs text-gray-400">{cert.issuer || '-'}</td>
-                                <td className="py-1.5 font-mono text-xs text-gray-400 max-w-[200px] truncate" title={cert.sans?.join(', ')}>
-                                  {cert.sans?.join(', ') || '-'}
-                                </td>
-                                <td className="py-1.5 text-xs text-gray-400">
-                                  {cert.not_after ? new Date(cert.not_after).toLocaleDateString() : '-'}
-                                </td>
-                                <td className={`py-1.5 text-xs font-medium ${expiryColor}`}>
-                                  {cert.days_left <= 0 ? (
-                                    <span className="inline-flex items-center gap-1">
-                                      <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold">EXPIRED</span>
-                                    </span>
+                                <td className="py-1.5 pr-3 font-mono text-xs">{site.server_names?.join(', ') || '-'}</td>
+                                <td className="py-1.5 pr-3 font-mono text-xs text-gray-400 max-w-[150px] break-words">{site.listen?.join(', ') || '-'}</td>
+                                <td className="py-1.5 pr-3 font-mono text-xs text-gray-400 max-w-[200px] truncate" title={site.proxy_pass || site.root}>{site.proxy_pass || site.root || '-'}</td>
+                                <td className="py-1.5 pr-3">
+                                  {site.ssl_cert ? (
+                                    <span className="text-emerald-400 text-xs">Yes</span>
                                   ) : (
-                                    `${cert.days_left}d`
+                                    <span className="text-gray-500 text-xs">No</span>
                                   )}
                                 </td>
-                                <td className="py-1.5 text-xs text-gray-500">{cert.key_type || '-'}</td>
+                                <td className="py-1.5 font-mono text-xs text-gray-500 max-w-[140px] truncate" title={site.config_file}>
+                                  {site.config_file ? site.config_file.split('/').pop() : '-'}
+                                </td>
                               </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* Upstreams */}
-                {srv.upstreams && srv.upstreams.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Upstreams</h3>
-                    <div className="max-h-64 overflow-auto scrollbar-thin">
-                      <table className="w-full text-sm">
-                        <thead className="sticky top-0 bg-gray-900">
-                          <tr className="text-gray-500 text-xs uppercase">
-                            <th className="text-left py-2">Name</th>
-                            <th className="text-left py-2">Servers</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-800/50">
-                          {srv.upstreams.map((up, i) => (
-                            <tr key={i}>
-                              <td className="py-1.5 font-mono text-xs">{up.name}</td>
-                              <td className="py-1.5">
+                  {/* Right column: Certs, Upstreams, Security Config */}
+                  {hasRightColumn && (
+                    <div className="space-y-4">
+                      {/* Certificates */}
+                      {srv.certs && srv.certs.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Certificates</h3>
+                          <div className="max-h-48 overflow-auto scrollbar-thin">
+                            <table className="w-full text-sm">
+                              <thead className="sticky top-0 bg-gray-900">
+                                <tr className="text-gray-500 text-xs uppercase">
+                                  <th className="text-left py-2">Subject</th>
+                                  <th className="text-left py-2">Expires</th>
+                                  <th className="text-left py-2">Days Left</th>
+                                  <th className="text-left py-2">Issuer</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-800/50">
+                                {srv.certs.map((cert, i) => {
+                                  const expiryColor = cert.days_left <= 0 ? 'text-red-400'
+                                    : cert.days_left <= 7 ? 'text-red-400'
+                                    : cert.days_left <= 30 ? 'text-amber-400'
+                                    : 'text-emerald-400'
+                                  return (
+                                    <tr key={i}>
+                                      <td className="py-1.5 font-mono text-xs" title={cert.sans?.join(', ')}>{cert.subject || '-'}</td>
+                                      <td className="py-1.5 text-xs text-gray-400">
+                                        {cert.not_after ? new Date(cert.not_after).toLocaleDateString() : '-'}
+                                      </td>
+                                      <td className={`py-1.5 text-xs font-medium ${expiryColor}`}>
+                                        {cert.days_left <= 0 ? (
+                                          <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold">EXPIRED</span>
+                                        ) : (
+                                          `${cert.days_left}d`
+                                        )}
+                                      </td>
+                                      <td className="py-1.5 text-xs text-gray-500">{cert.issuer || '-'}</td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Upstreams */}
+                      {srv.upstreams && srv.upstreams.length > 0 && (
+                        <div>
+                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Upstreams</h3>
+                          <div className="space-y-1.5">
+                            {srv.upstreams.map((up, i) => (
+                              <div key={i} className="flex items-start gap-2">
+                                <span className="font-mono text-xs text-gray-300 shrink-0">{up.name}:</span>
                                 <div className="flex flex-wrap gap-1">
                                   {up.servers?.map((s, j) => (
                                     <span key={j} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono ${
@@ -936,83 +935,86 @@ export default function DeviceDetail() {
                                       {s.backup && ' (backup)'}
                                       {s.down && ' (down)'}
                                     </span>
-                                  )) || '-'}
+                                  )) || <span className="text-xs text-gray-500">-</span>}
                                 </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                {/* Security Config */}
-                {srv.security_config && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Security Config</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0 && (
+                      {/* Security Config */}
+                      {hasSecurityConfig && srv.security_config && (
                         <div>
-                          <p className="text-xs text-gray-500 mb-1">Security Headers</p>
-                          <div className="space-y-1">
-                            {Object.entries(srv.security_config.security_headers).map(([k, v]) => (
-                              <div key={k} className="flex gap-2 text-xs">
-                                <span className="text-gray-400 font-mono shrink-0">{k}:</span>
-                                <span className="text-gray-300 font-mono break-all">{v}</span>
+                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Security Config</h3>
+                          <div className="space-y-3">
+                            {srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0 && (
+                              <div>
+                                <p className="text-xs text-gray-500 mb-1">Headers</p>
+                                <div className="space-y-0.5">
+                                  {Object.entries(srv.security_config.security_headers).map(([k, v]) => (
+                                    <div key={k} className="flex gap-2 text-xs">
+                                      <span className="text-gray-400 font-mono shrink-0">{k}:</span>
+                                      <span className="text-gray-300 font-mono break-all">{v}</span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {srv.security_config.rate_limiting && srv.security_config.rate_limiting.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Rate Limiting</p>
-                          <div className="space-y-1">
-                            {srv.security_config.rate_limiting.map((r, i) => (
-                              <div key={i} className="text-xs font-mono text-gray-300">
-                                {r.zone}: {r.rate}{r.burst ? ` burst=${r.burst}` : ''}
+                            )}
+                            {srv.security_config.rate_limiting && srv.security_config.rate_limiting.length > 0 && (
+                              <div>
+                                <p className="text-xs text-gray-500 mb-1">Rate Limiting</p>
+                                <div className="space-y-0.5">
+                                  {srv.security_config.rate_limiting.map((r, i) => (
+                                    <div key={i} className="text-xs font-mono text-gray-300">
+                                      {r.zone}: {r.rate}{r.burst ? ` burst=${r.burst}` : ''}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {srv.security_config.access_controls && srv.security_config.access_controls.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Access Controls</p>
-                          <div className="space-y-1">
-                            {srv.security_config.access_controls.map((r, i) => (
-                              <div key={i} className="text-xs font-mono">
-                                <span className={r.directive === 'allow' ? 'text-emerald-400' : 'text-red-400'}>{r.directive}</span>
-                                {' '}<span className="text-gray-300">{r.value}</span>
-                                {r.location && <span className="text-gray-500"> ({r.location})</span>}
+                            )}
+                            {srv.security_config.access_controls && srv.security_config.access_controls.length > 0 && (
+                              <div>
+                                <p className="text-xs text-gray-500 mb-1">Access Controls</p>
+                                <div className="space-y-0.5">
+                                  {srv.security_config.access_controls.map((r, i) => (
+                                    <div key={i} className="text-xs font-mono">
+                                      <span className={r.directive === 'allow' ? 'text-emerald-400' : 'text-red-400'}>{r.directive}</span>
+                                      {' '}<span className="text-gray-300">{r.value}</span>
+                                      {r.location && <span className="text-gray-500"> ({r.location})</span>}
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                            ))}
+                            )}
+                            <div className="flex flex-wrap gap-x-6 gap-y-2">
+                              {srv.security_config.allowed_methods && srv.security_config.allowed_methods.length > 0 && (
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">Allowed Methods</p>
+                                  <p className="text-xs font-mono text-gray-300">{srv.security_config.allowed_methods.join(', ')}</p>
+                                </div>
+                              )}
+                              {srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0 && (
+                                <div>
+                                  <p className="text-xs text-gray-500 mb-1">CORS Origins</p>
+                                  <p className="text-xs font-mono text-gray-300">{srv.security_config.cors_origins.join(', ')}</p>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                      {srv.security_config.allowed_methods && srv.security_config.allowed_methods.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">Allowed Methods</p>
-                          <p className="text-xs font-mono text-gray-300">{srv.security_config.allowed_methods.join(', ')}</p>
-                        </div>
-                      )}
-                      {srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0 && (
-                        <div>
-                          <p className="text-xs text-gray-500 mb-1">CORS Origins</p>
-                          <p className="text-xs font-mono text-gray-300">{srv.security_config.cors_origins.join(', ')}</p>
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 {/* Separator between servers */}
-                {tel.web_servers!.servers!.indexOf(srv) < tel.web_servers!.servers!.length - 1 && (
+                {srvIdx < tel.web_servers!.servers!.length - 1 && (
                   <hr className="border-gray-800" />
                 )}
               </div>
-            ))}
+              )
+            })}
           </div>
         </Section>
       )}

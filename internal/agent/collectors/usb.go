@@ -1,12 +1,14 @@
 package collectors
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -28,6 +30,8 @@ func (c *USBCollector) Collect(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return info, nil
 	}
+
+	db := getUSBIDDB()
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -56,6 +60,20 @@ func (c *USBCollector) Collect(ctx context.Context) (interface{}, error) {
 			SysPath:   name,
 		}
 
+		// Fall back to usb.ids database when sysfs doesn't have names
+		if db != nil {
+			if dev.Vendor == "" {
+				if name, ok := db.vendors[vendorID]; ok {
+					dev.Vendor = name
+				}
+			}
+			if dev.Product == "" {
+				if name, ok := db.products[vendorID+":"+productID]; ok {
+					dev.Product = name
+				}
+			}
+		}
+
 		if cls := readSysfsFile(devPath, "bDeviceClass"); cls != "" {
 			dev.DeviceClass = usbClassName(cls)
 		}
@@ -71,6 +89,8 @@ func (c *USBCollector) Collect(ctx context.Context) (interface{}, error) {
 			dev.Description = dev.Vendor + " " + dev.Product
 		} else if dev.Product != "" {
 			dev.Description = dev.Product
+		} else if dev.Vendor != "" {
+			dev.Description = dev.Vendor + " (" + vendorID + ":" + productID + ")"
 		} else {
 			dev.Description = vendorID + ":" + productID
 		}
@@ -135,4 +155,119 @@ func usbClassName(hex string) string {
 	default:
 		return hex
 	}
+}
+
+// usbIDDB is a parsed usb.ids database for looking up vendor/product names.
+type usbIDDB struct {
+	vendors  map[string]string // vendorID → vendor name
+	products map[string]string // "vendorID:productID" → product name
+}
+
+var (
+	usbIDDBOnce     sync.Once
+	usbIDDBInstance *usbIDDB
+)
+
+// usb.ids file locations in order of preference.
+var usbIDPaths = []string{
+	"/usr/share/hwdata/usb.ids",
+	"/usr/share/misc/usb.ids",
+	"/usr/share/usb.ids",
+	"/var/lib/usbutils/usb.ids",
+}
+
+// getUSBIDDB lazily loads and caches the usb.ids database.
+func getUSBIDDB() *usbIDDB {
+	usbIDDBOnce.Do(func() {
+		for _, path := range usbIDPaths {
+			if db, err := parseUSBIDFile(path); err == nil {
+				usbIDDBInstance = db
+				return
+			}
+		}
+	})
+	return usbIDDBInstance
+}
+
+// parseUSBIDFile parses the standard usb.ids file format.
+// Vendor lines start at column 0: "1a6e  Global Unichip Corp."
+// Product lines start with a tab: "\t089a  Coral USB Accelerator"
+func parseUSBIDFile(path string) (*usbIDDB, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	db := &usbIDDB{
+		vendors:  make(map[string]string),
+		products: make(map[string]string),
+	}
+
+	scanner := bufio.NewScanner(f)
+	var currentVendor string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Skip comments and empty lines
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		// Stop at device class section (starts with "C ")
+		if len(line) >= 2 && line[0] == 'C' && line[1] == ' ' {
+			break
+		}
+
+		if line[0] == '\t' {
+			// Product line: "\tPPPP  Product Name"
+			if currentVendor == "" {
+				continue
+			}
+			line = line[1:] // strip leading tab
+			// Skip sub-devices (double tab)
+			if len(line) > 0 && line[0] == '\t' {
+				continue
+			}
+			if len(line) < 6 {
+				continue
+			}
+			productID := line[:4]
+			productName := strings.TrimSpace(line[4:])
+			if productName != "" {
+				db.products[currentVendor+":"+productID] = productName
+			}
+		} else {
+			// Vendor line: "VVVV  Vendor Name"
+			if len(line) < 6 {
+				continue
+			}
+			vendorID := line[:4]
+			// Validate it looks like a hex ID
+			if !isHex4(vendorID) {
+				currentVendor = ""
+				continue
+			}
+			vendorName := strings.TrimSpace(line[4:])
+			if vendorName != "" {
+				db.vendors[vendorID] = vendorName
+				currentVendor = vendorID
+			}
+		}
+	}
+
+	return db, nil
+}
+
+func isHex4(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
