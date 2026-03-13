@@ -262,7 +262,6 @@ export default function App() {
               <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
                 <NavLink to="/alert-rules">Alert Rules</NavLink>
-                <NavLink to="/alerts">Alerts</NavLink>
                 <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/security">Security</NavLink>
                 <NavLink to="/settings">Settings</NavLink>
@@ -286,7 +285,6 @@ export default function App() {
           <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
             <NavLink to="/">Fleet</NavLink>
             <NavLink to="/alert-rules">Alert Rules</NavLink>
-            <NavLink to="/alerts">Alerts</NavLink>
             <NavLink to="/probes">Probes</NavLink>
             <NavLink to="/security">Security</NavLink>
             <NavLink to="/settings">Settings</NavLink>
