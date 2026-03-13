@@ -32,6 +32,39 @@ func NewHTTPClient(baseURL, apiKey string) *HTTPClient {
 	}
 }
 
+// buildCertPool loads all trusted CA/server certificates into a single pool.
+// This includes the TOFU-pinned server cert and the mTLS CA cert (if present).
+func buildCertPool(serverCfg ServerConfig) *x509.CertPool {
+	pool := x509.NewCertPool()
+	loaded := 0
+
+	// Load TOFU-pinned server certificate (self-signed TLS cert)
+	serverCertPath := ServerCertPath()
+	if data, err := os.ReadFile(serverCertPath); err == nil {
+		if pool.AppendCertsFromPEM(data) {
+			loaded++
+			slog.Info("loaded TOFU-pinned server certificate", "path", serverCertPath)
+		}
+	}
+
+	// Load mTLS CA certificate
+	if serverCfg.CACertFile != "" {
+		if data, err := os.ReadFile(serverCfg.CACertFile); err == nil {
+			if pool.AppendCertsFromPEM(data) {
+				loaded++
+				slog.Info("loaded mTLS CA certificate", "path", serverCfg.CACertFile)
+			}
+		} else {
+			slog.Error("failed to read CA cert file", "path", serverCfg.CACertFile, "error", err)
+		}
+	}
+
+	if loaded > 0 {
+		return pool
+	}
+	return nil
+}
+
 // NewHTTPClientWithTLS creates an HTTP client with custom TLS settings.
 func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 	transport := &http.Transport{}
@@ -41,16 +74,8 @@ func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 		tlsCfg.InsecureSkipVerify = true
 	}
 
-	if serverCfg.CACertFile != "" {
-		caCert, err := os.ReadFile(serverCfg.CACertFile)
-		if err != nil {
-			slog.Error("failed to read CA cert file", "path", serverCfg.CACertFile, "error", err)
-		} else {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caCert)
-			tlsCfg.RootCAs = pool
-			slog.Info("loaded custom CA certificate", "path", serverCfg.CACertFile)
-		}
+	if pool := buildCertPool(serverCfg); pool != nil {
+		tlsCfg.RootCAs = pool
 	}
 
 	// Load mTLS client certificate if configured
@@ -76,7 +101,7 @@ func NewHTTPClientWithTLS(serverCfg ServerConfig) *HTTPClient {
 	}
 }
 
-// TLSConfig returns the TLS configuration for the current server config.
+// TLSConfigFromServerConfig returns the TLS configuration for the current server config.
 // Used by the WebSocket client to share TLS settings.
 func TLSConfigFromServerConfig(serverCfg ServerConfig) *tls.Config {
 	tlsCfg := &tls.Config{}
@@ -85,13 +110,8 @@ func TLSConfigFromServerConfig(serverCfg ServerConfig) *tls.Config {
 		tlsCfg.InsecureSkipVerify = true
 	}
 
-	if serverCfg.CACertFile != "" {
-		caCert, err := os.ReadFile(serverCfg.CACertFile)
-		if err == nil {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caCert)
-			tlsCfg.RootCAs = pool
-		}
+	if pool := buildCertPool(serverCfg); pool != nil {
+		tlsCfg.RootCAs = pool
 	}
 
 	if serverCfg.ClientCert != "" && serverCfg.ClientKey != "" {
