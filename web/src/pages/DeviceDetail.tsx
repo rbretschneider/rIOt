@@ -12,12 +12,14 @@ import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
+import { useFeatures } from '../hooks/useFeatures'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
   // useDevices sets up the WS listener that pushes heartbeat/telemetry/events
   // directly into the ['device', id] and ['events'] query caches
   const { wsConnected } = useDevices()
+  const { isEnabled } = useFeatures()
   const { data, isLoading } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
@@ -151,7 +153,7 @@ export default function DeviceDetail() {
             )}
           </p>
           <div className="flex items-center gap-4 mt-2">
-            {tel?.docker?.available && tel.docker.total_containers > 0 && (
+            {isEnabled('docker') && tel?.docker?.available && tel.docker.total_containers > 0 && (
               <Link
                 to={`/devices/${id}/containers`}
                 className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
@@ -183,7 +185,7 @@ export default function DeviceDetail() {
         </div>
         {/* Right: security gauge + status badge + action buttons */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          {securityScore && (
+          {isEnabled('security_score') && securityScore && (
             <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
           )}
           <StatusBadge status={device.status} />
@@ -325,7 +327,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Security score modal */}
-      {showSecurityModal && securityScore && (
+      {isEnabled('security_score') && showSecurityModal && securityScore && (
         <SecurityScoreModal
           score={securityScore}
           hostname={device.hostname}
@@ -424,7 +426,7 @@ export default function DeviceDetail() {
       )}
 
       {/* UPS */}
-      {tel?.ups?.name && (
+      {isEnabled('ups') && tel?.ups?.name && (
         <Section title="UPS">
           {tel.ups.on_battery && (
             <div className={`px-4 py-2 mb-4 rounded text-sm ${
@@ -712,7 +714,7 @@ export default function DeviceDetail() {
       })()}
 
       {/* Security */}
-      {tel?.security && (
+      {isEnabled('security') && tel?.security && (
         <Section title="Security">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <InfoItem label="Firewall" value={tel.security.firewall_status || '-'} />
@@ -731,7 +733,7 @@ export default function DeviceDetail() {
       )}
 
       {/* USB Devices */}
-      {tel?.usb?.devices && tel.usb.devices.length > 0 && (
+      {isEnabled('usb') && tel?.usb?.devices && tel.usb.devices.length > 0 && (
         <Section title={`USB Devices (${tel.usb.devices.length})`}>
           <div className="max-h-80 overflow-auto scrollbar-thin">
             <table className="w-full text-sm min-w-[640px]">
@@ -773,7 +775,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Web Servers */}
-      {tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
+      {isEnabled('web_servers') && tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
         <Section title="Web Servers">
           <div className="space-y-6">
             {tel.web_servers.servers.map((srv, srvIdx) => {

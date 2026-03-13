@@ -97,6 +97,12 @@ export const settingsApi = {
   getServerCert: () =>
     fetchJSON<{ fingerprint?: string }>('/api/v1/server-cert'),
 
+  // Feature Toggles
+  getFeatureToggles: () => fetchJSON<Record<string, boolean>>(`${BASE}/features`),
+
+  saveFeatureToggles: (toggles: Record<string, boolean>) =>
+    mutate<Record<string, boolean>>(`${BASE}/features`, 'PUT', toggles),
+
   // Server logs
   getLogs: (level: string, limit: number, before?: string) => {
     let url = `${BASE}/logs?limit=${limit}`

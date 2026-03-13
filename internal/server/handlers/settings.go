@@ -242,6 +242,43 @@ func (h *Handlers) ListAlertTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events.AlertTemplates())
 }
 
+// --- Feature Toggles ---
+
+// GetFeatureToggles handles GET /api/v1/settings/features.
+func (h *Handlers) GetFeatureToggles(w http.ResponseWriter, r *http.Request) {
+	val, err := h.adminRepo.GetConfig(r.Context(), "feature_toggles")
+	if err != nil || val == "" {
+		// Return default (all enabled)
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		return
+	}
+	var toggles map[string]interface{}
+	if err := json.Unmarshal([]byte(val), &toggles); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, toggles)
+}
+
+// SetFeatureToggles handles PUT /api/v1/settings/features.
+func (h *Handlers) SetFeatureToggles(w http.ResponseWriter, r *http.Request) {
+	var toggles map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&toggles); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	data, err := json.Marshal(toggles)
+	if err != nil {
+		http.Error(w, `{"error":"failed to encode toggles"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := h.adminRepo.SetConfig(r.Context(), "feature_toggles", string(data)); err != nil {
+		http.Error(w, `{"error":"failed to save feature toggles"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, toggles)
+}
+
 // --- Event Acknowledgement ---
 
 // UnreadEventCount handles GET /api/v1/events/unread-count.

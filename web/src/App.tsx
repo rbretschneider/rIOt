@@ -21,6 +21,7 @@ import ProbeSettings from './pages/settings/ProbeSettings'
 import AgentManagement from './pages/settings/AgentManagement'
 import CertificateSettings from './pages/settings/CertificateSettings'
 import LogSettings from './pages/settings/LogSettings'
+import FeatureSettings from './pages/settings/FeatureSettings'
 import Security from './pages/Security'
 import Probes from './pages/Probes'
 import ProbeDetail from './pages/ProbeDetail'
@@ -326,6 +327,7 @@ export default function App() {
             <Route path="probes" element={<ProbeSettings />} />
             <Route path="agents" element={<AgentManagement />} />
             <Route path="certificates" element={<CertificateSettings />} />
+            <Route path="features" element={<FeatureSettings />} />
             <Route path="logs" element={<LogSettings />} />
             <Route path="general" element={<GeneralSettings />} />
           </Route>

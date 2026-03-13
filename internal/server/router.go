@@ -153,6 +153,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		// Settings: notification log
 		r.Get("/api/v1/settings/notifications/log", h.ListNotificationLog)
 
+		// Settings: feature toggles
+		r.Get("/api/v1/settings/features", h.GetFeatureToggles)
+		r.Put("/api/v1/settings/features", h.SetFeatureToggles)
+
 		// Settings: server logs
 		r.Get("/api/v1/settings/logs", h.GetServerLogs)
 
