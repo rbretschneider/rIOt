@@ -55,6 +55,7 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 	r.Register(&LogsCollector{})
 	r.Register(&UPSCollector{})
 	r.Register(&WebServersCollector{})
+	r.Register(&USBCollector{})
 }
 
 func (r *Registry) FilterEnabled(enabled []string) {

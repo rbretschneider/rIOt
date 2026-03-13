@@ -17,12 +17,14 @@ const TARGET_STATES: Record<string, string[]> = {
   service_state: ['stopped', 'failed', 'inactive', 'dead'],
   nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'DORMANT', 'UNKNOWN', 'NO-CARRIER'],
   process_missing: ['absent'],
+  usb_missing: ['absent'],
 }
 
 const TARGET_STATE_DEFAULTS: Record<string, string[]> = {
   service_state: ['stopped', 'failed'],
   nic_state: ['DOWN', 'LOWER_LAYER_DOWN', 'NO-CARRIER'],
   process_missing: ['absent'],
+  usb_missing: ['absent'],
 }
 
 const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; severity: string; cooldown: number; hint: string }> = {
@@ -34,11 +36,12 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   device_offline:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 300,  hint: 'Fires when a device stops sending heartbeats' },
   ups_on_battery:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when UPS switches to battery power' },
   ups_battery_percent: { operator: '<', threshold: 20, severity: 'critical', cooldown: 300, hint: 'UPS battery charge percentage (0–100)' },
+  usb_missing:     { operator: '==', threshold: 1, severity: 'critical', cooldown: 300, hint: 'Fires when the USB device is not found' },
 }
 
 export default function CreateAlertDialog({ metric, targetName, targetState, deviceFilter, onClose }: CreateAlertDialogProps) {
   const qc = useQueryClient()
-  const isState = ['service_state', 'nic_state', 'process_missing'].includes(metric)
+  const isState = ['service_state', 'nic_state', 'process_missing', 'usb_missing'].includes(metric)
   const defaults = METRIC_DEFAULTS[metric]
 
   const metricLabels: Record<string, string> = {
@@ -48,6 +51,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     log_errors: 'Log Errors',
     ups_on_battery: 'UPS On Battery',
     ups_battery_percent: 'UPS Battery %',
+    usb_missing: 'USB Device Missing',
   }
 
   // Use provided targetState or sensible defaults

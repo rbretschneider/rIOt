@@ -6,7 +6,7 @@ import type {
   Device, DeviceDetailResponse, TelemetrySnapshot, FullTelemetryData,
   ContainerInfo, Event, FleetSummary, ProbeWithResult, ProbeResult,
   AlertRule, AlertTemplate, NotificationChannel, NotificationLog,
-  Command, UPSInfo, WebServerInfo, SecurityScoreResult,
+  Command, UPSInfo, WebServerInfo, USBInfo, SecurityScoreResult,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
 
@@ -100,6 +100,34 @@ export function getDevices(): Device[] {
 }
 
 // ── Telemetry ────────────────────────────────────────────────────────────────
+
+function makeUSB(hostname: string): USBInfo | undefined {
+  if (hostname === 'proxmox-01') {
+    return {
+      devices: [
+        { bus: '1', device: '2', vendor_id: '1a6e', product_id: '089a', vendor: 'Global Unichip Corp.', product: 'Coral USB Accelerator', serial: '', description: 'Global Unichip Corp. Coral USB Accelerator', device_class: 'Vendor Specific', speed_mbps: 5000, sys_path: '1-2' },
+        { bus: '1', device: '3', vendor_id: '0658', product_id: '0200', vendor: 'Sigma Designs', product: 'Z-Wave Controller', serial: 'A1B2C3D4', description: 'Sigma Designs Z-Wave Controller', device_class: 'Communications', speed_mbps: 12, sys_path: '1-3' },
+        { bus: '2', device: '1', vendor_id: '8087', product_id: '0026', vendor: 'Intel Corp.', product: 'AX201 Bluetooth', serial: '', description: 'Intel Corp. AX201 Bluetooth', device_class: 'Wireless', speed_mbps: 12, sys_path: '2-1' },
+      ],
+    }
+  }
+  if (hostname === 'nas-synology') {
+    return {
+      devices: [
+        { bus: '1', device: '2', vendor_id: '174c', product_id: '55aa', vendor: 'ASMedia Technology', product: 'ASM1142 USB 3.1 Host Controller', serial: '', description: 'ASMedia Technology ASM1142 USB 3.1 Host Controller', device_class: 'Hub', speed_mbps: 5000, sys_path: '1-2' },
+        { bus: '1', device: '4', vendor_id: '0764', product_id: '0501', vendor: 'Cyber Power System', product: 'CP1500 UPS', serial: 'ABCD1234', description: 'Cyber Power System CP1500 UPS', device_class: 'HID', speed_mbps: 1.5, sys_path: '1-4' },
+      ],
+    }
+  }
+  if (hostname === 'pi-dns') {
+    return {
+      devices: [
+        { bus: '1', device: '2', vendor_id: '0424', product_id: 'ec00', vendor: 'Microchip Technology', product: 'SMSC9512/9514 Ethernet Adapter', serial: '', description: 'Microchip Technology SMSC9512/9514 Ethernet Adapter', device_class: 'Vendor Specific', speed_mbps: 480, sys_path: '1-1.1' },
+      ],
+    }
+  }
+  return undefined
+}
 
 function makeUPS(hostname: string): UPSInfo | undefined {
   if (hostname === 'nas-synology') {
@@ -321,6 +349,7 @@ function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
     },
     ups: makeUPS(d.hostname),
     web_servers: makeWebServers(d.hostname),
+    usb: makeUSB(d.hostname),
     updates: {
       package_manager: 'apt',
       total_installed: 340,

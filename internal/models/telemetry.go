@@ -45,6 +45,7 @@ type FullTelemetryData struct {
 	Logs       []LogEntry     `json:"logs,omitempty"`
 	UPS        *UPSInfo       `json:"ups,omitempty"`
 	WebServers *WebServerInfo `json:"web_servers,omitempty"`
+	USB        *USBInfo       `json:"usb,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.
@@ -309,6 +310,26 @@ type ContainerMetric struct {
 	MemUsage      int64     `json:"mem_usage"`
 	MemLimit      int64     `json:"mem_limit"`
 	CPULimit      int64     `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
+}
+
+// USBInfo holds USB device information.
+type USBInfo struct {
+	Devices []USBDevice `json:"devices,omitempty"`
+}
+
+// USBDevice represents a single USB device.
+type USBDevice struct {
+	Bus         string  `json:"bus"`
+	Device      string  `json:"device"`
+	VendorID    string  `json:"vendor_id"`
+	ProductID   string  `json:"product_id"`
+	Vendor      string  `json:"vendor,omitempty"`
+	Product     string  `json:"product,omitempty"`
+	Serial      string  `json:"serial,omitempty"`
+	Description string  `json:"description"`
+	DeviceClass string  `json:"device_class,omitempty"`
+	SpeedMbps   float64 `json:"speed_mbps,omitempty"`
+	SysPath     string  `json:"sys_path,omitempty"`
 }
 
 // SecurityInfo holds security-related info.

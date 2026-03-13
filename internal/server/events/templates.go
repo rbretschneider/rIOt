@@ -184,6 +184,20 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when UPS battery charge drops below the threshold",
 		},
+		// USB
+		{
+			ID:              "usb_missing",
+			Name:            "USB Device Missing",
+			Category:        "usb",
+			Metric:          "usb_missing",
+			Operator:        "==",
+			Threshold:       1,
+			TargetState:     "absent",
+			Severity:        "critical",
+			CooldownSeconds: 300,
+			NeedsTargetName: true,
+			Description:     "Fires when a USB device (by vendor:product ID, serial, or name) is not found",
+		},
 		// Logs
 		{
 			ID:              "log_errors",

@@ -251,6 +251,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 	if data.WebServers != nil {
 		g.CheckWebServerAlerts(ctx, deviceID, data.WebServers)
 	}
+	if data.USB != nil {
+		g.CheckUSBAlerts(ctx, deviceID, data.USB)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -685,6 +688,78 @@ func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID string, w
 					})
 			}
 		}
+	}
+}
+
+// CheckUSBAlerts checks for missing USB devices against usb_missing alert rules.
+func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID string, usb *models.USBInfo) {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		slog.Error("check usb alerts", "error", err)
+		return
+	}
+
+	// Build a set of present USB device identifiers (vendor_id:product_id and serial)
+	presentByVidPid := make(map[string]bool)
+	presentBySerial := make(map[string]bool)
+	for _, dev := range usb.Devices {
+		presentByVidPid[dev.VendorID+":"+dev.ProductID] = true
+		if dev.Serial != "" {
+			presentBySerial[dev.Serial] = true
+		}
+	}
+
+	for i := range rules {
+		r := &rules[i]
+		if r.Metric != "usb_missing" || r.TargetName == "" {
+			continue
+		}
+		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+			continue
+		}
+
+		// TargetName can be "vendor_id:product_id", a serial number, or a product description
+		target := strings.TrimSpace(r.TargetName)
+		found := false
+
+		// Check by vendor:product ID (e.g., "1a6e:089a")
+		if presentByVidPid[target] {
+			found = true
+		}
+		// Check by serial
+		if !found && presentBySerial[target] {
+			found = true
+		}
+		// Check by description or product name (case-insensitive substring)
+		if !found {
+			for _, dev := range usb.Devices {
+				if strings.EqualFold(dev.Description, target) ||
+					strings.EqualFold(dev.Product, target) ||
+					strings.EqualFold(dev.Serial, target) {
+					found = true
+					break
+				}
+			}
+		}
+
+		if found {
+			continue // Device is present, no alert
+		}
+
+		key := fmt.Sprintf("%s:rule:%d:%s", deviceID, r.ID, target)
+		cd := time.Duration(r.CooldownSeconds) * time.Second
+		if g.onCooldown(key, cd) {
+			continue
+		}
+
+		e := &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventUSBDisconnected,
+			Severity:  models.EventSeverity(r.Severity),
+			Message:   fmt.Sprintf("USB device %s not found", target),
+			CreatedAt: time.Now().UTC(),
+		}
+		g.createEventAndNotify(ctx, e, r, "", 1)
 	}
 }
 

@@ -41,6 +41,7 @@ const (
 	EventUPSRestored          EventType = "ups_restored"
 	EventCertExpiring         EventType = "cert_expiring"
 	EventCertExpired          EventType = "cert_expired"
+	EventUSBDisconnected      EventType = "usb_disconnected"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

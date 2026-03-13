@@ -75,6 +75,7 @@ export interface FullTelemetryData {
   security?: SecurityInfo
   ups?: UPSInfo
   web_servers?: WebServerInfo
+  usb?: USBInfo
 }
 
 export interface SystemInfo {
@@ -402,6 +403,24 @@ export interface AccessRule {
   directive: string
   value: string
   location?: string
+}
+
+export interface USBInfo {
+  devices?: USBDevice[]
+}
+
+export interface USBDevice {
+  bus: string
+  device: string
+  vendor_id: string
+  product_id: string
+  vendor?: string
+  product?: string
+  serial?: string
+  description: string
+  device_class?: string
+  speed_mbps?: number
+  sys_path?: string
 }
 
 // Security Score

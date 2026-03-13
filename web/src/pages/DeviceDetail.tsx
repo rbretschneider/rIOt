@@ -736,6 +736,51 @@ export default function DeviceDetail() {
         </Section>
       )}
 
+      {/* USB Devices */}
+      {tel?.usb?.devices && tel.usb.devices.length > 0 && (
+        <Section title={`USB Devices (${tel.usb.devices.length})`}>
+          <div className="max-h-80 overflow-auto scrollbar-thin">
+            <table className="w-full text-sm min-w-[640px]">
+              <thead className="sticky top-0 bg-gray-900">
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2">Description</th>
+                  <th className="text-left py-2">Vendor:Product</th>
+                  <th className="text-left py-2">Serial</th>
+                  <th className="text-left py-2">Class</th>
+                  <th className="text-right py-2">Speed</th>
+                  <th className="py-2 w-8"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {tel.usb.devices.map((dev, i) => (
+                  <tr key={dev.sys_path || i}>
+                    <td className="py-2 text-gray-200">{dev.description}</td>
+                    <td className="py-2 font-mono text-gray-400">{dev.vendor_id}:{dev.product_id}</td>
+                    <td className="py-2 font-mono text-gray-500 text-xs">{dev.serial || '-'}</td>
+                    <td className="py-2 text-gray-400">{dev.device_class || '-'}</td>
+                    <td className="py-2 text-right font-mono text-gray-400">
+                      {dev.speed_mbps ? `${dev.speed_mbps} Mbps` : '-'}
+                    </td>
+                    <td className="py-2">
+                      <button
+                        onClick={() => setAlertDialog({
+                          metric: 'usb_missing',
+                          targetName: dev.serial || `${dev.vendor_id}:${dev.product_id}`,
+                        })}
+                        className="text-gray-600 hover:text-amber-400 transition-colors"
+                        title="Alert if this device disconnects"
+                      >
+                        <AlertIcon />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
       {/* Web Servers */}
       {tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
         <Section title="Web Servers">

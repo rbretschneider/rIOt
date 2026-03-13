@@ -74,6 +74,8 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.UPS = v
 		case *models.WebServerInfo:
 			data.WebServers = v
+		case *models.USBInfo:
+			data.USB = v
 		case []models.LogEntry:
 			data.Logs = v
 			// Count priority<=3 entries (error and above) for heartbeat metric,
