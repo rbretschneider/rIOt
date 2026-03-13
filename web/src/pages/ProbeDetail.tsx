@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import ProbeModal, { probeToForm, type ProbeForm } from '../components/ProbeModal'
 
 export default function ProbeDetail() {
   const { id } = useParams<{ id: string }>()
@@ -28,6 +30,16 @@ export default function ProbeDetail() {
     },
   })
 
+  const saveMutation = useMutation({
+    mutationFn: (form: ProbeForm) => api.updateProbe(form.id!, form),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['probes'] })
+      setEditing(null)
+    },
+  })
+
+  const [editing, setEditing] = useState<ProbeForm | null>(null)
+
   if (!probe) return <div className="text-gray-500">Probe not found</div>
 
   const successCount = results.filter(r => r.success).length
@@ -47,15 +59,24 @@ export default function ProbeDetail() {
             <h1 className="text-2xl font-bold text-white">{probe.name}</h1>
             <p className="text-sm text-gray-500">
               {probe.type.toUpperCase()} &middot; every {probe.interval_seconds}s &middot; timeout {probe.timeout_seconds}s
+              {!probe.enabled && <span className="ml-2 text-amber-500">(disabled)</span>}
             </p>
           </div>
-          <button
-            onClick={() => runMutation.mutate()}
-            disabled={runMutation.isPending}
-            className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
-          >
-            {runMutation.isPending ? 'Running...' : 'Run Now'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setEditing(probeToForm(probe))}
+              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => runMutation.mutate()}
+              disabled={runMutation.isPending}
+              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors disabled:opacity-50"
+            >
+              {runMutation.isPending ? 'Running...' : 'Run Now'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -118,6 +139,17 @@ export default function ProbeDetail() {
           </table>
         </div>
       </div>
+
+      {editing && (
+        <ProbeModal
+          editing={editing}
+          isNew={false}
+          saving={saveMutation.isPending}
+          onClose={() => setEditing(null)}
+          onChange={setEditing}
+          onSave={() => saveMutation.mutate(editing)}
+        />
+      )}
     </div>
   )
 }

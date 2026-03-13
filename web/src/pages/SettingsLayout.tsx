@@ -3,7 +3,6 @@ import { NavLink, Outlet } from 'react-router-dom'
 const tabs = [
   { to: '/settings/alert-rules', label: 'Alert Rules' },
   { to: '/settings/notifications', label: 'Notifications' },
-  { to: '/settings/probes', label: 'Probes' },
   { to: '/settings/agents', label: 'Agents' },
   { to: '/settings/certificates', label: 'Certificates' },
   { to: '/settings/features', label: 'Features' },

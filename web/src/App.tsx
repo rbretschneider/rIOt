@@ -17,7 +17,6 @@ import SettingsLayout from './pages/SettingsLayout'
 import AlertRuleSettings from './pages/settings/AlertRuleSettings'
 import NotificationSettings from './pages/settings/NotificationSettings'
 import GeneralSettings from './pages/settings/GeneralSettings'
-import ProbeSettings from './pages/settings/ProbeSettings'
 import AgentManagement from './pages/settings/AgentManagement'
 import CertificateSettings from './pages/settings/CertificateSettings'
 import LogSettings from './pages/settings/LogSettings'
@@ -264,6 +263,7 @@ export default function App() {
                 <NavLink to="/">Fleet</NavLink>
                 <NavLink to="/security">Security</NavLink>
                 <NavLink to="/probes">Probes</NavLink>
+                <NavLink to="/alerts">Alerts</NavLink>
                 <NavLink to="/settings">Settings</NavLink>
               </div>
             </div>
@@ -324,7 +324,6 @@ export default function App() {
             <Route index element={<Navigate to="/settings/alert-rules" replace />} />
             <Route path="alert-rules" element={<AlertRuleSettings />} />
             <Route path="notifications" element={<NotificationSettings />} />
-            <Route path="probes" element={<ProbeSettings />} />
             <Route path="agents" element={<AgentManagement />} />
             <Route path="certificates" element={<CertificateSettings />} />
             <Route path="features" element={<FeatureSettings />} />
