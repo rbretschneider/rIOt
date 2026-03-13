@@ -115,6 +115,10 @@ export default function DeviceDetail() {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       navigate('/')
     },
+    onError: (err) => {
+      console.error('Delete device failed:', err)
+      alert(`Failed to delete device: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    },
   })
 
   const latestVersion = serverUpdate?.latest_version

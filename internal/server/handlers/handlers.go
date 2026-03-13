@@ -572,7 +572,8 @@ func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.devices.Delete(r.Context(), id); err != nil {
-		http.Error(w, `{"error":"failed to delete device"}`, http.StatusInternalServerError)
+		slog.Error("failed to delete device", "id", id, "error", err)
+		http.Error(w, fmt.Sprintf(`{"error":"failed to delete device: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
 	h.hub.BroadcastDeviceRemoved(id)
