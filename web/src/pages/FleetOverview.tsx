@@ -201,7 +201,7 @@ export default function FleetOverview() {
         </div>
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto">
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto scrollbar-thin">
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : (

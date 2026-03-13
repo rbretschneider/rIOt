@@ -95,7 +95,7 @@ export default function CertificateSettings() {
         ) : certs.length === 0 ? (
           <p className="text-gray-500 text-sm">No device certificates issued yet.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-400 border-b border-gray-800">
@@ -203,7 +203,7 @@ export default function CertificateSettings() {
         ) : keys.length === 0 ? (
           <p className="text-gray-500 text-sm">No bootstrap keys.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto scrollbar-thin">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-400 border-b border-gray-800">

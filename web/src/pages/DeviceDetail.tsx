@@ -696,7 +696,7 @@ export default function DeviceDetail() {
                     <td className="py-1.5 text-gray-400 font-mono text-xs">{rule.metric}</td>
                     <td className="py-1.5 text-gray-400 font-mono text-xs">
                       {rule.target_state
-                        ? `state in [${rule.target_state}]`
+                        ? `state in [${rule.target_state.replace(/,/g, ', ')}]`
                         : `${rule.operator} ${rule.threshold}`}
                     </td>
                     <td className="py-1.5">

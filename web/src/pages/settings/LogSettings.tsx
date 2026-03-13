@@ -61,7 +61,7 @@ export default function LogSettings() {
         </div>
       </div>
 
-      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+      <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto scrollbar-thin">
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : (

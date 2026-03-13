@@ -393,7 +393,7 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
 }) {
   const colCount = showDevices ? 9 : 8
   return (
-    <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto">
+    <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto scrollbar-thin">
       <table className="w-full text-sm min-w-[640px]">
         <thead>
           <tr className="text-left text-gray-400 border-b border-gray-800">
@@ -430,7 +430,7 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
               </td>
               <td className="px-4 py-3 font-mono text-xs">
                 {STATE_METRICS.includes(rule.metric)
-                  ? (rule.target_state || 'any')
+                  ? (rule.target_state?.replace(/,/g, ', ') || 'any')
                   : `${rule.operator} ${rule.threshold}`}
               </td>
               <td className="px-4 py-3">
