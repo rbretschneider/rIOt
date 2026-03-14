@@ -76,6 +76,7 @@ export interface FullTelemetryData {
   ups?: UPSInfo
   web_servers?: WebServerInfo
   usb?: USBInfo
+  cron_jobs?: CronInfo
 }
 
 export interface SystemInfo {
@@ -251,6 +252,7 @@ export interface ContainerInfo {
   repo_url?: string
   riot?: RiotLabels
   update_available?: boolean | null
+  network_mode?: string
 }
 
 export interface PortMapping {
@@ -421,6 +423,69 @@ export interface USBDevice {
   device_class?: string
   speed_mbps?: number
   sys_path?: string
+}
+
+export interface CronInfo {
+  jobs?: CronJob[]
+  timers?: CronTimer[]
+}
+
+export interface CronJob {
+  user: string
+  schedule: string
+  command: string
+  source: string
+  enabled: boolean
+  next_run?: string
+  last_run?: string
+  task_name?: string
+}
+
+export interface CronTimer {
+  name: string
+  calendar: string
+  next_run?: string
+  last_run?: string
+  unit: string
+  enabled: boolean
+}
+
+export interface DeviceProbe {
+  id: number
+  name: string
+  device_id: string
+  type: string
+  enabled: boolean
+  config: Record<string, unknown>
+  assertions: ProbeAssertion[]
+  interval_seconds: number
+  timeout_seconds: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ProbeAssertion {
+  field: string
+  operator: string
+  value: string
+}
+
+export interface DeviceProbeResult {
+  id: number
+  probe_id: number
+  device_id: string
+  success: boolean
+  latency_ms: number
+  output: Record<string, unknown>
+  failed_assertions?: ProbeAssertion[]
+  error_msg?: string
+  created_at: string
+}
+
+export interface DeviceProbeWithResult extends DeviceProbe {
+  latest_result?: DeviceProbeResult
+  success_rate?: number
+  total_checks: number
 }
 
 // Security Score

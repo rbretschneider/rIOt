@@ -166,6 +166,21 @@ type AutoUpdateRepository interface {
 	SetLastTriggered(ctx context.Context, id int) error
 }
 
+// DeviceProbeRepository defines the interface for device probe operations.
+type DeviceProbeRepository interface {
+	List(ctx context.Context, deviceID string) ([]models.DeviceProbe, error)
+	ListEnabled(ctx context.Context, deviceID string) ([]models.DeviceProbe, error)
+	GetByID(ctx context.Context, id int64) (*models.DeviceProbe, error)
+	Create(ctx context.Context, p *models.DeviceProbe) error
+	Update(ctx context.Context, p *models.DeviceProbe) error
+	Delete(ctx context.Context, id int64) error
+	StoreResult(ctx context.Context, result *models.DeviceProbeResult) error
+	ListResults(ctx context.Context, probeID int64, limit int) ([]models.DeviceProbeResult, error)
+	LatestResult(ctx context.Context, probeID int64) (*models.DeviceProbeResult, error)
+	SuccessRate(ctx context.Context, probeID int64) (float64, int, error)
+	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository    = (*DeviceRepo)(nil)
@@ -182,4 +197,5 @@ var (
 	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
 	_ AutoUpdateRepository      = (*AutoUpdateRepo)(nil)
 	_ ContainerMetricRepository = (*ContainerMetricRepo)(nil)
+	_ DeviceProbeRepository     = (*DeviceProbeRepo)(nil)
 )

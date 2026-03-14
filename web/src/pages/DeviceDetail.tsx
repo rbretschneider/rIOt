@@ -13,6 +13,7 @@ import CreateAlertDialog from '../components/CreateAlertDialog'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import { useFeatures } from '../hooks/useFeatures'
+import cronstrue from 'cronstrue'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -165,6 +166,12 @@ export default function DeviceDetail() {
                 Docker ({tel.docker.total_containers})
               </Link>
             )}
+            <Link
+              to={`/devices/${id}/probes`}
+              className="text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              Probes
+            </Link>
             {device.status === 'online' && (
               canCommand ? (
                 <Link
@@ -1015,6 +1022,72 @@ export default function DeviceDetail() {
               )
             })}
           </div>
+        </Section>
+      )}
+
+      {/* Cron Jobs & Scheduled Tasks */}
+      {isEnabled('cron') && tel?.cron_jobs && ((tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0) || (tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0)) && (
+        <Section title={`Cron Jobs & Scheduled Tasks (${(tel.cron_jobs.jobs?.length ?? 0) + (tel.cron_jobs.timers?.length ?? 0)})`}>
+          {tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cron Jobs ({tel.cron_jobs.jobs.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">User</th>
+                      <th className="py-2 pr-4 font-medium">Schedule</th>
+                      <th className="py-2 pr-4 font-medium">Command</th>
+                      <th className="py-2 pr-4 font-medium">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.cron_jobs.jobs.map((job, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 font-mono text-xs">{job.user}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs" title={(() => { try { return cronstrue.toString(job.schedule) } catch { return job.schedule } })()}>{job.schedule}</td>
+                        <td className="py-1.5 pr-4 text-xs max-w-md truncate" title={job.command}>{job.command}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-500">{job.source}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Systemd Timers ({tel.cron_jobs.timers.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">Name</th>
+                      <th className="py-2 pr-4 font-medium">Calendar</th>
+                      <th className="py-2 pr-4 font-medium">Next Run</th>
+                      <th className="py-2 pr-4 font-medium">Last Run</th>
+                      <th className="py-2 pr-4 font-medium">Unit</th>
+                      <th className="py-2 pr-4 font-medium">Enabled</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.cron_jobs.timers.map((timer, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 text-xs font-medium">{timer.name}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs">{timer.calendar}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{timer.next_run ? new Date(timer.next_run).toLocaleString() : '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{timer.last_run ? new Date(timer.last_run).toLocaleString() : '-'}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs">{timer.unit}</td>
+                        <td className="py-1.5 pr-4">
+                          <span className={`inline-block w-2 h-2 rounded-full ${timer.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </Section>
       )}
 

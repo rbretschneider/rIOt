@@ -19,10 +19,20 @@ export default function DeviceContainers() {
   })
 
   const [containerSearch, setContainerSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const checkUpdatesMutation = useMutation({
     mutationFn: () => api.sendCommand(id!, 'docker_check_updates', {}),
     onSuccess: () => { setTimeout(() => checkUpdatesMutation.reset(), 5000) },
+  })
+
+  const bulkUpdateMutation = useMutation({
+    mutationFn: (containerIds: string[]) => api.bulkDockerUpdate(id!, containerIds),
+    onSuccess: () => {
+      setSelectedIds(new Set())
+      setTimeout(() => bulkUpdateMutation.reset(), 5000)
+    },
+    onError: () => { setTimeout(() => bulkUpdateMutation.reset(), 5000) },
   })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
@@ -43,8 +53,24 @@ export default function DeviceContainers() {
     )
   }
 
+  const allContainers = docker.containers ?? []
+  const allUpdatable = allContainers.filter(c => c.update_available)
+
   function handleContainerClick(c: ContainerInfo) {
     navigate(`/devices/${id}/containers/${c.short_id}`)
+  }
+
+  function handleSelectionChange(containerId: string, selected: boolean) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (selected) next.add(containerId)
+      else next.delete(containerId)
+      return next
+    })
+  }
+
+  function handleSelectAllUpdatable() {
+    setSelectedIds(new Set(allUpdatable.map(c => c.id)))
   }
 
   return (
@@ -62,7 +88,7 @@ export default function DeviceContainers() {
             {docker.running} running / {docker.total_containers} total
             {docker.paused ? ` / ${docker.paused} paused` : ''}
             {(() => {
-              const updatable = (docker.containers ?? []).filter(c => c.update_available).length
+              const updatable = allUpdatable.length
               return updatable > 0 ? (
                 <span className="text-amber-400 ml-1">/ {updatable} updatable</span>
               ) : null
@@ -78,6 +104,46 @@ export default function DeviceContainers() {
           </button>
         </div>
       </div>
+
+      {/* Bulk Action Toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-blue-900/20 border border-blue-800/30 rounded-lg">
+          <span className="text-sm text-blue-300">{selectedIds.size} selected</span>
+          <button
+            onClick={() => bulkUpdateMutation.mutate(Array.from(selectedIds))}
+            disabled={bulkUpdateMutation.isPending}
+            className="px-3 py-1 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors disabled:opacity-50"
+          >
+            {bulkUpdateMutation.isPending ? 'Updating...' : 'Update Selected'}
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="px-2 py-1 text-xs text-gray-400 hover:text-white transition-colors"
+          >
+            Clear
+          </button>
+          <div className="flex-1" />
+          {allUpdatable.length > 0 && (
+            <button
+              onClick={handleSelectAllUpdatable}
+              className="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              Select all updatable ({allUpdatable.length})
+            </button>
+          )}
+        </div>
+      )}
+
+      {bulkUpdateMutation.isSuccess && (
+        <div className="px-3 py-2 bg-emerald-900/20 border border-emerald-800/30 rounded text-sm text-emerald-400">
+          Bulk update command sent
+        </div>
+      )}
+      {bulkUpdateMutation.isError && (
+        <div className="px-3 py-2 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-400">
+          {(bulkUpdateMutation.error as Error).message}
+        </div>
+      )}
 
       {/* Search */}
       <div>
@@ -96,6 +162,8 @@ export default function DeviceContainers() {
         search={containerSearch}
         onContainerClick={handleContainerClick}
         deviceId={id}
+        selectedIds={selectedIds}
+        onSelectionChange={handleSelectionChange}
       />
     </div>
   )
@@ -106,11 +174,15 @@ function ContainerList({
   search,
   onContainerClick,
   deviceId,
+  selectedIds,
+  onSelectionChange,
 }: {
   docker: NonNullable<import('../types/models').FullTelemetryData['docker']>
   search: string
   onContainerClick: (c: ContainerInfo) => void
   deviceId?: string
+  selectedIds?: Set<string>
+  onSelectionChange?: (id: string, selected: boolean) => void
 }) {
   const filtered = useMemo(() => {
     let containers = docker.containers ?? []
@@ -139,7 +211,14 @@ function ContainerList({
   return (
     <div className="columns-1 md:columns-2 xl:columns-3 gap-4">
       {groups.map(g => (
-        <ContainerGroup key={g.name} group={g} onContainerClick={onContainerClick} deviceId={deviceId} />
+        <ContainerGroup
+          key={g.name}
+          group={g}
+          onContainerClick={onContainerClick}
+          deviceId={deviceId}
+          selectedIds={selectedIds}
+          onSelectionChange={onSelectionChange}
+        />
       ))}
     </div>
   )

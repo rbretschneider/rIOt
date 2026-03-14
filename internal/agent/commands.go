@@ -36,6 +36,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.dockerCommand(ctx, payload, "start")
 	case "docker_update":
 		status, message = a.dockerUpdate(ctx, payload)
+	case "docker_bulk_update":
+		status, message = a.dockerBulkUpdate(ctx, payload)
 	case "docker_check_updates":
 		a.clearFreshnessCache()
 		status, message = "success", "image freshness cache cleared, will re-check on next telemetry cycle"
@@ -51,6 +53,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.handleFetchLogs(ctx, payload)
 	case "enable_auto_updates":
 		status, message = a.handleEnableAutoUpdates(ctx)
+	case "run_device_probe":
+		status, message = a.handleRunDeviceProbe(ctx, payload)
 	default:
 		status = "error"
 		message = fmt.Sprintf("unknown action: %s", payload.Action)

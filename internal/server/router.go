@@ -45,7 +45,8 @@ func (s *Server) setupRouter() *chi.Mux {
 		LogRepo:           s.LogRepo,
 		DeviceLogRepo:     s.DeviceLogRepo,
 		AutoUpdateRepo:       s.AutoUpdateRepo,
-		ContainerMetricRepo: s.ContainerMetricRepo,
+		ContainerMetricRepo:  s.ContainerMetricRepo,
+		DeviceProbeRepo:      s.DeviceProbeRepo,
 		JWTSecret:         s.JWTSecret,
 		AdminPasswordHash: s.Config.AdminPasswordHash,
 	})
@@ -123,11 +124,21 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Post("/rotate-key", h.RotateKey)
 		r.With(adminAuth).Post("/commands", h.SendCommand)
 		r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
+		r.With(adminAuth).Post("/docker/bulk-update", h.BulkDockerUpdate)
 		r.With(adminAuth).Put("/auto-patch", h.SetAutoPatch)
 		r.With(adminAuth).Get("/auto-updates", h.ListAutoUpdates)
 		r.With(adminAuth).Put("/auto-updates", h.SetAutoUpdate)
 		r.With(adminAuth).Delete("/auto-updates/{target}", h.DeleteAutoUpdate)
 		r.With(adminAuth).Get("/security-score", h.GetSecurityScore)
+
+		// Device probes
+		r.With(adminAuth).Get("/device-probes", h.ListDeviceProbes)
+		r.With(adminAuth).Post("/device-probes", h.CreateDeviceProbe)
+		r.With(adminAuth).Put("/device-probes/{pid}", h.UpdateDeviceProbe)
+		r.With(adminAuth).Delete("/device-probes/{pid}", h.DeleteDeviceProbe)
+		r.With(adminAuth).Post("/device-probes/{pid}/run", h.RunDeviceProbe)
+		r.With(adminAuth).Get("/device-probes/{pid}/results", h.GetDeviceProbeResults)
+		r.With(deviceAuth...).Post("/probe-results", h.ReceiveDeviceProbeResults)
 	})
 
 	// === ADMIN routes (JWT cookie auth) ===

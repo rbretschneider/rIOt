@@ -25,6 +25,7 @@ import Security from './pages/Security'
 import Probes from './pages/Probes'
 import ProbeDetail from './pages/ProbeDetail'
 import LearnMore from './pages/LearnMore'
+import DeviceProbes from './pages/DeviceProbes'
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation()
@@ -314,6 +315,7 @@ export default function App() {
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/devices/:id/containers" element={<DeviceContainers />} />
           <Route path="/devices/:id/containers/:cid" element={<ContainerDetailPage />} />
+          <Route path="/devices/:id/probes" element={<DeviceProbes />} />
           <Route path="/devices/:id/terminal" element={<DeviceTerminal />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/alert-rules" element={<AlertRuleSettings />} />

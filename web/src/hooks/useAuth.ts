@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { clearPassword } from '../utils/credentialStore'
 
 const isDemo = import.meta.env.VITE_DEMO === 'true'
 
@@ -64,6 +65,7 @@ export function useAuth(): AuthState {
 
   const logout = useCallback(async () => {
     if (isDemo) return
+    clearPassword()
     await fetch('/api/v1/auth/logout', {
       method: 'POST',
       credentials: 'same-origin',

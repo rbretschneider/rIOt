@@ -1302,6 +1302,156 @@ func (m *MockContainerMetricRepo) Purge(_ context.Context, _ time.Time) (int64, 
 	return 0, m.Err
 }
 
+// --- MockDeviceProbeRepo ---
+
+type MockDeviceProbeRepo struct {
+	Probes  []models.DeviceProbe
+	Results []models.DeviceProbeResult
+	NextID  int64
+	Err     error
+}
+
+func NewMockDeviceProbeRepo() *MockDeviceProbeRepo {
+	return &MockDeviceProbeRepo{NextID: 1}
+}
+
+func (m *MockDeviceProbeRepo) List(_ context.Context, deviceID string) ([]models.DeviceProbe, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []models.DeviceProbe
+	for _, p := range m.Probes {
+		if p.DeviceID == deviceID {
+			result = append(result, p)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockDeviceProbeRepo) ListEnabled(_ context.Context, deviceID string) ([]models.DeviceProbe, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []models.DeviceProbe
+	for _, p := range m.Probes {
+		if p.DeviceID == deviceID && p.Enabled {
+			result = append(result, p)
+		}
+	}
+	return result, nil
+}
+
+func (m *MockDeviceProbeRepo) GetByID(_ context.Context, id int64) (*models.DeviceProbe, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	for i := range m.Probes {
+		if m.Probes[i].ID == id {
+			return &m.Probes[i], nil
+		}
+	}
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *MockDeviceProbeRepo) Create(_ context.Context, p *models.DeviceProbe) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	p.ID = m.NextID
+	m.NextID++
+	m.Probes = append(m.Probes, *p)
+	return nil
+}
+
+func (m *MockDeviceProbeRepo) Update(_ context.Context, p *models.DeviceProbe) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for i := range m.Probes {
+		if m.Probes[i].ID == p.ID {
+			m.Probes[i] = *p
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+func (m *MockDeviceProbeRepo) Delete(_ context.Context, id int64) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for i := range m.Probes {
+		if m.Probes[i].ID == id {
+			m.Probes = append(m.Probes[:i], m.Probes[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("not found")
+}
+
+func (m *MockDeviceProbeRepo) StoreResult(_ context.Context, result *models.DeviceProbeResult) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.Results = append(m.Results, *result)
+	return nil
+}
+
+func (m *MockDeviceProbeRepo) ListResults(_ context.Context, probeID int64, limit int) ([]models.DeviceProbeResult, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []models.DeviceProbeResult
+	for _, r := range m.Results {
+		if r.ProbeID == probeID {
+			result = append(result, r)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (m *MockDeviceProbeRepo) LatestResult(_ context.Context, probeID int64) (*models.DeviceProbeResult, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var latest *models.DeviceProbeResult
+	for i := range m.Results {
+		if m.Results[i].ProbeID == probeID {
+			latest = &m.Results[i]
+		}
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("not found")
+	}
+	return latest, nil
+}
+
+func (m *MockDeviceProbeRepo) SuccessRate(_ context.Context, probeID int64) (float64, int, error) {
+	if m.Err != nil {
+		return 0, 0, m.Err
+	}
+	var total, successes int
+	for _, r := range m.Results {
+		if r.ProbeID == probeID {
+			total++
+			if r.Success {
+				successes++
+			}
+		}
+	}
+	if total == 0 {
+		return 0, 0, nil
+	}
+	return float64(successes) / float64(total), total, nil
+}
+
+func (m *MockDeviceProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int64, error) {
+	return 0, m.Err
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -1317,4 +1467,5 @@ var (
 	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
 	_ db.AutoUpdateRepository      = (*MockAutoUpdateRepo)(nil)
 	_ db.ContainerMetricRepository = (*MockContainerMetricRepo)(nil)
+	_ db.DeviceProbeRepository     = (*MockDeviceProbeRepo)(nil)
 )

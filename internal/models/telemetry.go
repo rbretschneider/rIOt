@@ -46,6 +46,7 @@ type FullTelemetryData struct {
 	UPS        *UPSInfo       `json:"ups,omitempty"`
 	WebServers *WebServerInfo `json:"web_servers,omitempty"`
 	USB        *USBInfo       `json:"usb,omitempty"`
+	CronJobs   *CronInfo      `json:"cron_jobs,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.
@@ -240,6 +241,7 @@ type ContainerInfo struct {
 	RepoURL         string            `json:"repo_url,omitempty"`
 	Riot            *RiotLabels       `json:"riot,omitempty"`
 	UpdateAvailable *bool             `json:"update_available,omitempty"`
+	NetworkMode     string            `json:"network_mode,omitempty"`
 }
 
 // PortMapping represents a container port binding.
@@ -422,4 +424,30 @@ type AccessRule struct {
 	Directive string `json:"directive"`
 	Value     string `json:"value"`
 	Location  string `json:"location,omitempty"`
+}
+
+// CronInfo holds cron job and systemd timer information.
+type CronInfo struct {
+	Jobs   []CronJob   `json:"jobs,omitempty"`
+	Timers []CronTimer `json:"timers,omitempty"`
+}
+
+type CronJob struct {
+	User     string `json:"user"`
+	Schedule string `json:"schedule"`
+	Command  string `json:"command"`
+	Source   string `json:"source"`
+	Enabled  bool   `json:"enabled"`
+	NextRun  string `json:"next_run,omitempty"`
+	LastRun  string `json:"last_run,omitempty"`
+	TaskName string `json:"task_name,omitempty"`
+}
+
+type CronTimer struct {
+	Name     string `json:"name"`
+	Calendar string `json:"calendar"`
+	NextRun  string `json:"next_run,omitempty"`
+	LastRun  string `json:"last_run,omitempty"`
+	Unit     string `json:"unit"`
+	Enabled  bool   `json:"enabled"`
 }

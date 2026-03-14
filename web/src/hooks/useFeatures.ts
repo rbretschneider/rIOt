@@ -14,6 +14,7 @@ export const FEATURES = {
   services: { label: 'Services & Processes', description: 'Services and top processes sections on device detail' },
   updates: { label: 'Updates', description: 'Pending updates section on device detail' },
   logs: { label: 'Device Logs', description: 'Device log viewer on device detail' },
+  cron: { label: 'Cron Jobs', description: 'Cron jobs and scheduled tasks section on device detail' },
 } as const
 
 export type FeatureKey = keyof typeof FEATURES

@@ -218,6 +218,112 @@ func (a *Agent) sendDockerLifecycleEvent(ctx context.Context, containerName, ima
 	}
 }
 
+// dockerBulkUpdate handles ordered container updates with network dependency awareness.
+// It receives a list of container IDs and updates them, handling network_mode: container:<parent>
+// dependencies by stopping dependents first, updating the parent, then updating dependents.
+func (a *Agent) dockerBulkUpdate(ctx context.Context, payload models.CommandPayload) (string, string) {
+	containerIDs, ok := payload.Params["container_ids"].([]interface{})
+	if !ok || len(containerIDs) == 0 {
+		return "error", "container_ids is required"
+	}
+
+	cli, err := newDockerClient(a.config.Docker.SocketPath)
+	if err != nil {
+		return "error", fmt.Sprintf("docker client: %s", err)
+	}
+	defer cli.Close()
+
+	// Build dependency graph: child -> parent
+	type containerNode struct {
+		id     string
+		parent string // container name from network_mode: container:<name>
+	}
+
+	var nodes []containerNode
+	nameToID := make(map[string]string)
+
+	for _, rawID := range containerIDs {
+		cid, _ := rawID.(string)
+		if cid == "" {
+			continue
+		}
+		inspect, err := cli.ContainerInspect(ctx, cid)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimPrefix(inspect.Name, "/")
+		nameToID[name] = cid
+
+		node := containerNode{id: cid}
+		if inspect.HostConfig != nil {
+			nm := string(inspect.HostConfig.NetworkMode)
+			if strings.HasPrefix(nm, "container:") {
+				node.parent = strings.TrimPrefix(nm, "container:")
+			}
+		}
+		nodes = append(nodes, node)
+	}
+
+	// Separate into: parents (containers that others depend on) and children
+	parentSet := make(map[string]bool)
+	for _, n := range nodes {
+		if n.parent != "" {
+			parentSet[n.parent] = true
+		}
+	}
+
+	// Update order: children first, then parents
+	var children, parents []containerNode
+	for _, n := range nodes {
+		name := ""
+		for k, v := range nameToID {
+			if v == n.id {
+				name = k
+				break
+			}
+		}
+		if parentSet[name] || parentSet[n.id] {
+			parents = append(parents, n)
+		} else if n.parent != "" {
+			children = append(children, n)
+		} else {
+			// Independent container — just update
+			children = append(children, n)
+		}
+	}
+
+	var results []string
+	var failed int
+
+	// First: update children (dependents)
+	for _, n := range children {
+		p := models.CommandPayload{Params: map[string]interface{}{"container_id": n.id}}
+		status, msg := a.dockerUpdate(ctx, p)
+		results = append(results, fmt.Sprintf("%s: %s", n.id[:12], msg))
+		if status == "error" {
+			failed++
+		}
+	}
+
+	// Then: update parents (network providers)
+	for _, n := range parents {
+		p := models.CommandPayload{Params: map[string]interface{}{"container_id": n.id}}
+		status, msg := a.dockerUpdate(ctx, p)
+		results = append(results, fmt.Sprintf("%s: %s", n.id[:12], msg))
+		if status == "error" {
+			failed++
+		}
+	}
+
+	a.clearFreshnessCache()
+
+	summary := fmt.Sprintf("bulk update: %d/%d succeeded\n%s", len(nodes)-failed, len(nodes), strings.Join(results, "\n"))
+	if failed > 0 {
+		return "error", summary
+	}
+	return "success", summary
+}
+
 // clearFreshnessCache clears the docker collector's image freshness cache
 // so the next telemetry push reflects the updated state.
 func (a *Agent) clearFreshnessCache() {

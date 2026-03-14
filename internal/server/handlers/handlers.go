@@ -46,7 +46,8 @@ type HandlerDeps struct {
 	LogRepo           db.LogRepository
 	DeviceLogRepo     db.DeviceLogRepository
 	AutoUpdateRepo       db.AutoUpdateRepository
-	ContainerMetricRepo db.ContainerMetricRepository
+	ContainerMetricRepo  db.ContainerMetricRepository
+	DeviceProbeRepo      db.DeviceProbeRepository
 	JWTSecret            []byte
 	AdminPasswordHash string
 }
@@ -69,8 +70,9 @@ type Handlers struct {
 	logRepo            db.LogRepository
 	deviceLogRepo      db.DeviceLogRepository
 	autoUpdateRepo      db.AutoUpdateRepository
-	containerMetricRepo db.ContainerMetricRepository
-	jwtSecret           []byte
+	containerMetricRepo  db.ContainerMetricRepository
+	deviceProbeRepo      db.DeviceProbeRepository
+	jwtSecret            []byte
 	adminPasswordHash  string
 
 	// serverHostID tracks which device is hosting the rIOt server.
@@ -97,8 +99,9 @@ func New(deps HandlerDeps) *Handlers {
 		logRepo:           deps.LogRepo,
 		deviceLogRepo:     deps.DeviceLogRepo,
 		autoUpdateRepo:      deps.AutoUpdateRepo,
-		containerMetricRepo: deps.ContainerMetricRepo,
-		jwtSecret:           deps.JWTSecret,
+		containerMetricRepo:  deps.ContainerMetricRepo,
+		deviceProbeRepo:      deps.DeviceProbeRepo,
+		jwtSecret:            deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
 	}
 }
@@ -274,6 +277,13 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "delivered via heartbeat")
 			}
 			resp["pending_commands"] = payloads
+		}
+	}
+	// Include device probe configs for agents
+	if h.deviceProbeRepo != nil {
+		probes, err := h.deviceProbeRepo.ListEnabled(r.Context(), deviceID)
+		if err == nil && len(probes) > 0 {
+			resp["device_probes"] = probes
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

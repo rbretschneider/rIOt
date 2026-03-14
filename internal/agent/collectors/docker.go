@@ -98,6 +98,9 @@ func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
 		c.checkImageUpdates(ctx, cli, info.Containers)
 	}
 
+	// Collect network modes for dependency awareness
+	c.collectNetworkModes(ctx, cli, info.Containers)
+
 	return info, nil
 }
 
@@ -253,6 +256,9 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 		if err == nil && inspect.HostConfig != nil && inspect.HostConfig.NanoCPUs > 0 {
 			containers[i].CPULimit = inspect.HostConfig.NanoCPUs
 		}
+		if err == nil && inspect.HostConfig != nil {
+			containers[i].NetworkMode = string(inspect.HostConfig.NetworkMode)
+		}
 	}
 }
 
@@ -264,6 +270,26 @@ func portStr(port uint16, proto string) string {
 		return fmt.Sprintf("%d/%s", port, proto)
 	}
 	return fmt.Sprintf("%d", port)
+}
+
+// collectNetworkModes reads HostConfig.NetworkMode for all containers.
+func (c *DockerCollector) collectNetworkModes(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+	for i := range containers {
+		// Running containers already have NetworkMode from collectStats inspect
+		if containers[i].NetworkMode != "" {
+			continue
+		}
+		inspect, err := cli.ContainerInspect(ctx, containers[i].ID)
+		if err != nil {
+			continue
+		}
+		if inspect.HostConfig != nil {
+			containers[i].NetworkMode = string(inspect.HostConfig.NetworkMode)
+			if inspect.HostConfig.RestartPolicy.Name != "" {
+				containers[i].RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
+			}
+		}
+	}
 }
 
 // ClearFreshnessCache clears the image freshness cache, forcing the next

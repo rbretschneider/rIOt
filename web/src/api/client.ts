@@ -259,6 +259,65 @@ export const api = {
   getSecurityScore: (id: string) =>
     fetchJSON<SecurityScoreResult>(`${BASE}/devices/${id}/security-score`),
 
+  // Bulk docker update
+  bulkDockerUpdate: async (deviceId: string, containerIds: string[]): Promise<Command> => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/docker/bulk-update`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ container_ids: containerIds }),
+    })
+    if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  // Device probes
+  getDeviceProbes: (deviceId: string) =>
+    fetchJSON<import('../types/models').DeviceProbeWithResult[]>(`${BASE}/devices/${deviceId}/device-probes`),
+
+  createDeviceProbe: async (deviceId: string, probe: Partial<import('../types/models').DeviceProbe>) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/device-probes`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(probe),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  updateDeviceProbe: async (deviceId: string, probeId: number, probe: Partial<import('../types/models').DeviceProbe>) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/device-probes/${probeId}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(probe),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  deleteDeviceProbe: async (deviceId: string, probeId: number) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/device-probes/${probeId}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  },
+
+  runDeviceProbe: async (deviceId: string, probeId: number) => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/device-probes/${probeId}/run`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  },
+
+  getDeviceProbeResults: (deviceId: string, probeId: number, limit = 100) =>
+    fetchJSON<import('../types/models').DeviceProbeResult[]>(`${BASE}/devices/${deviceId}/device-probes/${probeId}/results?limit=${limit}`),
+
   bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number }> => {
     const res = await fetch(`${BASE}/fleet/bulk-patch`, {
       method: 'POST',

@@ -31,6 +31,7 @@ type DNSCacheConfig struct {
 type CommandsConfig struct {
 	AllowReboot   bool `yaml:"allow_reboot"`   // opt-in for remote reboot
 	AllowPatching bool `yaml:"allow_patching"` // opt-in for remote OS patching
+	AllowProbes   bool `yaml:"allow_probes"`   // opt-in for device probe execution
 }
 
 // HostTerminalConfig controls host-level terminal access.

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { ContainerInfo, AutoUpdatePolicy } from '../types/models'
 import type { ContainerGroup as ContainerGroupType } from '../utils/docker'
+import { getNetworkParent } from '../utils/docker'
 import ContainerCard from './ContainerCard'
 import ConfirmModal from './ConfirmModal'
 
@@ -10,6 +11,8 @@ interface Props {
   group: ContainerGroupType
   onContainerClick: (c: ContainerInfo) => void
   deviceId?: string
+  selectedIds?: Set<string>
+  onSelectionChange?: (id: string, selected: boolean) => void
 }
 
 interface ComposeStack {
@@ -18,7 +21,7 @@ interface ComposeStack {
   updatableCount: number
 }
 
-export default function ContainerGroup({ group, onContainerClick, deviceId }: Props) {
+export default function ContainerGroup({ group, onContainerClick, deviceId, selectedIds, onSelectionChange }: Props) {
   const [confirmStack, setConfirmStack] = useState<ComposeStack | null>(null)
   const queryClient = useQueryClient()
 
@@ -56,6 +59,16 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
 
   const updatableStacks = composeStack.filter(s => s.updatableCount > 0)
 
+  // Build network parent map for this group
+  const networkParentMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of group.containers) {
+      const parent = getNetworkParent(c)
+      if (parent) map.set(c.id, parent)
+    }
+    return map
+  }, [group.containers])
+
   const stackMutation = useMutation({
     mutationFn: ({ workDir }: { workDir: string }) =>
       api.sendCommand(deviceId!, 'docker_update', { compose_work_dir: workDir }),
@@ -76,10 +89,32 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
 
   const runningCount = group.containers.filter(c => c.state === 'running').length
 
+  // Updatable containers in this group
+  const updatableInGroup = group.containers.filter(c => c.update_available)
+  const allUpdatableSelected = updatableInGroup.length > 0 && selectedIds != null &&
+    updatableInGroup.every(c => selectedIds.has(c.id))
+
+  function handleSelectAllUpdatable() {
+    if (!onSelectionChange) return
+    const newSelected = !allUpdatableSelected
+    for (const c of updatableInGroup) {
+      onSelectionChange(c.id, newSelected)
+    }
+  }
+
   return (
     <div className="break-inside-avoid mb-4">
       {/* Group Header */}
       <div className="flex items-center gap-2 mb-1.5 px-1">
+        {onSelectionChange && updatableInGroup.length > 0 && (
+          <input
+            type="checkbox"
+            checked={allUpdatableSelected}
+            onChange={handleSelectAllUpdatable}
+            className="w-3 h-3 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-0 cursor-pointer"
+            title="Select all updatable"
+          />
+        )}
         {group.icon && <span className="text-sm">{group.icon}</span>}
         <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{group.name}</h3>
         <span className="text-xs text-gray-700">{runningCount}/{group.containers.length}</span>
@@ -141,6 +176,9 @@ export default function ContainerGroup({ group, onContainerClick, deviceId }: Pr
               container={c}
               onClick={onContainerClick}
               autoUpdate={isStackAutoUpdate || (containerPolicy?.enabled ?? false)}
+              selected={selectedIds?.has(c.id)}
+              onSelect={onSelectionChange ? (container, sel) => onSelectionChange(container.id, sel) : undefined}
+              networkParent={networkParentMap.get(c.id)}
             />
           )
         })}

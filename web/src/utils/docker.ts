@@ -138,3 +138,26 @@ export function formatPorts(c: ContainerInfo): string {
     })
     .join(', ')
 }
+
+/** Returns the parent container name for containers using network_mode: container:<name> */
+export function getNetworkParent(c: ContainerInfo): string | null {
+  if (!c.network_mode) return null
+  if (c.network_mode.startsWith('container:')) {
+    return c.network_mode.slice('container:'.length)
+  }
+  return null
+}
+
+/** Builds a map of parent container name -> list of dependent container names */
+export function buildNetworkGraph(containers: ContainerInfo[]): Map<string, ContainerInfo[]> {
+  const graph = new Map<string, ContainerInfo[]>()
+  for (const c of containers) {
+    const parent = getNetworkParent(c)
+    if (parent) {
+      const deps = graph.get(parent) || []
+      deps.push(c)
+      graph.set(parent, deps)
+    }
+  }
+  return graph
+}

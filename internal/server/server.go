@@ -49,6 +49,7 @@ type Server struct {
 	DeviceLogRepo  *db.DeviceLogRepo
 	AutoUpdateRepo      *db.AutoUpdateRepo
 	ContainerMetricRepo *db.ContainerMetricRepo
+	DeviceProbeRepo     *db.DeviceProbeRepo
 	LogHandler     *logstore.DBHandler
 	CA             *ca.CA
 	ProbeRunner    *probes.Runner
@@ -104,6 +105,7 @@ func (s *Server) Start() error {
 	s.DeviceLogRepo = db.NewDeviceLogRepo(s.DB)
 	s.AutoUpdateRepo = db.NewAutoUpdateRepo(s.DB)
 	s.ContainerMetricRepo = db.NewContainerMetricRepo(s.DB)
+	s.DeviceProbeRepo = db.NewDeviceProbeRepo(s.DB)
 
 	// Set up database log handler (stores WARN+ logs to DB alongside stdout)
 	logStoreLevel := slog.LevelWarn
@@ -481,6 +483,13 @@ func (s *Server) runRetention(ctx context.Context) {
 		slog.Error("purge container metrics failed", "error", err)
 	} else if cmDeleted > 0 {
 		slog.Info("purged old container metrics", "count", cmDeleted)
+	}
+
+	dpDeleted, err := s.DeviceProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
+	if err != nil {
+		slog.Error("purge device probe results failed", "error", err)
+	} else if dpDeleted > 0 {
+		slog.Info("purged old device probe results", "count", dpDeleted)
 	}
 
 	dlDeleted, err := s.DeviceLogRepo.Purge(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))

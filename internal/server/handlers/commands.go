@@ -22,6 +22,8 @@ var validActions = map[string]bool{
 	"os_update":            true,
 	"fetch_logs":           true,
 	"enable_auto_updates":  true,
+	"docker_bulk_update":   true,
+	"run_device_probe":     true,
 }
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.
@@ -93,6 +95,63 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("command created", "id", cmd.ID, "device", deviceID, "action", req.Action, "status", cmd.Status)
+	writeJSON(w, http.StatusCreated, cmd)
+}
+
+// BulkDockerUpdate handles POST /api/v1/devices/{id}/docker/bulk-update.
+func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+
+	var req struct {
+		ContainerIDs []string `json:"container_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.ContainerIDs) == 0 {
+		http.Error(w, `{"error":"container_ids is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Create a single command for the bulk update
+	cmd := &models.Command{
+		ID:       uuid.New().String(),
+		DeviceID: deviceID,
+		Action:   "docker_bulk_update",
+		Params:   map[string]interface{}{"container_ids": req.ContainerIDs},
+		Status:   "pending",
+	}
+	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
+		slog.Error("create bulk update command", "error", err)
+		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Try WS delivery
+	agentConnections.RLock()
+	ac := agentConnections.m[deviceID]
+	agentConnections.RUnlock()
+
+	if ac != nil {
+		payload := models.CommandPayload{
+			CommandID: cmd.ID,
+			Action:    cmd.Action,
+			Params:    cmd.Params,
+		}
+		payloadJSON, _ := json.Marshal(payload)
+		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed")
+			cmd.Status = "queued"
+		} else {
+			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
+			cmd.Status = "sent"
+		}
+	} else {
+		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected")
+		cmd.Status = "queued"
+	}
+
 	writeJSON(w, http.StatusCreated, cmd)
 }
 
