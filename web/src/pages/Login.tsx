@@ -1,4 +1,5 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { savePassword, loadPassword, clearPassword, hasStoredPassword } from '../utils/credentialStore'
 
 const isDemo = import.meta.env.VITE_DEMO === 'true'
 
@@ -8,14 +9,32 @@ interface LoginProps {
 
 export default function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(() => hasStoredPassword())
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const autoLoginAttempted = useRef(false)
 
-  // In demo mode, auto-login immediately
+  // Auto-login from saved credentials or demo mode
   useEffect(() => {
+    if (autoLoginAttempted.current) return
+    autoLoginAttempted.current = true
+
     if (isDemo) {
       onLogin('demo')
+      return
     }
+
+    loadPassword().then(async (saved) => {
+      if (!saved) return
+      setLoading(true)
+      const ok = await onLogin(saved)
+      if (!ok) {
+        clearPassword()
+        setRemember(false)
+        setError('Saved password is no longer valid')
+      }
+      setLoading(false)
+    })
   }, [onLogin])
 
   async function handleSubmit(e: FormEvent) {
@@ -23,11 +42,17 @@ export default function Login({ onLogin }: LoginProps) {
     setError('')
     setLoading(true)
     const ok = await onLogin(password)
-    setLoading(false)
-    if (!ok) {
+    if (ok) {
+      if (remember) {
+        await savePassword(password)
+      } else {
+        clearPassword()
+      }
+    } else {
       setError('Invalid password')
       setPassword('')
     }
+    setLoading(false)
   }
 
   return (
@@ -49,6 +74,7 @@ export default function Login({ onLogin }: LoginProps) {
             type="text"
             autoComplete="username"
             defaultValue="admin"
+            readOnly
             tabIndex={-1}
             className="w-full px-3 py-2 mb-4 bg-gray-800 border border-gray-700 rounded-md text-gray-400 cursor-default focus:outline-none"
           />
@@ -67,6 +93,15 @@ export default function Login({ onLogin }: LoginProps) {
             autoFocus
             disabled={loading}
           />
+          <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-0 accent-blue-600"
+            />
+            <span className="text-sm text-gray-400">Remember me</span>
+          </label>
           {error && (
             <p className="mt-2 text-sm text-red-400">{error}</p>
           )}
