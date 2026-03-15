@@ -9,16 +9,18 @@
   Deploy a lightweight agent on each device and get a single-pane-of-glass view of your entire fleet through a real-time web dashboard.
 </p>
 
+<h4>Please note, this is in active dev and still receiving breaking changes. It is relatively stable at version 2.24 but still may receive breaking changes. If you installed prior to v2.24 i recommend starting over as there were several issues resolved.</h4>
+
 <p align="center">
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.22.0**
+> **README last updated for v2.24.1**
 
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, cron jobs and scheduled tasks
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -229,6 +231,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - ups
        - webservers
        - usb
+       - cron
 
    docker:
      enabled: "auto"               # "auto" (detect), "true", or "false"
@@ -340,6 +343,7 @@ New installs via `install.sh` include all rules automatically.
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
 | `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
 | `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
+| `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
 
 **Note:** The `usb` collector is Linux-only. It reads from `/sys/bus/usb/devices/` and uses the system `usb.ids` database (shipped with `usbutils` or `hwdata`) to resolve vendor/product names for devices that don't self-report (e.g., Google Coral TPU). No additional packages or permissions are required.
 
