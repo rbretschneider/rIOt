@@ -15,6 +15,7 @@ import SecurityScoreModal from '../components/SecurityScoreModal'
 import { useFeatures } from '../hooks/useFeatures'
 import cronstrue from 'cronstrue'
 import { formatRunDate, parseSystemdCalendar } from '../utils/cron'
+import Tooltip from '../components/Tooltip'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -1046,7 +1047,11 @@ export default function DeviceDetail() {
                     {tel.cron_jobs.jobs.map((job, i) => (
                       <tr key={i} className="border-b border-gray-800/50 text-gray-300">
                         <td className="py-1.5 pr-4 font-mono text-xs">{job.user}</td>
-                        <td className="py-1.5 pr-4 font-mono text-xs" title={(() => { try { return cronstrue.toString(job.schedule) } catch { return job.schedule } })()}>{job.schedule}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs">
+                          <Tooltip content={(() => { try { return cronstrue.toString(job.schedule) } catch { return null } })()}>
+                            <span className="cursor-help border-b border-dotted border-gray-600">{job.schedule}</span>
+                          </Tooltip>
+                        </td>
                         <td className="py-1.5 pr-4 text-xs max-w-md truncate" title={job.command}>{job.command}</td>
                         <td className="py-1.5 pr-4 text-xs text-gray-500">{job.source}</td>
                       </tr>
@@ -1075,7 +1080,11 @@ export default function DeviceDetail() {
                     {tel.cron_jobs.timers.map((timer, i) => (
                       <tr key={i} className="border-b border-gray-800/50 text-gray-300">
                         <td className="py-1.5 pr-4 text-xs font-medium">{timer.name}</td>
-                        <td className="py-1.5 pr-4 font-mono text-xs" title={parseSystemdCalendar(timer.calendar) ?? timer.calendar}>{timer.calendar}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs">
+                          <Tooltip content={parseSystemdCalendar(timer.calendar)}>
+                            <span className="cursor-help border-b border-dotted border-gray-600">{timer.calendar}</span>
+                          </Tooltip>
+                        </td>
                         <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.next_run)}</td>
                         <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.last_run)}</td>
                         <td className="py-1.5 pr-4 font-mono text-xs">{timer.unit}</td>
