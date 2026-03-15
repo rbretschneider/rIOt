@@ -425,9 +425,10 @@ export default function DeviceDetail() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {tel.cpu && <GaugeBar label="CPU Usage" value={tel.cpu.usage_percent} />}
             {tel.memory && <GaugeBar label="RAM Usage" value={tel.memory.usage_percent} />}
-            {tel.disks?.filesystems?.[0] && (
-              <GaugeBar label={`Disk (${tel.disks.filesystems[0].mount_point})`} value={tel.disks.filesystems[0].usage_percent} />
-            )}
+            {tel.disks?.filesystems && tel.disks.filesystems.length > 0 && (() => {
+              const highest = tel.disks!.filesystems!.reduce((max, fs) => fs.usage_percent > max.usage_percent ? fs : max)
+              return <GaugeBar label={`Disk (${highest.mount_point})`} value={highest.usage_percent} />
+            })()}
           </div>
           {tel.cpu && (
             <div className="mt-4 grid grid-cols-3 gap-4">
