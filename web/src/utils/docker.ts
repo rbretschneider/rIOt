@@ -139,6 +139,76 @@ export function formatPorts(c: ContainerInfo): string {
     .join(', ')
 }
 
+// --- V2 grouping types ---
+
+export interface NetworkCluster {
+  parent: ContainerInfo
+  dependents: ContainerInfo[]
+}
+
+export interface ComposeStackGroup {
+  name: string
+  workDir: string
+  containers: ContainerInfo[]
+  networkClusters: NetworkCluster[]
+  loose: ContainerInfo[]
+  updatableCount: number
+}
+
+export interface ContainerLayout {
+  composeStacks: ComposeStackGroup[]
+  standalone: ContainerInfo[]
+}
+
+export function groupContainersV2(containers: ContainerInfo[]): ContainerLayout {
+  const visible = containers.filter(c => !c.riot?.hide)
+  const composeMap = new Map<string, ContainerInfo[]>()
+  const standalone: ContainerInfo[] = []
+
+  for (const c of visible) {
+    const project = c.labels?.['com.docker.compose.project']
+    if (project) {
+      const list = composeMap.get(project) || []
+      list.push(c)
+      composeMap.set(project, list)
+    } else {
+      standalone.push(c)
+    }
+  }
+
+  const composeStacks: ComposeStackGroup[] = []
+  for (const [name, members] of composeMap) {
+    const workDir = members.find(c => c.labels?.['com.docker.compose.project.working_dir'])
+      ?.labels?.['com.docker.compose.project.working_dir'] ?? ''
+
+    // Build network clusters within this stack
+    const networkGraph = buildNetworkGraph(members)
+    const memberNames = new Set(members.map(c => c.name))
+    const inCluster = new Set<string>()
+    const clusters: NetworkCluster[] = []
+
+    for (const [parentName, deps] of networkGraph) {
+      // Only cluster if the parent is in this same stack
+      if (!memberNames.has(parentName)) continue
+      const parent = members.find(c => c.name === parentName)
+      if (!parent) continue
+      inCluster.add(parent.id)
+      for (const d of deps) inCluster.add(d.id)
+      clusters.push({ parent, dependents: deps })
+    }
+
+    const loose = members.filter(c => !inCluster.has(c.id))
+    const updatableCount = members.filter(c => c.update_available).length
+
+    composeStacks.push({ name, workDir, containers: members, networkClusters: clusters, loose, updatableCount })
+  }
+
+  composeStacks.sort((a, b) => a.name.localeCompare(b.name))
+  standalone.sort((a, b) => displayName(a.riot, a.name).localeCompare(displayName(b.riot, b.name)))
+
+  return { composeStacks, standalone }
+}
+
 /** Returns the parent container name for containers using network_mode: container:<name> */
 export function getNetworkParent(c: ContainerInfo): string | null {
   if (!c.network_mode) return null

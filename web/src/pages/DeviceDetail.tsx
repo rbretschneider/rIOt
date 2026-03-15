@@ -14,6 +14,7 @@ import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import { useFeatures } from '../hooks/useFeatures'
 import cronstrue from 'cronstrue'
+import { formatRunDate, parseSystemdCalendar } from '../utils/cron'
 
 export default function DeviceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -1074,9 +1075,9 @@ export default function DeviceDetail() {
                     {tel.cron_jobs.timers.map((timer, i) => (
                       <tr key={i} className="border-b border-gray-800/50 text-gray-300">
                         <td className="py-1.5 pr-4 text-xs font-medium">{timer.name}</td>
-                        <td className="py-1.5 pr-4 font-mono text-xs">{timer.calendar}</td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-400">{timer.next_run ? new Date(timer.next_run).toLocaleString() : '-'}</td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-400">{timer.last_run ? new Date(timer.last_run).toLocaleString() : '-'}</td>
+                        <td className="py-1.5 pr-4 font-mono text-xs" title={parseSystemdCalendar(timer.calendar) ?? timer.calendar}>{timer.calendar}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.next_run)}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.last_run)}</td>
                         <td className="py-1.5 pr-4 font-mono text-xs">{timer.unit}</td>
                         <td className="py-1.5 pr-4">
                           <span className={`inline-block w-2 h-2 rounded-full ${timer.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />

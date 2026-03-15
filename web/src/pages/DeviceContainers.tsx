@@ -3,9 +3,10 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
-import ContainerGroup from '../components/ContainerGroup'
+import ComposeStackSection from '../components/ComposeStackSection'
+import CompactContainerTile from '../components/CompactContainerTile'
 import type { ContainerInfo } from '../types/models'
-import { groupContainers, displayName } from '../utils/docker'
+import { groupContainersV2, displayName, getNetworkParent } from '../utils/docker'
 
 export default function DeviceContainers() {
   const { id } = useParams<{ id: string }>()
@@ -19,20 +20,10 @@ export default function DeviceContainers() {
   })
 
   const [containerSearch, setContainerSearch] = useState('')
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const checkUpdatesMutation = useMutation({
     mutationFn: () => api.sendCommand(id!, 'docker_check_updates', {}),
     onSuccess: () => { setTimeout(() => checkUpdatesMutation.reset(), 5000) },
-  })
-
-  const bulkUpdateMutation = useMutation({
-    mutationFn: (containerIds: string[]) => api.bulkDockerUpdate(id!, containerIds),
-    onSuccess: () => {
-      setSelectedIds(new Set())
-      setTimeout(() => bulkUpdateMutation.reset(), 5000)
-    },
-    onError: () => { setTimeout(() => bulkUpdateMutation.reset(), 5000) },
   })
 
   if (isLoading) return <div className="text-gray-500">Loading...</div>
@@ -60,19 +51,6 @@ export default function DeviceContainers() {
     navigate(`/devices/${id}/containers/${c.short_id}`)
   }
 
-  function handleSelectionChange(containerId: string, selected: boolean) {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (selected) next.add(containerId)
-      else next.delete(containerId)
-      return next
-    })
-  }
-
-  function handleSelectAllUpdatable() {
-    setSelectedIds(new Set(allUpdatable.map(c => c.id)))
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -87,12 +65,9 @@ export default function DeviceContainers() {
           <p className="text-sm text-gray-500">
             {docker.running} running / {docker.total_containers} total
             {docker.paused ? ` / ${docker.paused} paused` : ''}
-            {(() => {
-              const updatable = allUpdatable.length
-              return updatable > 0 ? (
-                <span className="text-amber-400 ml-1">/ {updatable} updatable</span>
-              ) : null
-            })()}
+            {allUpdatable.length > 0 && (
+              <span className="text-amber-400 ml-1">/ {allUpdatable.length} updatable</span>
+            )}
           </p>
           <button
             onClick={() => checkUpdatesMutation.mutate()}
@@ -105,46 +80,6 @@ export default function DeviceContainers() {
         </div>
       </div>
 
-      {/* Bulk Action Toolbar */}
-      {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 bg-blue-900/20 border border-blue-800/30 rounded-lg">
-          <span className="text-sm text-blue-300">{selectedIds.size} selected</span>
-          <button
-            onClick={() => bulkUpdateMutation.mutate(Array.from(selectedIds))}
-            disabled={bulkUpdateMutation.isPending}
-            className="px-3 py-1 text-xs font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors disabled:opacity-50"
-          >
-            {bulkUpdateMutation.isPending ? 'Updating...' : 'Update Selected'}
-          </button>
-          <button
-            onClick={() => setSelectedIds(new Set())}
-            className="px-2 py-1 text-xs text-gray-400 hover:text-white transition-colors"
-          >
-            Clear
-          </button>
-          <div className="flex-1" />
-          {allUpdatable.length > 0 && (
-            <button
-              onClick={handleSelectAllUpdatable}
-              className="px-2 py-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              Select all updatable ({allUpdatable.length})
-            </button>
-          )}
-        </div>
-      )}
-
-      {bulkUpdateMutation.isSuccess && (
-        <div className="px-3 py-2 bg-emerald-900/20 border border-emerald-800/30 rounded text-sm text-emerald-400">
-          Bulk update command sent
-        </div>
-      )}
-      {bulkUpdateMutation.isError && (
-        <div className="px-3 py-2 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-400">
-          {(bulkUpdateMutation.error as Error).message}
-        </div>
-      )}
-
       {/* Search */}
       <div>
         <input
@@ -156,70 +91,97 @@ export default function DeviceContainers() {
         />
       </div>
 
-      {/* Container Groups */}
-      <ContainerList
-        docker={docker}
+      {/* Container Layout */}
+      <ContainerLayout
+        allContainers={allContainers}
         search={containerSearch}
         onContainerClick={handleContainerClick}
-        deviceId={id}
-        selectedIds={selectedIds}
-        onSelectionChange={handleSelectionChange}
+        deviceId={id!}
       />
     </div>
   )
 }
 
-function ContainerList({
-  docker,
+function ContainerLayout({
+  allContainers,
   search,
   onContainerClick,
   deviceId,
-  selectedIds,
-  onSelectionChange,
 }: {
-  docker: NonNullable<import('../types/models').FullTelemetryData['docker']>
+  allContainers: ContainerInfo[]
   search: string
   onContainerClick: (c: ContainerInfo) => void
-  deviceId?: string
-  selectedIds?: Set<string>
-  onSelectionChange?: (id: string, selected: boolean) => void
+  deviceId: string
 }) {
   const filtered = useMemo(() => {
-    let containers = docker.containers ?? []
-    if (search) {
-      const q = search.toLowerCase()
-      containers = containers.filter(c => {
-        const name = displayName(c.riot, c.name).toLowerCase()
-        return (
-          name.includes(q) ||
-          c.image.toLowerCase().includes(q) ||
-          c.state.includes(q) ||
-          (c.riot?.group?.toLowerCase().includes(q)) ||
-          (c.riot?.tags?.some(t => t.toLowerCase().includes(q)))
-        )
-      })
+    if (!search) return allContainers
+    const q = search.toLowerCase()
+    return allContainers.filter(c => {
+      const name = displayName(c.riot, c.name).toLowerCase()
+      return (
+        name.includes(q) ||
+        c.image.toLowerCase().includes(q) ||
+        c.state.includes(q) ||
+        c.riot?.group?.toLowerCase().includes(q) ||
+        c.riot?.tags?.some(t => t.toLowerCase().includes(q)) ||
+        c.labels?.['com.docker.compose.project']?.toLowerCase().includes(q)
+      )
+    })
+  }, [allContainers, search])
+
+  const layout = useMemo(() => groupContainersV2(filtered), [filtered])
+
+  // Build cross-stack network parent labels for standalone containers
+  const standaloneCrossStack = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const c of layout.standalone) {
+      const parent = getNetworkParent(c)
+      if (parent) {
+        const parentContainer = allContainers.find(ac => ac.name === parent)
+        const project = parentContainer?.labels?.['com.docker.compose.project']
+        map.set(c.id, project ? `${parent} (${project})` : parent)
+      }
     }
-    return containers
-  }, [docker.containers, search])
+    return map
+  }, [layout.standalone, allContainers])
 
-  const groups = useMemo(() => groupContainers(filtered), [filtered])
-
-  if (groups.length === 0) {
+  if (layout.composeStacks.length === 0 && layout.standalone.length === 0) {
     return <p className="text-sm text-gray-500">No containers match your search.</p>
   }
 
   return (
-    <div className="columns-1 md:columns-2 xl:columns-3 gap-4">
-      {groups.map(g => (
-        <ContainerGroup
-          key={g.name}
-          group={g}
-          onContainerClick={onContainerClick}
+    <div className="space-y-4">
+      {layout.composeStacks.map(stack => (
+        <ComposeStackSection
+          key={stack.name}
+          stack={stack}
           deviceId={deviceId}
-          selectedIds={selectedIds}
-          onSelectionChange={onSelectionChange}
+          onContainerClick={onContainerClick}
+          allContainers={allContainers}
         />
       ))}
+
+      {layout.standalone.length > 0 && (
+        <section className="border border-gray-700/30 rounded-lg bg-gray-900/30 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+            </svg>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Standalone Containers</h2>
+            <span className="text-xs text-gray-600">{layout.standalone.length}</span>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-1.5">
+            {layout.standalone.map(c => (
+              <CompactContainerTile
+                key={c.id}
+                container={c}
+                onClick={onContainerClick}
+                crossStackParent={standaloneCrossStack.get(c.id)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }
