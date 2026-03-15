@@ -170,7 +170,7 @@ function ContainerLayout({
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">Standalone Containers</h2>
             <span className="text-xs text-gray-600">{layout.standalone.length}</span>
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {layout.standalone.map(c => (
               <CompactContainerTile
                 key={c.id}

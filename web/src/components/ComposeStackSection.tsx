@@ -120,9 +120,9 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         <div className="px-2 py-1 mb-2 bg-red-900/20 rounded text-xs text-red-400">{(bulkUpdateMutation.error as Error).message}</div>
       )}
 
-      {/* Loose containers grid */}
+      {/* Loose containers */}
       {stack.loose.length > 0 && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {stack.loose.map(c => (
             <CompactContainerTile
               key={c.id}
@@ -149,6 +149,10 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         <UpdateConfirmModal
           title={`Update Stack: ${stack.name}`}
           containers={updatable}
+          networkOrder={stack.networkClusters.length > 0 ? {
+            parent: stack.networkClusters.map(nc => nc.parent.name).join(', '),
+            dependents: stack.networkClusters.flatMap(nc => nc.dependents.map(d => d.name)),
+          } : undefined}
           onConfirm={() => {
             stackMutation.mutate()
             setShowStackConfirm(false)

@@ -42,7 +42,7 @@ export default function NetworkClusterGroup({ cluster, onContainerClick, onBulkU
       {/* Dependent tiles */}
       {cluster.dependents.length > 0 && (
         <div className="ml-6 mt-1 border-l border-gray-700/40 pl-2">
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             {cluster.dependents.map(c => (
               <CompactContainerTile key={c.id} container={c} onClick={onContainerClick} updating={updating} />
             ))}

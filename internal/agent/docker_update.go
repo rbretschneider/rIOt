@@ -73,6 +73,9 @@ func (a *Agent) dockerUpdate(ctx context.Context, payload models.CommandPayload)
 // dockerUpdateCompose updates Compose-managed containers by running
 // `docker compose pull && docker compose up -d`.
 // If service is non-empty, only that service is updated; otherwise the entire stack is updated.
+//
+// Before recreating, it stops containers using network_mode: container:<name> to prevent
+// failures when the parent container is recreated (e.g. sonarr/radarr depending on gluetun).
 func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -85,6 +88,14 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 
 	slog.Info("docker_update: compose path", "workDir", workDir, "service", service)
 	a.sendDockerLifecycleEvent(updateCtx, target, "", "update_started")
+
+	// Stop network_mode dependents before compose up to prevent failures when
+	// a parent container (e.g. gluetun) is recreated and dependents lose their network namespace.
+	stoppedDependents := a.stopNetworkDependents(updateCtx, workDir)
+	if len(stoppedDependents) > 0 {
+		slog.Info("docker_update: stopped network dependents before compose update",
+			"stack", stackName, "stopped", stoppedDependents)
+	}
 
 	// Build pull command
 	pullArgs := []string{"compose", "--project-directory", workDir, "pull"}
@@ -118,6 +129,72 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 		label = "service " + service
 	}
 	return "success", fmt.Sprintf("updated compose %s\n%s", label, truncateOutput(combined, 4000))
+}
+
+// stopNetworkDependents finds and stops containers in a compose project that use
+// network_mode: container:<name>, so that the parent can be safely recreated.
+// Returns the names of containers that were stopped.
+func (a *Agent) stopNetworkDependents(ctx context.Context, workDir string) []string {
+	cli, err := newDockerClient(a.config.Docker.SocketPath)
+	if err != nil {
+		return nil
+	}
+	defer cli.Close()
+
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil
+	}
+
+	// Find containers in this compose project
+	var projectContainers []container.Summary
+	for _, c := range containers {
+		if c.Labels["com.docker.compose.project.working_dir"] == workDir {
+			projectContainers = append(projectContainers, c)
+		}
+	}
+
+	// Find which container names exist in this project
+	projectNames := make(map[string]bool)
+	for _, c := range projectContainers {
+		for _, name := range c.Names {
+			projectNames[strings.TrimPrefix(name, "/")] = true
+		}
+	}
+
+	// Stop running containers that use network_mode: container:<name> where <name> is in this project
+	var stopped []string
+	for _, c := range projectContainers {
+		if c.State != "running" {
+			continue
+		}
+		// Need to inspect to get network mode
+		inspect, err := cli.ContainerInspect(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		if inspect.HostConfig == nil {
+			continue
+		}
+		nm := string(inspect.HostConfig.NetworkMode)
+		if !strings.HasPrefix(nm, "container:") {
+			continue
+		}
+		parentName := strings.TrimPrefix(nm, "container:")
+		if !projectNames[parentName] {
+			continue
+		}
+		// This container depends on another container's network — stop it first
+		containerName := strings.TrimPrefix(inspect.Name, "/")
+		timeout := 30
+		if err := cli.ContainerStop(ctx, c.ID, container.StopOptions{Timeout: &timeout}); err != nil {
+			slog.Warn("docker_update: failed to stop network dependent", "container", containerName, "error", err)
+			continue
+		}
+		stopped = append(stopped, containerName)
+	}
+
+	return stopped
 }
 
 // dockerUpdateStandalone updates a standalone container by pulling the new image,
