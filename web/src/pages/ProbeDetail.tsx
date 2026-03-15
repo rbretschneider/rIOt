@@ -54,7 +54,7 @@ export default function ProbeDetail() {
         <Link to="/probes" className="text-sm text-gray-400 hover:text-white transition-colors">
           &larr; Back to Probes
         </Link>
-        <div className="flex items-center justify-between mt-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-2 gap-2">
           <div>
             <h1 className="text-2xl font-bold text-white">{probe.name}</h1>
             <p className="text-sm text-gray-500">
@@ -62,7 +62,7 @@ export default function ProbeDetail() {
               {!probe.enabled && <span className="ml-2 text-amber-500">(disabled)</span>}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => setEditing(probeToForm(probe))}
               className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
@@ -81,7 +81,7 @@ export default function ProbeDetail() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
           <p className="text-xs text-gray-500 uppercase">Success Rate</p>
           <p className="text-2xl font-bold text-white">{successRate}%</p>
@@ -102,12 +102,12 @@ export default function ProbeDetail() {
           <h2 className="text-sm font-semibold text-gray-300 uppercase">Recent Results</h2>
         </div>
         <div className="max-h-96 overflow-auto scrollbar-thin">
-          <table className="w-full text-sm min-w-[480px]">
+          <table className="w-full text-sm">
             <thead>
               <tr className="text-gray-500 text-xs uppercase">
                 <th className="text-left px-4 py-2">Status</th>
                 <th className="text-right px-4 py-2">Latency</th>
-                <th className="text-left px-4 py-2">Error</th>
+                <th className="text-left px-4 py-2 hidden sm:table-cell">Error</th>
                 <th className="text-right px-4 py-2">Time</th>
               </tr>
             </thead>
@@ -120,10 +120,10 @@ export default function ProbeDetail() {
                   <td className="px-4 py-2 text-right font-mono text-gray-300">
                     {r.latency_ms.toFixed(1)}ms
                   </td>
-                  <td className="px-4 py-2 text-gray-500 text-xs truncate max-w-xs">
+                  <td className="px-4 py-2 text-gray-500 text-xs truncate max-w-xs hidden sm:table-cell">
                     {r.error_msg || '-'}
                   </td>
-                  <td className="px-4 py-2 text-right text-gray-500 text-xs">
+                  <td className="px-4 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
                     {new Date(r.created_at).toLocaleString()}
                   </td>
                 </tr>

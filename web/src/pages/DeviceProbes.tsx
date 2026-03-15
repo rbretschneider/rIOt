@@ -101,42 +101,44 @@ export default function DeviceProbes() {
         <div className="space-y-3">
           {probes.map(probe => (
             <div key={probe.id} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                {/* Status indicator */}
-                <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                  !probe.enabled ? 'bg-gray-600'
-                  : probe.latest_result == null ? 'bg-gray-500'
-                  : probe.latest_result.success ? 'bg-emerald-400'
-                  : 'bg-red-400'
-                }`} />
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {/* Status indicator */}
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                    !probe.enabled ? 'bg-gray-600'
+                    : probe.latest_result == null ? 'bg-gray-500'
+                    : probe.latest_result.success ? 'bg-emerald-400'
+                    : 'bg-red-400'
+                  }`} />
 
-                {/* Name & type */}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white">{probe.name}</span>
-                    <span className="px-1.5 py-0.5 text-[10px] uppercase font-medium rounded bg-gray-800 text-gray-400 border border-gray-700">
-                      {probe.type}
-                    </span>
-                    {!probe.enabled && (
-                      <span className="text-xs text-gray-600">disabled</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
-                    {probe.success_rate != null && (
-                      <span className={probe.success_rate >= 95 ? 'text-emerald-400' : probe.success_rate >= 80 ? 'text-amber-400' : 'text-red-400'}>
-                        {probe.success_rate.toFixed(1)}% success
+                  {/* Name & type */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-white">{probe.name}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] uppercase font-medium rounded bg-gray-800 text-gray-400 border border-gray-700">
+                        {probe.type}
                       </span>
-                    )}
-                    <span>{probe.total_checks} checks</span>
-                    {probe.latest_result && (
-                      <span>{probe.latest_result.latency_ms.toFixed(0)}ms</span>
-                    )}
-                    <span>every {probe.interval_seconds}s</span>
+                      {!probe.enabled && (
+                        <span className="text-xs text-gray-600">disabled</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500 flex-wrap">
+                      {probe.success_rate != null && (
+                        <span className={probe.success_rate >= 95 ? 'text-emerald-400' : probe.success_rate >= 80 ? 'text-amber-400' : 'text-red-400'}>
+                          {probe.success_rate.toFixed(1)}% success
+                        </span>
+                      )}
+                      <span>{probe.total_checks} checks</span>
+                      {probe.latest_result && (
+                        <span>{probe.latest_result.latency_ms.toFixed(0)}ms</span>
+                      )}
+                      <span>every {probe.interval_seconds}s</span>
+                    </div>
                   </div>
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2 flex-shrink-0">
+                <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
                   <button
                     onClick={() => setViewingResults(viewingResults === probe.id ? null : probe.id)}
                     className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded transition-colors"

@@ -165,3 +165,13 @@ func (r *CARepo) DeleteBootstrapKey(ctx context.Context, keyHash string) error {
 	_, err := r.db.Pool.Exec(ctx, `DELETE FROM bootstrap_keys WHERE key_hash = $1`, keyHash)
 	return err
 }
+
+// PurgeStaleBootstrapKeys deletes bootstrap keys that have been used or have expired.
+func (r *CARepo) PurgeStaleBootstrapKeys(ctx context.Context) (int64, error) {
+	tag, err := r.db.Pool.Exec(ctx,
+		`DELETE FROM bootstrap_keys WHERE used = true OR expires_at < NOW()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/ca"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -81,7 +82,7 @@ func (h *EnrollHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sign CSR
-	validity := 365 * 24 * time.Hour // 1 year
+	validity := 10 * 365 * 24 * time.Hour // 10 years
 	certPEM, serialHex, notBefore, notAfter, err := h.ca.SignCSR([]byte(req.CSRPEM), deviceID, validity)
 	if err != nil {
 		slog.Error("enroll: sign CSR", "error", err)
@@ -201,6 +202,69 @@ func (h *EnrollHandler) DeleteBootstrapKey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// Renew handles POST /api/v1/renew — device presents existing valid mTLS cert,
+// server issues a new cert and revokes the old one.
+func (h *EnrollHandler) Renew(w http.ResponseWriter, r *http.Request) {
+	// Device ID is already validated by MTLSDeviceAuth middleware
+	devID := middleware.DeviceIDFromMTLS(r.Context())
+	if devID == "" {
+		http.Error(w, `{"error":"mTLS authentication required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		CSRPEM string `json:"csr_pem"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CSRPEM == "" {
+		http.Error(w, `{"error":"csr_pem is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get current cert to revoke after renewal
+	oldCert, err := h.caRepo.GetCertByDevice(r.Context(), devID)
+	if err != nil {
+		slog.Error("renew: get old cert", "error", err)
+	}
+
+	// Sign new CSR
+	validity := 10 * 365 * 24 * time.Hour
+	certPEM, serialHex, notBefore, notAfter, err := h.ca.SignCSR([]byte(req.CSRPEM), devID, validity)
+	if err != nil {
+		slog.Error("renew: sign CSR", "error", err)
+		http.Error(w, `{"error":"failed to sign certificate"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Store new cert
+	deviceCert := &models.DeviceCert{
+		DeviceID:     devID,
+		SerialNumber: serialHex,
+		CertPEM:      string(certPEM),
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+	}
+	if err := h.caRepo.StoreCert(r.Context(), deviceCert); err != nil {
+		slog.Error("renew: store cert", "error", err)
+		http.Error(w, `{"error":"failed to store certificate"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Revoke old cert
+	if oldCert != nil && !oldCert.Revoked {
+		if err := h.caRepo.RevokeCert(r.Context(), oldCert.SerialNumber); err != nil {
+			slog.Error("renew: revoke old cert", "error", err)
+		}
+	}
+
+	slog.Info("device certificate renewed", "device_id", devID, "new_serial", serialHex)
+
+	writeJSON(w, http.StatusOK, models.EnrollResponse{
+		DeviceID:  devID,
+		CertPEM:   string(certPEM),
+		CACertPEM: string(h.ca.CertPEM()),
+	})
 }
 
 func hashKey(key string) string {

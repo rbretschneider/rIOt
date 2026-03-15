@@ -195,3 +195,77 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		"tls_enabled": req.TLSMode != "none",
 	})
 }
+
+// RegenerateTLS handles POST /api/v1/settings/tls/regenerate.
+// Generates a new server TLS certificate signed by the rIOt CA (if available)
+// or self-signed, stores it, and triggers a TLS restart.
+func (h *SetupHandler) RegenerateTLS(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	tlsMode, _ := h.adminRepo.GetConfig(ctx, "tls_mode")
+	if tlsMode != "self-signed" {
+		http.Error(w, `{"error":"TLS regeneration only available in self-signed mode"}`, http.StatusBadRequest)
+		return
+	}
+
+	hostname := r.Host
+	for i := len(hostname) - 1; i >= 0; i-- {
+		if hostname[i] == ':' {
+			hostname = hostname[:i]
+			break
+		}
+	}
+
+	var extraIPs []net.IP
+	if ip := net.ParseIP(hostname); ip != nil {
+		extraIPs = append(extraIPs, ip)
+	}
+	if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
+		if ip := net.ParseIP(realIP); ip != nil {
+			extraIPs = append(extraIPs, ip)
+		}
+	}
+
+	// Try CA-signed first (agents already trust the CA cert)
+	var certPEM, keyPEM []byte
+	var err error
+
+	// Load CA from DB to try CA-signed cert
+	caCertPEM, caKeyPEM, caErr := h.caRepo.GetCA(ctx)
+	if caErr == nil && caCertPEM != "" {
+		authority, loadErr := ca.LoadCA([]byte(caCertPEM), []byte(caKeyPEM))
+		if loadErr == nil {
+			certPEM, keyPEM, err = ca.GenerateServerTLSWithCA(authority, hostname, extraIPs, 3650)
+			if err == nil {
+				slog.Info("regenerated CA-signed server TLS certificate", "hostname", hostname)
+			}
+		}
+	}
+
+	// Fall back to self-signed if CA not available
+	if certPEM == nil {
+		certPEM, keyPEM, err = ca.GenerateServerTLS(hostname, extraIPs, 3650)
+		if err != nil {
+			slog.Error("regenerate TLS: generate cert", "error", err)
+			http.Error(w, `{"error":"failed to generate TLS certificate"}`, http.StatusInternalServerError)
+			return
+		}
+		slog.Info("regenerated self-signed server TLS certificate", "hostname", hostname)
+	}
+
+	if err := h.adminRepo.StoreServerTLSCert(ctx, string(certPEM), string(keyPEM)); err != nil {
+		slog.Error("regenerate TLS: store cert", "error", err)
+		http.Error(w, `{"error":"failed to store TLS certificate"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Trigger TLS restart
+	if h.onComplete != nil {
+		go h.onComplete()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":      true,
+		"message": "TLS certificate regenerated, server restarting with new certificate",
+	})
+}

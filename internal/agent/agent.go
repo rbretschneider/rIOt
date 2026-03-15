@@ -89,6 +89,13 @@ func (a *Agent) Run() error {
 		}
 	}
 
+	// mTLS renewal: if client cert exists and is expiring within 30 days, renew
+	if a.config.Server.ClientCert != "" {
+		if err := a.renewCertIfNeeded(); err != nil {
+			slog.Warn("certificate renewal failed, continuing with current cert", "error", err)
+		}
+	}
+
 	// Initialize HTTP client
 	if a.config.Server.ClientCert != "" || a.config.Server.CACertFile != "" || !a.config.Server.TLSVerify {
 		a.client = NewHTTPClientWithTLS(a.config.Server)

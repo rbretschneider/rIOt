@@ -89,6 +89,8 @@ func (s *Server) setupRouter() *chi.Mux {
 	if enrollH != nil {
 		r.Post("/api/v1/enroll", enrollH.Enroll)
 		r.Get("/api/v1/ca.pem", enrollH.CACert)
+		// mTLS certificate renewal (requires valid client cert)
+		r.With(middleware.MTLSDeviceAuth(s.DeviceRepo, s.CARepo)).Post("/api/v1/renew", enrollH.Renew)
 	}
 
 	// Build device auth middleware stack: API key always required,
@@ -196,6 +198,9 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/api/v1/settings/bootstrap-keys", enrollH.CreateBootstrapKey)
 			r.Delete("/api/v1/settings/bootstrap-keys/{hash}", enrollH.DeleteBootstrapKey)
 		}
+
+		// Settings: TLS certificate management
+		r.Post("/api/v1/settings/tls/regenerate", setupH.RegenerateTLS)
 
 		// Fleet management
 		r.Get("/api/v1/fleet/agent-versions", h.AgentVersionSummary)

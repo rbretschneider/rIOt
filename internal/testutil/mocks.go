@@ -1168,6 +1168,24 @@ func (m *MockCARepo) DeleteBootstrapKey(_ context.Context, keyHash string) error
 	return fmt.Errorf("not found")
 }
 
+func (m *MockCARepo) PurgeStaleBootstrapKeys(_ context.Context) (int64, error) {
+	if m.Err != nil {
+		return 0, m.Err
+	}
+	now := time.Now()
+	var kept []models.BootstrapKey
+	var purged int64
+	for _, k := range m.BootstrapKeys {
+		if k.Used || now.After(k.ExpiresAt) {
+			purged++
+		} else {
+			kept = append(kept, k)
+		}
+	}
+	m.BootstrapKeys = kept
+	return purged, nil
+}
+
 // --- MockDeviceLogRepo ---
 
 type MockDeviceLogRepo struct {

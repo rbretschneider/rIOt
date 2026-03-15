@@ -15,7 +15,7 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.24.1**
+> **README last updated for v2.25.0**
 
 ## Features
 
@@ -33,7 +33,7 @@
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
-- **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, server-enforced cert + API key auth on all device routes, and zero external tooling
+- **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls)
@@ -488,6 +488,20 @@ If a device is compromised or decommissioned:
 
 The server immediately stops accepting requests from that certificate. The device will need to be re-enrolled with a new bootstrap key to reconnect.
 
+### Certificate Renewal
+
+Device certificates are valid for 10 years. Agents automatically check their certificate on startup and renew when fewer than 30 days remain. Renewal uses the existing mTLS connection — no bootstrap key is needed. The old certificate is revoked automatically.
+
+If a certificate has already expired, the agent cannot renew (it can't authenticate). In that case, create a new bootstrap key and re-enroll the device.
+
+### Server TLS Certificate
+
+The server's self-signed TLS certificate is also valid for 10 years. When mTLS is enabled, the server certificate is signed by the rIOt CA so agents automatically trust it after renewal. To regenerate the server certificate (e.g. after adding new IP SANs), go to **Settings > Certificates** and click **Regenerate TLS Certificate**. The server restarts TLS automatically.
+
+### Bootstrap Key Cleanup
+
+Used and expired bootstrap keys are automatically purged by the server's hourly retention worker. No manual cleanup is needed.
+
 ### Certificate Management
 
 From **Settings > Certificates**:
@@ -570,6 +584,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/v1/enroll` | Enroll a device with bootstrap key + CSR |
+| `POST` | `/api/v1/renew` | Renew device certificate (requires valid mTLS client cert) |
 | `GET` | `/api/v1/ca.pem` | Download CA certificate |
 
 ### Dashboard (admin auth)
@@ -601,6 +616,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/settings/certs` | List device certificates |
 | `POST` | `/api/v1/settings/certs/:serial/revoke` | Revoke a device certificate |
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
+| `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
 | `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |

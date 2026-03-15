@@ -102,8 +102,8 @@ function ProbeCard({ probe, onRun, running, onEdit, onDelete, onToggle }: {
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <button
             onClick={onToggle}
             className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ${
@@ -127,7 +127,7 @@ function ProbeCard({ probe, onRun, running, onEdit, onDelete, onToggle }: {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-shrink-0 flex-wrap">
           {probe.success_rate != null && (
             <div className="text-right hidden sm:block">
               <p className={`text-sm font-mono font-semibold ${

@@ -34,6 +34,13 @@ export default function NetworkClusterGroup({ cluster, onContainerClick, onBulkU
         )}
       </div>
 
+      {/* Network parent down warning */}
+      {cluster.parent.state !== 'running' && cluster.dependents.length > 0 && (
+        <div className="px-2 py-1 mb-1.5 bg-red-900/20 border border-red-800/30 rounded text-[10px] text-red-400">
+          Network parent <span className="font-medium">{cluster.parent.name}</span> is {cluster.parent.state} — {cluster.dependents.length} dependent{cluster.dependents.length > 1 ? 's' : ''} may lose connectivity
+        </div>
+      )}
+
       {/* Parent tile */}
       <div className="border-l-2 border-blue-500/40 pl-2">
         <CompactContainerTile container={cluster.parent} onClick={onContainerClick} updating={updating} />
@@ -44,7 +51,13 @@ export default function NetworkClusterGroup({ cluster, onContainerClick, onBulkU
         <div className="ml-6 mt-1 border-l border-gray-700/40 pl-2">
           <div className="flex flex-wrap gap-1.5">
             {cluster.dependents.map(c => (
-              <CompactContainerTile key={c.id} container={c} onClick={onContainerClick} updating={updating} />
+              <CompactContainerTile
+                key={c.id}
+                container={c}
+                onClick={onContainerClick}
+                updating={updating}
+                networkParentDown={cluster.parent.state !== 'running'}
+              />
             ))}
           </div>
         </div>

@@ -142,6 +142,7 @@ type CARepository interface {
 	MarkBootstrapKeyUsed(ctx context.Context, keyHash, deviceID string) error
 	ListBootstrapKeys(ctx context.Context) ([]models.BootstrapKey, error)
 	DeleteBootstrapKey(ctx context.Context, keyHash string) error
+	PurgeStaleBootstrapKeys(ctx context.Context) (int64, error)
 }
 
 // DeviceLogRepository defines the interface for device log operations.

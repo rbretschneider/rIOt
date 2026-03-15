@@ -6,6 +6,7 @@ interface Props {
   onClick: (c: ContainerInfo) => void
   updating?: boolean
   crossStackParent?: string
+  networkParentDown?: boolean
 }
 
 function statusDotColor(state: string): string {
@@ -16,7 +17,7 @@ function statusDotColor(state: string): string {
   }
 }
 
-export default function CompactContainerTile({ container: c, onClick, updating, crossStackParent }: Props) {
+export default function CompactContainerTile({ container: c, onClick, updating, crossStackParent, networkParentDown }: Props) {
   const name = displayName(c.riot, c.name)
   const isRunning = c.state === 'running'
   const imageTag = c.image.includes(':') ? c.image.split(':').pop()! : 'latest'
@@ -47,6 +48,11 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
         {crossStackParent && (
           <span className="text-[9px] text-blue-400/70 truncate" title={`Network via ${crossStackParent}`}>
             via {crossStackParent}
+          </span>
+        )}
+        {networkParentDown && (
+          <span className="text-[9px] text-red-400 font-medium" title="Network parent is not running">
+            net down
           </span>
         )}
       </div>

@@ -498,6 +498,13 @@ func (s *Server) runRetention(ctx context.Context) {
 	} else if dlDeleted > 0 {
 		slog.Info("purged old device logs", "count", dlDeleted)
 	}
+
+	bkDeleted, err := s.CARepo.PurgeStaleBootstrapKeys(ctx)
+	if err != nil {
+		slog.Error("purge stale bootstrap keys failed", "error", err)
+	} else if bkDeleted > 0 {
+		slog.Info("purged stale bootstrap keys", "count", bkDeleted)
+	}
 }
 
 func (s *Server) offlineDetectionWorker(ctx context.Context) {

@@ -151,15 +151,17 @@ function ContainerLayout({
 
   return (
     <div className="space-y-4">
-      {layout.composeStacks.map(stack => (
-        <ComposeStackSection
-          key={stack.name}
-          stack={stack}
-          deviceId={deviceId}
-          onContainerClick={onContainerClick}
-          allContainers={allContainers}
-        />
-      ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {layout.composeStacks.map(stack => (
+          <ComposeStackSection
+            key={stack.name}
+            stack={stack}
+            deviceId={deviceId}
+            onContainerClick={onContainerClick}
+            allContainers={allContainers}
+          />
+        ))}
+      </div>
 
       {layout.standalone.length > 0 && (
         <section className="border border-gray-700/30 rounded-lg bg-gray-900/30 p-4">
