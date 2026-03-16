@@ -38,6 +38,7 @@ func (c *WebServersCollector) Collect(ctx context.Context) (interface{}, error) 
 	parsers := []ProxyParser{
 		&NginxParser{},
 		&CaddyParser{},
+		&FerronParser{},
 	}
 
 	var servers []models.ProxyServer

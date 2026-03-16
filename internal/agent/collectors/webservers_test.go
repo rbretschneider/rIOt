@@ -474,3 +474,261 @@ func TestNginxReadConfigFromDisk_NonexistentPath(t *testing.T) {
 	config := parser.readConfigFromDisk("/tmp/nonexistent-riot-test/nginx.conf")
 	assert.Empty(t, config)
 }
+
+// --- Ferron parser tests ---
+
+func TestParseFerronConfig_BasicSites(t *testing.T) {
+	config := `
+example.com {
+	root "/var/www/html"
+}
+
+"api.example.com" {
+	proxy "http://localhost:3000"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 2)
+
+	assert.Equal(t, []string{"example.com"}, sites[0].ServerNames)
+	assert.Equal(t, "/var/www/html", sites[0].Root)
+	assert.True(t, sites[0].Enabled)
+
+	assert.Equal(t, []string{"api.example.com"}, sites[1].ServerNames)
+	assert.Equal(t, "http://localhost:3000", sites[1].ProxyPass)
+}
+
+func TestParseFerronConfig_MultiHost(t *testing.T) {
+	config := `
+"example.com,example.org" {
+	root "/var/www/html"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"example.com", "example.org"}, sites[0].ServerNames)
+}
+
+func TestParseFerronConfig_HostWithPort(t *testing.T) {
+	config := `
+"example.com:8080" {
+	root "/var/www/html"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"example.com"}, sites[0].ServerNames)
+	assert.Contains(t, sites[0].Listen, "8080")
+}
+
+func TestParseFerronConfig_TLS(t *testing.T) {
+	config := `
+example.com {
+	tls "/etc/ssl/certs/example.pem" "/etc/ssl/private/example.key"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, "/etc/ssl/certs/example.pem", sites[0].SSLCert)
+}
+
+func TestParseFerronConfig_Upstreams(t *testing.T) {
+	config := `
+api.example.com {
+	proxy "http://backend1:8080"
+	proxy "http://backend2:8080"
+}
+`
+	sites, upstreams, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, "http://backend2:8080", sites[0].ProxyPass) // last proxy wins for display
+
+	require.Len(t, upstreams, 1)
+	assert.Equal(t, "api.example.com", upstreams[0].Name)
+	require.Len(t, upstreams[0].Servers, 2)
+	assert.Equal(t, "http://backend1:8080", upstreams[0].Servers[0].Address)
+	assert.Equal(t, "http://backend2:8080", upstreams[0].Servers[1].Address)
+}
+
+func TestParseFerronConfig_SecurityHeaders(t *testing.T) {
+	config := `
+example.com {
+	root "/var/www/html"
+	header "Strict-Transport-Security" "max-age=31536000"
+	header "X-Frame-Options" "DENY"
+	header "X-Custom-Header" "ignored"
+}
+`
+	sites, _, sec := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	require.NotNil(t, sec)
+	assert.Equal(t, "max-age=31536000", sec.SecurityHeaders["Strict-Transport-Security"])
+	assert.Equal(t, "DENY", sec.SecurityHeaders["X-Frame-Options"])
+	_, hasCustom := sec.SecurityHeaders["X-Custom-Header"]
+	assert.False(t, hasCustom)
+}
+
+func TestParseFerronConfig_RateLimiting(t *testing.T) {
+	config := `
+example.com {
+	limit rate=100 burst=200
+}
+`
+	_, _, sec := parseFerronConfig(config)
+	require.NotNil(t, sec)
+	require.Len(t, sec.RateLimiting, 1)
+	assert.Equal(t, "100r/s", sec.RateLimiting[0].Rate)
+	assert.Equal(t, 200, sec.RateLimiting[0].Burst)
+}
+
+func TestParseFerronConfig_AccessControl(t *testing.T) {
+	config := `
+example.com {
+	block "192.168.1.0/24"
+	allow "10.0.0.0/8"
+}
+`
+	_, _, sec := parseFerronConfig(config)
+	require.NotNil(t, sec)
+	require.Len(t, sec.AccessControls, 2)
+	assert.Equal(t, "deny", sec.AccessControls[0].Directive)
+	assert.Equal(t, "192.168.1.0/24", sec.AccessControls[0].Value)
+	assert.Equal(t, "allow", sec.AccessControls[1].Directive)
+	assert.Equal(t, "10.0.0.0/8", sec.AccessControls[1].Value)
+}
+
+func TestParseFerronConfig_SkipsGlobalsAndSnippets(t *testing.T) {
+	config := `
+globals {
+	tls_min_version "TLSv1.2"
+}
+
+snippet "common" {
+	header "X-Frame-Options" "DENY"
+}
+
+example.com {
+	root "/var/www/html"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, []string{"example.com"}, sites[0].ServerNames)
+}
+
+func TestParseFerronConfig_Comments(t *testing.T) {
+	config := `
+// This is a comment
+example.com {
+	// root "/old/path"
+	root "/var/www/html"
+}
+`
+	sites, _, _ := parseFerronConfig(config)
+	require.Len(t, sites, 1)
+	assert.Equal(t, "/var/www/html", sites[0].Root)
+}
+
+func TestParseFerronConfig_NoSecurityConfig(t *testing.T) {
+	config := `
+example.com {
+	root "/var/www/html"
+}
+`
+	_, _, sec := parseFerronConfig(config)
+	assert.Nil(t, sec)
+}
+
+func TestParseFerronConfig_Empty(t *testing.T) {
+	sites, upstreams, sec := parseFerronConfig("")
+	assert.Empty(t, sites)
+	assert.Empty(t, upstreams)
+	assert.Nil(t, sec)
+}
+
+func TestFerronLoadConfig_WithInclude(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create an included config file
+	incConf := `api.example.com {
+	proxy "http://localhost:8080"
+}
+`
+	incPath := filepath.Join(tmpDir, "api.kdl")
+	os.WriteFile(incPath, []byte(incConf), 0644)
+
+	// Create main config that includes it
+	mainConf := `include "` + filepath.ToSlash(filepath.Join(tmpDir, "*.kdl")) + `"
+
+example.com {
+	root "/var/www/html"
+}
+`
+	mainPath := filepath.Join(tmpDir, "ferron.kdl")
+	os.WriteFile(mainPath, []byte(mainConf), 0644)
+
+	parser := &FerronParser{}
+	content, err := parser.loadConfig(mainPath)
+	require.NoError(t, err)
+
+	sites, _, _ := parseFerronConfig(content)
+	require.Len(t, sites, 2)
+}
+
+func TestFerronLoadConfig_NonexistentPath(t *testing.T) {
+	parser := &FerronParser{}
+	_, err := parser.loadConfig("/tmp/nonexistent-riot-test/ferron.kdl")
+	assert.Error(t, err)
+}
+
+func TestParseFerronConfig_Realistic(t *testing.T) {
+	config := `globals {
+	tls_min_version "TLSv1.2"
+	auto_tls_contact "admin@example.com"
+}
+
+"blog.example.com" {
+	root "/var/www/blog"
+	header "Strict-Transport-Security" "max-age=31536000"
+	header "X-Content-Type-Options" "nosniff"
+	header "Referrer-Policy" "strict-origin-when-cross-origin"
+	limit rate=50 burst=100
+}
+
+"api.example.com" {
+	proxy "http://127.0.0.1:3000"
+	proxy "http://127.0.0.1:3001"
+	tls "/etc/ssl/certs/api.pem" "/etc/ssl/private/api.key"
+	limit rate=10 burst=20
+	block "192.168.0.0/16"
+	allow "10.0.0.0/8"
+}
+
+"static.example.com" {
+	root "/var/www/static"
+}
+`
+	sites, upstreams, sec := parseFerronConfig(config)
+	require.Len(t, sites, 3)
+
+	// Blog site
+	assert.Equal(t, []string{"blog.example.com"}, sites[0].ServerNames)
+	assert.Equal(t, "/var/www/blog", sites[0].Root)
+
+	// API site with multiple backends
+	assert.Equal(t, []string{"api.example.com"}, sites[1].ServerNames)
+	assert.Equal(t, "/etc/ssl/certs/api.pem", sites[1].SSLCert)
+	require.Len(t, upstreams, 1)
+	assert.Len(t, upstreams[0].Servers, 2)
+
+	// Static site
+	assert.Equal(t, []string{"static.example.com"}, sites[2].ServerNames)
+
+	// Security config aggregated from all sites
+	require.NotNil(t, sec)
+	assert.Equal(t, "max-age=31536000", sec.SecurityHeaders["Strict-Transport-Security"])
+	assert.Equal(t, "nosniff", sec.SecurityHeaders["X-Content-Type-Options"])
+	assert.Len(t, sec.RateLimiting, 2)
+	assert.Len(t, sec.AccessControls, 2)
+}
+
