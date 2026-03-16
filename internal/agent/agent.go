@@ -31,6 +31,16 @@ type Agent struct {
 	client     *HTTPClient
 	wsClient   *agentWSClient
 	logErrors  atomic.Int64
+
+	// Disk I/O tracking for delta computation between heartbeats.
+	prevDiskIO     map[string]diskIOSnapshot
+	prevDiskIOTime time.Time
+}
+
+type diskIOSnapshot struct {
+	ReadBytes  uint64
+	WriteBytes uint64
+	IoTime     uint64 // milliseconds spent doing I/O
 }
 
 func New(configPath, version string) (*Agent, error) {

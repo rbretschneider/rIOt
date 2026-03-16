@@ -54,6 +54,54 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 		}
 	}
 
+	// Disk I/O throughput and utilization (delta between heartbeats)
+	if counters, err := disk.IOCountersWithContext(ctx); err == nil {
+		now := time.Now()
+		curr := make(map[string]diskIOSnapshot, len(counters))
+		for name, c := range counters {
+			curr[name] = diskIOSnapshot{
+				ReadBytes:  c.ReadBytes,
+				WriteBytes: c.WriteBytes,
+				IoTime:     c.IoTime,
+			}
+		}
+
+		if a.prevDiskIO != nil && !a.prevDiskIOTime.IsZero() {
+			elapsed := now.Sub(a.prevDiskIOTime).Seconds()
+			if elapsed > 0 {
+				var totalReadDelta, totalWriteDelta uint64
+				var totalIOTimeDelta uint64
+				var deviceCount int
+				for name, cur := range curr {
+					if prev, ok := a.prevDiskIO[name]; ok {
+						if cur.ReadBytes >= prev.ReadBytes {
+							totalReadDelta += cur.ReadBytes - prev.ReadBytes
+						}
+						if cur.WriteBytes >= prev.WriteBytes {
+							totalWriteDelta += cur.WriteBytes - prev.WriteBytes
+						}
+						if cur.IoTime >= prev.IoTime {
+							totalIOTimeDelta += cur.IoTime - prev.IoTime
+						}
+						deviceCount++
+					}
+				}
+				data.DiskReadBytesPerSec = float64(totalReadDelta) / elapsed
+				data.DiskWriteBytesPerSec = float64(totalWriteDelta) / elapsed
+				if deviceCount > 0 {
+					// IoTime is ms spent doing I/O; normalize to percentage of wall time
+					data.DiskIOPercent = float64(totalIOTimeDelta) / (elapsed * 1000) * 100 / float64(deviceCount)
+					if data.DiskIOPercent > 100 {
+						data.DiskIOPercent = 100
+					}
+				}
+			}
+		}
+
+		a.prevDiskIO = curr
+		a.prevDiskIOTime = now
+	}
+
 	// Log errors since last heartbeat
 	data.LogErrors = int(a.logErrors.Swap(0))
 

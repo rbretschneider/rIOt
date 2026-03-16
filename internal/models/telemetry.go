@@ -4,13 +4,16 @@ import "time"
 
 // HeartbeatData is the lightweight ping payload.
 type HeartbeatData struct {
-	Uptime          uint64  `json:"uptime"`
-	CPUPercent      float64 `json:"cpu_percent"`
-	MemPercent      float64 `json:"mem_percent"`
-	LoadAvg1m       float64 `json:"load_avg_1m"`
-	DiskRootPercent float64 `json:"disk_root_percent"`
-	AgentVersion    string  `json:"agent_version,omitempty"`
-	LogErrors       int     `json:"log_errors,omitempty"`
+	Uptime              uint64  `json:"uptime"`
+	CPUPercent          float64 `json:"cpu_percent"`
+	MemPercent          float64 `json:"mem_percent"`
+	LoadAvg1m           float64 `json:"load_avg_1m"`
+	DiskRootPercent     float64 `json:"disk_root_percent"`
+	DiskReadBytesPerSec float64 `json:"disk_read_bytes_sec,omitempty"`
+	DiskWriteBytesPerSec float64 `json:"disk_write_bytes_sec,omitempty"`
+	DiskIOPercent       float64 `json:"disk_io_percent,omitempty"`
+	AgentVersion        string  `json:"agent_version,omitempty"`
+	LogErrors           int     `json:"log_errors,omitempty"`
 }
 
 // Heartbeat wraps a heartbeat with metadata.

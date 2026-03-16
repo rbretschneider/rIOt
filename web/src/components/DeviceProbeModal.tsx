@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { ProbeAssertion } from '../types/models'
 
 const TYPES = [
@@ -7,6 +6,75 @@ const TYPES = [
   { value: 'port', label: 'Port Check' },
   { value: 'file', label: 'File Check' },
   { value: 'container_exec', label: 'Container Exec' },
+]
+
+// Available output fields per probe type (matches what the agent returns)
+const FIELDS_BY_TYPE: Record<string, { value: string; label: string }[]> = {
+  shell: [
+    { value: 'exit_code', label: 'Exit Code' },
+    { value: 'stdout', label: 'Stdout' },
+    { value: 'stderr', label: 'Stderr' },
+  ],
+  http: [
+    { value: 'status_code', label: 'Status Code' },
+    { value: 'body', label: 'Response Body' },
+    { value: 'latency_ms', label: 'Latency (ms)' },
+  ],
+  port: [
+    { value: 'connected', label: 'Connected' },
+    { value: 'latency_ms', label: 'Latency (ms)' },
+  ],
+  file: [
+    { value: 'exists', label: 'Exists' },
+    { value: 'size', label: 'Size (bytes)' },
+    { value: 'content', label: 'Content' },
+  ],
+  container_exec: [
+    { value: 'exit_code', label: 'Exit Code' },
+    { value: 'stdout', label: 'Stdout' },
+    { value: 'stderr', label: 'Stderr' },
+  ],
+}
+
+// Common assertion templates per probe type
+const TEMPLATES_BY_TYPE: Record<string, { label: string; assertion: ProbeAssertion }[]> = {
+  shell: [
+    { label: 'Exit code = 0', assertion: { field: 'exit_code', operator: 'eq', value: '0' } },
+    { label: 'Stdout contains...', assertion: { field: 'stdout', operator: 'contains', value: '' } },
+    { label: 'Stdout = true', assertion: { field: 'stdout', operator: 'regex', value: '^\\s*true\\s*$' } },
+    { label: 'Stderr is empty', assertion: { field: 'stderr', operator: 'eq', value: '' } },
+  ],
+  http: [
+    { label: 'Status 200', assertion: { field: 'status_code', operator: 'eq', value: '200' } },
+    { label: 'Status 2xx', assertion: { field: 'status_code', operator: 'regex', value: '^2\\d{2}$' } },
+    { label: 'Body contains...', assertion: { field: 'body', operator: 'contains', value: '' } },
+    { label: 'Latency < 1000ms', assertion: { field: 'latency_ms', operator: 'lt', value: '1000' } },
+  ],
+  port: [
+    { label: 'Port is open', assertion: { field: 'connected', operator: 'eq', value: 'true' } },
+    { label: 'Latency < 100ms', assertion: { field: 'latency_ms', operator: 'lt', value: '100' } },
+  ],
+  file: [
+    { label: 'File exists', assertion: { field: 'exists', operator: 'eq', value: 'true' } },
+    { label: 'Size > 0', assertion: { field: 'size', operator: 'gt', value: '0' } },
+    { label: 'Content contains...', assertion: { field: 'content', operator: 'contains', value: '' } },
+  ],
+  container_exec: [
+    { label: 'Exit code = 0', assertion: { field: 'exit_code', operator: 'eq', value: '0' } },
+    { label: 'Stdout contains...', assertion: { field: 'stdout', operator: 'contains', value: '' } },
+    { label: 'Stdout = true', assertion: { field: 'stdout', operator: 'regex', value: '^\\s*true\\s*$' } },
+    { label: 'Stderr is empty', assertion: { field: 'stderr', operator: 'eq', value: '' } },
+  ],
+}
+
+// Operators that match what the Go backend actually handles
+const OPERATORS = [
+  { value: 'eq', label: '=' },
+  { value: 'ne', label: '!=' },
+  { value: 'gt', label: '>' },
+  { value: 'lt', label: '<' },
+  { value: 'contains', label: 'contains' },
+  { value: 'regex', label: 'regex' },
 ]
 
 export interface DeviceProbeForm {
@@ -59,8 +127,9 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
     onChange({ ...editing, config: { ...editing.config, [key]: value } })
   }
 
-  function addAssertion() {
-    onChange({ ...editing, assertions: [...editing.assertions, { field: '', operator: 'eq', value: '' }] })
+  function addAssertion(template?: ProbeAssertion) {
+    const a = template ? { ...template } : { field: fields[0]?.value || '', operator: 'eq', value: '' }
+    onChange({ ...editing, assertions: [...editing.assertions, a] })
   }
 
   function updateAssertion(idx: number, field: string, value: string) {
@@ -71,6 +140,9 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
   function removeAssertion(idx: number) {
     onChange({ ...editing, assertions: editing.assertions.filter((_, i) => i !== idx) })
   }
+
+  const fields = FIELDS_BY_TYPE[editing.type] || []
+  const templates = TEMPLATES_BY_TYPE[editing.type] || []
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
@@ -105,7 +177,7 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
               value={editing.type}
               onChange={e => {
                 const newType = e.target.value
-                onChange({ ...editing, type: newType, config: defaultConfig(newType) })
+                onChange({ ...editing, type: newType, config: defaultConfig(newType), assertions: [] })
               }}
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-sm text-white focus:outline-none focus:border-gray-500"
             >
@@ -263,36 +335,52 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Assertions</h4>
               <button
-                onClick={addAssertion}
+                onClick={() => addAssertion()}
                 className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
               >
                 + Add Assertion
               </button>
             </div>
+
+            {/* Templates */}
+            {templates.length > 0 && editing.assertions.length === 0 && (
+              <div className="mb-3">
+                <p className="text-xs text-gray-500 mb-2">Quick add:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {templates.map((t, i) => (
+                    <button
+                      key={i}
+                      onClick={() => addAssertion(t.assertion)}
+                      className="px-2 py-1 text-xs bg-gray-800 border border-gray-700 rounded text-gray-400 hover:text-white hover:border-gray-500 transition-colors"
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {editing.assertions.length === 0 && (
-              <p className="text-xs text-gray-600">No assertions configured. The probe will pass if the command exits successfully.</p>
+              <p className="text-xs text-gray-600">
+                No assertions — probe will always report success if it executes without error. Use this for fire-and-forget tasks.
+              </p>
             )}
             {editing.assertions.map((a, i) => (
               <div key={i} className="flex items-center gap-2 mb-2">
-                <input
+                <select
                   value={a.field}
                   onChange={e => updateAssertion(i, 'field', e.target.value)}
-                  placeholder="field"
                   className="flex-1 px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-xs text-white focus:outline-none focus:border-gray-500"
-                />
+                >
+                  {!a.field && <option value="">Select field...</option>}
+                  {fields.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                </select>
                 <select
                   value={a.operator}
                   onChange={e => updateAssertion(i, 'operator', e.target.value)}
                   className="px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-xs text-white focus:outline-none focus:border-gray-500"
                 >
-                  <option value="eq">=</option>
-                  <option value="neq">!=</option>
-                  <option value="gt">&gt;</option>
-                  <option value="lt">&lt;</option>
-                  <option value="gte">&gt;=</option>
-                  <option value="lte">&lt;=</option>
-                  <option value="contains">contains</option>
-                  <option value="matches">matches</option>
+                  {OPERATORS.map(op => <option key={op.value} value={op.value}>{op.label}</option>)}
                 </select>
                 <input
                   value={a.value}
@@ -310,6 +398,21 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
                 </button>
               </div>
             ))}
+
+            {/* Show templates inline when assertions already exist */}
+            {templates.length > 0 && editing.assertions.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {templates.map((t, i) => (
+                  <button
+                    key={i}
+                    onClick={() => addAssertion(t.assertion)}
+                    className="px-2 py-0.5 text-xs text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    + {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

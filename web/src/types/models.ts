@@ -37,6 +37,9 @@ export interface HeartbeatData {
   mem_percent: number
   load_avg_1m: number
   disk_root_percent: number
+  disk_read_bytes_sec?: number
+  disk_write_bytes_sec?: number
+  disk_io_percent?: number
   agent_version?: string
   log_errors?: number
 }
