@@ -21,7 +21,7 @@
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks
-- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
+- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, container log viewer, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
@@ -36,8 +36,9 @@
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
-- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls)
-- **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent)
+- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls); all commands generate informational events with container context for full audit trail
+- **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
+- **Feature toggles** — 16 individually toggleable dashboard features (including device terminal and Docker terminal) via Settings > Features with search/filter; toggles control UI visibility only — agents continue collecting all data
 - **Web server monitoring** — auto-detects nginx and Caddy reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
 - **Security scoring** — per-device 0–100 hardening score based on CIS-inspired checks across access control, patching, network, Docker, and system categories; interactive detail modal with per-finding remediation guidance and one-click fix buttons for actionable issues (enable auto-updates, apply patches)
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
@@ -226,6 +227,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - services
        - processes
        - docker
+       - container_logs
        - security
        - logs
        - ups
@@ -339,6 +341,7 @@ New installs via `install.sh` include all rules automatically.
 | `services` | systemd services — name, state, enabled, PID, memory usage |
 | `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
+| `container_logs` | Docker container stdout/stderr logs — fetched via Docker API, stored server-side with 7-day retention, viewable in the container detail Logs tab |
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins, logged-in users |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
@@ -349,7 +352,7 @@ New installs via `install.sh` include all rules automatically.
 
 **Note:** The `usb` and `hardware` collectors are Linux-only. They read from sysfs (`/sys/bus/usb/devices/`, `/sys/bus/pci/devices/`, `/sys/block/`, `/sys/class/tty/`) and use the system ID databases (shipped with `usbutils` or `hwdata`) to resolve vendor/product names. No additional packages or permissions are required.
 
-**Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
+**Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware` and `container_logs` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
 
 ---
 
@@ -602,6 +605,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/history` | Paginated telemetry history |
 | `GET` | `/api/v1/devices/:id/containers` | List containers for a device |
 | `GET` | `/api/v1/devices/:id/containers/:cid` | Container detail |
+| `GET` | `/api/v1/devices/:id/containers/:cid/logs` | Container log history (query: `limit`, `stream`, `since`) |
+| `GET` | `/api/v1/devices/:id/containers/:cname/metrics` | Container metric history (query: `hours`) |
 | `DELETE` | `/api/v1/devices/:id` | Remove a device |
 | `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
 | `POST` | `/api/v1/devices/:id/commands` | Send command to agent |
@@ -718,6 +723,9 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 | Events | 90 days |
 | Notification log | 90 days |
 | Probe results | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
+| Container metrics | 7 days |
+| Container logs | 7 days |
+| Device logs | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Device registry | Forever (until manually deleted) |
 
 A background worker purges expired data hourly.
