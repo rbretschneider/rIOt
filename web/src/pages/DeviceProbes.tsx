@@ -194,7 +194,7 @@ export default function DeviceProbes() {
                   {probeResults.length === 0 ? (
                     <p className="text-xs text-gray-600">No results yet.</p>
                   ) : (
-                    <div className="overflow-x-auto thin-scrollbar">
+                    <div className="overflow-x-auto scrollbar-thin">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-left text-gray-500 border-b border-gray-800">

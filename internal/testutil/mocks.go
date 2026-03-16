@@ -109,7 +109,7 @@ func (m *MockDeviceRepo) UpdatePrimaryIP(_ context.Context, id, ip string) error
 	return m.Err
 }
 
-func (m *MockDeviceRepo) UpdateDockerAvailable(_ context.Context, id string, available bool) error {
+func (m *MockDeviceRepo) UpdateDockerAvailable(_ context.Context, id string, available bool, containerCount ...int) error {
 	return m.Err
 }
 

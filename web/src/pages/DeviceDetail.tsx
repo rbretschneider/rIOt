@@ -813,7 +813,7 @@ export default function DeviceDetail() {
           {tel.hardware.gpus && tel.hardware.gpus.length > 0 && (
             <div className="mb-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">GPUs ({tel.hardware.gpus.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar">
+              <div className="overflow-x-auto scrollbar-thin">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -842,7 +842,7 @@ export default function DeviceDetail() {
           {tel.hardware.disk_drives && tel.hardware.disk_drives.length > 0 && (
             <div className="mb-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Disk Drives ({tel.hardware.disk_drives.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar">
+              <div className="overflow-x-auto scrollbar-thin">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -888,7 +888,7 @@ export default function DeviceDetail() {
           {tel.hardware.pci_devices && tel.hardware.pci_devices.length > 0 && (
             <div className="mb-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">PCI Devices ({tel.hardware.pci_devices.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar max-h-80 overflow-y-auto">
+              <div className="overflow-x-auto scrollbar-thin max-h-80 overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-gray-900">
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -919,7 +919,7 @@ export default function DeviceDetail() {
           {tel.hardware.serial_ports && tel.hardware.serial_ports.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Serial Ports ({tel.hardware.serial_ports.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar">
+              <div className="overflow-x-auto scrollbar-thin">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -1197,7 +1197,7 @@ export default function DeviceDetail() {
           {isEnabled('cron') && tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0 && (
             <div className="mb-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cron Jobs ({tel.cron_jobs.jobs.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar">
+              <div className="overflow-x-auto scrollbar-thin">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
@@ -1228,7 +1228,7 @@ export default function DeviceDetail() {
           {isEnabled('systemd_timers') && tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Systemd Timers ({tel.cron_jobs.timers.length})</h3>
-              <div className="overflow-x-auto thin-scrollbar">
+              <div className="overflow-x-auto scrollbar-thin">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-gray-500 text-xs border-b border-gray-800">

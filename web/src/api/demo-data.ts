@@ -90,6 +90,7 @@ export function getDevices(): Device[] {
     location: '',
     tags: d.tags,
     docker_available: d.hostname === 'proxmox-01',
+    docker_container_count: d.hostname === 'proxmox-01' ? 12 : 0,
     auto_patch: false,
     hardware_profile: { ...d.hw, cpu_threads: d.hw.cpu_threads ?? d.hw.cpu_cores },
     last_heartbeat: d.status === 'offline' ? ago(3 * DAY) : ago((i + 1) * 15_000),

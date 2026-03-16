@@ -86,7 +86,7 @@ export default function DeviceProbeModal({ editing, isNew, saving, onClose, onCh
           </button>
         </div>
 
-        <div className="overflow-y-auto px-6 pb-6 space-y-4">
+        <div className="overflow-y-auto scrollbar-thin px-6 pb-6 space-y-4">
           {/* Name */}
           <div>
             <label className="block text-xs text-gray-400 mb-1">Name</label>

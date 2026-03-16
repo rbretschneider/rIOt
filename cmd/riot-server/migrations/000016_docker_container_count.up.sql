@@ -1,0 +1,1 @@
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS docker_container_count INT NOT NULL DEFAULT 0;
