@@ -3,8 +3,10 @@ package collectors
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -343,7 +345,126 @@ func collectDiskDrives() []models.DiskDrive {
 		drives = append(drives, drive)
 	}
 
+	// Enrich drives with SMART data if smartctl is available
+	enrichDrivesSMART(drives)
+
 	return drives
+}
+
+// smartctlJSON is the subset of smartctl --json output we care about.
+type smartctlJSON struct {
+	SmartStatus struct {
+		Passed bool `json:"passed"`
+	} `json:"smart_status"`
+	Temperature struct {
+		Current int `json:"current"`
+	} `json:"temperature"`
+	ATASmartAttributes struct {
+		Table []struct {
+			ID    int    `json:"id"`
+			Name  string `json:"name"`
+			Value int    `json:"value"`
+			Raw   struct {
+				Value int64 `json:"value"`
+			} `json:"raw"`
+		} `json:"table"`
+	} `json:"ata_smart_attributes"`
+	PowerOnTime struct {
+		Hours int64 `json:"hours"`
+	} `json:"power_on_time"`
+	NVMeSmartHealthLog struct {
+		Temperature     int   `json:"temperature"`
+		PowerOnHours    int64 `json:"power_on_hours"`
+		MediaErrors     int64 `json:"media_errors"`
+		CriticalWarning int   `json:"critical_warning"`
+	} `json:"nvme_smart_health_information_log"`
+	Smartctl struct {
+		ExitStatus int `json:"exit_status"`
+	} `json:"smartctl"`
+}
+
+// enrichDrivesSMART runs smartctl for each drive and populates SMART fields.
+func enrichDrivesSMART(drives []models.DiskDrive) {
+	// Check if smartctl is available
+	smartctlPath, err := exec.LookPath("smartctl")
+	if err != nil {
+		// Try with sudo — agent may need privilege escalation
+		if _, err := exec.LookPath("sudo"); err != nil {
+			return
+		}
+		smartctlPath = "smartctl"
+	}
+
+	for i := range drives {
+		d := &drives[i]
+		devPath := "/dev/" + d.Name
+
+		// Run smartctl with JSON output; use sudo since drives typically need root
+		out, err := exec.Command("sudo", "-n", smartctlPath, "--json=c", "--all", devPath).Output()
+		if err != nil {
+			// smartctl returns non-zero for various reasons (drive doesn't support SMART, etc.)
+			// but still outputs valid JSON. If we got output, try to parse it.
+			if len(out) == 0 {
+				continue
+			}
+		}
+
+		var result smartctlJSON
+		if err := json.Unmarshal(out, &result); err != nil {
+			continue
+		}
+
+		d.SmartAvailable = true
+
+		// Health status — smartctl exit bit 3 means SMART status failed
+		if result.Smartctl.ExitStatus&(1<<3) != 0 {
+			d.SmartHealth = "FAILED"
+		} else {
+			if result.SmartStatus.Passed {
+				d.SmartHealth = "PASSED"
+			} else {
+				// If we got data but passed is false and bit 3 isn't set,
+				// it might just be unavailable
+				d.SmartHealth = "UNKNOWN"
+			}
+		}
+
+		// Temperature — try NVMe log first, then generic
+		if result.NVMeSmartHealthLog.Temperature > 0 {
+			temp := result.NVMeSmartHealthLog.Temperature
+			d.SmartTemp = &temp
+		} else if result.Temperature.Current > 0 {
+			temp := result.Temperature.Current
+			d.SmartTemp = &temp
+		}
+
+		// Power-on hours — try NVMe log first, then generic
+		if result.NVMeSmartHealthLog.PowerOnHours > 0 {
+			h := result.NVMeSmartHealthLog.PowerOnHours
+			d.SmartPowerOnHours = &h
+		} else if result.PowerOnTime.Hours > 0 {
+			h := result.PowerOnTime.Hours
+			d.SmartPowerOnHours = &h
+		}
+
+		// NVMe media errors count as reallocated equivalent
+		if result.NVMeSmartHealthLog.MediaErrors > 0 {
+			e := result.NVMeSmartHealthLog.MediaErrors
+			d.SmartReallocated = &e
+		}
+
+		// ATA SMART attributes
+		for _, attr := range result.ATASmartAttributes.Table {
+			switch attr.ID {
+			case 5: // Reallocated Sectors Count
+				v := attr.Raw.Value
+				d.SmartReallocated = &v
+			case 197: // Current Pending Sector Count
+				v := attr.Raw.Value
+				d.SmartPendingSector = &v
+			}
+		}
+	}
 }
 
 // --- Serial Ports ---

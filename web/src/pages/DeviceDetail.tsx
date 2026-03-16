@@ -849,8 +849,9 @@ export default function DeviceDetail() {
                       <th className="py-2 pr-4 font-medium">Serial</th>
                       <th className="py-2 pr-4 font-medium">Size</th>
                       <th className="py-2 pr-4 font-medium">Type</th>
-                      <th className="py-2 pr-4 font-medium">Transport</th>
-                      <th className="py-2 pr-4 font-medium">Scheduler</th>
+                      <th className="py-2 pr-4 font-medium">Health</th>
+                      <th className="py-2 pr-4 font-medium">Temp</th>
+                      <th className="py-2 pr-4 font-medium">Power On</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -872,8 +873,37 @@ export default function DeviceDetail() {
                             </span>
                           )}
                         </td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-500">{d.transport || '-'}</td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-500">{d.scheduler || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs">
+                          {d.smart_available ? (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              d.smart_health === 'PASSED' ? 'bg-emerald-900/50 text-emerald-400' :
+                              d.smart_health === 'FAILED' ? 'bg-red-900/50 text-red-400' :
+                              'bg-gray-800 text-gray-500'
+                            }`}>
+                              {d.smart_health || 'UNKNOWN'}
+                              {(d.smart_reallocated != null && d.smart_reallocated > 0) && ` (${d.smart_reallocated} realloc)`}
+                              {(d.smart_pending_sector != null && d.smart_pending_sector > 0) && ` (${d.smart_pending_sector} pending)`}
+                            </span>
+                          ) : (
+                            <span className="text-gray-600">-</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-4 text-xs">
+                          {d.smart_temp != null ? (
+                            <span className={d.smart_temp > 55 ? 'text-red-400' : d.smart_temp > 45 ? 'text-amber-400' : 'text-gray-300'}>
+                              {d.smart_temp}&deg;C
+                            </span>
+                          ) : <span className="text-gray-600">-</span>}
+                        </td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">
+                          {d.smart_power_on_hours != null ? (
+                            d.smart_power_on_hours >= 8760
+                              ? `${(d.smart_power_on_hours / 8760).toFixed(1)}y`
+                              : d.smart_power_on_hours >= 720
+                                ? `${(d.smart_power_on_hours / 720).toFixed(0)}mo`
+                                : `${d.smart_power_on_hours}h`
+                          ) : <span className="text-gray-600">-</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

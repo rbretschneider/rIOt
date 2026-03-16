@@ -474,6 +474,12 @@ export interface DiskDrive {
   transport?: string
   removable?: boolean
   scheduler?: string
+  smart_health?: string
+  smart_temp?: number
+  smart_power_on_hours?: number
+  smart_reallocated?: number
+  smart_pending_sector?: number
+  smart_available?: boolean
 }
 
 export interface SerialPort {

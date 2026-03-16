@@ -180,6 +180,26 @@ if [ "$OS" = "linux" ]; then
     fi
 fi
 
+# ── Install smartmontools for SMART disk health monitoring ────────────
+if [ "$OS" = "linux" ]; then
+    if ! command -v smartctl >/dev/null 2>&1; then
+        echo "==> Installing smartmontools (for SMART disk health monitoring)"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq && apt-get install -y -qq smartmontools >/dev/null 2>&1
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q smartmontools >/dev/null 2>&1
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y -q smartmontools >/dev/null 2>&1
+        elif command -v pacman >/dev/null 2>&1; then
+            pacman -S --noconfirm --quiet smartmontools >/dev/null 2>&1
+        elif command -v apk >/dev/null 2>&1; then
+            apk add --quiet smartmontools >/dev/null 2>&1
+        else
+            echo "    WARN: Could not install smartmontools — SMART monitoring will be unavailable"
+        fi
+    fi
+fi
+
 # ── Create directories ───────────────────────────────────────────────
 echo "==> Creating directories"
 mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
@@ -416,6 +436,8 @@ riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
 # Web server config inspection (read-only)
 riot ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 riot ALL=(root) NOPASSWD: /usr/sbin/nginx -T
+# SMART disk health monitoring
+riot ALL=(root) NOPASSWD: /usr/sbin/smartctl
 SUDOEOF
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then

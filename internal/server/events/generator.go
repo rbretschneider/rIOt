@@ -275,6 +275,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 	if data.USB != nil {
 		g.CheckUSBAlerts(ctx, deviceID, hostname, data.USB)
 	}
+	if data.Hardware != nil {
+		g.CheckDiskSmartAlerts(ctx, deviceID, hostname, data.Hardware.DiskDrives)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -807,6 +810,34 @@ func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID, hostname strin
 			CreatedAt: time.Now().UTC(),
 		}
 		g.createEventAndNotify(ctx, e, r, "", 1)
+	}
+}
+
+// CheckDiskSmartAlerts fires a critical alert when any drive reports SMART FAILED.
+func (g *Generator) CheckDiskSmartAlerts(ctx context.Context, deviceID, hostname string, drives []models.DiskDrive) {
+	for _, d := range drives {
+		if !d.SmartAvailable || d.SmartHealth == "" || d.SmartHealth == "PASSED" || d.SmartHealth == "UNKNOWN" {
+			continue
+		}
+		// Drive is FAILED — fire alert
+		key := fmt.Sprintf("%s:smart:%s", deviceID, d.Name)
+		if g.onCooldown(key, 1*time.Hour) {
+			continue
+		}
+
+		msg := fmt.Sprintf("Disk %s SMART health FAILED", d.Name)
+		if d.Model != "" {
+			msg = fmt.Sprintf("Disk %s (%s) SMART health FAILED", d.Name, d.Model)
+		}
+
+		e := &models.Event{
+			DeviceID:  deviceID,
+			Type:      models.EventDiskSmartFailing,
+			Severity:  models.SeverityCrit,
+			Message:   msg,
+			CreatedAt: time.Now().UTC(),
+		}
+		g.createEvent(ctx, e)
 	}
 }
 

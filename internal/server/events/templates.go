@@ -236,5 +236,18 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when an SSL certificate has expired",
 		},
+		// Disk Health
+		{
+			ID:              "disk_smart_failing",
+			Name:            "Disk SMART Failing",
+			Category:        "system",
+			Metric:          "disk_smart_health",
+			Operator:        "==",
+			Threshold:       1,
+			Severity:        "critical",
+			CooldownSeconds: 3600,
+			NeedsTargetName: false,
+			Description:     "Fires when a disk reports SMART health status FAILED (replace the drive)",
+		},
 	}
 }

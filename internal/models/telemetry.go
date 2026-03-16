@@ -479,6 +479,13 @@ type DiskDrive struct {
 	Transport string  `json:"transport,omitempty"`
 	Removable bool    `json:"removable,omitempty"`
 	Scheduler string  `json:"scheduler,omitempty"`
+	// SMART health data (populated via smartctl if available)
+	SmartHealth        string  `json:"smart_health,omitempty"`         // PASSED, FAILED, UNKNOWN
+	SmartTemp          *int    `json:"smart_temp,omitempty"`           // Celsius
+	SmartPowerOnHours  *int64  `json:"smart_power_on_hours,omitempty"`
+	SmartReallocated   *int64  `json:"smart_reallocated,omitempty"`    // Reallocated sector count
+	SmartPendingSector *int64  `json:"smart_pending_sector,omitempty"` // Current pending sector count
+	SmartAvailable     bool    `json:"smart_available"`                // Whether smartctl returned data
 }
 
 // SerialPort represents a serial port.
