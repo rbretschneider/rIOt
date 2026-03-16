@@ -76,6 +76,7 @@ export interface FullTelemetryData {
   ups?: UPSInfo
   web_servers?: WebServerInfo
   usb?: USBInfo
+  hardware?: HardwareInfo
   cron_jobs?: CronInfo
 }
 
@@ -292,6 +293,16 @@ export interface RiotLabels {
   tags?: string[]
 }
 
+export interface ContainerLogEntry {
+  id?: number
+  device_id?: string
+  container_id: string
+  container_name: string
+  timestamp: string
+  stream: 'stdout' | 'stderr'
+  line: string
+}
+
 export interface ContainerMetric {
   id?: number
   device_id: string
@@ -423,6 +434,58 @@ export interface USBDevice {
   device_class?: string
   speed_mbps?: number
   sys_path?: string
+}
+
+export interface HardwareInfo {
+  pci_devices?: PCIDevice[]
+  disk_drives?: DiskDrive[]
+  serial_ports?: SerialPort[]
+  gpus?: GPUInfo[]
+}
+
+export interface PCIDevice {
+  slot: string
+  vendor_id: string
+  device_id: string
+  vendor?: string
+  device?: string
+  description: string
+  class_code?: string
+  class_name?: string
+  driver?: string
+  subsys_vendor_id?: string
+  subsys_device_id?: string
+  numa_node?: string
+  irq?: string
+}
+
+export interface DiskDrive {
+  name: string
+  model?: string
+  serial?: string
+  rev?: string
+  size_bytes: number
+  size_gb: number
+  type?: string
+  transport?: string
+  removable?: boolean
+  scheduler?: string
+}
+
+export interface SerialPort {
+  name: string
+  path: string
+  type?: string
+  driver?: string
+}
+
+export interface GPUInfo {
+  vendor?: string
+  model?: string
+  pci_slot?: string
+  driver?: string
+  vram_mb?: number
+  description: string
 }
 
 export interface CronInfo {
@@ -567,7 +630,8 @@ export interface AlertRule {
   target_name: string
   target_state: string
   severity: string
-  device_filter: string
+  include_devices: string
+  exclude_devices: string
   cooldown_seconds: number
   notify: boolean
   template_id: string

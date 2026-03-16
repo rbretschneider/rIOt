@@ -85,7 +85,7 @@ func TestCheckHeartbeatThresholds_HighMemory(t *testing.T) {
 	ctx := context.Background()
 
 	data := &models.HeartbeatData{MemPercent: 95.0}
-	gen.CheckHeartbeatThresholds(ctx, "dev-1", data)
+	gen.CheckHeartbeatThresholds(ctx, "dev-1", "test-host", data)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventMemHigh, eventRepo.Events[0].Type)
@@ -96,7 +96,7 @@ func TestCheckHeartbeatThresholds_Normal(t *testing.T) {
 	ctx := context.Background()
 
 	data := &models.HeartbeatData{MemPercent: 50.0, DiskRootPercent: 40.0}
-	gen.CheckHeartbeatThresholds(ctx, "dev-1", data)
+	gen.CheckHeartbeatThresholds(ctx, "dev-1", "test-host", data)
 
 	assert.Empty(t, eventRepo.Events, "no events for normal values")
 }
@@ -117,7 +117,7 @@ func TestCheckHeartbeatThresholds_WithRule(t *testing.T) {
 	}}
 
 	data := &models.HeartbeatData{MemPercent: 85.0}
-	gen.CheckHeartbeatThresholds(ctx, "dev-1", data)
+	gen.CheckHeartbeatThresholds(ctx, "dev-1", "test-host", data)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventSeverity("warning"), eventRepo.Events[0].Severity)
@@ -135,12 +135,12 @@ func TestCheckHeartbeatThresholds_DeviceFilter(t *testing.T) {
 		Operator:     ">",
 		Threshold:    80,
 		Severity:     "warning",
-		DeviceFilter: "dev-2,dev-3", // only applies to dev-2 and dev-3
+		IncludeDevices: "dev-2,dev-3", // only applies to dev-2 and dev-3
 		CooldownSeconds: 60,
 	}}
 
 	data := &models.HeartbeatData{MemPercent: 95.0}
-	gen.CheckHeartbeatThresholds(ctx, "dev-1", data)
+	gen.CheckHeartbeatThresholds(ctx, "dev-1", "test-host", data)
 
 	// Rule doesn't match dev-1, so fallback threshold (90) applies
 	require.Len(t, eventRepo.Events, 1)
@@ -155,7 +155,7 @@ func TestCheckDockerEvent_Die(t *testing.T) {
 		ContainerName: "web-app",
 		Action:        "die",
 	}
-	gen.CheckDockerEvent(ctx, "dev-1", evt)
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",evt)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventContainerDied, eventRepo.Events[0].Type)
@@ -167,13 +167,13 @@ func TestCheckDockerEvent_DieDowngradedDuringUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	// Simulate an update in progress
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "bookstack stack",
 		Action:        "update_started",
 	})
 
 	// Container dies during the update — should be info, not warning
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "bookstack_db",
 		Action:        "die",
 	})
@@ -190,17 +190,17 @@ func TestCheckDockerEvent_DieWarningAfterUpdateCompletes(t *testing.T) {
 	ctx := context.Background()
 
 	// Start and complete an update
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "bookstack stack",
 		Action:        "update_started",
 	})
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "bookstack stack",
 		Action:        "update_completed",
 	})
 
 	// Container dies after update finished — should be warning
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "bookstack_db",
 		Action:        "die",
 	})
@@ -227,13 +227,13 @@ func TestCheckDockerEvent_DieNoNotifyDuringUpdate(t *testing.T) {
 	}}
 
 	// Update in progress
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "myapp",
 		Action:        "update_started",
 	})
 
 	// Die during update — should NOT dispatch notification
-	gen.CheckDockerEvent(ctx, "dev-1", &models.DockerEvent{
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",&models.DockerEvent{
 		ContainerName: "myapp_web",
 		Action:        "die",
 	})
@@ -251,7 +251,7 @@ func TestCheckDockerEvent_OOM(t *testing.T) {
 		ContainerName: "memory-hog",
 		Action:        "oom",
 	}
-	gen.CheckDockerEvent(ctx, "dev-1", evt)
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",evt)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventContainerOOM, eventRepo.Events[0].Type)
@@ -267,7 +267,7 @@ func TestCheckDockerEvent_Start(t *testing.T) {
 		Action:        "start",
 		Image:         "nginx:latest",
 	}
-	gen.CheckDockerEvent(ctx, "dev-1", evt)
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",evt)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventContainerStart, eventRepo.Events[0].Type)
@@ -281,7 +281,7 @@ func TestCheckDockerEvent_Stop(t *testing.T) {
 		ContainerName: "web-app",
 		Action:        "stop",
 	}
-	gen.CheckDockerEvent(ctx, "dev-1", evt)
+	gen.CheckDockerEvent(ctx, "dev-1", "test-host",evt)
 
 	require.Len(t, eventRepo.Events, 1)
 	assert.Equal(t, models.EventContainerStop, eventRepo.Events[0].Type)

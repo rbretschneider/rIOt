@@ -48,6 +48,7 @@ type Server struct {
 	LogRepo        *db.LogRepo
 	DeviceLogRepo  *db.DeviceLogRepo
 	AutoUpdateRepo      *db.AutoUpdateRepo
+	ContainerLogRepo    *db.ContainerLogRepo
 	ContainerMetricRepo *db.ContainerMetricRepo
 	DeviceProbeRepo     *db.DeviceProbeRepo
 	LogHandler     *logstore.DBHandler
@@ -104,6 +105,7 @@ func (s *Server) Start() error {
 	s.LogRepo = db.NewLogRepo(s.DB)
 	s.DeviceLogRepo = db.NewDeviceLogRepo(s.DB)
 	s.AutoUpdateRepo = db.NewAutoUpdateRepo(s.DB)
+	s.ContainerLogRepo = db.NewContainerLogRepo(s.DB)
 	s.ContainerMetricRepo = db.NewContainerMetricRepo(s.DB)
 	s.DeviceProbeRepo = db.NewDeviceProbeRepo(s.DB)
 
@@ -476,6 +478,13 @@ func (s *Server) runRetention(ctx context.Context) {
 		slog.Error("purge server logs failed", "error", err)
 	} else if logDeleted > 0 {
 		slog.Info("purged old server logs", "count", logDeleted)
+	}
+
+	clDeleted, err := s.ContainerLogRepo.Purge(ctx, now.AddDate(0, 0, -7))
+	if err != nil {
+		slog.Error("purge container logs failed", "error", err)
+	} else if clDeleted > 0 {
+		slog.Info("purged old container logs", "count", clDeleted)
 	}
 
 	cmDeleted, err := s.ContainerMetricRepo.Purge(ctx, now.AddDate(0, 0, -7))

@@ -45,6 +45,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		LogRepo:           s.LogRepo,
 		DeviceLogRepo:     s.DeviceLogRepo,
 		AutoUpdateRepo:       s.AutoUpdateRepo,
+		ContainerLogRepo:     s.ContainerLogRepo,
 		ContainerMetricRepo:  s.ContainerMetricRepo,
 		DeviceProbeRepo:      s.DeviceProbeRepo,
 		JWTSecret:         s.JWTSecret,
@@ -117,6 +118,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Get("/containers", h.GetDeviceContainers)
 		r.With(adminAuth).Get("/containers/{cid}", h.GetContainerDetail)
 		r.With(adminAuth).Get("/containers/{cname}/metrics", h.GetContainerMetricHistory)
+		r.With(adminAuth).Get("/containers/{cid}/logs", h.GetContainerLogs)
 		r.With(adminAuth).Put("/location", h.UpdateDeviceLocation)
 		r.With(adminAuth).Put("/tags", h.UpdateDeviceTags)
 		r.With(adminAuth).Get("/alert-rules", h.GetDeviceAlertRules)

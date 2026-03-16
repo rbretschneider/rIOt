@@ -100,7 +100,7 @@ export default function DeviceProbes() {
       ) : (
         <div className="space-y-3">
           {probes.map(probe => (
-            <div key={probe.id} className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div key={probe.id} className="bg-gray-900 border border-gray-800 rounded-lg p-4 overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   {/* Status indicator */}
@@ -138,7 +138,7 @@ export default function DeviceProbes() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+                <div className="flex items-center gap-2 flex-shrink min-w-0 flex-wrap">
                   <button
                     onClick={() => setViewingResults(viewingResults === probe.id ? null : probe.id)}
                     className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-600 rounded transition-colors"

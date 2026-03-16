@@ -15,12 +15,12 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.25.0**
+> **README last updated for v2.26.0**
 
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, cron jobs and scheduled tasks
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -30,7 +30,7 @@
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
 - **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery; fleet status dot turns yellow when a device is on battery power
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
-- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; one-click alert creation from device view; pre-built templates
+- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
@@ -231,6 +231,7 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
        - ups
        - webservers
        - usb
+       - hardware
        - cron
 
    docker:
@@ -343,11 +344,12 @@ New installs via `install.sh` include all rules automatically.
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
 | `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
 | `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
+| `hardware` | PCI devices (vendor/device/class/driver via sysfs + `/usr/share/hwdata/pci.ids`), disk drives (model, serial, size, type — NVMe/SSD/HDD, transport, scheduler), serial ports, GPUs (filtered from PCI display class devices, optional VRAM via DRM). Linux-only. |
 | `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
 
-**Note:** The `usb` collector is Linux-only. It reads from `/sys/bus/usb/devices/` and uses the system `usb.ids` database (shipped with `usbutils` or `hwdata`) to resolve vendor/product names for devices that don't self-report (e.g., Google Coral TPU). No additional packages or permissions are required.
+**Note:** The `usb` and `hardware` collectors are Linux-only. They read from sysfs (`/sys/bus/usb/devices/`, `/sys/bus/pci/devices/`, `/sys/block/`, `/sys/class/tty/`) and use the system ID databases (shipped with `usbutils` or `hwdata`) to resolve vendor/product names. No additional packages or permissions are required.
 
-**Note:** Existing agent installs use a whitelist from the installer — new collectors like `usb` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
+**Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
 
 ---
 
@@ -378,6 +380,10 @@ Monitor service, network, process, USB, and UPS state changes:
 ### Alert Templates
 
 Pre-built templates are available in Settings > Alert Rules > "Create from Template" for common scenarios. Templates pre-fill the metric, operator, threshold, and severity — just add a target name if needed.
+
+### Alert Scoping (Include / Exclude)
+
+Every alert rule supports **Include** and **Exclude** device lists. When both are empty the rule is global (applies to all devices). Add hostnames to the Include list to scope a rule to specific devices, or add hostnames to the Exclude list to exempt devices from a global rule. Exclude always wins — a device in both lists is excluded. Tags are also supported for matching.
 
 ### One-Click Alert Creation
 

@@ -163,9 +163,15 @@ export default function DeviceDetail() {
             {isEnabled('docker') && tel?.docker?.available && tel.docker.total_containers > 0 && (
               <Link
                 to={`/devices/${id}/containers`}
-                className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                className="inline-flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+                title={`${tel.docker.total_containers} container${tel.docker.total_containers === 1 ? '' : 's'}`}
               >
-                Docker ({tel.docker.total_containers})
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                  <line x1="12" y1="22.08" x2="12" y2="12" />
+                </svg>
+                <span>{tel.docker.total_containers}</span>
               </Link>
             )}
             <Link
@@ -174,7 +180,7 @@ export default function DeviceDetail() {
             >
               Probes
             </Link>
-            {device.status === 'online' && (
+            {isEnabled('device_terminal') && device.status === 'online' && (
               canCommand ? (
                 <Link
                   to={`/devices/${id}/terminal`}
@@ -682,7 +688,7 @@ export default function DeviceDetail() {
 
       {/* Alert Rules */}
       {alertRules && alertRules.length > 0 && (() => {
-        const deviceRules = alertRules.filter(r => !!r.device_filter)
+        const deviceRules = alertRules.filter(r => !!r.include_devices || !!r.exclude_devices)
         if (deviceRules.length === 0) return null
         return (
           <Section title="Alert Rules">
@@ -790,6 +796,156 @@ export default function DeviceDetail() {
         </Section>
       )}
 
+      {/* Hardware Details */}
+      {isEnabled('hardware') && tel?.hardware && (
+        (tel.hardware.pci_devices && tel.hardware.pci_devices.length > 0) ||
+        (tel.hardware.disk_drives && tel.hardware.disk_drives.length > 0) ||
+        (tel.hardware.serial_ports && tel.hardware.serial_ports.length > 0) ||
+        (tel.hardware.gpus && tel.hardware.gpus.length > 0)
+      ) && (
+        <Section title={`Hardware Details (${
+          (tel.hardware.pci_devices?.length ?? 0) +
+          (tel.hardware.disk_drives?.length ?? 0) +
+          (tel.hardware.serial_ports?.length ?? 0) +
+          (tel.hardware.gpus?.length ?? 0)
+        })`}>
+          {/* GPUs */}
+          {tel.hardware.gpus && tel.hardware.gpus.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">GPUs ({tel.hardware.gpus.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">Description</th>
+                      <th className="py-2 pr-4 font-medium">Driver</th>
+                      <th className="py-2 pr-4 font-medium">VRAM</th>
+                      <th className="py-2 pr-4 font-medium">PCI Slot</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.hardware.gpus.map((gpu, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 text-xs">{gpu.description}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono">{gpu.driver || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs">{gpu.vram_mb ? `${gpu.vram_mb} MB` : '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{gpu.pci_slot}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Disk Drives */}
+          {tel.hardware.disk_drives && tel.hardware.disk_drives.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Disk Drives ({tel.hardware.disk_drives.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">Name</th>
+                      <th className="py-2 pr-4 font-medium">Model</th>
+                      <th className="py-2 pr-4 font-medium">Serial</th>
+                      <th className="py-2 pr-4 font-medium">Size</th>
+                      <th className="py-2 pr-4 font-medium">Type</th>
+                      <th className="py-2 pr-4 font-medium">Transport</th>
+                      <th className="py-2 pr-4 font-medium">Scheduler</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.hardware.disk_drives.map((d, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 text-xs font-mono font-medium">{d.name}</td>
+                        <td className="py-1.5 pr-4 text-xs">{d.model || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{d.serial || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs">{d.size_gb >= 1 ? `${d.size_gb.toFixed(1)} GB` : `${(d.size_gb * 1024).toFixed(0)} MB`}</td>
+                        <td className="py-1.5 pr-4 text-xs">
+                          {d.type && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              d.type === 'NVMe' ? 'bg-purple-900/50 text-purple-400' :
+                              d.type === 'SSD' ? 'bg-blue-900/50 text-blue-400' :
+                              d.type === 'HDD' ? 'bg-gray-700 text-gray-300' :
+                              'bg-gray-800 text-gray-400'
+                            }`}>
+                              {d.type}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-500">{d.transport || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-500">{d.scheduler || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* PCI Devices */}
+          {tel.hardware.pci_devices && tel.hardware.pci_devices.length > 0 && (
+            <div className="mb-4">
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">PCI Devices ({tel.hardware.pci_devices.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar max-h-80 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-gray-900">
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">Description</th>
+                      <th className="py-2 pr-4 font-medium">Class</th>
+                      <th className="py-2 pr-4 font-medium">Vendor:Device</th>
+                      <th className="py-2 pr-4 font-medium">Driver</th>
+                      <th className="py-2 pr-4 font-medium">Slot</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.hardware.pci_devices.map((d, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 text-xs">{d.description}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{d.class_name || d.class_code}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{d.vendor_id}:{d.device_id}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono">{d.driver || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{d.slot}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Serial Ports */}
+          {tel.hardware.serial_ports && tel.hardware.serial_ports.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Serial Ports ({tel.hardware.serial_ports.length})</h3>
+              <div className="overflow-x-auto thin-scrollbar">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500 text-xs border-b border-gray-800">
+                      <th className="py-2 pr-4 font-medium">Name</th>
+                      <th className="py-2 pr-4 font-medium">Path</th>
+                      <th className="py-2 pr-4 font-medium">Type</th>
+                      <th className="py-2 pr-4 font-medium">Driver</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tel.hardware.serial_ports.map((p, i) => (
+                      <tr key={i} className="border-b border-gray-800/50 text-gray-300">
+                        <td className="py-1.5 pr-4 text-xs font-mono font-medium">{p.name}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{p.path}</td>
+                        <td className="py-1.5 pr-4 text-xs">{p.type || '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs font-mono">{p.driver || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
       {/* Web Servers */}
       {isEnabled('web_servers') && tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
         <Section title="Web Servers">
@@ -803,7 +959,7 @@ export default function DeviceDetail() {
                 (srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0)
               )
               const hasRightColumn = (srv.certs && srv.certs.length > 0) ||
-                (srv.upstreams && srv.upstreams.length > 0) || hasSecurityConfig
+                (srv.upstreams && srv.upstreams.length > 0)
 
               return (
               <div key={srv.name} className="space-y-4">
@@ -839,7 +995,69 @@ export default function DeviceDetail() {
                   </div>
                 )}
 
-                {/* Two-column layout: Sites (left) | Certs + Upstreams + Security (right) */}
+                {/* Security Config (full width, above tables) */}
+                {hasSecurityConfig && srv.security_config && (
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Security Config</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                      {srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Headers</p>
+                          <div className="space-y-0.5">
+                            {Object.entries(srv.security_config.security_headers).map(([k, v]) => (
+                              <div key={k} className="flex gap-2 text-xs">
+                                <span className="text-gray-400 font-mono shrink-0">{k}:</span>
+                                <span className="text-gray-300 font-mono break-all">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {srv.security_config.rate_limiting && srv.security_config.rate_limiting.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Rate Limiting</p>
+                          <div className="space-y-0.5">
+                            {srv.security_config.rate_limiting.map((r, i) => (
+                              <div key={i} className="text-xs font-mono text-gray-300">
+                                {r.zone}: {r.rate}{r.burst ? ` burst=${r.burst}` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {srv.security_config.access_controls && srv.security_config.access_controls.length > 0 && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">Access Controls</p>
+                          <div className="space-y-0.5">
+                            {srv.security_config.access_controls.map((r, i) => (
+                              <div key={i} className="text-xs font-mono">
+                                <span className={r.directive === 'allow' ? 'text-emerald-400' : 'text-red-400'}>{r.directive}</span>
+                                {' '}<span className="text-gray-300">{r.value}</span>
+                                {r.location && <span className="text-gray-500"> ({r.location})</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-x-6 gap-y-2">
+                        {srv.security_config.allowed_methods && srv.security_config.allowed_methods.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1">Allowed Methods</p>
+                            <p className="text-xs font-mono text-gray-300">{srv.security_config.allowed_methods.join(', ')}</p>
+                          </div>
+                        )}
+                        {srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-500 mb-1">CORS Origins</p>
+                            <p className="text-xs font-mono text-gray-300">{srv.security_config.cors_origins.join(', ')}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Two-column layout: Sites (left) | Certs + Upstreams (right) */}
                 <div className={`grid gap-4 ${hasRightColumn ? 'grid-cols-1 xl:grid-cols-[1fr_1fr]' : ''}`}>
                   {/* Sites */}
                   {srv.sites && srv.sites.length > 0 && (
@@ -952,67 +1170,6 @@ export default function DeviceDetail() {
                         </div>
                       )}
 
-                      {/* Security Config */}
-                      {hasSecurityConfig && srv.security_config && (
-                        <div>
-                          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Security Config</h3>
-                          <div className="space-y-3">
-                            {srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0 && (
-                              <div>
-                                <p className="text-xs text-gray-500 mb-1">Headers</p>
-                                <div className="space-y-0.5">
-                                  {Object.entries(srv.security_config.security_headers).map(([k, v]) => (
-                                    <div key={k} className="flex gap-2 text-xs">
-                                      <span className="text-gray-400 font-mono shrink-0">{k}:</span>
-                                      <span className="text-gray-300 font-mono break-all">{v}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {srv.security_config.rate_limiting && srv.security_config.rate_limiting.length > 0 && (
-                              <div>
-                                <p className="text-xs text-gray-500 mb-1">Rate Limiting</p>
-                                <div className="space-y-0.5">
-                                  {srv.security_config.rate_limiting.map((r, i) => (
-                                    <div key={i} className="text-xs font-mono text-gray-300">
-                                      {r.zone}: {r.rate}{r.burst ? ` burst=${r.burst}` : ''}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {srv.security_config.access_controls && srv.security_config.access_controls.length > 0 && (
-                              <div>
-                                <p className="text-xs text-gray-500 mb-1">Access Controls</p>
-                                <div className="space-y-0.5">
-                                  {srv.security_config.access_controls.map((r, i) => (
-                                    <div key={i} className="text-xs font-mono">
-                                      <span className={r.directive === 'allow' ? 'text-emerald-400' : 'text-red-400'}>{r.directive}</span>
-                                      {' '}<span className="text-gray-300">{r.value}</span>
-                                      {r.location && <span className="text-gray-500"> ({r.location})</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap gap-x-6 gap-y-2">
-                              {srv.security_config.allowed_methods && srv.security_config.allowed_methods.length > 0 && (
-                                <div>
-                                  <p className="text-xs text-gray-500 mb-1">Allowed Methods</p>
-                                  <p className="text-xs font-mono text-gray-300">{srv.security_config.allowed_methods.join(', ')}</p>
-                                </div>
-                              )}
-                              {srv.security_config.cors_origins && srv.security_config.cors_origins.length > 0 && (
-                                <div>
-                                  <p className="text-xs text-gray-500 mb-1">CORS Origins</p>
-                                  <p className="text-xs font-mono text-gray-300">{srv.security_config.cors_origins.join(', ')}</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -1029,9 +1186,15 @@ export default function DeviceDetail() {
       )}
 
       {/* Cron Jobs & Scheduled Tasks */}
-      {isEnabled('cron') && tel?.cron_jobs && ((tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0) || (tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0)) && (
-        <Section title={`Cron Jobs & Scheduled Tasks (${(tel.cron_jobs.jobs?.length ?? 0) + (tel.cron_jobs.timers?.length ?? 0)})`}>
-          {tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0 && (
+      {(isEnabled('cron') || isEnabled('systemd_timers')) && tel?.cron_jobs && (
+        (isEnabled('cron') && tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0) ||
+        (isEnabled('systemd_timers') && tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0)
+      ) && (
+        <Section title={`Cron Jobs & Scheduled Tasks (${
+          (isEnabled('cron') ? tel.cron_jobs.jobs?.length ?? 0 : 0) +
+          (isEnabled('systemd_timers') ? tel.cron_jobs.timers?.length ?? 0 : 0)
+        })`}>
+          {isEnabled('cron') && tel.cron_jobs.jobs && tel.cron_jobs.jobs.length > 0 && (
             <div className="mb-4">
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Cron Jobs ({tel.cron_jobs.jobs.length})</h3>
               <div className="overflow-x-auto thin-scrollbar">
@@ -1062,7 +1225,7 @@ export default function DeviceDetail() {
               </div>
             </div>
           )}
-          {tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0 && (
+          {isEnabled('systemd_timers') && tel.cron_jobs.timers && tel.cron_jobs.timers.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Systemd Timers ({tel.cron_jobs.timers.length})</h3>
               <div className="overflow-x-auto thin-scrollbar">
@@ -1239,7 +1402,7 @@ export default function DeviceDetail() {
           metric={alertDialog.metric}
           targetName={alertDialog.targetName}
           targetState={alertDialog.targetState}
-          deviceFilter={device.id}
+          includeDevices={device.hostname}
           onClose={() => setAlertDialog(null)}
         />
       )}

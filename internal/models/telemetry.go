@@ -45,8 +45,10 @@ type FullTelemetryData struct {
 	Logs       []LogEntry     `json:"logs,omitempty"`
 	UPS        *UPSInfo       `json:"ups,omitempty"`
 	WebServers *WebServerInfo `json:"web_servers,omitempty"`
-	USB        *USBInfo       `json:"usb,omitempty"`
-	CronJobs   *CronInfo      `json:"cron_jobs,omitempty"`
+	USB        *USBInfo        `json:"usb,omitempty"`
+	Hardware   *HardwareInfo   `json:"hardware,omitempty"`
+	CronJobs       *CronInfo            `json:"cron_jobs,omitempty"`
+	ContainerLogs  []ContainerLogEntry  `json:"container_logs,omitempty"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.
@@ -314,6 +316,17 @@ type ContainerMetric struct {
 	CPULimit      int64     `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
 }
 
+// ContainerLogEntry holds a single log line from a Docker container.
+type ContainerLogEntry struct {
+	ID            int64     `json:"id,omitempty"`
+	DeviceID      string    `json:"device_id,omitempty"`
+	ContainerID   string    `json:"container_id"`
+	ContainerName string    `json:"container_name"`
+	Timestamp     time.Time `json:"timestamp"`
+	Stream        string    `json:"stream"` // "stdout" or "stderr"
+	Line          string    `json:"line"`
+}
+
 // USBInfo holds USB device information.
 type USBInfo struct {
 	Devices []USBDevice `json:"devices,omitempty"`
@@ -424,6 +437,63 @@ type AccessRule struct {
 	Directive string `json:"directive"`
 	Value     string `json:"value"`
 	Location  string `json:"location,omitempty"`
+}
+
+// HardwareInfo holds detailed hardware device information.
+type HardwareInfo struct {
+	PCIDevices  []PCIDevice  `json:"pci_devices,omitempty"`
+	DiskDrives  []DiskDrive  `json:"disk_drives,omitempty"`
+	SerialPorts []SerialPort `json:"serial_ports,omitempty"`
+	GPUs        []GPUInfo    `json:"gpus,omitempty"`
+}
+
+// PCIDevice represents a PCI/PCIe device.
+type PCIDevice struct {
+	Slot           string `json:"slot"`
+	VendorID       string `json:"vendor_id"`
+	DeviceID       string `json:"device_id"`
+	Vendor         string `json:"vendor,omitempty"`
+	Device         string `json:"device,omitempty"`
+	Description    string `json:"description"`
+	ClassCode      string `json:"class_code,omitempty"`
+	ClassName      string `json:"class_name,omitempty"`
+	Driver         string `json:"driver,omitempty"`
+	SubsysVendorID string `json:"subsys_vendor_id,omitempty"`
+	SubsysDeviceID string `json:"subsys_device_id,omitempty"`
+	NUMANode       string `json:"numa_node,omitempty"`
+	IRQ            string `json:"irq,omitempty"`
+}
+
+// DiskDrive represents a physical disk drive.
+type DiskDrive struct {
+	Name      string  `json:"name"`
+	Model     string  `json:"model,omitempty"`
+	Serial    string  `json:"serial,omitempty"`
+	Rev       string  `json:"rev,omitempty"`
+	SizeBytes int64   `json:"size_bytes"`
+	SizeGB    float64 `json:"size_gb"`
+	Type      string  `json:"type,omitempty"` // HDD, SSD, NVMe, SD/eMMC
+	Transport string  `json:"transport,omitempty"`
+	Removable bool    `json:"removable,omitempty"`
+	Scheduler string  `json:"scheduler,omitempty"`
+}
+
+// SerialPort represents a serial port.
+type SerialPort struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	Type   string `json:"type,omitempty"` // UART, USB-Serial, USB-ACM, ARM-UART
+	Driver string `json:"driver,omitempty"`
+}
+
+// GPUInfo represents a graphics processing unit.
+type GPUInfo struct {
+	Vendor      string `json:"vendor,omitempty"`
+	Model       string `json:"model,omitempty"`
+	PCISlot     string `json:"pci_slot,omitempty"`
+	Driver      string `json:"driver,omitempty"`
+	VRAMMB      int    `json:"vram_mb,omitempty"`
+	Description string `json:"description"`
 }
 
 // CronInfo holds cron job and systemd timer information.

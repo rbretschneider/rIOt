@@ -47,26 +47,62 @@ func TestCompareValue(t *testing.T) {
 	}
 }
 
-func TestMatchesDeviceFilter(t *testing.T) {
+func TestMatchesDeviceScope(t *testing.T) {
 	tests := []struct {
 		name     string
-		filter   string
+		include  string
+		exclude  string
 		deviceID string
+		hostname string
 		want     bool
 	}{
-		{"empty filter matches all", "", "device-1", true},
-		{"exact match", "device-1", "device-1", true},
-		{"no match", "device-2", "device-1", false},
-		{"comma separated match first", "device-1,device-2", "device-1", true},
-		{"comma separated match second", "device-1,device-2", "device-2", true},
-		{"comma separated no match", "device-1,device-2", "device-3", false},
-		{"whitespace trimmed", "device-1, device-2 , device-3", "device-2", true},
-		{"partial id no match", "device-1", "device-10", false},
+		{"empty include/exclude matches all", "", "", "device-1", "host-1", true},
+		{"include by device ID", "device-1", "", "device-1", "host-1", true},
+		{"include by hostname", "host-1", "", "device-1", "host-1", true},
+		{"include no match", "device-2", "", "device-1", "host-1", false},
+		{"include comma separated match", "device-1,device-2", "", "device-1", "host-1", true},
+		{"include comma separated hostname match", "host-2", "", "device-1", "host-2", true},
+		{"include comma separated no match", "device-2,device-3", "", "device-1", "host-1", false},
+		{"exclude by hostname", "", "host-1", "device-1", "host-1", false},
+		{"exclude by device ID", "", "device-1", "device-1", "host-1", false},
+		{"exclude wins over include", "device-1", "host-1", "device-1", "host-1", false},
+		{"exclude doesn't match, include does", "device-1", "host-2", "device-1", "host-1", true},
+		{"hostname case insensitive", "HOST-1", "", "device-1", "host-1", true},
+		{"exclude case insensitive", "", "HOST-1", "device-1", "host-1", false},
+		{"whitespace trimmed", "device-1, device-2 , device-3", "", "device-2", "host-2", true},
+		{"partial id no match", "device-1", "", "device-10", "host-10", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesDeviceFilter(tt.filter, tt.deviceID)
+			got := matchesDeviceScope(tt.include, tt.exclude, tt.deviceID, tt.hostname)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMatchesDeviceScope_Tags(t *testing.T) {
+	tests := []struct {
+		name     string
+		include  string
+		exclude  string
+		deviceID string
+		hostname string
+		tags     []string
+		want     bool
+	}{
+		{"include by tag", "homelab", "", "device-1", "host-1", []string{"homelab", "prod"}, true},
+		{"include by tag no match", "staging", "", "device-1", "host-1", []string{"homelab", "prod"}, false},
+		{"exclude by tag", "", "homelab", "device-1", "host-1", []string{"homelab"}, false},
+		{"exclude tag wins over include hostname", "host-1", "homelab", "device-1", "host-1", []string{"homelab"}, false},
+		{"include tag with exclude hostname miss", "homelab", "host-2", "device-1", "host-1", []string{"homelab"}, true},
+		{"empty tags matches via hostname", "host-1", "", "device-1", "host-1", nil, true},
+		{"empty tags no match", "homelab", "", "device-1", "host-1", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchesDeviceScope(tt.include, tt.exclude, tt.deviceID, tt.hostname, tt.tags)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -130,7 +166,7 @@ func TestCheckWebServerAlerts(t *testing.T) {
 				},
 			}
 
-			gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+			gen.CheckWebServerAlerts(context.Background(), "device-1", "test-host", ws)
 
 			require.Len(t, eventRepo.events, tt.wantEvents)
 			if tt.wantEvents > 0 {
@@ -155,7 +191,7 @@ func TestCheckWebServerAlerts_NoCerts(t *testing.T) {
 		},
 	}
 
-	gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+	gen.CheckWebServerAlerts(context.Background(), "device-1", "test-host", ws)
 	assert.Empty(t, eventRepo.events)
 }
 
@@ -188,7 +224,7 @@ func TestCheckWebServerAlerts_MultipleCerts(t *testing.T) {
 		},
 	}
 
-	gen.CheckWebServerAlerts(context.Background(), "device-1", ws)
+	gen.CheckWebServerAlerts(context.Background(), "device-1", "test-host", ws)
 	// The first matching cert fires on rule 1 (< 30); the second cert matches the same
 	// rule but is on cooldown. The expired cert is evaluated separately via rule 2 (<= 0)
 	// but rule 1 matches first (since -1 < 30), so it shares the cooldown key.

@@ -1280,6 +1280,53 @@ func (m *MockAutoUpdateRepo) SetLastTriggered(_ context.Context, id int) error {
 	return m.Err
 }
 
+// --- MockContainerLogRepo ---
+
+type MockContainerLogRepo struct {
+	Logs map[string][]models.ContainerLogEntry // "deviceID:containerID" → logs
+	Err  error
+}
+
+func NewMockContainerLogRepo() *MockContainerLogRepo {
+	return &MockContainerLogRepo{Logs: make(map[string][]models.ContainerLogEntry)}
+}
+
+func (m *MockContainerLogRepo) InsertBatch(_ context.Context, deviceID string, entries []models.ContainerLogEntry) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	for _, e := range entries {
+		key := deviceID + ":" + e.ContainerID
+		m.Logs[key] = append(m.Logs[key], e)
+	}
+	return nil
+}
+
+func (m *MockContainerLogRepo) List(_ context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	key := deviceID + ":" + containerID
+	var result []models.ContainerLogEntry
+	for _, e := range m.Logs[key] {
+		if stream != "" && e.Stream != stream {
+			continue
+		}
+		if since != nil && e.Timestamp.Before(*since) {
+			continue
+		}
+		result = append(result, e)
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result, nil
+}
+
+func (m *MockContainerLogRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
+	return 0, m.Err
+}
+
 // --- MockContainerMetricRepo ---
 
 type MockContainerMetricRepo struct {
@@ -1484,6 +1531,7 @@ var (
 	_ db.CARepository        = (*MockCARepo)(nil)
 	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
 	_ db.AutoUpdateRepository      = (*MockAutoUpdateRepo)(nil)
+	_ db.ContainerLogRepository    = (*MockContainerLogRepo)(nil)
 	_ db.ContainerMetricRepository = (*MockContainerMetricRepo)(nil)
 	_ db.DeviceProbeRepository     = (*MockDeviceProbeRepo)(nil)
 )

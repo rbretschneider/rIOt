@@ -13,7 +13,8 @@ type AlertRule struct {
 	TargetName      string    `json:"target_name"`       // named target (service name, NIC name, process name)
 	TargetState     string    `json:"target_state"`      // state to match ("stopped", "failed", "DOWN", "absent")
 	Severity        string    `json:"severity"`
-	DeviceFilter    string    `json:"device_filter"`     // empty=all, comma-separated device IDs or tags
+	IncludeDevices  string    `json:"include_devices"`   // empty=all, comma-separated hostnames
+	ExcludeDevices  string    `json:"exclude_devices"`   // comma-separated hostnames to exclude
 	CooldownSeconds int       `json:"cooldown_seconds"`
 	Notify          bool      `json:"notify"`
 	TemplateID      string    `json:"template_id"`       // reference to a predefined template

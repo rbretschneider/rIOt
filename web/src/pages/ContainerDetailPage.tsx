@@ -2,12 +2,14 @@ import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
+import { useFeatures } from '../hooks/useFeatures'
 import { displayName } from '../utils/docker'
 import { ContainerDetailContent } from '../components/ContainerDetail'
 
 export default function ContainerDetailPage() {
   const { id, cid } = useParams<{ id: string; cid: string }>()
   const { wsConnected } = useDevices()
+  const { isEnabled } = useFeatures()
   const { data, isLoading } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
@@ -61,7 +63,7 @@ export default function ContainerDetailPage() {
 
       {/* Content */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-5">
-        <ContainerDetailContent container={container} deviceId={id} terminalEnabled />
+        <ContainerDetailContent container={container} deviceId={id} terminalEnabled={isEnabled('docker_terminal')} />
       </div>
     </div>
   )

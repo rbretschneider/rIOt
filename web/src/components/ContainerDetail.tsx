@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { settingsApi } from '../api/settings'
-import type { ContainerInfo, AlertRule } from '../types/models'
+import type { ContainerInfo, AlertRule, ContainerLogEntry } from '../types/models'
 import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, statusColor } from '../utils/docker'
 import ContainerStatusBadge from './ContainerStatusBadge'
 import ContainerMetricChart from './ContainerMetricChart'
@@ -10,7 +10,7 @@ import GaugeBar from './GaugeBar'
 import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
 
-type Tab = 'general' | 'network' | 'volumes' | 'terminal'
+type Tab = 'general' | 'network' | 'volumes' | 'logs' | 'terminal'
 
 /** Reusable content (tabs + actions) for a container — used both in the full page and any other context. */
 export function ContainerDetailContent({ container: c, deviceId, terminalEnabled }: { container: ContainerInfo; deviceId?: string; terminalEnabled?: boolean }) {
@@ -29,6 +29,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
     { key: 'general', label: 'General', show: true },
     { key: 'network', label: 'Network', show: true },
     { key: 'volumes', label: 'Volumes', show: true },
+    { key: 'logs', label: 'Logs', show: !!deviceId },
     { key: 'terminal', label: 'Terminal', show: !!terminalEnabled },
   ]
 
@@ -113,6 +114,9 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
         {tab === 'general' && <GeneralTab container={c} deviceId={deviceId} />}
         {tab === 'network' && <NetworkTab container={c} />}
         {tab === 'volumes' && <VolumesTab container={c} />}
+        {tab === 'logs' && deviceId && (
+          <ContainerLogsTab containerID={c.short_id} containerName={c.name} deviceId={deviceId} />
+        )}
         {tab === 'terminal' && deviceId && c.state === 'running' && (
           <div className="h-96">
             <Terminal deviceId={deviceId} containerId={c.id} />
@@ -442,6 +446,74 @@ function VolumesTab({ container: c }: { container: ContainerInfo }) {
   )
 }
 
+function ContainerLogsTab({ containerID, containerName, deviceId }: { containerID: string; containerName: string; deviceId: string }) {
+  const [streamFilter, setStreamFilter] = useState<'' | 'stdout' | 'stderr'>('')
+  const [limit, setLimit] = useState(200)
+
+  const { data: logs = [], isLoading } = useQuery({
+    queryKey: ['container-logs', deviceId, containerID, limit, streamFilter],
+    queryFn: () => api.getContainerLogs(deviceId, containerID, limit, streamFilter || undefined),
+    refetchInterval: 15_000,
+  })
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="flex gap-1">
+          {(['', 'stdout', 'stderr'] as const).map(s => (
+            <button
+              key={s}
+              onClick={() => setStreamFilter(s)}
+              className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                streamFilter === s
+                  ? 'bg-gray-700 text-white'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+              }`}
+            >
+              {s || 'all'}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1 ml-auto">
+          {[200, 500, 1000].map(n => (
+            <button
+              key={n}
+              onClick={() => setLimit(n)}
+              className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                limit === n
+                  ? 'bg-gray-700 text-white'
+                  : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading && <p className="text-xs text-gray-500">Loading logs...</p>}
+      {!isLoading && logs.length === 0 && (
+        <p className="text-xs text-gray-500">No logs available. The <code className="text-gray-400">container_logs</code> collector must be enabled on the agent.</p>
+      )}
+      {logs.length > 0 && (
+        <div className="max-h-96 overflow-auto scrollbar-thin bg-gray-950 rounded border border-gray-800 p-2 font-mono text-xs">
+          {logs.map((entry: ContainerLogEntry, i: number) => (
+            <div key={entry.id ?? i} className="flex gap-2 hover:bg-gray-900/50 py-px">
+              <span className="text-gray-600 flex-shrink-0 select-none">
+                {new Date(entry.timestamp).toLocaleTimeString()}
+              </span>
+              <span className={`flex-shrink-0 w-10 ${entry.stream === 'stderr' ? 'text-red-400' : 'text-blue-400'}`}>
+                {entry.stream === 'stderr' ? 'ERR' : 'OUT'}
+              </span>
+              <span className="text-gray-300 whitespace-pre-wrap break-all">{entry.line}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
@@ -499,7 +571,8 @@ function AddContainerAlertButton({ containerName, deviceId }: { containerName: s
                 target_name: containerName,
                 target_state: '',
                 severity: preset.severity,
-                device_filter: deviceId,
+                include_devices: '',
+                exclude_devices: '',
                 cooldown_seconds: 900,
                 notify: true,
               })}

@@ -85,6 +85,22 @@ var disruptiveActions = map[string]string{
 	"os_update": "OS update",
 }
 
+// commandLabels maps all command actions to human-readable labels for event messages.
+var commandLabels = map[string]string{
+	"docker_stop":          "Docker stop",
+	"docker_restart":       "Docker restart",
+	"docker_start":         "Docker start",
+	"docker_update":        "Docker update",
+	"docker_check_updates": "Docker check updates",
+	"docker_bulk_update":   "Docker bulk update",
+	"reboot":               "Reboot",
+	"agent_update":         "Agent update",
+	"os_update":            "OS update",
+	"fetch_logs":           "Log fetch",
+	"enable_auto_updates":  "Enable auto-updates",
+	"run_device_probe":     "Device probe",
+}
+
 // recentDisruptiveCommand returns the most recent disruptive command sent to a device
 // within the last 2 minutes, or nil if none found.
 func (g *Generator) recentDisruptiveCommand(ctx context.Context, deviceID string) *models.Command {
@@ -105,30 +121,35 @@ func (g *Generator) recentDisruptiveCommand(ctx context.Context, deviceID string
 	return nil
 }
 
-// CommandSent creates an informational event when a disruptive command is dispatched.
-func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action string) {
-	label, ok := disruptiveActions[action]
+// CommandSent creates an informational event when any command is dispatched.
+func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action string, params map[string]interface{}) {
+	label, ok := commandLabels[action]
 	if !ok {
-		return
+		label = action
+	}
+	msg := fmt.Sprintf("%s initiated on %s", label, hostname)
+	// Add container context for Docker commands
+	if cname, _ := params["container_id"].(string); cname != "" {
+		msg = fmt.Sprintf("%s initiated for %s on %s", label, cname, hostname)
 	}
 	g.createEvent(ctx, &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventCommandSent,
 		Severity:  models.SeverityInfo,
-		Message:   fmt.Sprintf("%s initiated on %s", strings.Title(label), hostname),
+		Message:   msg,
 		CreatedAt: time.Now().UTC(),
 	})
 }
 
-// CommandCompleted creates an event when a disruptive command finishes (success or failure).
+// CommandCompleted creates an event when any command finishes (success or failure).
 func (g *Generator) CommandCompleted(ctx context.Context, deviceID, hostname, action, status, message string) {
-	label, ok := disruptiveActions[action]
+	label, ok := commandLabels[action]
 	if !ok {
-		return
+		label = action
 	}
 
 	severity := models.SeverityInfo
-	msg := fmt.Sprintf("%s completed on %s", strings.Title(label), hostname)
+	msg := fmt.Sprintf("%s completed on %s", label, hostname)
 	if status == "error" {
 		severity = models.SeverityWarning
 		// Include a brief reason — truncate long output
@@ -136,7 +157,7 @@ func (g *Generator) CommandCompleted(ctx context.Context, deviceID, hostname, ac
 		if len(reason) > 200 {
 			reason = reason[:200] + "..."
 		}
-		msg = fmt.Sprintf("%s failed on %s: %s", strings.Title(label), hostname, reason)
+		msg = fmt.Sprintf("%s failed on %s: %s", label, hostname, reason)
 	}
 
 	g.createEvent(ctx, &models.Event{
@@ -185,7 +206,7 @@ func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string
 	}
 
 	// Check for device_offline alert rules
-	rule := g.findMatchingRule(ctx, "device_offline", deviceID, 1)
+	rule := g.findMatchingRule(ctx, "device_offline", deviceID, hostname, 1)
 	if rule != nil {
 		key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 		cd := time.Duration(rule.CooldownSeconds) * time.Second
@@ -206,27 +227,27 @@ func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string
 	}
 }
 
-func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID string, data *models.HeartbeatData) {
-	g.evaluateMetric(ctx, deviceID, "mem_percent", data.MemPercent, "", models.EventMemHigh,
+func (g *Generator) CheckHeartbeatThresholds(ctx context.Context, deviceID, hostname string, data *models.HeartbeatData) {
+	g.evaluateMetric(ctx, deviceID, "mem_percent", data.MemPercent, hostname, models.EventMemHigh,
 		func(val float64) string { return fmt.Sprintf("RAM usage at %.1f%%", val) })
 
-	g.evaluateMetric(ctx, deviceID, "disk_percent", data.DiskRootPercent, "", models.EventDiskHigh,
+	g.evaluateMetric(ctx, deviceID, "disk_percent", data.DiskRootPercent, hostname, models.EventDiskHigh,
 		func(val float64) string { return fmt.Sprintf("Disk usage at %.1f%%", val) })
 
 	if data.LogErrors > 0 {
-		g.evaluateMetric(ctx, deviceID, "log_errors", float64(data.LogErrors), "", models.EventLogErrors,
+		g.evaluateMetric(ctx, deviceID, "log_errors", float64(data.LogErrors), hostname, models.EventLogErrors,
 			func(val float64) string { return fmt.Sprintf("%d log errors detected since last heartbeat", int(val)) })
 	}
 }
 
-func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
+func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, hostname string, data *models.FullTelemetryData) {
 	if data.Memory != nil {
-		g.evaluateMetric(ctx, deviceID, "mem_percent", data.Memory.UsagePercent, "", models.EventMemHigh,
+		g.evaluateMetric(ctx, deviceID, "mem_percent", data.Memory.UsagePercent, hostname, models.EventMemHigh,
 			func(val float64) string { return fmt.Sprintf("RAM usage at %.1f%%", val) })
 	}
 	if data.Disks != nil {
 		for _, fs := range data.Disks.Filesystems {
-			g.evaluateMetric(ctx, deviceID, "disk_percent", fs.UsagePercent, "", models.EventDiskHigh,
+			g.evaluateMetric(ctx, deviceID, "disk_percent", fs.UsagePercent, hostname, models.EventDiskHigh,
 				func(val float64) string { return fmt.Sprintf("Disk %s usage at %.1f%%", fs.MountPoint, val) })
 		}
 	}
@@ -234,30 +255,30 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID strin
 
 	// Check service, NIC, and process alerts
 	if data.Services != nil {
-		g.CheckServiceAlerts(ctx, deviceID, data.Services)
+		g.CheckServiceAlerts(ctx, deviceID, hostname, data.Services)
 	}
 	if data.Network != nil && data.Network.Interfaces != nil {
-		g.CheckNICAlerts(ctx, deviceID, data.Network.Interfaces)
+		g.CheckNICAlerts(ctx, deviceID, hostname, data.Network.Interfaces)
 	}
 	if data.Procs != nil {
-		g.CheckProcessAlerts(ctx, deviceID, data.Procs)
+		g.CheckProcessAlerts(ctx, deviceID, hostname, data.Procs)
 	}
 	if data.UPS != nil {
-		g.CheckUPSAlerts(ctx, deviceID, data.UPS)
+		g.CheckUPSAlerts(ctx, deviceID, hostname, data.UPS)
 	}
 	if data.Docker != nil && data.Docker.Available {
-		g.CheckContainerThresholds(ctx, deviceID, data.Docker.Containers)
+		g.CheckContainerThresholds(ctx, deviceID, hostname, data.Docker.Containers)
 	}
 	if data.WebServers != nil {
-		g.CheckWebServerAlerts(ctx, deviceID, data.WebServers)
+		g.CheckWebServerAlerts(ctx, deviceID, hostname, data.WebServers)
 	}
 	if data.USB != nil {
-		g.CheckUSBAlerts(ctx, deviceID, data.USB)
+		g.CheckUSBAlerts(ctx, deviceID, hostname, data.USB)
 	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
-func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID string, services []models.ServiceInfo) {
+func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID, hostname string, services []models.ServiceInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("check service alerts", "error", err)
@@ -269,7 +290,7 @@ func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID string, ser
 		if r.Metric != "service_state" || r.TargetName == "" {
 			continue
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 
@@ -306,7 +327,7 @@ func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID string, ser
 }
 
 // CheckNICAlerts checks network interface state against nic_state alert rules.
-func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfaces []models.NetworkInterface) {
+func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID, hostname string, interfaces []models.NetworkInterface) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("check nic alerts", "error", err)
@@ -318,7 +339,7 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfa
 		if r.Metric != "nic_state" || r.TargetName == "" {
 			continue
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 
@@ -355,7 +376,7 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID string, interfa
 }
 
 // CheckProcessAlerts checks for missing processes against process_missing alert rules.
-func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID string, procs *models.ProcessInfo) {
+func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID, hostname string, procs *models.ProcessInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("check process alerts", "error", err)
@@ -380,7 +401,7 @@ func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID string, pro
 		if r.Metric != "process_missing" || r.TargetName == "" {
 			continue
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 
@@ -407,7 +428,7 @@ func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID string, pro
 }
 
 // CheckUPSAlerts checks UPS state and creates events for power transitions.
-func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *models.UPSInfo) {
+func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID, hostname string, ups *models.UPSInfo) {
 	if ups.Name == "" {
 		return
 	}
@@ -429,7 +450,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 				Message:   fmt.Sprintf("UPS %s low battery%s", ups.Name, charge),
 				CreatedAt: time.Now().UTC(),
 			}
-			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, hostname, 1)
 			if rule != nil {
 				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -450,7 +471,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 				Message:   fmt.Sprintf("UPS %s running on battery", ups.Name),
 				CreatedAt: time.Now().UTC(),
 			}
-			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, hostname, 1)
 			if rule != nil {
 				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -486,7 +507,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 				Message:   fmt.Sprintf("UPS %s restored to line power", ups.Name),
 				CreatedAt: time.Now().UTC(),
 			}
-			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, 1)
+			rule := g.findMatchingRule(ctx, "ups_on_battery", deviceID, hostname, 1)
 			if rule != nil {
 				g.createEventAndNotify(ctx, e, rule, "", 0)
 			} else {
@@ -497,13 +518,13 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID string, ups *mo
 
 	// Battery charge threshold check via evaluateMetric
 	if ups.BatteryCharge != nil {
-		g.evaluateMetric(ctx, deviceID, "ups_battery_percent", *ups.BatteryCharge, "", models.EventUPSLowBattery,
+		g.evaluateMetric(ctx, deviceID, "ups_battery_percent", *ups.BatteryCharge, hostname, models.EventUPSLowBattery,
 			func(val float64) string { return fmt.Sprintf("UPS %s battery at %.0f%%", ups.Name, val) })
 	}
 }
 
 // CheckContainerThresholds checks per-container CPU and memory against alert rules.
-func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID string, containers []models.ContainerInfo) {
+func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, hostname string, containers []models.ContainerInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("check container thresholds", "error", err)
@@ -515,7 +536,7 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID strin
 		if r.TargetName == "" {
 			continue // container threshold rules require a target name
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 
@@ -578,13 +599,13 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID strin
 				Message:   fmt.Sprintf("Container %s %s at %.1f%%", c.Name, metricName, value),
 				CreatedAt: time.Now().UTC(),
 			}
-			g.createEventAndNotify(ctx, e, r, "", value)
+			g.createEventAndNotify(ctx, e, r, hostname, value)
 		}
 	}
 }
 
 // CheckDockerEvent creates an event from a Docker container state change.
-func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *models.DockerEvent) {
+func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname string, evt *models.DockerEvent) {
 	now := time.Now().UTC()
 	switch evt.Action {
 	case "start":
@@ -613,7 +634,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
 				Message: fmt.Sprintf("Container %s died", evt.ContainerName), CreatedAt: now,
 			}
-			rule := g.findMatchingRule(ctx, "container_died", deviceID, 1)
+			rule := g.findMatchingRule(ctx, "container_died", deviceID, hostname, 1)
 			if rule != nil {
 				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -629,7 +650,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 			DeviceID: deviceID, Type: models.EventContainerOOM, Severity: models.SeverityCrit,
 			Message: fmt.Sprintf("Container %s OOM killed", evt.ContainerName), CreatedAt: now,
 		}
-		rule := g.findMatchingRule(ctx, "container_oom", deviceID, 1)
+		rule := g.findMatchingRule(ctx, "container_oom", deviceID, hostname, 1)
 		if rule != nil {
 			key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 			if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -697,18 +718,18 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID string, evt *
 }
 
 // CheckWebServerAlerts checks SSL certificates across all proxy servers for expiry.
-func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID string, ws *models.WebServerInfo) {
+func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID, hostname string, ws *models.WebServerInfo) {
 	for _, srv := range ws.Servers {
 		for _, cert := range srv.Certs {
 			if cert.DaysLeft <= 0 {
 				// Expired
-				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), "", models.EventCertExpired,
+				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), hostname, models.EventCertExpired,
 					func(val float64) string {
 						return fmt.Sprintf("SSL certificate %s (%s) has expired", cert.Subject, srv.Name)
 					})
 			} else if cert.DaysLeft < 30 {
 				// Expiring soon
-				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), "", models.EventCertExpiring,
+				g.evaluateMetric(ctx, deviceID, "cert_days_left", float64(cert.DaysLeft), hostname, models.EventCertExpiring,
 					func(val float64) string {
 						return fmt.Sprintf("SSL certificate %s (%s) expires in %d days", cert.Subject, srv.Name, cert.DaysLeft)
 					})
@@ -718,7 +739,7 @@ func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID string, w
 }
 
 // CheckUSBAlerts checks for missing USB devices against usb_missing alert rules.
-func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID string, usb *models.USBInfo) {
+func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID, hostname string, usb *models.USBInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("check usb alerts", "error", err)
@@ -740,7 +761,7 @@ func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID string, usb *mo
 		if r.Metric != "usb_missing" || r.TargetName == "" {
 			continue
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 
@@ -791,7 +812,7 @@ func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID string, usb *mo
 
 // evaluateMetric checks a numeric metric against all matching alert rules.
 func (g *Generator) evaluateMetric(ctx context.Context, deviceID, metric string, value float64, hostname string, eventType models.EventType, msgFn func(float64) string) {
-	rule := g.findMatchingRule(ctx, metric, deviceID, value)
+	rule := g.findMatchingRule(ctx, metric, deviceID, hostname, value)
 	if rule != nil {
 		key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 		cd := time.Duration(rule.CooldownSeconds) * time.Second
@@ -847,7 +868,7 @@ func (g *Generator) evaluateMetric(ctx context.Context, deviceID, metric string,
 }
 
 // findMatchingRule returns the first enabled rule that matches the metric, device, and threshold.
-func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID string, value float64) *models.AlertRule {
+func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, hostname string, value float64) *models.AlertRule {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
 		slog.Error("find matching rule", "error", err)
@@ -858,7 +879,7 @@ func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID strin
 		if r.Metric != metric {
 			continue
 		}
-		if !matchesDeviceFilter(r.DeviceFilter, deviceID) {
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
 		if !compareValue(value, r.Operator, r.Threshold) {
@@ -883,21 +904,45 @@ func matchesTargetState(targetState, actualState string) bool {
 	return false
 }
 
-// matchesDeviceFilter checks if a device matches the rule's filter.
-// Empty filter matches all devices.
-func matchesDeviceFilter(filter, deviceID string) bool {
-	return MatchesDeviceFilter(filter, deviceID, nil)
+// matchesDeviceScope checks if a device matches the rule's include/exclude lists.
+func matchesDeviceScope(include, exclude, deviceID, hostname string) bool {
+	return MatchesDeviceScope(include, exclude, deviceID, hostname, nil)
 }
 
-// MatchesDeviceFilter checks if a device matches a comma-separated filter
-// of device IDs and/or tags. Empty filter matches all devices.
-func MatchesDeviceFilter(filter, deviceID string, tags []string) bool {
-	if filter == "" {
+// MatchesDeviceScope checks if a device matches include/exclude hostname lists.
+// Exclude always wins. Empty include matches all devices (minus excludes).
+// Matches against device ID, hostname, and tags.
+func MatchesDeviceScope(include, exclude, deviceID, hostname string, tags []string) bool {
+	// Check exclude first — exclude always wins
+	if exclude != "" {
+		for _, e := range strings.Split(exclude, ",") {
+			e = strings.TrimSpace(e)
+			if e == "" {
+				continue
+			}
+			if strings.EqualFold(e, hostname) || e == deviceID {
+				return false
+			}
+			for _, tag := range tags {
+				if e == tag {
+					return false
+				}
+			}
+		}
+	}
+
+	// Empty include means "all devices" (minus excludes above)
+	if include == "" {
 		return true
 	}
-	for _, f := range strings.Split(filter, ",") {
+
+	// Check include list
+	for _, f := range strings.Split(include, ",") {
 		f = strings.TrimSpace(f)
-		if f == deviceID {
+		if f == "" {
+			continue
+		}
+		if strings.EqualFold(f, hostname) || f == deviceID {
 			return true
 		}
 		for _, tag := range tags {

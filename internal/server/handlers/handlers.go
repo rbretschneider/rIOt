@@ -46,6 +46,7 @@ type HandlerDeps struct {
 	LogRepo           db.LogRepository
 	DeviceLogRepo     db.DeviceLogRepository
 	AutoUpdateRepo       db.AutoUpdateRepository
+	ContainerLogRepo     db.ContainerLogRepository
 	ContainerMetricRepo  db.ContainerMetricRepository
 	DeviceProbeRepo      db.DeviceProbeRepository
 	JWTSecret            []byte
@@ -70,6 +71,7 @@ type Handlers struct {
 	logRepo            db.LogRepository
 	deviceLogRepo      db.DeviceLogRepository
 	autoUpdateRepo      db.AutoUpdateRepository
+	containerLogRepo     db.ContainerLogRepository
 	containerMetricRepo  db.ContainerMetricRepository
 	deviceProbeRepo      db.DeviceProbeRepository
 	jwtSecret            []byte
@@ -99,6 +101,7 @@ func New(deps HandlerDeps) *Handlers {
 		logRepo:           deps.LogRepo,
 		deviceLogRepo:     deps.DeviceLogRepo,
 		autoUpdateRepo:      deps.AutoUpdateRepo,
+		containerLogRepo:     deps.ContainerLogRepo,
 		containerMetricRepo:  deps.ContainerMetricRepo,
 		deviceProbeRepo:      deps.DeviceProbeRepo,
 		jwtSecret:            deps.JWTSecret,
@@ -256,8 +259,14 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Look up hostname for alert scoping
+	var hostname string
+	if dev, err := h.devices.GetByID(r.Context(), deviceID); err == nil && dev != nil {
+		hostname = dev.Hostname
+	}
+
 	// Check thresholds and generate events
-	h.eventGen.CheckHeartbeatThresholds(r.Context(), deviceID, &hb.Data)
+	h.eventGen.CheckHeartbeatThresholds(r.Context(), deviceID, hostname, &hb.Data)
 
 	// Broadcast heartbeat via WebSocket
 	h.hub.BroadcastHeartbeat(deviceID, &hb.Data)
@@ -331,6 +340,14 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		snap.Data.Logs = nil // Don't persist logs in the telemetry snapshot
 	}
 
+	// Extract and store container logs
+	if len(snap.Data.ContainerLogs) > 0 && h.containerLogRepo != nil {
+		if err := h.containerLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.ContainerLogs); err != nil {
+			slog.Error("store container logs", "error", err)
+		}
+		snap.Data.ContainerLogs = nil // Don't persist logs in the telemetry snapshot
+	}
+
 	// Extract and store per-container metrics
 	if snap.Data.Docker != nil && snap.Data.Docker.Available && h.containerMetricRepo != nil {
 		var metrics []models.ContainerMetric
@@ -356,7 +373,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check thresholds
-	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, &snap.Data)
+	var telHostname string
+	if snap.Data.System != nil {
+		telHostname = snap.Data.System.Hostname
+	}
+	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, telHostname, &snap.Data)
 
 	// Set device status to "warning" if UPS is on battery power
 	if snap.Data.UPS != nil && snap.Data.UPS.OnBattery {
@@ -514,7 +535,7 @@ func (h *Handlers) GetDeviceAlertRules(w http.ResponseWriter, r *http.Request) {
 	}
 	var matching []models.AlertRule
 	for _, rule := range rules {
-		if events.MatchesDeviceFilter(rule.DeviceFilter, id, device.Tags) {
+		if events.MatchesDeviceScope(rule.IncludeDevices, rule.ExcludeDevices, id, device.Hostname, device.Tags) {
 			matching = append(matching, rule)
 		}
 	}
@@ -681,6 +702,43 @@ func (h *Handlers) GetContainerMetricHistory(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, metrics)
 }
 
+// GetContainerLogs returns stored log lines for a container.
+func (h *Handlers) GetContainerLogs(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	containerID := chi.URLParam(r, "cid")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	stream := r.URL.Query().Get("stream") // "", "stdout", or "stderr"
+
+	var since *time.Time
+	if s := r.URL.Query().Get("since"); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			since = &t
+		}
+	}
+
+	if h.containerLogRepo == nil {
+		http.Error(w, `{"error":"container log storage not available"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	entries, err := h.containerLogRepo.List(r.Context(), deviceID, containerID, limit, stream, since)
+	if err != nil {
+		slog.Error("get container logs", "error", err)
+		http.Error(w, `{"error":"failed to fetch container logs"}`, http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []models.ContainerLogEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
 // ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update status).
 func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
@@ -726,8 +784,14 @@ func (h *Handlers) ReceiveDockerEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up hostname for alert scoping
+	var dockerHostname string
+	if dev, err := h.devices.GetByID(r.Context(), deviceID); err == nil && dev != nil {
+		dockerHostname = dev.Hostname
+	}
+
 	// Generate appropriate event
-	h.eventGen.CheckDockerEvent(r.Context(), deviceID, &dockerEvt)
+	h.eventGen.CheckDockerEvent(r.Context(), deviceID, dockerHostname, &dockerEvt)
 
 	// Broadcast docker update via WebSocket so dashboards refresh
 	h.hub.BroadcastDockerUpdate(deviceID, &dockerEvt)

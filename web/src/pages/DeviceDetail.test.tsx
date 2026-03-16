@@ -131,4 +131,68 @@ describe('DeviceDetail', () => {
     expect(await screen.findByText('test-host')).toBeInTheDocument()
     expect(screen.queryByText('Web Servers')).not.toBeInTheDocument()
   })
+
+  it('renders Hardware Details section when telemetry has hardware data', async () => {
+    mockGetDevice.mockResolvedValue({
+      ...baseDevice,
+      latest_telemetry: {
+        id: 1,
+        device_id: 'dev-1',
+        timestamp: new Date().toISOString(),
+        data: {
+          hardware: {
+            pci_devices: [{
+              slot: '0000:00:02.0',
+              vendor_id: '8086',
+              device_id: '9a49',
+              vendor: 'Intel Corporation',
+              device: 'TigerLake-LP GT2 [Iris Xe Graphics]',
+              description: 'Intel Corporation TigerLake-LP GT2 [Iris Xe Graphics]',
+              class_code: '030000',
+              class_name: 'VGA Controller',
+              driver: 'i915',
+            }],
+            disk_drives: [{
+              name: 'nvme0n1',
+              model: 'Samsung SSD 980 PRO 1TB',
+              serial: 'S5XXXX',
+              size_bytes: 1000204886016,
+              size_gb: 931.5,
+              type: 'NVMe',
+            }],
+            gpus: [{
+              vendor: 'Intel Corporation',
+              model: 'TigerLake-LP GT2 [Iris Xe Graphics]',
+              pci_slot: '0000:00:02.0',
+              driver: 'i915',
+              description: 'Intel Corporation TigerLake-LP GT2 [Iris Xe Graphics]',
+            }],
+          },
+        },
+      },
+    })
+    renderWithProviders()
+    // Check section title contains "Hardware Details"
+    const heading = await screen.findByText(/Hardware Details/)
+    expect(heading).toBeInTheDocument()
+    // Check GPU sub-heading appears
+    expect(await screen.findByText(/GPUs/)).toBeInTheDocument()
+    // Check disk drives sub-heading appears
+    expect(await screen.findByText(/Disk Drives/)).toBeInTheDocument()
+  })
+
+  it('does not render Hardware Details section when no hardware data', async () => {
+    mockGetDevice.mockResolvedValue({
+      ...baseDevice,
+      latest_telemetry: {
+        id: 1,
+        device_id: 'dev-1',
+        timestamp: new Date().toISOString(),
+        data: {},
+      },
+    })
+    renderWithProviders()
+    expect(await screen.findByText('test-host')).toBeInTheDocument()
+    expect(screen.queryByText(/Hardware Details/)).not.toBeInTheDocument()
+  })
 })

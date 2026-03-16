@@ -51,11 +51,16 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 		SocketPath:   opts.SocketPath,
 		CheckUpdates: opts.CheckUpdates,
 	})
+	r.Register(&ContainerLogCollector{
+		SocketPath: opts.SocketPath,
+		TailLines:  50,
+	})
 	r.Register(&SecurityCollector{})
 	r.Register(&LogsCollector{})
 	r.Register(&UPSCollector{})
 	r.Register(&WebServersCollector{})
 	r.Register(&USBCollector{})
+	r.Register(&HardwareCollector{})
 	r.Register(&CronCollector{})
 }
 

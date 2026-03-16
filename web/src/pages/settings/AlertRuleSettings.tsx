@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
+import { api } from '../../api/client'
 import type { AlertRule, AlertTemplate } from '../../types/models'
 
 const METRICS = [
@@ -63,7 +64,8 @@ const emptyRule: Partial<AlertRule> = {
   target_name: '',
   target_state: '',
   severity: 'warning',
-  device_filter: '',
+  include_devices: '',
+  exclude_devices: '',
   cooldown_seconds: 900,
   notify: true,
   template_id: '',
@@ -104,8 +106,8 @@ export default function AlertRuleSettings() {
   const isStateMetric = editing ? STATE_METRICS.includes(editing.metric || '') : false
   const isContainerThreshold = editing ? CONTAINER_THRESHOLD_METRICS.includes(editing.metric || '') : false
 
-  const globalRules = useMemo(() => rules.filter(r => !r.device_filter), [rules])
-  const deviceRules = useMemo(() => rules.filter(r => !!r.device_filter), [rules])
+  const globalRules = useMemo(() => rules.filter(r => !r.include_devices && !r.exclude_devices), [rules])
+  const deviceRules = useMemo(() => rules.filter(r => !!r.include_devices || !!r.exclude_devices), [rules])
 
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
@@ -154,7 +156,7 @@ export default function AlertRuleSettings() {
       <div className="flex items-center justify-between mb-4 mt-8">
         <h2 className="text-lg font-semibold text-white">Device-Specific Alert Rules</h2>
         <button
-          onClick={() => { setEditing({ ...emptyRule, device_filter: '' }); setIsNew(true) }}
+          onClick={() => { setEditing({ ...emptyRule, include_devices: '', exclude_devices: '' }); setIsNew(true) }}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
         >
           Add Rule
@@ -315,14 +317,18 @@ export default function AlertRuleSettings() {
                   />
                 </Field>
               </div>
-              <Field label="Device Filter (comma-separated IDs, empty = all)">
-                <input
-                  value={editing.device_filter || ''}
-                  onChange={e => setEditing({ ...editing, device_filter: e.target.value })}
-                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-                  placeholder="Leave empty for all devices"
-                />
-              </Field>
+              <DeviceSelector
+                label="Include Devices (empty = all)"
+                value={editing.include_devices || ''}
+                onChange={v => setEditing({ ...editing, include_devices: v })}
+                placeholder="All devices"
+              />
+              <DeviceSelector
+                label="Exclude Devices"
+                value={editing.exclude_devices || ''}
+                onChange={v => setEditing({ ...editing, exclude_devices: v })}
+                placeholder="None"
+              />
               <label className="flex items-center gap-2 text-sm text-gray-300">
                 <input
                   type="checkbox"
@@ -445,7 +451,11 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
               <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
               <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
               {showDevices && (
-                <td className="px-4 py-3 text-gray-400 font-mono text-xs">{rule.device_filter}</td>
+                <td className="px-4 py-3 text-gray-400 font-mono text-xs">
+                  {rule.include_devices && <span className="text-emerald-400">+{rule.include_devices}</span>}
+                  {rule.include_devices && rule.exclude_devices && ' '}
+                  {rule.exclude_devices && <span className="text-red-400">-{rule.exclude_devices}</span>}
+                </td>
               )}
               <td className="px-4 py-3 text-right">
                 <div className="flex items-center justify-end gap-3">
@@ -572,6 +582,52 @@ function StateMultiSelect({ options, selected, onChange }: {
         ))}
       </div>
     </div>
+  )
+}
+
+function DeviceSelector({ label, value, onChange, placeholder }: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
+  const { data: devices = [] } = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.getDevices,
+    staleTime: 60_000,
+  })
+
+  const selected = value ? value.split(',').map(s => s.trim()).filter(Boolean) : []
+
+  const toggle = (hostname: string) => {
+    const next = selected.includes(hostname)
+      ? selected.filter(s => s !== hostname)
+      : [...selected, hostname]
+    onChange(next.join(','))
+  }
+
+  return (
+    <Field label={label}>
+      <div className="bg-gray-800 border border-gray-700 rounded px-3 py-2 max-h-32 overflow-y-auto scrollbar-thin">
+        {devices.length === 0 ? (
+          <p className="text-xs text-gray-500">{placeholder}</p>
+        ) : (
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {devices.map(d => (
+              <label key={d.id} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(d.hostname)}
+                  onChange={() => toggle(d.hostname)}
+                  className="rounded bg-gray-700 border-gray-600 text-blue-500"
+                />
+                {d.hostname}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    </Field>
   )
 }
 

@@ -76,6 +76,15 @@ export const api = {
   getContainerMetricHistory: (deviceId: string, containerName: string, hours = 24) =>
     fetchJSON<ContainerMetric[]>(`${BASE}/devices/${deviceId}/containers/${encodeURIComponent(containerName)}/metrics?hours=${hours}`),
 
+  getContainerLogs: (deviceId: string, containerID: string, limit = 200, stream?: string, since?: string) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (stream) params.set('stream', stream)
+    if (since) params.set('since', since)
+    return fetchJSON<import('../types/models').ContainerLogEntry[]>(
+      `${BASE}/devices/${deviceId}/containers/${encodeURIComponent(containerID)}/logs?${params}`
+    )
+  },
+
   sendCommand: async (deviceId: string, action: string, params: Record<string, unknown> = {}): Promise<Command> => {
     const res = await fetch(`${BASE}/devices/${deviceId}/commands`, {
       method: 'POST',

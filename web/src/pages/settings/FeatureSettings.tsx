@@ -1,9 +1,11 @@
+import { useState, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import { FEATURES, type FeatureKey } from '../../hooks/useFeatures'
 
 export default function FeatureSettings() {
   const qc = useQueryClient()
+  const [filter, setFilter] = useState('')
   const { data: toggles = {}, isLoading } = useQuery({
     queryKey: ['feature-toggles'],
     queryFn: settingsApi.getFeatureToggles,
@@ -22,6 +24,16 @@ export default function FeatureSettings() {
     mutation.mutate(updated)
   }
 
+  const featureKeys = useMemo(() => {
+    const keys = Object.keys(FEATURES) as FeatureKey[]
+    if (!filter.trim()) return keys
+    const q = filter.toLowerCase()
+    return keys.filter(key => {
+      const f = FEATURES[key]
+      return f.label.toLowerCase().includes(q) || f.description.toLowerCase().includes(q)
+    })
+  }, [filter])
+
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
   }
@@ -32,47 +44,52 @@ export default function FeatureSettings() {
         <h2 className="text-lg font-semibold text-white">Dashboard Features</h2>
         <p className="text-sm text-gray-400 mt-1">
           Toggle visibility of features across the dashboard. Disabled features are hidden from all views.
-          Data collection continues regardless of these settings.
+          Data collection continues regardless of these settings. Per-device overrides may be supported in a future release.
         </p>
       </div>
 
-      <div className="space-y-2">
-        {(Object.keys(FEATURES) as FeatureKey[]).map(key => {
+      {/* Search / filter */}
+      <div className="mb-4">
+        <input
+          type="text"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Filter features..."
+          className="w-full max-w-sm px-3 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-600"
+        />
+      </div>
+
+      {/* Feature grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+        {featureKeys.map(key => {
           const feature = FEATURES[key]
           const enabled = toggles[key] !== false
           return (
-            <div
+            <button
               key={key}
-              className="bg-gray-900 rounded-lg border border-gray-800 p-4 flex items-center justify-between"
+              onClick={() => toggle(key)}
+              disabled={mutation.isPending}
+              className={`text-left rounded-lg border p-3 transition-colors cursor-pointer disabled:opacity-50 ${
+                enabled
+                  ? 'bg-gray-900 border-gray-700 hover:border-gray-600'
+                  : 'bg-gray-900/50 border-gray-800 hover:border-gray-700 opacity-60'
+              }`}
             >
-              <div>
-                <span className="text-white font-medium">{feature.label}</span>
-                <p className="text-xs text-gray-500 mt-0.5">{feature.description}</p>
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-sm font-medium ${enabled ? 'text-white' : 'text-gray-400'}`}>
+                  {feature.label}
+                </span>
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${enabled ? 'bg-blue-500' : 'bg-gray-600'}`} />
               </div>
-              <button
-                onClick={() => toggle(key)}
-                disabled={mutation.isPending}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
-                  enabled ? 'bg-blue-600' : 'bg-gray-700'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
-                    enabled ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
+              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{feature.description}</p>
+            </button>
           )
         })}
       </div>
 
-      <div className="mt-6 p-4 bg-gray-900/50 rounded-lg border border-gray-800/50">
-        <p className="text-xs text-gray-500">
-          These toggles control UI visibility only. Agents will continue collecting all enabled metrics.
-          Per-device overrides may be supported in a future release.
-        </p>
-      </div>
+      {featureKeys.length === 0 && (
+        <p className="text-sm text-gray-500 mt-2">No features match "{filter}"</p>
+      )}
     </div>
   )
 }

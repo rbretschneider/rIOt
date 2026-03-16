@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../api/settings'
+import { api } from '../api/client'
 import type { AlertRule } from '../types/models'
 
 interface CreateAlertDialogProps {
   metric: string
   targetName: string
   targetState?: string
-  deviceFilter?: string
+  includeDevices?: string
+  excludeDevices?: string
   onClose: () => void
 }
 
@@ -39,10 +41,16 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   usb_missing:     { operator: '==', threshold: 1, severity: 'critical', cooldown: 300, hint: 'Fires when the USB device is not found' },
 }
 
-export default function CreateAlertDialog({ metric, targetName, targetState, deviceFilter, onClose }: CreateAlertDialogProps) {
+export default function CreateAlertDialog({ metric, targetName, targetState, includeDevices, excludeDevices, onClose }: CreateAlertDialogProps) {
   const qc = useQueryClient()
   const isState = ['service_state', 'nic_state', 'process_missing', 'usb_missing'].includes(metric)
   const defaults = METRIC_DEFAULTS[metric]
+
+  const { data: devices = [] } = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.getDevices,
+    staleTime: 60_000,
+  })
 
   const metricLabels: Record<string, string> = {
     service_state: 'Service State',
@@ -68,7 +76,8 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
     target_name: targetName,
     target_state: defaultStates,
     severity: defaults?.severity ?? 'warning',
-    device_filter: deviceFilter || '',
+    include_devices: includeDevices || '',
+    exclude_devices: excludeDevices || '',
     cooldown_seconds: defaults?.cooldown ?? 900,
     notify: true,
     template_id: '',
@@ -199,6 +208,62 @@ export default function CreateAlertDialog({ metric, targetName, targetState, dev
                 onChange={e => setRule({ ...rule, cooldown_seconds: parseInt(e.target.value) || 900 })}
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
               />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Include Devices (empty = all)</label>
+            <div className="bg-gray-800 border border-gray-700 rounded px-3 py-2 max-h-28 overflow-y-auto scrollbar-thin">
+              {devices.length === 0 ? (
+                <p className="text-xs text-gray-500">All devices</p>
+              ) : (
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {devices.map(d => {
+                    const sel = (rule.include_devices || '').split(',').filter(Boolean)
+                    return (
+                      <label key={d.id} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sel.includes(d.hostname)}
+                          onChange={() => {
+                            const next = sel.includes(d.hostname) ? sel.filter(s => s !== d.hostname) : [...sel, d.hostname]
+                            setRule({ ...rule, include_devices: next.join(',') })
+                          }}
+                          className="rounded bg-gray-700 border-gray-600 text-blue-500"
+                        />
+                        {d.hostname}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Exclude Devices</label>
+            <div className="bg-gray-800 border border-gray-700 rounded px-3 py-2 max-h-28 overflow-y-auto scrollbar-thin">
+              {devices.length === 0 ? (
+                <p className="text-xs text-gray-500">None</p>
+              ) : (
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  {devices.map(d => {
+                    const sel = (rule.exclude_devices || '').split(',').filter(Boolean)
+                    return (
+                      <label key={d.id} className="flex items-center gap-1.5 text-sm text-white cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sel.includes(d.hostname)}
+                          onChange={() => {
+                            const next = sel.includes(d.hostname) ? sel.filter(s => s !== d.hostname) : [...sel, d.hostname]
+                            setRule({ ...rule, exclude_devices: next.join(',') })
+                          }}
+                          className="rounded bg-gray-700 border-gray-600 text-blue-500"
+                        />
+                        {d.hostname}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-300">

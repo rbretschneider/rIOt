@@ -152,6 +152,13 @@ type DeviceLogRepository interface {
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// ContainerLogRepository defines the interface for container log operations.
+type ContainerLogRepository interface {
+	InsertBatch(ctx context.Context, deviceID string, entries []models.ContainerLogEntry) error
+	List(ctx context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error)
+	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+}
+
 // ContainerMetricRepository defines the interface for container metric operations.
 type ContainerMetricRepository interface {
 	StoreBatch(ctx context.Context, deviceID string, metrics []models.ContainerMetric) error
@@ -197,6 +204,7 @@ var (
 	_ CARepository        = (*CARepo)(nil)
 	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
 	_ AutoUpdateRepository      = (*AutoUpdateRepo)(nil)
+	_ ContainerLogRepository    = (*ContainerLogRepo)(nil)
 	_ ContainerMetricRepository = (*ContainerMetricRepo)(nil)
 	_ DeviceProbeRepository     = (*DeviceProbeRepo)(nil)
 )
