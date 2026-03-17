@@ -861,7 +861,14 @@ func (g *Generator) evaluateMetric(ctx context.Context, deviceID, metric string,
 		return
 	}
 
-	// No matching rule — use hardcoded fallback thresholds
+	// If user-configured rules exist for this metric, respect them — don't
+	// fall through to hardcoded fallback. This prevents alerts firing for
+	// devices that are explicitly excluded from a rule.
+	if g.hasRulesForMetric(ctx, metric) {
+		return
+	}
+
+	// No rules configured at all — use hardcoded fallback thresholds
 	var fallbackThreshold float64
 	var fallbackCooldown time.Duration
 	var fallbackSeverity models.EventSeverity
@@ -919,6 +926,20 @@ func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, host
 		return r
 	}
 	return nil
+}
+
+// hasRulesForMetric returns true if any enabled rules exist for the given metric.
+func (g *Generator) hasRulesForMetric(ctx context.Context, metric string) bool {
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		return false
+	}
+	for i := range rules {
+		if rules[i].Metric == metric {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesTargetState checks if an actual state matches a comma-separated list

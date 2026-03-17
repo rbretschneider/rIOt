@@ -1,6 +1,9 @@
 package collectors
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Collector is the interface all system collectors implement.
 type Collector interface {
@@ -79,6 +82,17 @@ func (r *Registry) FilterEnabled(enabled []string) {
 		}
 	}
 	r.ordered = filtered
+}
+
+// SetSMARTInterval configures how often the hardware collector re-runs
+// smartctl. Zero uses the default (4 hours).
+func (r *Registry) SetSMARTInterval(d time.Duration) {
+	for _, c := range r.ordered {
+		if hw, ok := c.(*HardwareCollector); ok {
+			hw.smartInterval = d
+			return
+		}
+	}
 }
 
 func (r *Registry) Collectors() []Collector {

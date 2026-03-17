@@ -397,6 +397,28 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
   onEdit: (rule: AlertRule) => void
   onDelete: (id: number) => void
 }) {
+  const { data: devices = [] } = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.getDevices,
+    staleTime: 60_000,
+    enabled: showDevices,
+  })
+
+  // Build a lookup from device ID -> hostname so we can display friendly names
+  const idToHostname = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const d of devices) {
+      map[d.id] = d.hostname
+    }
+    return map
+  }, [devices])
+
+  // Resolve a comma-separated list of device IDs/hostnames to display names
+  const resolveNames = (raw: string) =>
+    raw.split(',').map(s => s.trim()).filter(Boolean)
+      .map(entry => idToHostname[entry] || entry)
+      .join(', ')
+
   const colCount = showDevices ? 9 : 8
   return (
     <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto scrollbar-thin">
@@ -451,10 +473,10 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
               <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
               <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
               {showDevices && (
-                <td className="px-4 py-3 text-gray-400 font-mono text-xs">
-                  {rule.include_devices && <span className="text-emerald-400">+{rule.include_devices}</span>}
+                <td className="px-4 py-3 text-xs">
+                  {rule.include_devices && <span className="text-emerald-400">+{resolveNames(rule.include_devices)}</span>}
                   {rule.include_devices && rule.exclude_devices && ' '}
-                  {rule.exclude_devices && <span className="text-red-400">-{rule.exclude_devices}</span>}
+                  {rule.exclude_devices && <span className="text-red-400">-{resolveNames(rule.exclude_devices)}</span>}
                 </td>
               )}
               <td className="px-4 py-3 text-right">

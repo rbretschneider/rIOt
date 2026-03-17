@@ -9,6 +9,7 @@ interface Props {
   color: string
   maxY?: number
   unit?: string
+  subtitle?: string
   valueTransform?: (v: number) => number
 }
 
@@ -19,7 +20,7 @@ function formatBytes(bytes: number): string {
   return `${bytes.toFixed(0)} B/s`
 }
 
-export default function MetricChart({ heartbeats, metricKey, label, color, maxY, unit = '%', valueTransform }: Props) {
+export default function MetricChart({ heartbeats, metricKey, label, color, maxY, unit = '%', subtitle, valueTransform }: Props) {
   const data = useMemo(() =>
     heartbeats.map(hb => {
       const raw = Number(hb.data[metricKey]) || 0
@@ -69,7 +70,10 @@ export default function MetricChart({ heartbeats, metricKey, label, color, maxY,
 
   return (
     <div>
-      <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">{label}</p>
+      <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-2">
+        {label}
+        {subtitle && <span className="ml-1.5 normal-case font-normal text-gray-600">{subtitle}</span>}
+      </p>
       <ResponsiveContainer width="100%" height={180}>
         <AreaChart data={data}>
           <defs>

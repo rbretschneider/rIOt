@@ -426,8 +426,9 @@ export default function DeviceDetail() {
             {tel.cpu && <GaugeBar label="CPU Usage" value={tel.cpu.usage_percent} />}
             {tel.memory && <GaugeBar label="RAM Usage" value={tel.memory.usage_percent} />}
             {tel.disks?.filesystems && tel.disks.filesystems.length > 0 && (() => {
-              const highest = tel.disks!.filesystems!.reduce((max, fs) => fs.usage_percent > max.usage_percent ? fs : max)
-              return <GaugeBar label={`Disk Space (${highest.mount_point})`} value={highest.usage_percent} />
+              const boot = tel.disks!.filesystems!.find(fs => fs.mount_point === '/' || fs.mount_point === 'C:\\')
+                || tel.disks!.filesystems![0]
+              return <GaugeBar label={`Disk Space (${boot.mount_point})`} value={boot.usage_percent} />
             })()}
           </div>
           {tel.cpu && (
@@ -523,11 +524,11 @@ export default function DeviceDetail() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <MetricChart heartbeats={heartbeats} metricKey="cpu_percent" label="CPU %" color="#3b82f6" />
             <MetricChart heartbeats={heartbeats} metricKey="mem_percent" label="Memory %" color="#8b5cf6" />
-            <MetricChart heartbeats={heartbeats} metricKey="disk_io_percent" label="Disk I/O %" color="#f59e0b" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_io_percent" label="Disk I/O %" color="#f59e0b" subtitle="(all drives)" />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            <MetricChart heartbeats={heartbeats} metricKey="disk_read_bytes_sec" label="Disk Read" color="#34d399" unit="bytes/s" />
-            <MetricChart heartbeats={heartbeats} metricKey="disk_write_bytes_sec" label="Disk Write" color="#fb923c" unit="bytes/s" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_read_bytes_sec" label="Disk Read" color="#34d399" unit="bytes/s" subtitle="(all drives)" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_write_bytes_sec" label="Disk Write" color="#fb923c" unit="bytes/s" subtitle="(all drives)" />
           </div>
         </Section>
       )}

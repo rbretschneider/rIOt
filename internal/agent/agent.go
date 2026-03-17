@@ -56,6 +56,9 @@ func New(configPath, version string) (*Agent, error) {
 		SocketPath:   cfg.Docker.SocketPath,
 		CheckUpdates: checkUpdates,
 	})
+	if cfg.Collector.SMARTInterval > 0 {
+		registry.SetSMARTInterval(time.Duration(cfg.Collector.SMARTInterval) * time.Second)
+	}
 
 	return &Agent{
 		config:     cfg,

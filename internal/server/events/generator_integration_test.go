@@ -142,9 +142,9 @@ func TestCheckHeartbeatThresholds_DeviceFilter(t *testing.T) {
 	data := &models.HeartbeatData{MemPercent: 95.0}
 	gen.CheckHeartbeatThresholds(ctx, "dev-1", "test-host", data)
 
-	// Rule doesn't match dev-1, so fallback threshold (90) applies
-	require.Len(t, eventRepo.Events, 1)
-	assert.Equal(t, models.SeverityWarning, eventRepo.Events[0].Severity, "fallback severity")
+	// Rule exists for mem_percent but doesn't include dev-1 — no fallback
+	// should fire because user-configured rules take precedence over defaults.
+	require.Len(t, eventRepo.Events, 0)
 }
 
 func TestCheckDockerEvent_Die(t *testing.T) {

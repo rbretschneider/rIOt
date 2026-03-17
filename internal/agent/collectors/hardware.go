@@ -12,13 +12,24 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
+// DefaultSMARTInterval is how often SMART scans run. SMART reads are harmless
+// but there's no reason to pound drives every 60 s — every 4 h is plenty.
+const DefaultSMARTInterval = 4 * time.Hour
+
 // HardwareCollector gathers PCI devices, disk drive details, serial ports,
 // and GPU information from sysfs. Linux-only.
-type HardwareCollector struct{}
+type HardwareCollector struct {
+	smartInterval time.Duration
+
+	mu              sync.Mutex
+	lastSMART       time.Time
+	cachedDiskDrives []models.DiskDrive
+}
 
 func (c *HardwareCollector) Name() string { return "hardware" }
 
@@ -29,11 +40,50 @@ func (c *HardwareCollector) Collect(ctx context.Context) (interface{}, error) {
 	}
 
 	info.PCIDevices = collectPCIDevices()
-	info.DiskDrives = collectDiskDrives()
+	info.DiskDrives = c.collectDiskDrivesThrottled()
 	info.SerialPorts = collectSerialPorts()
 	info.GPUs = collectGPUs(info.PCIDevices)
 
 	return info, nil
+}
+
+// collectDiskDrivesThrottled returns disk drives with SMART data, but only
+// re-runs smartctl when the SMART interval has elapsed. In between, it reuses
+// cached SMART fields overlaid onto fresh sysfs data.
+func (c *HardwareCollector) collectDiskDrivesThrottled() []models.DiskDrive {
+	drives := collectDiskDrives()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	interval := c.smartInterval
+	if interval == 0 {
+		interval = DefaultSMARTInterval
+	}
+
+	if time.Since(c.lastSMART) >= interval || c.cachedDiskDrives == nil {
+		enrichDrivesSMART(drives)
+		c.lastSMART = time.Now()
+		c.cachedDiskDrives = drives
+	} else {
+		// Overlay cached SMART data onto fresh sysfs drives
+		cached := make(map[string]*models.DiskDrive, len(c.cachedDiskDrives))
+		for i := range c.cachedDiskDrives {
+			cached[c.cachedDiskDrives[i].Name] = &c.cachedDiskDrives[i]
+		}
+		for i := range drives {
+			if prev, ok := cached[drives[i].Name]; ok && prev.SmartAvailable {
+				drives[i].SmartAvailable = prev.SmartAvailable
+				drives[i].SmartHealth = prev.SmartHealth
+				drives[i].SmartTemp = prev.SmartTemp
+				drives[i].SmartPowerOnHours = prev.SmartPowerOnHours
+				drives[i].SmartReallocated = prev.SmartReallocated
+				drives[i].SmartPendingSector = prev.SmartPendingSector
+			}
+		}
+	}
+
+	return drives
 }
 
 // --- PCI Devices ---

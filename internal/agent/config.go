@@ -70,7 +70,8 @@ type AgentConfig struct {
 }
 
 type CollectorConfig struct {
-	Enabled []string `yaml:"enabled"`
+	Enabled       []string `yaml:"enabled"`
+	SMARTInterval int      `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
 }
 
 func DefaultConfig() *Config {
@@ -163,6 +164,7 @@ collectors:
     - security
     - logs
     - ups
+  # smart_interval: 14400  # SMART scan interval in seconds (default 14400 = 4 hours)
 
 docker:
   enabled: "auto"          # "auto" (detect), "true", or "false"
