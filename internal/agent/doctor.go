@@ -165,12 +165,23 @@ func Doctor(configPath string) {
 
 	// Sudoers check for smartctl
 	if enabled["hardware"] {
-		if out, err := exec.Command("sudo", "-n", "smartctl", "--version").CombinedOutput(); err != nil {
+		// Find smartctl the same way the collector does
+		smartctlPath, _ := exec.LookPath("smartctl")
+		if smartctlPath == "" {
+			for _, p := range []string{"/usr/sbin/smartctl", "/usr/bin/smartctl", "/sbin/smartctl"} {
+				if _, err := os.Stat(p); err == nil {
+					smartctlPath = p
+					break
+				}
+			}
+		}
+		if smartctlPath == "" {
+			warn("smartctl not found — SMART data will not be collected")
+		} else if _, err := exec.Command("sudo", "-n", smartctlPath, "--version").CombinedOutput(); err != nil {
 			warn("smartctl sudo check failed — SMART data may not be available")
-			warn("  Add: riot ALL=(root) NOPASSWD: /usr/sbin/smartctl")
+			warn("  Add: riot ALL=(root) NOPASSWD: %s", smartctlPath)
 		} else {
-			_ = out
-			pass("smartctl sudo access OK")
+			pass("smartctl sudo access OK (%s)", smartctlPath)
 		}
 	}
 

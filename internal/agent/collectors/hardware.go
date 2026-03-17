@@ -435,14 +435,19 @@ type smartctlJSON struct {
 
 // enrichDrivesSMART runs smartctl for each drive and populates SMART fields.
 func enrichDrivesSMART(drives []models.DiskDrive) {
-	// Check if smartctl is available
+	// Check if smartctl is available — try PATH first, then common absolute paths.
+	// The agent runs as the 'riot' user whose PATH may not include /usr/sbin.
 	smartctlPath, err := exec.LookPath("smartctl")
 	if err != nil {
-		// Try with sudo — agent may need privilege escalation
-		if _, err := exec.LookPath("sudo"); err != nil {
+		for _, p := range []string{"/usr/sbin/smartctl", "/usr/bin/smartctl", "/sbin/smartctl"} {
+			if _, err := os.Stat(p); err == nil {
+				smartctlPath = p
+				break
+			}
+		}
+		if smartctlPath == "" {
 			return
 		}
-		smartctlPath = "smartctl"
 	}
 
 	for i := range drives {
