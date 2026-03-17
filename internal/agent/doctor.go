@@ -1,7 +1,8 @@
 package agent
 
 import (
-	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,6 +38,9 @@ func Doctor(configPath string) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			warn("Config file not found — using defaults")
+		} else if os.IsPermission(err) {
+			fail("Config file permission denied — try: sudo riot-agent doctor")
+			return
 		} else {
 			fail("Config load error: %v", err)
 			return
@@ -239,8 +243,34 @@ func checkServer(cfg *Config) {
 	conn.Close()
 	pass("Server reachable at %s", host)
 
+	// Build TLS config using the agent's CA/server certs
+	tlsConfig := &tls.Config{}
+	if !cfg.Server.TLSVerify {
+		tlsConfig.InsecureSkipVerify = true
+	} else {
+		// Try pinned server cert, then CA cert, then custom CA file
+		pool := x509.NewCertPool()
+		loaded := false
+		for _, path := range []string{ServerCertPath(), CACertPath(), cfg.Server.CACertFile} {
+			if path == "" {
+				continue
+			}
+			if pem, err := os.ReadFile(path); err == nil {
+				if pool.AppendCertsFromPEM(pem) {
+					loaded = true
+				}
+			}
+		}
+		if loaded {
+			tlsConfig.RootCAs = pool
+		}
+	}
+
 	// Try /health endpoint
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	}
 	resp, err := client.Get(url + "/health")
 	if err != nil {
 		warn("Health check failed: %v", err)
@@ -296,5 +326,3 @@ func friendlyDuration(seconds int) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-// suppress unused context import — used by future connectivity checks
-var _ = context.Background
