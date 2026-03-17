@@ -7,6 +7,7 @@ import type { AlertRule, AlertTemplate } from '../../types/models'
 const METRICS = [
   { value: 'mem_percent', label: 'Memory %' },
   { value: 'disk_percent', label: 'Disk %' },
+  { value: 'disk_smart_temp', label: 'Disk Temperature (°C)' },
   { value: 'container_died', label: 'Container Died' },
   { value: 'container_oom', label: 'Container OOM' },
   { value: 'container_cpu_percent', label: 'Container CPU %' },
@@ -31,6 +32,7 @@ const EVENT_METRICS = ['container_died', 'container_oom', 'device_offline']
 const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; severity: string; cooldown: number; hint: string }> = {
   mem_percent:     { operator: '>', threshold: 90, severity: 'warning',  cooldown: 3600, hint: 'Memory usage percentage (0–100)' },
   disk_percent:    { operator: '>', threshold: 90, severity: 'critical', cooldown: 3600, hint: 'Disk usage percentage (0–100)' },
+  disk_smart_temp: { operator: '>', threshold: 55, severity: 'warning',  cooldown: 3600, hint: 'Disk temperature in °C (applies to all drives on the device)' },
   log_errors:      { operator: '>', threshold: 0,  severity: 'warning',  cooldown: 900,  hint: 'Number of error-level log entries since last heartbeat' },
   container_died:  { operator: '==', threshold: 1, severity: 'warning',  cooldown: 900,  hint: 'Fires when a container exits unexpectedly' },
   container_oom:   { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when a container is OOM killed' },

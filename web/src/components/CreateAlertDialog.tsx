@@ -39,6 +39,7 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   ups_on_battery:  { operator: '==', threshold: 1, severity: 'critical', cooldown: 900,  hint: 'Fires when UPS switches to battery power' },
   ups_battery_percent: { operator: '<', threshold: 20, severity: 'critical', cooldown: 300, hint: 'UPS battery charge percentage (0–100)' },
   usb_missing:     { operator: '==', threshold: 1, severity: 'critical', cooldown: 300, hint: 'Fires when the USB device is not found' },
+  disk_smart_temp: { operator: '>', threshold: 55, severity: 'warning',  cooldown: 3600, hint: 'Disk temperature in °C (applies to all drives on the device)' },
 }
 
 export default function CreateAlertDialog({ metric, targetName, targetState, includeDevices, excludeDevices, onClose }: CreateAlertDialogProps) {
@@ -60,6 +61,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, inc
     ups_on_battery: 'UPS On Battery',
     ups_battery_percent: 'UPS Battery %',
     usb_missing: 'USB Device Missing',
+    disk_smart_temp: 'Disk Temperature',
   }
 
   // Use provided targetState or sensible defaults
@@ -68,7 +70,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, inc
     : (TARGET_STATE_DEFAULTS[metric] || []).join(',')
 
   const [rule, setRule] = useState<Partial<AlertRule>>({
-    name: `${metricLabels[metric] || metric}: ${targetName}`,
+    name: targetName ? `${metricLabels[metric] || metric}: ${targetName}` : (metricLabels[metric] || metric),
     enabled: true,
     metric,
     operator: isState ? '==' : (defaults?.operator ?? '>'),
