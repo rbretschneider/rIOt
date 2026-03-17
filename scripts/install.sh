@@ -7,7 +7,7 @@ set -euo pipefail
 #   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://server:7331
 #
 # Options:
-#   $1                   — rIOt server URL (required)
+#   $1                   — rIOt server URL (required for first install, optional for reinstall)
 #   --fingerprint SHA256:xxx  — verify server cert fingerprint on first connect
 #   --key mykey          — registration key (if server requires one)
 #   --bootstrap-key KEY  — mTLS bootstrap key for certificate enrollment
@@ -70,9 +70,13 @@ RIOT_SERVER="${RIOT_SERVER_URL:-${RIOT_SERVER:-}}"
 RIOT_VERSION="${RIOT_VERSION_OVERRIDE:-${RIOT_VERSION}}"
 
 if [ -z "$RIOT_SERVER" ]; then
-    echo "ERROR: Server URL is required."
-    echo "Usage: curl -sSL .../install.sh | sudo bash -s -- https://server:7331"
-    exit 1
+    if [ -f "/etc/riot/agent.yaml" ]; then
+        echo "==> No server URL provided — reinstalling with existing config"
+    else
+        echo "ERROR: Server URL is required for first-time install."
+        echo "Usage: curl -sSL .../install.sh | sudo bash -s -- https://server:7331"
+        exit 1
+    fi
 fi
 
 RIOT_REPO="rbretschneider/rIOt"
