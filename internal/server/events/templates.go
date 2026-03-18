@@ -247,7 +247,7 @@ func AlertTemplates() []models.AlertTemplate {
 			Severity:        "critical",
 			CooldownSeconds: 3600,
 			NeedsTargetName: false,
-			Description:     "Fires when a disk reports SMART health status FAILED (replace the drive). This alert is always active and does not require a rule.",
+			Description:     "Always active — fires automatically when any disk reports SMART health FAILED. No rule required.",
 		},
 		{
 			ID:              "disk_smart_temp_warn",

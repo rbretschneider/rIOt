@@ -841,7 +841,10 @@ export default function DeviceDetail() {
           {tel.hardware.disk_drives && tel.hardware.disk_drives.length > 0 && (
             <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Disk Drives ({tel.hardware.disk_drives.length})</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Disk Drives ({tel.hardware.disk_drives.length})</h3>
+                  <span className="text-[10px] text-gray-600">SMART health alerts are always active</span>
+                </div>
                 <button
                   onClick={() => setAlertDialog({ metric: 'disk_smart_temp', targetName: '' })}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-amber-400 border border-gray-700 hover:border-amber-600/50 rounded-md transition-colors"
