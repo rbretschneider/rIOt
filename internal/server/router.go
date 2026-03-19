@@ -203,6 +203,8 @@ func (s *Server) setupRouter() *chi.Mux {
 		}
 
 		// Settings: TLS certificate management
+		r.Get("/api/v1/settings/tls/sans", setupH.GetTLSSANs)
+		r.Put("/api/v1/settings/tls/sans", setupH.SetTLSSANs)
 		r.Post("/api/v1/settings/tls/regenerate", setupH.RegenerateTLS)
 
 		// Fleet management

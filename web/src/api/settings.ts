@@ -97,6 +97,16 @@ export const settingsApi = {
   getServerCert: () =>
     fetchJSON<{ fingerprint?: string }>('/api/v1/server-cert'),
 
+  // TLS SANs (extra hostnames/IPs for self-signed cert)
+  getTLSSANs: () =>
+    fetchJSON<{ sans: string[] }>(`${BASE}/tls/sans`),
+
+  saveTLSSANs: (sans: string[]) =>
+    mutate<{ ok: boolean; sans: string[] }>(`${BASE}/tls/sans`, 'PUT', { sans }),
+
+  regenerateTLS: () =>
+    mutate<{ ok: boolean; message: string }>(`${BASE}/tls/regenerate`, 'POST'),
+
   // Feature Toggles
   getFeatureToggles: () => fetchJSON<Record<string, boolean>>(`${BASE}/features`),
 

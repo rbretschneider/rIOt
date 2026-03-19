@@ -26,6 +26,9 @@ export default function GeneralSettings() {
         {/* Server Certificate */}
         <ServerCertSection />
 
+        {/* TLS SANs (DDNS / external hostnames) */}
+        <TLSSANSection />
+
         {/* Server Update */}
         <div>
           <h3 className="text-sm font-medium text-white mb-2">Server Version</h3>
@@ -154,6 +157,128 @@ function ServerCertSection() {
       </p>
       <div className="bg-gray-800 rounded p-3">
         <code className="text-xs text-emerald-400 select-all break-all">{certInfo.fingerprint}</code>
+      </div>
+    </div>
+  )
+}
+
+function TLSSANSection() {
+  const [sans, setSans] = useState<string[]>([])
+  const [input, setInput] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'saving' | 'regenerating' | 'success' | 'regen-success' | 'error'>('idle')
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    settingsApi.getTLSSANs()
+      .then(data => { setSans(data.sans || []); setLoaded(true) })
+      .catch(() => setLoaded(true))
+  }, [])
+
+  function addSAN() {
+    const trimmed = input.trim()
+    if (!trimmed) return
+    if (sans.includes(trimmed)) { setError('Already added'); return }
+    setSans([...sans, trimmed])
+    setInput('')
+    setError('')
+  }
+
+  function removeSAN(i: number) {
+    setSans(sans.filter((_, idx) => idx !== i))
+  }
+
+  async function handleSave() {
+    setStatus('saving')
+    setError('')
+    try {
+      const data = await settingsApi.saveTLSSANs(sans)
+      setSans(data.sans || [])
+      setStatus('success')
+      setTimeout(() => setStatus('idle'), 3000)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save')
+      setStatus('error')
+    }
+  }
+
+  async function handleRegenerate() {
+    setStatus('regenerating')
+    setError('')
+    try {
+      // Save first, then regenerate
+      await settingsApi.saveTLSSANs(sans)
+      await settingsApi.regenerateTLS()
+      setStatus('regen-success')
+      setTimeout(() => setStatus('idle'), 5000)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to regenerate')
+      setStatus('error')
+    }
+  }
+
+  if (!loaded) return null
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-white mb-2">Certificate SANs</h3>
+      <p className="text-xs text-gray-500 mb-3">
+        Additional hostnames and IPs to include in the self-signed TLS certificate.
+        Add your DDNS domain or external IP here so remote agents can verify the server.
+      </p>
+      <div className="space-y-3 max-w-md">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={e => { setInput(e.target.value); setError('') }}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSAN() } }}
+            placeholder="e.g. mylab.duckdns.org"
+            className="flex-1 px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="button"
+            onClick={addSAN}
+            className="px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors"
+          >
+            Add
+          </button>
+        </div>
+        {sans.length > 0 && (
+          <div className="space-y-1">
+            {sans.map((s, i) => (
+              <div key={i} className="flex items-center justify-between px-3 py-1.5 bg-gray-800 rounded text-sm">
+                <code className="text-emerald-400 text-xs">{s}</code>
+                <button
+                  onClick={() => removeSAN(i)}
+                  className="text-gray-500 hover:text-red-400 text-xs transition-colors"
+                >
+                  remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            disabled={status === 'saving' || status === 'regenerating'}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-md font-medium transition-colors"
+          >
+            {status === 'saving' ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            onClick={handleRegenerate}
+            disabled={status === 'saving' || status === 'regenerating'}
+            className="px-4 py-2 text-sm bg-amber-600 hover:bg-amber-700 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-md font-medium transition-colors"
+            title="Save SANs and regenerate the TLS certificate"
+          >
+            {status === 'regenerating' ? 'Regenerating...' : 'Save & Regenerate Cert'}
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        {status === 'success' && <p className="text-xs text-emerald-400">SANs saved. Click "Save & Regenerate Cert" to apply.</p>}
+        {status === 'regen-success' && <p className="text-xs text-emerald-400">Certificate regenerated with new SANs. Server is restarting.</p>}
       </div>
     </div>
   )

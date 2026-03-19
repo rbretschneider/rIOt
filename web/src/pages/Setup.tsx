@@ -12,6 +12,8 @@ export default function Setup({ onComplete }: SetupProps) {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [tlsMode, setTlsMode] = useState<TLSMode>('self-signed')
   const [tlsDomain, setTlsDomain] = useState('')
+  const [extraSANs, setExtraSANs] = useState<string[]>([])
+  const [sanInput, setSanInput] = useState('')
   const [mtlsEnabled, setMtlsEnabled] = useState(false)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -53,6 +55,7 @@ export default function Setup({ onComplete }: SetupProps) {
           password,
           tls_mode: tlsMode,
           tls_domain: tlsMode === 'letsencrypt' ? tlsDomain : '',
+          extra_sans: tlsMode === 'self-signed' ? extraSANs : [],
           mtls_enabled: mtlsEnabled,
         }),
       })
@@ -162,6 +165,62 @@ export default function Setup({ onComplete }: SetupProps) {
                   description="No TLS on this server. Use if you have nginx, Caddy, or Traefik handling TLS in front."
                 />
               </div>
+              {tlsMode === 'self-signed' && (
+                <div className="mt-4 pt-4 border-t border-gray-700">
+                  <p className="text-sm text-gray-400 mb-2">External hostnames <span className="text-gray-600">(optional)</span></p>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Add DDNS domains or external IPs so remote agents can verify this server's certificate.
+                  </p>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={sanInput}
+                      onChange={e => setSanInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          const v = sanInput.trim()
+                          if (v && !extraSANs.includes(v)) {
+                            setExtraSANs([...extraSANs, v])
+                            setSanInput('')
+                          }
+                        }
+                      }}
+                      placeholder="e.g. mylab.duckdns.org"
+                      className="flex-1 px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const v = sanInput.trim()
+                        if (v && !extraSANs.includes(v)) {
+                          setExtraSANs([...extraSANs, v])
+                          setSanInput('')
+                        }
+                      }}
+                      className="px-3 py-2 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded-md transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {extraSANs.length > 0 && (
+                    <div className="space-y-1">
+                      {extraSANs.map((s, i) => (
+                        <div key={i} className="flex items-center justify-between px-3 py-1 bg-gray-800 rounded text-sm">
+                          <code className="text-emerald-400 text-xs">{s}</code>
+                          <button
+                            type="button"
+                            onClick={() => setExtraSANs(extraSANs.filter((_, idx) => idx !== i))}
+                            className="text-gray-500 hover:text-red-400 text-xs transition-colors"
+                          >
+                            remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -218,6 +277,9 @@ export default function Setup({ onComplete }: SetupProps) {
                   tlsMode === 'letsencrypt' ? `Let's Encrypt (${tlsDomain})` :
                   'Disabled (Reverse Proxy)'
                 } />
+                {extraSANs.length > 0 && (
+                  <ReviewItem label="Extra SANs" value={extraSANs.join(', ')} />
+                )}
                 <ReviewItem label="mTLS" value={mtlsEnabled ? 'Enabled' : 'Disabled'} />
               </div>
               {tlsMode === 'self-signed' && (
