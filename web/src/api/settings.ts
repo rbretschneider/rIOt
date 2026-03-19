@@ -1,4 +1,4 @@
-import type { AlertRule, AlertTemplate, NotificationChannel, NotificationLog } from '../types/models'
+import type { AlertRule, AlertTemplate, AutomationConfig, NotificationChannel, NotificationLog } from '../types/models'
 
 const BASE = '/api/v1/settings'
 
@@ -112,6 +112,12 @@ export const settingsApi = {
 
   saveFeatureToggles: (toggles: Record<string, boolean>) =>
     mutate<Record<string, boolean>>(`${BASE}/features`, 'PUT', toggles),
+
+  // Automation config
+  getAutomationConfig: () => fetchJSON<AutomationConfig>(`${BASE}/automation`),
+
+  saveAutomationConfig: (config: AutomationConfig) =>
+    mutate<AutomationConfig>(`${BASE}/automation`, 'PUT', config),
 
   // Server logs
   getLogs: (level: string, limit: number, before?: string) => {

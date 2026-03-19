@@ -683,6 +683,19 @@ export interface NotificationLog {
   created_at: string
 }
 
+// Automation config
+export interface MaintenanceWindow {
+  mode: 'anytime' | 'window' | 'disabled'
+  start_time: string
+  end_time: string
+  cooldown_minutes: number
+}
+
+export interface AutomationConfig {
+  os_patch: MaintenanceWindow
+  docker_update: MaintenanceWindow
+}
+
 // Auto-update policies
 export interface AutoUpdatePolicy {
   id: number

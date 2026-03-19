@@ -3,8 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -71,12 +74,132 @@ func (h *Handlers) DeleteAutoUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// GetAutomationConfig handles GET /api/v1/settings/automation.
+func (h *Handlers) GetAutomationConfig(w http.ResponseWriter, r *http.Request) {
+	cfg := h.loadAutomationConfig(r.Context())
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// SetAutomationConfig handles PUT /api/v1/settings/automation.
+func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg models.AutomationConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate modes
+	for _, mw := range []models.MaintenanceWindow{cfg.OSPatch, cfg.DockerUpdate} {
+		switch mw.Mode {
+		case "anytime", "window", "disabled":
+			// ok
+		default:
+			http.Error(w, fmt.Sprintf(`{"error":"invalid mode: %s"}`, mw.Mode), http.StatusBadRequest)
+			return
+		}
+		if mw.Mode == "window" {
+			if !validTimeStr(mw.StartTime) || !validTimeStr(mw.EndTime) {
+				http.Error(w, `{"error":"invalid time format, expected HH:MM"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		if mw.CooldownMinutes < 1 {
+			http.Error(w, `{"error":"cooldown must be at least 1 minute"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	data, _ := json.Marshal(cfg)
+	if err := h.adminRepo.SetConfig(r.Context(), "automation_config", string(data)); err != nil {
+		slog.Error("save automation config", "error", err)
+		http.Error(w, `{"error":"failed to save automation config"}`, http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("automation config updated",
+		"os_patch_mode", cfg.OSPatch.Mode,
+		"docker_update_mode", cfg.DockerUpdate.Mode)
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// loadAutomationConfig reads the automation config from the admin config store.
+func (h *Handlers) loadAutomationConfig(ctx context.Context) models.AutomationConfig {
+	raw, err := h.adminRepo.GetConfig(ctx, "automation_config")
+	if err != nil || raw == "" {
+		return models.DefaultAutomationConfig()
+	}
+	var cfg models.AutomationConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return models.DefaultAutomationConfig()
+	}
+	return cfg
+}
+
+// inMaintenanceWindow checks if the current UTC time falls within the maintenance window.
+func inMaintenanceWindow(w models.MaintenanceWindow) bool {
+	switch w.Mode {
+	case "disabled":
+		return false
+	case "anytime":
+		return true
+	case "window":
+		now := time.Now().UTC()
+		currentMin := now.Hour()*60 + now.Minute()
+		startMin := parseTimeStr(w.StartTime)
+		endMin := parseTimeStr(w.EndTime)
+
+		if startMin <= endMin {
+			// Same-day window (e.g. 09:00 - 17:00)
+			return currentMin >= startMin && currentMin < endMin
+		}
+		// Overnight window (e.g. 23:00 - 05:00)
+		return currentMin >= startMin || currentMin < endMin
+	default:
+		return true
+	}
+}
+
+// parseTimeStr parses "HH:MM" to minutes from midnight.
+func parseTimeStr(s string) int {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return 0
+	}
+	h, _ := strconv.Atoi(parts[0])
+	m, _ := strconv.Atoi(parts[1])
+	return h*60 + m
+}
+
+// validTimeStr checks if a string is a valid "HH:MM" format.
+func validTimeStr(s string) bool {
+	parts := strings.SplitN(s, ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	h, err := strconv.Atoi(parts[0])
+	if err != nil || h < 0 || h > 23 {
+		return false
+	}
+	m, err := strconv.Atoi(parts[1])
+	if err != nil || m < 0 || m > 59 {
+		return false
+	}
+	return true
+}
+
 // checkAutoUpdates looks at incoming telemetry for containers with update_available=true,
 // matches them against auto-update policies, and sends docker_update commands.
 func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
 	if h.autoUpdateRepo == nil || h.commandRepo == nil || data.Docker == nil {
 		return
 	}
+
+	// Check maintenance window
+	cfg := h.loadAutomationConfig(ctx)
+	if !inMaintenanceWindow(cfg.DockerUpdate) {
+		return
+	}
+	cooldown := time.Duration(cfg.DockerUpdate.CooldownMinutes) * time.Minute
 
 	policies, err := h.autoUpdateRepo.ListByDevice(ctx, deviceID)
 	if err != nil || len(policies) == 0 {
@@ -108,7 +231,7 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 		if project != "" && workDir != "" {
 			if pol, ok := policyMap[project]; ok && pol.IsStack && !triggeredStacks[project] {
-				if !recentlyTriggered(pol, 30*time.Minute) {
+				if !recentlyTriggered(pol, cooldown) {
 					h.dispatchAutoUpdate(ctx, deviceID, pol, map[string]interface{}{
 						"compose_work_dir": workDir,
 					})
@@ -121,7 +244,7 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 		// Check for container-level policy
 		name := c.Name
 		if pol, ok := policyMap[name]; ok && !pol.IsStack {
-			if !recentlyTriggered(pol, 30*time.Minute) {
+			if !recentlyTriggered(pol, cooldown) {
 				h.dispatchAutoUpdate(ctx, deviceID, pol, map[string]interface{}{
 					"container": name,
 				})
@@ -193,8 +316,7 @@ func (h *Handlers) SetAutoPatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkAutoPatch checks if a device has auto-patch enabled and pending OS updates,
-// and dispatches an os_update command if so. Uses a 6-hour cooldown to avoid
-// sending duplicate patch commands.
+// and dispatches an os_update command if so.
 func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
 	if h.commandRepo == nil || data.Updates == nil || data.Updates.PendingUpdates == 0 {
 		return
@@ -205,13 +327,20 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		return
 	}
 
-	// Check for recent os_update commands to avoid duplicates (6h cooldown)
+	// Check maintenance window
+	cfg := h.loadAutomationConfig(ctx)
+	if !inMaintenanceWindow(cfg.OSPatch) {
+		return
+	}
+	cooldown := time.Duration(cfg.OSPatch.CooldownMinutes) * time.Minute
+
+	// Check for recent os_update commands to avoid duplicates
 	cmds, err := h.commandRepo.ListByDevice(ctx, deviceID, 10)
 	if err != nil {
 		return
 	}
 	for _, cmd := range cmds {
-		if cmd.Action == "os_update" && time.Since(cmd.CreatedAt) < 6*time.Hour {
+		if cmd.Action == "os_update" && time.Since(cmd.CreatedAt) < cooldown {
 			return // Already sent recently
 		}
 	}

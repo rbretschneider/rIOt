@@ -207,6 +207,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Put("/api/v1/settings/tls/sans", setupH.SetTLSSANs)
 		r.Post("/api/v1/settings/tls/regenerate", setupH.RegenerateTLS)
 
+		// Settings: automation intervals
+		r.Get("/api/v1/settings/automation", h.GetAutomationConfig)
+		r.Put("/api/v1/settings/automation", h.SetAutomationConfig)
+
 		// Fleet management
 		r.Get("/api/v1/fleet/agent-versions", h.AgentVersionSummary)
 		r.Get("/api/v1/fleet/patch-status", h.PatchStatus)
