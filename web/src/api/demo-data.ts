@@ -719,7 +719,7 @@ export function getCommands(): Command[] {
   return [
     {
       id: uuid('cmd-1'), device_id: getDevices()[0].id, action: 'container.restart', params: { container: 'watchtower' },
-      status: 'completed', result_msg: 'Container restarted successfully', created_at: ago(2 * HOUR), updated_at: ago(2 * HOUR),
+      status: 'success', result_msg: 'Container restarted successfully', duration_ms: 1230, exit_code: 0, created_at: ago(2 * HOUR), updated_at: ago(2 * HOUR),
     },
   ]
 }
