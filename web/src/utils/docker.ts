@@ -181,8 +181,8 @@ export function groupContainersV2(containers: ContainerInfo[]): ContainerLayout 
     const workDir = members.find(c => c.labels?.['com.docker.compose.project.working_dir'])
       ?.labels?.['com.docker.compose.project.working_dir'] ?? ''
 
-    // Build network clusters within this stack
-    const networkGraph = buildNetworkGraph(members)
+    // Build network clusters within this stack (pass all visible for ID resolution)
+    const networkGraph = buildNetworkGraph(members, visible)
     const memberNames = new Set(members.map(c => c.name))
     const inCluster = new Set<string>()
     const clusters: NetworkCluster[] = []
@@ -209,7 +209,7 @@ export function groupContainersV2(containers: ContainerInfo[]): ContainerLayout 
   return { composeStacks, standalone }
 }
 
-/** Returns the parent container name for containers using network_mode: container:<name> */
+/** Returns the parent container name for containers using network_mode: container:<name|id> */
 export function getNetworkParent(c: ContainerInfo): string | null {
   if (!c.network_mode) return null
   if (c.network_mode.startsWith('container:')) {
@@ -218,15 +218,44 @@ export function getNetworkParent(c: ContainerInfo): string | null {
   return null
 }
 
-/** Builds a map of parent container name -> list of dependent container names */
-export function buildNetworkGraph(containers: ContainerInfo[]): Map<string, ContainerInfo[]> {
+/** Resolves a network parent reference (name or ID) to a container name */
+export function resolveNetworkParent(ref: string, containers: ContainerInfo[]): string | null {
+  // Try matching by name first
+  const byName = containers.find(c => c.name === ref)
+  if (byName) return byName.name
+  // Try matching by full or prefix ID
+  const byId = containers.find(c => c.id === ref || c.id.startsWith(ref) || ref.startsWith(c.id))
+  if (byId) return byId.name
+  return null
+}
+
+/** Checks if a string looks like a hex hash (container ID or image digest) */
+export function isHash(s: string): boolean {
+  return /^[0-9a-f]{12,}$/i.test(s)
+}
+
+/** Formats an image tag for display — truncates hashes */
+export function formatImageTag(image: string): string {
+  const tag = image.includes(':') ? image.split(':').pop()! : 'latest'
+  if (isHash(tag)) return tag.slice(0, 8) + '…'
+  return tag
+}
+
+/** Builds a map of parent container name -> list of dependent containers.
+ *  Resolves container IDs in network_mode to actual container names.
+ *  @param containers - containers to scan for network dependencies
+ *  @param allContainers - full container list for ID resolution (defaults to containers) */
+export function buildNetworkGraph(containers: ContainerInfo[], allContainers?: ContainerInfo[]): Map<string, ContainerInfo[]> {
+  const lookup = allContainers ?? containers
   const graph = new Map<string, ContainerInfo[]>()
   for (const c of containers) {
-    const parent = getNetworkParent(c)
-    if (parent) {
-      const deps = graph.get(parent) || []
+    const parentRef = getNetworkParent(c)
+    if (parentRef) {
+      // Resolve ID references to container names
+      const parentName = resolveNetworkParent(parentRef, lookup) ?? parentRef
+      const deps = graph.get(parentName) || []
       deps.push(c)
-      graph.set(parent, deps)
+      graph.set(parentName, deps)
     }
   }
   return graph

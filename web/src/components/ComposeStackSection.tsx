@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { ContainerInfo, AutoUpdatePolicy } from '../types/models'
 import type { ComposeStackGroup } from '../utils/docker'
-import { getNetworkParent } from '../utils/docker'
+import { getNetworkParent, resolveNetworkParent } from '../utils/docker'
 import CompactContainerTile from './CompactContainerTile'
 import NetworkClusterGroup from './NetworkClusterGroup'
 import UpdateConfirmModal from './UpdateConfirmModal'
@@ -60,12 +60,15 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
     const map = new Map<string, string>()
     const stackNames = new Set(stack.containers.map(c => c.name))
     for (const c of stack.containers) {
-      const parent = getNetworkParent(c)
-      if (parent && !stackNames.has(parent)) {
+      const parentRef = getNetworkParent(c)
+      if (!parentRef) continue
+      // Resolve ID references to container names
+      const parentName = resolveNetworkParent(parentRef, allContainers) ?? parentRef
+      if (!stackNames.has(parentName)) {
         // Parent is in another stack — find its compose project
-        const parentContainer = allContainers.find(ac => ac.name === parent)
+        const parentContainer = allContainers.find(ac => ac.name === parentName)
         const parentProject = parentContainer?.labels?.['com.docker.compose.project']
-        map.set(c.id, parentProject ? `${parent} (${parentProject})` : parent)
+        map.set(c.id, parentProject ? `${parentName} (${parentProject})` : parentName)
       }
     }
     return map

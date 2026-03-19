@@ -1,5 +1,5 @@
 import type { ContainerInfo } from '../types/models'
-import { displayName, formatBytes } from '../utils/docker'
+import { displayName, formatBytes, formatImageTag } from '../utils/docker'
 
 interface Props {
   container: ContainerInfo
@@ -20,7 +20,7 @@ function statusDotColor(state: string): string {
 export default function CompactContainerTile({ container: c, onClick, updating, crossStackParent, networkParentDown }: Props) {
   const name = displayName(c.riot, c.name)
   const isRunning = c.state === 'running'
-  const imageTag = c.image.includes(':') ? c.image.split(':').pop()! : 'latest'
+  const imageTag = formatImageTag(c.image)
 
   return (
     <div
