@@ -15,7 +15,7 @@
   <a href="https://rbretschneider.github.io/rIOt/"><strong>Live Demo</strong></a>
 </p>
 
-> **README last updated for v2.26.0**
+> **README last updated for v2.38.0**
 
 ## Features
 
@@ -34,17 +34,21 @@
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
-- **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking
+- **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking; per-device probe assertion templates for response validation
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
-- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls); all commands generate informational events with container context for full audit trail
+- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
 - **Feature toggles** — 16 individually toggleable dashboard features (including device terminal and Docker terminal) via Settings > Features with search/filter; toggles control UI visibility only — agents continue collecting all data
-- **Web server monitoring** — auto-detects nginx and Caddy reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
+- **Web server monitoring** — auto-detects nginx, Caddy, and Ferron reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
 - **Security scoring** — per-device 0–100 hardening score based on CIS-inspired checks across access control, patching, network, Docker, and system categories; interactive detail modal with per-finding remediation guidance and one-click fix buttons for actionable issues (enable auto-updates, apply patches)
 - **Security overview** — fleet-wide view of SELinux/AppArmor, firewall, open ports, failed logins
 - **Server log viewer** — browse and search server logs directly from the dashboard
 - **Per-device API keys** — generated at registration, individually revocable and rotatable
-- **TLS support** — self-signed (auto-generated), Let's Encrypt autocert, or manual cert/key files
+- **TLS support** — self-signed (auto-generated), Let's Encrypt autocert, or manual cert/key files; configurable Subject Alternative Names (SANs) for remote access via DDNS
+- **Activity log** — per-device command history with detail modal showing full output, parameters, duration, and exit code
+- **Temperature monitoring** — color-coded CPU and disk drive temperatures in the dashboard (green/yellow/orange/red thresholds)
+- **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
+- **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Architecture
@@ -184,6 +188,10 @@ curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/uni
 
 Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
 
+### Agent Diagnostics
+
+Run `riot-agent doctor` to troubleshoot a misbehaving agent. The command checks server connectivity, TLS certificate validity, file permissions, collector health, and system dependencies (e.g. `smartctl`, `upsc`, Docker socket). It prints a pass/fail summary with actionable suggestions for each failing check.
+
 ### Manual Install
 
 1. Download the agent binary for your platform from [Releases](https://github.com/rbretschneider/rIOt/releases):
@@ -311,6 +319,7 @@ New installs via `install.sh` include all rules automatically.
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
 | `agent.auto_update` | `true` | Automatically install agent updates when available |
 | `collectors.enabled` | all | List of collectors to run |
+| `collectors.smart_interval` | `4h` | Interval between SMART disk health scans (e.g. `1h`, `4h`, `12h`) |
 | `docker.enabled` | `auto` | Docker collection mode: `auto` (detect), `true`, `false` |
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
@@ -334,7 +343,7 @@ New installs via `install.sh` include all rules automatically.
 | `system` | Hardware identity — CPU model, cores, RAM, board model, serial, BIOS, virtualization |
 | `cpu` | Usage %, per-core, load average, temperature, frequency |
 | `memory` | RAM total/used/free/cached/buffers, swap, usage % |
-| `disk` | Block devices, mounted filesystems with usage |
+| `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth) |
 | `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
 | `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
 | `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status |
@@ -345,7 +354,7 @@ New installs via `install.sh` include all rules automatically.
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins, logged-in users |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
-| `webservers` | Reverse proxy detection (nginx, Caddy) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
+| `webservers` | Reverse proxy detection (nginx, Caddy, Ferron) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
 | `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
 | `hardware` | PCI devices (vendor/device/class/driver via sysfs + `/usr/share/hwdata/pci.ids`), disk drives (model, serial, size, type — NVMe/SSD/HDD, transport, scheduler, **SMART health/temp/power-on hours/reallocated sectors**), serial ports, GPUs (filtered from PCI display class devices, optional VRAM via DRM). Linux-only; SMART requires `smartmontools`. |
 | `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
@@ -611,6 +620,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
 | `POST` | `/api/v1/devices/:id/commands` | Send command to agent |
 | `GET` | `/api/v1/devices/:id/commands` | List device command history |
+| `GET` | `/api/v1/devices/:id/commands/:cmdId/output` | Command output detail |
 | `GET` | `/api/v1/summary` | Fleet summary stats |
 | `GET` | `/api/v1/events` | Event/alert list |
 | `GET` | `/api/v1/events/unread-count` | Count of unacknowledged events |
@@ -635,6 +645,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/security/overview` | Security overview |
 | `GET` | `/api/v1/security/devices` | Per-device security details |
 | `GET/POST` | `/api/v1/settings/logs` | Server log viewer |
+| `GET/PUT` | `/api/v1/settings/automation` | Automation interval config |
 | `GET/POST/PUT/DELETE` | `/api/v1/probes[/:id]` | Uptime probe CRUD |
 | `POST` | `/api/v1/probes/:id/run` | Run probe on demand |
 | `GET` | `/api/v1/probes/:id/results` | Probe result history |
