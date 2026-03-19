@@ -435,7 +435,7 @@ export default function DeviceDetail() {
           {tel.cpu && (
             <div className="mt-4 grid grid-cols-3 gap-4">
               <InfoItem label="Load (1m/5m/15m)" value={`${tel.cpu.load_avg_1m.toFixed(2)} / ${tel.cpu.load_avg_5m.toFixed(2)} / ${tel.cpu.load_avg_15m.toFixed(2)}`} />
-              {tel.cpu.temperature != null && <InfoItem label="CPU Temp" value={`${tel.cpu.temperature.toFixed(1)} C`} />}
+              {tel.cpu.temperature != null && <InfoItem label="CPU Temp" value={`${tel.cpu.temperature.toFixed(1)}°C`} valueClassName={tel.cpu.temperature > 88 ? 'text-red-400' : tel.cpu.temperature > 75 ? 'text-orange-400' : tel.cpu.temperature > 60 ? 'text-amber-400' : 'text-emerald-400'} />}
             </div>
           )}
         </Section>
@@ -549,23 +549,23 @@ export default function DeviceDetail() {
             <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Mount</th>
-                  <th className="text-left py-2">Device</th>
-                  <th className="text-left py-2">Type</th>
-                  <th className="text-right py-2">Used</th>
-                  <th className="text-right py-2">Total</th>
-                  <th className="text-right py-2">Usage</th>
+                  <th className="text-left py-2 pr-3">Mount</th>
+                  <th className="text-left py-2 pr-3">Device</th>
+                  <th className="text-left py-2 pr-3">Type</th>
+                  <th className="text-right py-2 pr-3">Used</th>
+                  <th className="text-right py-2 pr-3">Total</th>
+                  <th className="text-right py-2 pr-3">Usage</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {tel.disks.filesystems.map((fs) => (
                   <tr key={fs.mount_point}>
-                    <td className="py-2 font-mono">{fs.mount_point}</td>
-                    <td className="py-2 font-mono text-gray-400">{fs.device}</td>
-                    <td className="py-2 text-gray-400">{fs.fs_type}</td>
-                    <td className="py-2 text-right font-mono">{fs.used_gb.toFixed(1)} GB</td>
-                    <td className="py-2 text-right font-mono text-gray-400">{fs.total_gb.toFixed(1)} GB</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 pr-3font-mono">{fs.mount_point}</td>
+                    <td className="py-2 pr-3font-mono text-gray-400">{fs.device}</td>
+                    <td className="py-2 pr-3text-gray-400">{fs.fs_type}</td>
+                    <td className="py-2 pr-3text-right font-mono">{fs.used_gb.toFixed(1)} GB</td>
+                    <td className="py-2 pr-3text-right font-mono text-gray-400">{fs.total_gb.toFixed(1)} GB</td>
+                    <td className="py-2 pr-3text-right">
                       <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
                         {fs.usage_percent.toFixed(1)}%
                       </span>
@@ -588,9 +588,9 @@ export default function DeviceDetail() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Name</th>
-                  <th className="text-left py-2">State</th>
-                  <th className="text-left py-2">Enabled</th>
+                  <th className="text-left py-2 pr-3">Name</th>
+                  <th className="text-left py-2 pr-3">State</th>
+                  <th className="text-left py-2 pr-3">Enabled</th>
                   <th className="py-2 w-10"></th>
                 </tr>
               </thead>
@@ -600,14 +600,14 @@ export default function DeviceDetail() {
                   return rank(a.state) - rank(b.state)
                 }).map((svc) => (
                   <tr key={svc.name}>
-                    <td className="py-1.5 font-mono text-xs break-all">{svc.name}</td>
-                    <td className="py-1.5">
+                    <td className="py-1.5 pr-3 font-mono text-xs break-all">{svc.name}</td>
+                    <td className="py-1.5 pr-3">
                       <span className={svc.state.includes('running') ? 'text-emerald-400' : svc.state.includes('failed') ? 'text-red-400' : 'text-gray-400'}>
                         {svc.state}
                       </span>
                     </td>
-                    <td className="py-1.5 text-gray-400">{svc.enabled ? 'Yes' : 'No'}</td>
-                    <td className="py-1.5 text-right">
+                    <td className="py-1.5 pr-3 text-gray-400">{svc.enabled ? 'Yes' : 'No'}</td>
+                    <td className="py-1.5 pr-3 text-right">
                       <AlertButton
                         onClick={() => setAlertDialog({ metric: 'service_state', targetName: svc.name })}
                         title="Create alert for this service"
@@ -628,23 +628,23 @@ export default function DeviceDetail() {
           <table className="w-full text-sm min-w-[480px]">
             <thead className="sticky top-0 bg-gray-900">
               <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-2">PID</th>
-                <th className="text-left py-2">Name</th>
-                <th className="text-right py-2">CPU %</th>
-                <th className="text-right py-2">MEM %</th>
-                <th className="text-left py-2">User</th>
+                <th className="text-left py-2 pr-3">PID</th>
+                <th className="text-left py-2 pr-3">Name</th>
+                <th className="text-right py-2 pr-3">CPU %</th>
+                <th className="text-right py-2 pr-3">MEM %</th>
+                <th className="text-left py-2 pr-3">User</th>
                 <th className="py-2 w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
               {tel.processes.top_by_cpu.slice(0, 10).map((p) => (
                 <tr key={p.pid}>
-                  <td className="py-1.5 font-mono text-gray-500">{p.pid}</td>
-                  <td className="py-1.5 font-mono">{p.name}</td>
-                  <td className="py-1.5 text-right font-mono">{p.cpu_percent.toFixed(1)}</td>
-                  <td className="py-1.5 text-right font-mono">{p.mem_percent.toFixed(1)}</td>
-                  <td className="py-1.5 text-gray-400">{p.user}</td>
-                  <td className="py-1.5 text-right">
+                  <td className="py-1.5 pr-3 font-mono text-gray-500">{p.pid}</td>
+                  <td className="py-1.5 pr-3 font-mono">{p.name}</td>
+                  <td className="py-1.5 pr-3 text-right font-mono">{p.cpu_percent.toFixed(1)}</td>
+                  <td className="py-1.5 pr-3 text-right font-mono">{p.mem_percent.toFixed(1)}</td>
+                  <td className="py-1.5 pr-3 text-gray-400">{p.user}</td>
+                  <td className="py-1.5 pr-3 text-right">
                     <AlertButton
                       onClick={() => setAlertDialog({ metric: 'process_missing', targetName: p.name })}
                       title="Create alert for this process"
@@ -667,17 +667,17 @@ export default function DeviceDetail() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Package</th>
-                  <th className="text-left py-2">New Version</th>
-                  <th className="text-left py-2">Security</th>
+                  <th className="text-left py-2 pr-3">Package</th>
+                  <th className="text-left py-2 pr-3">New Version</th>
+                  <th className="text-left py-2 pr-3">Security</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {tel.updates.updates?.map((u) => (
                   <tr key={u.name}>
-                    <td className="py-1.5 font-mono">{u.name}</td>
-                    <td className="py-1.5 text-gray-400">{u.new_ver}</td>
-                    <td className="py-1.5">{u.is_security ? <span className="text-red-400">Yes</span> : '-'}</td>
+                    <td className="py-1.5 pr-3 font-mono">{u.name}</td>
+                    <td className="py-1.5 pr-3 text-gray-400">{u.new_ver}</td>
+                    <td className="py-1.5 pr-3">{u.is_security ? <span className="text-red-400">Yes</span> : '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -696,26 +696,26 @@ export default function DeviceDetail() {
               <thead>
                 <tr className="text-gray-500 text-xs uppercase">
                   <th className="text-left py-2 w-6"></th>
-                  <th className="text-left py-2">Name</th>
-                  <th className="text-left py-2">Metric</th>
-                  <th className="text-left py-2">Condition</th>
-                  <th className="text-left py-2">Severity</th>
+                  <th className="text-left py-2 pr-3">Name</th>
+                  <th className="text-left py-2 pr-3">Metric</th>
+                  <th className="text-left py-2 pr-3">Condition</th>
+                  <th className="text-left py-2 pr-3">Severity</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {deviceRules.map(rule => (
                   <tr key={rule.id}>
-                    <td className="py-1.5">
+                    <td className="py-1.5 pr-3">
                       <span className={`w-2 h-2 rounded-full inline-block ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
                     </td>
-                    <td className="py-1.5 text-gray-200">{rule.name}</td>
-                    <td className="py-1.5 text-gray-400 font-mono text-xs">{rule.metric}</td>
-                    <td className="py-1.5 text-gray-400 font-mono text-xs">
+                    <td className="py-1.5 pr-3 text-gray-200">{rule.name}</td>
+                    <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs">{rule.metric}</td>
+                    <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs">
                       {rule.target_state
                         ? `state in [${rule.target_state.replace(/,/g, ', ')}]`
                         : `${rule.operator} ${rule.threshold}`}
                     </td>
-                    <td className="py-1.5">
+                    <td className="py-1.5 pr-3">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
                         rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
                           : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
@@ -761,25 +761,25 @@ export default function DeviceDetail() {
             <table className="w-full text-sm min-w-[640px]">
               <thead className="sticky top-0 bg-gray-900">
                 <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2">Description</th>
-                  <th className="text-left py-2">Vendor:Product</th>
-                  <th className="text-left py-2">Serial</th>
-                  <th className="text-left py-2">Class</th>
-                  <th className="text-right py-2">Speed</th>
+                  <th className="text-left py-2 pr-3">Description</th>
+                  <th className="text-left py-2 pr-3">Vendor:Product</th>
+                  <th className="text-left py-2 pr-3">Serial</th>
+                  <th className="text-left py-2 pr-3">Class</th>
+                  <th className="text-right py-2 pr-3">Speed</th>
                   <th className="py-2 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
                 {tel.usb.devices.map((dev, i) => (
                   <tr key={dev.sys_path || i}>
-                    <td className="py-2 text-gray-200">{dev.description}</td>
-                    <td className="py-2 font-mono text-gray-400">{dev.vendor_id}:{dev.product_id}</td>
-                    <td className="py-2 font-mono text-gray-500 text-xs">{dev.serial || '-'}</td>
-                    <td className="py-2 text-gray-400">{dev.device_class || '-'}</td>
-                    <td className="py-2 text-right font-mono text-gray-400">
+                    <td className="py-2 pr-3text-gray-200">{dev.description}</td>
+                    <td className="py-2 pr-3font-mono text-gray-400">{dev.vendor_id}:{dev.product_id}</td>
+                    <td className="py-2 pr-3font-mono text-gray-500 text-xs">{dev.serial || '-'}</td>
+                    <td className="py-2 pr-3text-gray-400">{dev.device_class || '-'}</td>
+                    <td className="py-2 pr-3text-right font-mono text-gray-400">
                       {dev.speed_mbps ? `${dev.speed_mbps} Mbps` : '-'}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 pr-3text-right">
                       <AlertButton
                         onClick={() => setAlertDialog({
                           metric: 'usb_missing',
@@ -903,7 +903,7 @@ export default function DeviceDetail() {
                         </td>
                         <td className="py-1.5 pr-4 text-xs">
                           {d.smart_temp != null ? (
-                            <span className={d.smart_temp > 55 ? 'text-red-400' : d.smart_temp > 45 ? 'text-amber-400' : 'text-gray-300'}>
+                            <span className={d.smart_temp > 55 ? 'text-red-400' : d.smart_temp > 45 ? 'text-orange-400' : d.smart_temp > 35 ? 'text-amber-400' : 'text-emerald-400'}>
                               {d.smart_temp}&deg;C
                             </span>
                           ) : <span className="text-gray-600">-</span>}
@@ -1112,7 +1112,7 @@ export default function DeviceDetail() {
                               <th className="text-left py-2 pr-3">Listen</th>
                               <th className="text-left py-2 pr-3">Target</th>
                               <th className="text-left py-2 pr-3">SSL</th>
-                              <th className="text-left py-2">Config</th>
+                              <th className="text-left py-2 pr-3">Config</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-800/50">
@@ -1128,7 +1128,7 @@ export default function DeviceDetail() {
                                     <span className="text-gray-500 text-xs">No</span>
                                   )}
                                 </td>
-                                <td className="py-1.5 font-mono text-xs text-gray-500 max-w-[140px] truncate" title={site.config_file}>
+                                <td className="py-1.5 pr-3 font-mono text-xs text-gray-500 max-w-[140px] truncate" title={site.config_file}>
                                   {site.config_file ? site.config_file.split('/').pop() : '-'}
                                 </td>
                               </tr>
@@ -1150,10 +1150,10 @@ export default function DeviceDetail() {
                             <table className="w-full text-sm">
                               <thead className="sticky top-0 bg-gray-900">
                                 <tr className="text-gray-500 text-xs uppercase">
-                                  <th className="text-left py-2">Subject</th>
-                                  <th className="text-left py-2">Expires</th>
-                                  <th className="text-left py-2">Days Left</th>
-                                  <th className="text-left py-2">Issuer</th>
+                                  <th className="text-left py-2 pr-3">Subject</th>
+                                  <th className="text-left py-2 pr-3">Expires</th>
+                                  <th className="text-left py-2 pr-3">Days Left</th>
+                                  <th className="text-left py-2 pr-3">Issuer</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-800/50">
@@ -1164,18 +1164,18 @@ export default function DeviceDetail() {
                                     : 'text-emerald-400'
                                   return (
                                     <tr key={i}>
-                                      <td className="py-1.5 font-mono text-xs" title={cert.sans?.join(', ')}>{cert.subject || '-'}</td>
-                                      <td className="py-1.5 text-xs text-gray-400">
+                                      <td className="py-1.5 pr-3 font-mono text-xs" title={cert.sans?.join(', ')}>{cert.subject || '-'}</td>
+                                      <td className="py-1.5 pr-3 text-xs text-gray-400">
                                         {cert.not_after ? new Date(cert.not_after).toLocaleDateString() : '-'}
                                       </td>
-                                      <td className={`py-1.5 text-xs font-medium ${expiryColor}`}>
+                                      <td className={`py-1.5 pr-3 text-xs font-medium ${expiryColor}`}>
                                         {cert.days_left <= 0 ? (
                                           <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-semibold">EXPIRED</span>
                                         ) : (
                                           `${cert.days_left}d`
                                         )}
                                       </td>
-                                      <td className="py-1.5 text-xs text-gray-500">{cert.issuer || '-'}</td>
+                                      <td className="py-1.5 pr-3 text-xs text-gray-500">{cert.issuer || '-'}</td>
                                     </tr>
                                   )
                                 })}
@@ -1351,10 +1351,10 @@ export default function DeviceDetail() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-gray-900 z-10">
                 <tr className="text-gray-500 text-xs uppercase border-b border-gray-700">
-                  <th className="text-left py-2">Time</th>
-                  <th className="text-left py-2">Priority</th>
-                  <th className="text-left py-2">Unit</th>
-                  <th className="text-left py-2">Message</th>
+                  <th className="text-left py-2 pr-3">Time</th>
+                  <th className="text-left py-2 pr-3">Priority</th>
+                  <th className="text-left py-2 pr-3">Unit</th>
+                  <th className="text-left py-2 pr-3">Message</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-800/50">
@@ -1367,14 +1367,14 @@ export default function DeviceDetail() {
                     : 'text-gray-500'
                   return (
                     <tr key={i} className={rowColor}>
-                      <td className="py-1.5 font-mono text-xs whitespace-nowrap opacity-70">{new Date(log.timestamp).toLocaleString()}</td>
-                      <td className="py-1.5">
+                      <td className="py-1.5 pr-3 font-mono text-xs whitespace-nowrap opacity-70">{new Date(log.timestamp).toLocaleString()}</td>
+                      <td className="py-1.5 pr-3">
                         <span className="text-xs font-medium">
                           {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : log.priority === 6 ? 'INFO' : 'DEBUG'}
                         </span>
                       </td>
-                      <td className="py-1.5 font-mono text-xs opacity-70">{log.unit || '-'}</td>
-                      <td className="py-1.5 text-xs max-w-md truncate">{log.message}</td>
+                      <td className="py-1.5 pr-3 font-mono text-xs opacity-70">{log.unit || '-'}</td>
+                      <td className="py-1.5 pr-3 text-xs max-w-md truncate">{log.message}</td>
                     </tr>
                   )
                 })}
@@ -1488,28 +1488,28 @@ function NicTable({ interfaces, onCreateAlert }: { interfaces: import('../types/
     <table className="w-full text-sm min-w-[480px]">
       <thead>
         <tr className="text-gray-500 text-xs uppercase">
-          <th className="text-left py-2">Name</th>
-          <th className="text-left py-2">State</th>
-          <th className="text-left py-2">IPv4</th>
-          <th className="text-left py-2">MAC</th>
-          <th className="text-right py-2">TX / RX</th>
+          <th className="text-left py-2 pr-3">Name</th>
+          <th className="text-left py-2 pr-3">State</th>
+          <th className="text-left py-2 pr-3">IPv4</th>
+          <th className="text-left py-2 pr-3">MAC</th>
+          <th className="text-right py-2 pr-3">TX / RX</th>
           {onCreateAlert && <th className="py-2 w-10"></th>}
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-800/50">
         {interfaces.map((iface) => (
           <tr key={iface.name}>
-            <td className="py-2 font-mono">{iface.name}</td>
-            <td className="py-2">
+            <td className="py-2 pr-3font-mono">{iface.name}</td>
+            <td className="py-2 pr-3">
               <span className={iface.state === 'UP' ? 'text-emerald-400' : 'text-gray-500'}>{iface.state}</span>
             </td>
-            <td className="py-2 font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
-            <td className="py-2 font-mono text-gray-500">{iface.mac || '-'}</td>
-            <td className="py-2 text-right font-mono text-gray-400">
+            <td className="py-2 pr-3font-mono text-gray-400">{iface.ipv4?.join(', ') || '-'}</td>
+            <td className="py-2 pr-3font-mono text-gray-500">{iface.mac || '-'}</td>
+            <td className="py-2 pr-3text-right font-mono text-gray-400">
               {formatBytes(iface.bytes_sent)} / {formatBytes(iface.bytes_recv)}
             </td>
             {onCreateAlert && (
-              <td className="py-2 text-right">
+              <td className="py-2 pr-3text-right">
                 <AlertButton
                   onClick={() => onCreateAlert(iface.name)}
                   title="Create alert for this interface"
@@ -1561,11 +1561,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-function InfoItem({ label, value }: { label: string; value: string }) {
+function InfoItem({ label, value, valueClassName }: { label: string; value: string; valueClassName?: string }) {
   return (
     <div>
       <p className="text-xs text-gray-500">{label}</p>
-      <p className="text-sm text-gray-200">{value}</p>
+      <p className={`text-sm ${valueClassName || 'text-gray-200'}`}>{value}</p>
     </div>
   )
 }
