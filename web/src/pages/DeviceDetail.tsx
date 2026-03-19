@@ -12,6 +12,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
+import ActivityLog from '../components/ActivityLog'
 import { useFeatures } from '../hooks/useFeatures'
 import cronstrue from 'cronstrue'
 import { formatRunDate, parseSystemdCalendar } from '../utils/cron'
@@ -1435,6 +1436,11 @@ export default function DeviceDetail() {
           </Section>
         )
       })()}
+
+      {/* Activity Log */}
+      <Section title="Activity Log">
+        <ActivityLog deviceId={id!} />
+      </Section>
 
       {/* Create Alert Dialog */}
       {alertDialog && (

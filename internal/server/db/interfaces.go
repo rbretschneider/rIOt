@@ -82,9 +82,13 @@ type NotifyRepository interface {
 type CommandRepository interface {
 	Create(ctx context.Context, cmd *models.Command) error
 	UpdateStatus(ctx context.Context, id, status, resultMsg string) error
+	UpdateCommandResult(ctx context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error
 	ListByDevice(ctx context.Context, deviceID string, limit int) ([]models.Command, error)
+	ListByDeviceFiltered(ctx context.Context, deviceID string, limit, offset int, statuses []string, action string) ([]models.Command, error)
 	ListPending(ctx context.Context, deviceID string) ([]models.Command, error)
 	GetByID(ctx context.Context, id string) (*models.Command, error)
+	SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error
+	GetCommandOutput(ctx context.Context, commandID string) ([]models.CommandOutput, error)
 }
 
 // ProbeRepository defines the interface for probe database operations.

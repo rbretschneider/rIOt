@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,6 +16,21 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/docker/docker/api/types/container"
 )
+
+// maxOutputBytes is the maximum size of captured command output (256KB).
+const maxOutputBytes = 256 * 1024
+
+// truncateHeadTailBytes is the size kept from the head and tail when truncating (64KB).
+const truncateHeadTailBytes = 64 * 1024
+
+// commandExecResult holds the outcome of an executed command including timing and output.
+type commandExecResult struct {
+	Status     string
+	Message    string
+	ExitCode   *int
+	DurationMs *int64
+	Output     string
+}
 
 // handleCommand dispatches a remote command from the server.
 func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
@@ -26,7 +42,12 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 
 	slog.Info("command: received", "id", payload.CommandID, "action", payload.Action)
 
+	startTime := time.Now()
+
 	var status, message string
+	var execOutput string
+	var exitCode *int
+
 	switch payload.Action {
 	case "docker_stop":
 		status, message = a.dockerCommand(ctx, payload, "stop")
@@ -44,7 +65,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 	case "reboot":
 		status, message = a.handleReboot(payload)
 	case "os_update":
-		status, message = a.handleOSUpdate(ctx, payload)
+		r := a.handleOSUpdateWithOutput(ctx, payload)
+		status, message, execOutput, exitCode = r.Status, r.Message, r.Output, r.ExitCode
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(ctx)
 	case "agent_uninstall":
@@ -60,6 +82,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
 	}
 
+	durationMs := time.Since(startTime).Milliseconds()
+
 	if status == "error" {
 		slog.Warn("command: failed", "id", payload.CommandID, "action", payload.Action, "error", message)
 		// Report command failure as a server event so it appears in the dashboard
@@ -71,9 +95,12 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 
 	// Send result back to server
 	result := models.CommandResult{
-		CommandID: payload.CommandID,
-		Status:    status,
-		Message:   message,
+		CommandID:  payload.CommandID,
+		Status:     status,
+		Message:    message,
+		ExitCode:   exitCode,
+		DurationMs: &durationMs,
+		Output:     TruncateOutputSmart(execOutput, maxOutputBytes),
 	}
 	resultJSON, _ := json.Marshal(result)
 	if a.wsClient != nil {
@@ -133,13 +160,13 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 	return "success", "reboot initiated"
 }
 
-// handleOSUpdate runs package manager updates if allowed by config.
-func (a *Agent) handleOSUpdate(ctx context.Context, payload models.CommandPayload) (string, string) {
+// handleOSUpdateWithOutput runs package manager updates and captures full output.
+func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.CommandPayload) commandExecResult {
 	if !a.config.Commands.AllowPatching {
-		return "error", "patching not allowed by agent config (set commands.allow_patching: true)"
+		return commandExecResult{Status: "error", Message: "patching not allowed by agent config (set commands.allow_patching: true)"}
 	}
 	if runtime.GOOS != "linux" {
-		return "error", "os_update is only supported on Linux"
+		return commandExecResult{Status: "error", Message: "os_update is only supported on Linux"}
 	}
 
 	mode, _ := payload.Params["mode"].(string)
@@ -177,25 +204,139 @@ func (a *Agent) handleOSUpdate(ctx context.Context, payload models.CommandPayloa
 			upgradeArgs = []string{"sudo", dnfPath, "-y", "update"}
 		}
 	default:
-		return "error", "no supported package manager found (apt-get or dnf)"
+		return commandExecResult{Status: "error", Message: "no supported package manager found (apt-get or dnf)"}
 	}
 
 	slog.Info("os_update: refreshing package index", "mode", mode)
 	refreshCmd := exec.CommandContext(updateCtx, refreshArgs[0], refreshArgs[1:]...)
 	refreshOut, err := refreshCmd.CombinedOutput()
 	if err != nil {
-		return "error", fmt.Sprintf("package refresh failed: %s\n%s", err, truncateOutput(refreshOut, 4000))
+		ec := exitCodeFromError(err)
+		return commandExecResult{
+			Status:   "error",
+			Message:  fmt.Sprintf("package refresh failed (exit %d): %s", ec, lastMeaningfulLines(string(refreshOut), 10)),
+			ExitCode: &ec,
+			Output:   string(refreshOut),
+		}
 	}
 
 	slog.Info("os_update: running upgrade", "mode", mode)
 	upgradeCmd := exec.CommandContext(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
 	upgradeOut, err := upgradeCmd.CombinedOutput()
-	combined := append(refreshOut, upgradeOut...)
+	combinedOut := string(refreshOut) + string(upgradeOut)
 	if err != nil {
-		return "error", fmt.Sprintf("upgrade failed: %s\n%s", err, truncateOutput(combined, 4000))
+		ec := exitCodeFromError(err)
+		return commandExecResult{
+			Status:   "error",
+			Message:  fmt.Sprintf("upgrade failed (exit %d): %s", ec, lastMeaningfulLines(string(upgradeOut), 10)),
+			ExitCode: &ec,
+			Output:   combinedOut,
+		}
 	}
 
-	return "success", truncateOutput(combined, 4000)
+	ec := 0
+	summary := parseOSUpdateSummary(string(upgradeOut), aptErr == nil)
+	return commandExecResult{
+		Status:   "success",
+		Message:  summary,
+		ExitCode: &ec,
+		Output:   combinedOut,
+	}
+}
+
+// handleOSUpdate is kept for backward compatibility (wraps handleOSUpdateWithOutput).
+func (a *Agent) handleOSUpdate(ctx context.Context, payload models.CommandPayload) (string, string) {
+	r := a.handleOSUpdateWithOutput(ctx, payload)
+	return r.Status, r.Message
+}
+
+// parseOSUpdateSummary parses apt/dnf output to produce a human-readable summary.
+func parseOSUpdateSummary(output string, isApt bool) string {
+	if isApt {
+		return parseAptSummary(output)
+	}
+	return parseDnfSummary(output)
+}
+
+var aptUpgradedRe = regexp.MustCompile(`(\d+)\s+upgraded`)
+var aptInstalledRe = regexp.MustCompile(`(\d+)\s+newly installed`)
+var aptRemovedRe = regexp.MustCompile(`(\d+)\s+to remove`)
+var aptHeldRe = regexp.MustCompile(`(\d+)\s+not upgraded`)
+
+func parseAptSummary(output string) string {
+	upgraded := extractInt(aptUpgradedRe, output)
+	installed := extractInt(aptInstalledRe, output)
+	removed := extractInt(aptRemovedRe, output)
+	held := extractInt(aptHeldRe, output)
+
+	if upgraded == 0 && installed == 0 && removed == 0 {
+		return "System is up to date"
+	}
+
+	total := upgraded + installed
+	parts := []string{fmt.Sprintf("Updated %d packages", total)}
+	if removed > 0 {
+		parts = append(parts, fmt.Sprintf("%d removed", removed))
+	}
+	if held > 0 {
+		parts = append(parts, fmt.Sprintf("%d held", held))
+	}
+	return strings.Join(parts, " (") + strings.Repeat(")", len(parts)-1)
+}
+
+var dnfUpgradedRe = regexp.MustCompile(`(?i)Upgraded:\s*(\d+)`)
+var dnfInstalledRe = regexp.MustCompile(`(?i)Installed:\s*(\d+)`)
+var dnfRemovedRe = regexp.MustCompile(`(?i)Removed:\s*(\d+)`)
+
+func parseDnfSummary(output string) string {
+	upgraded := extractInt(dnfUpgradedRe, output)
+	installed := extractInt(dnfInstalledRe, output)
+	removed := extractInt(dnfRemovedRe, output)
+
+	if upgraded == 0 && installed == 0 && removed == 0 {
+		// dnf often says "Nothing to do" or "No packages marked for update"
+		if strings.Contains(output, "Nothing to do") || strings.Contains(output, "No packages marked") {
+			return "System is up to date"
+		}
+		return "Update completed"
+	}
+
+	total := upgraded + installed
+	parts := []string{fmt.Sprintf("Updated %d packages", total)}
+	if removed > 0 {
+		parts = append(parts, fmt.Sprintf("%d removed", removed))
+	}
+	return strings.Join(parts, " (") + strings.Repeat(")", len(parts)-1)
+}
+
+func extractInt(re *regexp.Regexp, s string) int {
+	m := re.FindStringSubmatch(s)
+	if len(m) < 2 {
+		return 0
+	}
+	v, _ := strconv.Atoi(m[1])
+	return v
+}
+
+// exitCodeFromError extracts the exit code from an exec.ExitError.
+func exitCodeFromError(err error) int {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
+// lastMeaningfulLines returns the last N non-empty lines of output.
+func lastMeaningfulLines(output string, n int) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var meaningful []string
+	for i := len(lines) - 1; i >= 0 && len(meaningful) < n; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			meaningful = append([]string{line}, meaningful...)
+		}
+	}
+	return strings.Join(meaningful, "\n")
 }
 
 // handleEnableAutoUpdates installs and configures unattended-upgrades (Debian/Ubuntu)
@@ -280,6 +421,22 @@ func truncateOutput(data []byte, maxLen int) string {
 		return string(data)
 	}
 	return "...(truncated)\n" + string(data[len(data)-maxLen:])
+}
+
+// TruncateOutputSmart truncates output to maxBytes using a head+tail strategy.
+// If the output is within the limit, it is returned as-is.
+// Otherwise, the first headSize bytes and last tailSize bytes are kept with a truncation marker.
+func TruncateOutputSmart(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	headSize := truncateHeadTailBytes
+	tailSize := truncateHeadTailBytes
+	if headSize+tailSize >= maxBytes {
+		headSize = maxBytes / 2
+		tailSize = maxBytes / 2
+	}
+	return s[:headSize] + "\n... [truncated] ...\n" + s[len(s)-tailSize:]
 }
 
 // handleUninstall initiates agent self-removal from the host.

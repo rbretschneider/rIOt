@@ -128,6 +128,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Post("/rotate-key", h.RotateKey)
 		r.With(adminAuth).Post("/commands", h.SendCommand)
 		r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
+		r.With(adminAuth).Get("/commands/{commandId}/output", h.GetCommandOutput)
 		r.With(adminAuth).Post("/docker/bulk-update", h.BulkDockerUpdate)
 		r.With(adminAuth).Put("/auto-patch", h.SetAutoPatch)
 		r.With(adminAuth).Get("/auto-updates", h.ListAutoUpdates)

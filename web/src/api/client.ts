@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -103,8 +103,18 @@ export const api = {
     return res.json()
   },
 
-  getDeviceCommands: (id: string, limit = 50) =>
-    fetchJSON<Command[]>(`${BASE}/devices/${id}/commands?limit=${limit}`),
+  getDeviceCommands: (id: string, params?: { limit?: number; offset?: number; status?: string; action?: string }) => {
+    const sp = new URLSearchParams()
+    if (params?.limit) sp.set('limit', String(params.limit))
+    if (params?.offset) sp.set('offset', String(params.offset))
+    if (params?.status) sp.set('status', params.status)
+    if (params?.action) sp.set('action', params.action)
+    const qs = sp.toString()
+    return fetchJSON<Command[]>(`${BASE}/devices/${id}/commands${qs ? `?${qs}` : ''}`)
+  },
+
+  getCommandOutput: (deviceId: string, commandId: string) =>
+    fetchJSON<CommandOutput[]>(`${BASE}/devices/${deviceId}/commands/${commandId}/output`),
 
   // Probes
   getProbes: () => fetchJSON<ProbeWithResult[]>(`${BASE}/probes`),

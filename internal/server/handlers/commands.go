@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/go-chi/chi/v5"
@@ -162,7 +163,27 @@ func (h *Handlers) ListDeviceCommands(w http.ResponseWriter, r *http.Request) {
 	if limit == 0 {
 		limit = 50
 	}
-	commands, err := h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+	statusParam := r.URL.Query().Get("status")
+	var statuses []string
+	if statusParam != "" {
+		for _, s := range strings.Split(statusParam, ",") {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				statuses = append(statuses, s)
+			}
+		}
+	}
+	action := r.URL.Query().Get("action")
+
+	var commands []models.Command
+	var err error
+	if len(statuses) > 0 || action != "" || offset > 0 {
+		commands, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action)
+	} else {
+		commands, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
+	}
 	if err != nil {
 		http.Error(w, `{"error":"failed to list commands"}`, http.StatusInternalServerError)
 		return
@@ -171,4 +192,30 @@ func (h *Handlers) ListDeviceCommands(w http.ResponseWriter, r *http.Request) {
 		commands = []models.Command{}
 	}
 	writeJSON(w, http.StatusOK, commands)
+}
+
+// GetCommandOutput handles GET /api/v1/devices/{id}/commands/{commandId}/output.
+func (h *Handlers) GetCommandOutput(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	commandID := chi.URLParam(r, "commandId")
+
+	cmd, err := h.commandRepo.GetByID(r.Context(), commandID)
+	if err != nil {
+		http.Error(w, `{"error":"command not found"}`, http.StatusNotFound)
+		return
+	}
+	if cmd.DeviceID != deviceID {
+		http.Error(w, `{"error":"command does not belong to this device"}`, http.StatusForbidden)
+		return
+	}
+
+	outputs, err := h.commandRepo.GetCommandOutput(r.Context(), commandID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to get command output"}`, http.StatusInternalServerError)
+		return
+	}
+	if outputs == nil {
+		outputs = []models.CommandOutput{}
+	}
+	writeJSON(w, http.StatusOK, outputs)
 }

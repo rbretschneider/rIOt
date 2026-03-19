@@ -11,11 +11,16 @@ vi.mock('../api/client', () => ({
     getEvents: vi.fn().mockResolvedValue([]),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),
     getDeviceAlertRules: vi.fn().mockResolvedValue([]),
+    getDeviceCommands: vi.fn().mockResolvedValue([]),
   },
 }))
 
 vi.mock('../hooks/useDevices', () => ({
   useDevices: () => ({ wsConnected: false }),
+}))
+
+vi.mock('../hooks/useWebSocket', () => ({
+  useWebSocket: () => ({ connected: false }),
 }))
 
 function renderWithProviders() {

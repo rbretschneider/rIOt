@@ -119,8 +119,8 @@ func (h *Hub) BroadcastDockerUpdate(deviceID string, data interface{}) {
 	h.broadcastMsg(WSMessage{Type: "docker_update", DeviceID: deviceID, Data: data})
 }
 
-func (h *Hub) BroadcastCommandResult(commandID string, data interface{}) {
-	h.broadcastMsg(WSMessage{Type: "command_result", Data: data})
+func (h *Hub) BroadcastCommandResult(deviceID string, commandID string, data interface{}) {
+	h.broadcastMsg(WSMessage{Type: "command_result", DeviceID: deviceID, Data: data})
 }
 
 func (h *Hub) BroadcastProbeResult(probeID int64, data interface{}) {

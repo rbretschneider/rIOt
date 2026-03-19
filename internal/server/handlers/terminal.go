@@ -166,23 +166,41 @@ func (h *Handlers) handleCommandResult(ctx context.Context, msg agentWSMessage) 
 		return
 	}
 	if h.commandRepo != nil {
-		if err := h.commandRepo.UpdateStatus(ctx, result.CommandID, result.Status, result.Message); err != nil {
-			slog.Error("terminal: update command status", "error", err)
+		if err := h.commandRepo.UpdateCommandResult(ctx, result.CommandID, result.Status, result.Message, result.DurationMs, result.ExitCode); err != nil {
+			slog.Error("terminal: update command result", "error", err)
+		}
+		// Save captured output if present
+		if result.Output != "" {
+			output := &models.CommandOutput{
+				CommandID: result.CommandID,
+				Stream:    "combined",
+				Content:   result.Output,
+			}
+			if err := h.commandRepo.SaveCommandOutput(ctx, output); err != nil {
+				slog.Error("terminal: save command output", "error", err)
+			}
 		}
 	}
-	// Broadcast to dashboard clients
-	h.hub.BroadcastCommandResult(result.CommandID, &result)
-	slog.Info("command result", "id", result.CommandID, "status", result.Status)
-
-	// Fire completion event for disruptive commands
-	if h.commandRepo != nil && h.eventGen != nil {
+	// Look up the command to get device ID for broadcast and event generation
+	var deviceID, hostname, action string
+	if h.commandRepo != nil {
 		if cmd, err := h.commandRepo.GetByID(ctx, result.CommandID); err == nil && cmd != nil {
-			hostname := cmd.DeviceID[:8] // fallback
+			deviceID = cmd.DeviceID
+			action = cmd.Action
+			hostname = cmd.DeviceID[:8] // fallback
 			if device, err := h.devices.GetByID(ctx, cmd.DeviceID); err == nil {
 				hostname = device.Hostname
 			}
-			h.eventGen.CommandCompleted(ctx, cmd.DeviceID, hostname, cmd.Action, result.Status, result.Message)
 		}
+	}
+
+	// Broadcast to dashboard clients
+	h.hub.BroadcastCommandResult(deviceID, result.CommandID, &result)
+	slog.Info("command result", "id", result.CommandID, "status", result.Status)
+
+	// Fire completion event for disruptive commands
+	if h.commandRepo != nil && h.eventGen != nil && deviceID != "" {
+		h.eventGen.CommandCompleted(ctx, deviceID, hostname, action, result.Status, result.Message)
 	}
 }
 

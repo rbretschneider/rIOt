@@ -651,6 +651,7 @@ func (m *MockNotifyRepo) PurgeNotificationLog(_ context.Context, _ time.Time) (i
 
 type MockCommandRepo struct {
 	Commands map[string]*models.Command
+	Outputs  map[string][]models.CommandOutput
 	Err      error
 }
 
@@ -674,6 +675,19 @@ func (m *MockCommandRepo) UpdateStatus(_ context.Context, id, status, resultMsg 
 	if cmd, ok := m.Commands[id]; ok {
 		cmd.Status = status
 		cmd.ResultMsg = resultMsg
+	}
+	return nil
+}
+
+func (m *MockCommandRepo) UpdateCommandResult(_ context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	if cmd, ok := m.Commands[id]; ok {
+		cmd.Status = status
+		cmd.ResultMsg = resultMsg
+		cmd.DurationMs = durationMs
+		cmd.ExitCode = exitCode
 	}
 	return nil
 }
@@ -705,6 +719,62 @@ func (m *MockCommandRepo) ListByDevice(_ context.Context, deviceID string, limit
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func (m *MockCommandRepo) ListByDeviceFiltered(_ context.Context, deviceID string, limit, offset int, statuses []string, action string) ([]models.Command, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	statusSet := make(map[string]bool)
+	for _, s := range statuses {
+		statusSet[s] = true
+	}
+	var result []models.Command
+	for _, cmd := range m.Commands {
+		if cmd.DeviceID != deviceID {
+			continue
+		}
+		if len(statusSet) > 0 && !statusSet[cmd.Status] {
+			continue
+		}
+		if action != "" && cmd.Action != action {
+			continue
+		}
+		result = append(result, *cmd)
+	}
+	if offset > 0 {
+		if offset >= len(result) {
+			return []models.Command{}, nil
+		}
+		result = result[offset:]
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (m *MockCommandRepo) SaveCommandOutput(_ context.Context, output *models.CommandOutput) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	if m.Outputs == nil {
+		m.Outputs = make(map[string][]models.CommandOutput)
+	}
+	output.ID = int64(len(m.Outputs[output.CommandID]) + 1)
+	output.CreatedAt = time.Now()
+	m.Outputs[output.CommandID] = append(m.Outputs[output.CommandID], *output)
+	return nil
+}
+
+func (m *MockCommandRepo) GetCommandOutput(_ context.Context, commandID string) ([]models.CommandOutput, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if m.Outputs == nil {
+		return nil, nil
+	}
+	return m.Outputs[commandID], nil
 }
 
 func (m *MockCommandRepo) GetByID(_ context.Context, id string) (*models.Command, error) {

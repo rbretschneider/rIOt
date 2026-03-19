@@ -701,10 +701,20 @@ export interface Command {
   device_id: string
   action: string
   params: Record<string, unknown>
-  status: string
+  status: 'pending' | 'sent' | 'queued' | 'success' | 'error'
   result_msg: string
+  duration_ms: number | null
+  exit_code: number | null
   created_at: string
   updated_at: string
+}
+
+export interface CommandOutput {
+  id: number
+  command_id: string
+  stream: string
+  content: string
+  created_at: string
 }
 
 export interface CommandResult {
