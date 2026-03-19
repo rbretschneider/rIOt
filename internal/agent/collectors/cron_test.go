@@ -173,3 +173,35 @@ func TestParseCrontabReader_ShortLineSkipped(t *testing.T) {
 		t.Errorf("expected command %q, got %q", "/usr/bin/valid.sh", jobs[0].Command)
 	}
 }
+
+func TestUserCrontabDirs_ContainsBothDistroVariants(t *testing.T) {
+	// Verify that userCrontabDirs includes paths for both Debian and Red Hat variants
+	debianFound := false
+	redhatFound := false
+	for _, dir := range userCrontabDirs {
+		if dir == "/var/spool/cron/crontabs" {
+			debianFound = true
+		}
+		if dir == "/var/spool/cron" {
+			redhatFound = true
+		}
+	}
+	if !debianFound {
+		t.Error("userCrontabDirs missing Debian path /var/spool/cron/crontabs")
+	}
+	if !redhatFound {
+		t.Error("userCrontabDirs missing Red Hat path /var/spool/cron")
+	}
+}
+
+func TestCollectLinuxCrontabs_UsesFirstExistingDir(t *testing.T) {
+	// The collector should use the first directory that exists and not double-count
+	// when both paths resolve to the same content. We verify this by checking
+	// that the Debian path is tried first (index 0) since it's more specific.
+	if userCrontabDirs[0] != "/var/spool/cron/crontabs" {
+		t.Errorf("expected Debian path first (more specific), got %q", userCrontabDirs[0])
+	}
+	if userCrontabDirs[1] != "/var/spool/cron" {
+		t.Errorf("expected Red Hat path second, got %q", userCrontabDirs[1])
+	}
+}

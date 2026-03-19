@@ -79,9 +79,16 @@ func (c *SecurityCollector) Collect(ctx context.Context) (interface{}, error) {
 			}
 		}
 		info.FailedLogins24h = count
-	} else if out, err := exec.CommandContext(ctx, "grep", "-c", "Failed password", "/var/log/auth.log").Output(); err == nil {
-		if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
-			info.FailedLogins24h = n
+	} else {
+		// Fallback: grep auth log files directly.
+		// Debian/Ubuntu uses /var/log/auth.log, Fedora/RHEL uses /var/log/secure.
+		for _, logPath := range []string{"/var/log/auth.log", "/var/log/secure"} {
+			if out, err := exec.CommandContext(ctx, "grep", "-c", "Failed password", logPath).Output(); err == nil {
+				if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil {
+					info.FailedLogins24h = n
+				}
+				break
+			}
 		}
 	}
 

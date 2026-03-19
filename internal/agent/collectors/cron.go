@@ -37,11 +37,23 @@ func (c *CronCollector) Collect(ctx context.Context) (interface{}, error) {
 	return info, nil
 }
 
+// userCrontabDirs lists the directories where user crontabs are stored
+// across different Linux distributions.
+//   - Debian/Ubuntu: /var/spool/cron/crontabs/<user>
+//   - Fedora/RHEL/CentOS: /var/spool/cron/<user>
+var userCrontabDirs = []string{
+	"/var/spool/cron/crontabs",
+	"/var/spool/cron",
+}
+
 // collectLinuxCrontabs reads user and system crontab files.
 func (c *CronCollector) collectLinuxCrontabs(info *models.CronInfo) {
-	// User crontabs: /var/spool/cron/crontabs/<user>
-	userDir := "/var/spool/cron/crontabs"
-	if entries, err := os.ReadDir(userDir); err == nil {
+	// User crontabs: try distro-specific paths
+	for _, userDir := range userCrontabDirs {
+		entries, err := os.ReadDir(userDir)
+		if err != nil {
+			continue
+		}
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
@@ -51,6 +63,7 @@ func (c *CronCollector) collectLinuxCrontabs(info *models.CronInfo) {
 			jobs := ParseCrontab(path, user, false)
 			info.Jobs = append(info.Jobs, jobs...)
 		}
+		break // use the first directory that exists
 	}
 
 	// System crontab: /etc/crontab

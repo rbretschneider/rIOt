@@ -84,15 +84,56 @@ func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateIn
 		info.TotalInstalled = len(lines)
 	}
 
+	// Get all pending updates with package details.
+	// dnf check-update exits 100 when updates are available, 0 when up to date.
 	out, err = exec.CommandContext(ctx, "dnf", "check-update", "-q").Output()
-	if err == nil || err.(*exec.ExitError) != nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
+	if err != nil || len(out) > 0 {
+		info.Updates = parseDNFCheckUpdate(string(out))
+		info.PendingUpdates = len(info.Updates)
+	}
+
+	// Check for security updates specifically.
+	secOut, secErr := exec.CommandContext(ctx, "dnf", "check-update", "-q", "--security").Output()
+	if secErr != nil || len(secOut) > 0 {
+		secPkgs := parseDNFCheckUpdate(string(secOut))
+		info.PendingSecurityCount = len(secPkgs)
+
+		// Mark security packages in the main update list
+		secSet := make(map[string]bool, len(secPkgs))
+		for _, p := range secPkgs {
+			secSet[p.Name] = true
+		}
+		for i := range info.Updates {
+			if secSet[info.Updates[i].Name] {
+				info.Updates[i].IsSecurity = true
 			}
-			info.PendingUpdates++
 		}
 	}
+}
+
+// parseDNFCheckUpdate parses output from `dnf check-update -q`.
+// Each update line has the format: package-name.arch   version   repository
+func parseDNFCheckUpdate(output string) []models.PendingUpdate {
+	var updates []models.PendingUpdate
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		// First field is "name.arch" — strip the arch suffix
+		nameArch := fields[0]
+		name := nameArch
+		if idx := strings.LastIndex(nameArch, "."); idx > 0 {
+			name = nameArch[:idx]
+		}
+		updates = append(updates, models.PendingUpdate{
+			Name:   name,
+			NewVer: fields[1],
+		})
+	}
+	return updates
 }

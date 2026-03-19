@@ -164,7 +164,8 @@ echo "==> Downloading from: ${DOWNLOAD_URL}"
 if [ "$OS" = "linux" ]; then
     if ! id -u "$RIOT_USER" >/dev/null 2>&1; then
         echo "==> Creating system user: $RIOT_USER"
-        useradd --system --no-create-home --shell /usr/sbin/nologin "$RIOT_USER"
+        NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || echo /usr/sbin/nologin)"
+        useradd --system --no-create-home --shell "$NOLOGIN_SHELL" "$RIOT_USER"
     fi
 
     # Add riot user to docker group if Docker is installed
@@ -425,24 +426,43 @@ PROTECT_SYSTEM="ProtectSystem=strict"
 if [ "$OS" = "linux" ]; then
     SUDOERS_FILE="/etc/sudoers.d/riot-agent"
     echo "==> Installing sudoers rules for fleet management"
-    cat > "$SUDOERS_FILE" <<SUDOEOF
-# rIOt Agent — least-privilege escalation for fleet management
-riot ALL=(root) NOPASSWD: /usr/bin/apt-get update
-riot ALL=(root) NOPASSWD: /usr/bin/apt-get -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef
-riot ALL=(root) NOPASSWD: /usr/bin/apt-get -y upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef
-riot ALL=(root) NOPASSWD: /usr/bin/dnf makecache
-riot ALL=(root) NOPASSWD: /usr/bin/dnf -y update
-riot ALL=(root) NOPASSWD: /usr/bin/dnf -y --security update
-riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
-riot ALL=(root) NOPASSWD: /bin/sh -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old
-riot ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=riot-agent-update sh -c *
-riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
-# Web server config inspection (read-only)
-riot ALL=(root) NOPASSWD: /usr/sbin/nginx -t
-riot ALL=(root) NOPASSWD: /usr/sbin/nginx -T
-# SMART disk health monitoring
-riot ALL=(root) NOPASSWD: /usr/sbin/smartctl
-SUDOEOF
+
+    # Resolve binary paths dynamically — different distros install to different locations
+    SYSTEMCTL_PATH="$(command -v systemctl 2>/dev/null || echo /usr/bin/systemctl)"
+    SYSTEMD_RUN_PATH="$(command -v systemd-run 2>/dev/null || echo /usr/bin/systemd-run)"
+    SMARTCTL_PATH="$(command -v smartctl 2>/dev/null || echo /usr/sbin/smartctl)"
+    NGINX_PATH="$(command -v nginx 2>/dev/null || echo /usr/sbin/nginx)"
+    SH_PATH="$(command -v sh 2>/dev/null || echo /bin/sh)"
+
+    {
+        echo "# rIOt Agent — least-privilege escalation for fleet management"
+
+        # Package manager rules (only for the detected manager)
+        if command -v apt-get >/dev/null 2>&1; then
+            APT_PATH="$(command -v apt-get)"
+            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} update"
+            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
+            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
+        fi
+        if command -v dnf >/dev/null 2>&1; then
+            DNF_PATH="$(command -v dnf)"
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} makecache"
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y update"
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y --security update"
+        fi
+
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"
+        echo "riot ALL=(root) NOPASSWD: ${SH_PATH} -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old"
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update sh -c *"
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reset-failed riot-agent-update"
+
+        # Web server config inspection (read-only)
+        echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -t"
+        echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -T"
+
+        # SMART disk health monitoring
+        echo "riot ALL=(root) NOPASSWD: ${SMARTCTL_PATH}"
+    } > "$SUDOERS_FILE"
     chmod 0440 "$SUDOERS_FILE"
     if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
         echo "==> Sudoers rules validated OK"
