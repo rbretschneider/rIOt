@@ -9,6 +9,38 @@ const CHANNEL_TYPES = [
   { value: 'smtp', label: 'Email (SMTP)' },
 ]
 
+function ChannelTypeIcon({ type }: { type: string }) {
+  const cls = "w-4 h-4 text-gray-400 shrink-0"
+  switch (type) {
+    case 'ntfy':
+      // Mobile push notification icon
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="7" y="1" width="10" height="22" rx="2" />
+          <line x1="12" y1="18" x2="12" y2="18.01" />
+        </svg>
+      )
+    case 'webhook':
+      // Link/webhook icon
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+      )
+    case 'smtp':
+      // Email envelope icon
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="M22 4l-10 8L2 4" />
+        </svg>
+      )
+    default:
+      return null
+  }
+}
+
 const emptyChannel: Partial<NotificationChannel> = {
   name: '',
   type: 'ntfy',
@@ -80,9 +112,12 @@ export default function NotificationSettings() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className={`w-2 h-2 rounded-full ${ch.enabled ? 'bg-emerald-500' : 'bg-gray-600'}`} />
+                <ChannelTypeIcon type={ch.type} />
                 <div>
                   <span className="text-white font-medium">{ch.name}</span>
-                  <span className="ml-2 text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded">{ch.type}</span>
+                  <span className="ml-2 text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded">
+                    {CHANNEL_TYPES.find(t => t.value === ch.type)?.label || ch.type}
+                  </span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -115,7 +150,7 @@ export default function NotificationSettings() {
             <div className="mt-2 text-xs text-gray-500">
               {ch.type === 'ntfy' && (
                 <>
-                  {(ch.config.server_url as string) || 'https://ntfy.sh'} / {(ch.config.topic as string) || '(no topic)'}
+                  {((ch.config.server_url as string) || 'https://ntfy.sh').replace(/\/+$/, '')}/{(ch.config.topic as string) || '(no topic)'}
                 </>
               )}
               {ch.type === 'webhook' && (
