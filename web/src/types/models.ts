@@ -561,6 +561,10 @@ export interface DeviceProbeWithResult extends DeviceProbe {
   total_checks: number
 }
 
+export interface DeviceProbeWithResultEnriched extends DeviceProbeWithResult {
+  device_hostname: string
+}
+
 // Security Score
 export interface SecurityFinding {
   id: string

@@ -228,6 +228,9 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Delete("/api/v1/probes/{id}", h.DeleteProbe)
 		r.Post("/api/v1/probes/{id}/run", h.RunProbe)
 		r.Get("/api/v1/probes/{id}/results", h.GetProbeResults)
+
+		// Device probes (all devices, aggregated)
+		r.Get("/api/v1/device-probes", h.ListAllDeviceProbes)
 	})
 
 	// Serve embedded frontend (must come last as catch-all)

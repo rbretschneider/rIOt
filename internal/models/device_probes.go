@@ -44,3 +44,10 @@ type DeviceProbeWithResult struct {
 	SuccessRate  *float64           `json:"success_rate,omitempty"`
 	TotalChecks  int                `json:"total_checks"`
 }
+
+// DeviceProbeWithResultEnriched extends DeviceProbeWithResult with the device hostname
+// for use in the all-device-probes list endpoint.
+type DeviceProbeWithResultEnriched struct {
+	DeviceProbeWithResult
+	DeviceHostname string `json:"device_hostname"`
+}

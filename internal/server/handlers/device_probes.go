@@ -12,6 +12,50 @@ import (
 	"github.com/google/uuid"
 )
 
+// ListAllDeviceProbes handles GET /api/v1/device-probes.
+// Returns all device probes across all devices, enriched with device hostname.
+func (h *Handlers) ListAllDeviceProbes(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	probes, err := h.deviceProbeRepo.ListAll(ctx)
+	if err != nil {
+		slog.Error("list all device probes", "error", err)
+		http.Error(w, `{"error":"failed to list all device probes"}`, http.StatusInternalServerError)
+		return
+	}
+
+	devices, err := h.devices.List(ctx)
+	if err != nil {
+		slog.Error("list devices for device probes", "error", err)
+		http.Error(w, `{"error":"failed to list all device probes"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Build device_id -> hostname lookup map. A missing key returns "" (Go zero value),
+	// which the frontend handles gracefully by falling back to device_id for display.
+	// This covers orphaned probes whose device has been deleted from the database.
+	hostnames := make(map[string]string, len(devices))
+	for _, d := range devices {
+		hostnames[d.ID] = d.Hostname
+	}
+
+	results := make([]models.DeviceProbeWithResultEnriched, len(probes))
+	for i, p := range probes {
+		results[i] = models.DeviceProbeWithResultEnriched{
+			DeviceProbeWithResult: models.DeviceProbeWithResult{DeviceProbe: p},
+			DeviceHostname:        hostnames[p.DeviceID],
+		}
+		if lr, err := h.deviceProbeRepo.LatestResult(ctx, p.ID); err == nil {
+			results[i].LatestResult = lr
+		}
+		if rate, total, err := h.deviceProbeRepo.SuccessRate(ctx, p.ID); err == nil && total > 0 {
+			results[i].SuccessRate = &rate
+			results[i].TotalChecks = total
+		}
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
 // ListDeviceProbes handles GET /api/v1/devices/{id}/device-probes.
 func (h *Handlers) ListDeviceProbes(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")

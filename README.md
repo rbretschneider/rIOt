@@ -34,7 +34,7 @@
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
-- **Uptime probes** — scheduled HTTP, DNS, and ping/ICMP probes with history and status tracking; per-device probe assertion templates for response validation
+- **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
@@ -646,9 +646,13 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/security/devices` | Per-device security details |
 | `GET/POST` | `/api/v1/settings/logs` | Server log viewer |
 | `GET/PUT` | `/api/v1/settings/automation` | Automation interval config |
-| `GET/POST/PUT/DELETE` | `/api/v1/probes[/:id]` | Uptime probe CRUD |
-| `POST` | `/api/v1/probes/:id/run` | Run probe on demand |
-| `GET` | `/api/v1/probes/:id/results` | Probe result history |
+| `GET/POST/PUT/DELETE` | `/api/v1/probes[/:id]` | Server uptime probe CRUD (HTTP, Ping, DNS) |
+| `POST` | `/api/v1/probes/:id/run` | Run server probe on demand |
+| `GET` | `/api/v1/probes/:id/results` | Server probe result history |
+| `GET` | `/api/v1/device-probes` | List all device probes across all devices, enriched with device hostname |
+| `GET/POST/PUT/DELETE` | `/api/v1/devices/:id/device-probes[/:pid]` | Device probe CRUD for a specific device |
+| `POST` | `/api/v1/devices/:id/device-probes/:pid/run` | Run device probe on demand |
+| `GET` | `/api/v1/devices/:id/device-probes/:pid/results` | Device probe result history |
 
 ### WebSocket
 

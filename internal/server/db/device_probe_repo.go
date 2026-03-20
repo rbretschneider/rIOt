@@ -31,6 +31,18 @@ func (r *DeviceProbeRepo) List(ctx context.Context, deviceID string) ([]models.D
 	return scanDeviceProbes(rows)
 }
 
+// ListAll returns all device probes across all devices ordered by id.
+func (r *DeviceProbeRepo) ListAll(ctx context.Context) ([]models.DeviceProbe, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT id, name, device_id, type, enabled, config, assertions, interval_seconds, timeout_seconds, created_at, updated_at
+		 FROM device_probes ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanDeviceProbes(rows)
+}
+
 // ListEnabled returns all enabled probes for a device (used for heartbeat delivery).
 func (r *DeviceProbeRepo) ListEnabled(ctx context.Context, deviceID string) ([]models.DeviceProbe, error) {
 	rows, err := r.db.Pool.Query(ctx,

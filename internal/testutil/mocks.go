@@ -1463,6 +1463,15 @@ func (m *MockDeviceProbeRepo) List(_ context.Context, deviceID string) ([]models
 	return result, nil
 }
 
+func (m *MockDeviceProbeRepo) ListAll(_ context.Context) ([]models.DeviceProbe, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	result := make([]models.DeviceProbe, len(m.Probes))
+	copy(result, m.Probes)
+	return result, nil
+}
+
 func (m *MockDeviceProbeRepo) ListEnabled(_ context.Context, deviceID string) ([]models.DeviceProbe, error) {
 	if m.Err != nil {
 		return nil, m.Err

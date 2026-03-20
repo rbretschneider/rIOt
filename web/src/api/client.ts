@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -292,6 +292,9 @@ export const api = {
   },
 
   // Device probes
+  getAllDeviceProbes: () =>
+    fetchJSON<DeviceProbeWithResultEnriched[]>(`${BASE}/device-probes`),
+
   getDeviceProbes: (deviceId: string) =>
     fetchJSON<import('../types/models').DeviceProbeWithResult[]>(`${BASE}/devices/${deviceId}/device-probes`),
 

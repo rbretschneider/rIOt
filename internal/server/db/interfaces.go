@@ -181,6 +181,7 @@ type AutoUpdateRepository interface {
 // DeviceProbeRepository defines the interface for device probe operations.
 type DeviceProbeRepository interface {
 	List(ctx context.Context, deviceID string) ([]models.DeviceProbe, error)
+	ListAll(ctx context.Context) ([]models.DeviceProbe, error)
 	ListEnabled(ctx context.Context, deviceID string) ([]models.DeviceProbe, error)
 	GetByID(ctx context.Context, id int64) (*models.DeviceProbe, error)
 	Create(ctx context.Context, p *models.DeviceProbe) error
