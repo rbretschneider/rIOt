@@ -2,6 +2,7 @@ package collectors
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -25,8 +26,10 @@ func (c *ServicesCollector) Collect(ctx context.Context) (interface{}, error) {
 	// List enabled and failed services.
 	// systemctl list-units exits with status 1 when degraded units exist,
 	// but the output is still valid — use it regardless of exit code.
-	out, err := exec.CommandContext(ctx, "systemctl", "list-units", "--type=service",
-		"--no-pager", "--no-legend", "--plain").CombinedOutput()
+	cmd := exec.CommandContext(ctx, "systemctl", "list-units", "--type=service",
+		"--no-pager", "--no-legend", "--plain")
+	ensureDBus(cmd)
+	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return []models.ServiceInfo{}, err
 	}
@@ -53,7 +56,9 @@ func (c *ServicesCollector) Collect(ctx context.Context) (interface{}, error) {
 		}
 
 		// Check if enabled
-		enableOut, err := exec.CommandContext(ctx, "systemctl", "is-enabled", name).Output()
+		enableCmd := exec.CommandContext(ctx, "systemctl", "is-enabled", name)
+		ensureDBus(enableCmd)
+		enableOut, err := enableCmd.Output()
 		if err == nil {
 			svc.Enabled = strings.TrimSpace(string(enableOut)) == "enabled"
 		}
@@ -62,4 +67,18 @@ func (c *ServicesCollector) Collect(ctx context.Context) (interface{}, error) {
 	}
 
 	return services, nil
+}
+
+// ensureDBus sets DBUS_SYSTEM_BUS_ADDRESS if not already present.
+// Minimal distros (e.g. DietPi) may not have it in the agent's env,
+// causing "Failed to connect to bus" from systemctl.
+func ensureDBus(cmd *exec.Cmd) {
+	const envKey = "DBUS_SYSTEM_BUS_ADDRESS"
+	if os.Getenv(envKey) != "" {
+		return
+	}
+	const sock = "/run/dbus/system_bus_socket"
+	if _, err := os.Stat(sock); err == nil {
+		cmd.Env = append(os.Environ(), envKey+"=unix:path="+sock)
+	}
 }
