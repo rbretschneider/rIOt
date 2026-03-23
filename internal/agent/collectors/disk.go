@@ -53,11 +53,12 @@ func (c *DiskCollector) Collect(ctx context.Context) (interface{}, error) {
 	seen := make(map[string]bool, len(info.Filesystems))
 	for _, fs := range info.Filesystems {
 		seen[fs.MountPoint] = true
+		seen[fs.Device] = true
 	}
 	allPartitions, err := disk.PartitionsWithContext(ctx, true)
 	if err == nil {
 		for _, p := range allPartitions {
-			if seen[p.Mountpoint] || !models.IsPoolFSType(p.Fstype) {
+			if seen[p.Mountpoint] || seen[p.Device] || !models.IsPoolFSType(p.Fstype) {
 				continue
 			}
 			usage, err := disk.UsageWithContext(ctx, p.Mountpoint)
