@@ -141,6 +141,29 @@ type Filesystem struct {
 	UsagePercent   float64 `json:"usage_percent"`
 	MountOptions   string  `json:"mount_options,omitempty"`
 	IsNetworkMount bool    `json:"is_network_mount"`
+	IsPool         bool    `json:"is_pool,omitempty"`
+}
+
+// PoolFSTypes is the authoritative list of filesystem types classified as storage pools.
+// Mirror list also exists in web/src/utils/filesystem.ts (POOL_FS_TYPES) for frontend fallback.
+// When adding a new pool type, both locations must be updated.
+var PoolFSTypes = []string{
+	"bcachefs",
+	"btrfs",
+	"fuse.mergerfs",
+	"fuse.unionfs",
+	"mergerfs",
+	"zfs",
+}
+
+// IsPoolFSType returns true if the given filesystem type is a known pool/union filesystem.
+func IsPoolFSType(fsType string) bool {
+	for _, t := range PoolFSTypes {
+		if fsType == t {
+			return true
+		}
+	}
+	return false
 }
 
 // NetworkInfo holds network interface details.

@@ -43,6 +43,7 @@ func (c *DiskCollector) Collect(ctx context.Context) (interface{}, error) {
 				UsagePercent:   usage.UsedPercent,
 				MountOptions:   strings.Join(p.Opts, ","),
 				IsNetworkMount: isNetwork,
+				IsPool:         models.IsPoolFSType(p.Fstype),
 			})
 		}
 	}

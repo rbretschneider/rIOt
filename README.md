@@ -342,7 +342,7 @@ New installs via `install.sh` include all rules automatically.
 | `system` | Hardware identity — CPU model, cores, RAM, board model, serial, BIOS, virtualization |
 | `cpu` | Usage %, per-core, load average, temperature, frequency |
 | `memory` | RAM total/used/free/cached/buffers, swap, usage % |
-| `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth) |
+| `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth); pool/union filesystems (mergerfs, ZFS, Btrfs, bcachefs) are automatically identified and displayed in a separate "Storage Pools" card section on the device detail page |
 | `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
 | `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
 | `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status |

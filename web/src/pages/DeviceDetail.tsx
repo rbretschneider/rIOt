@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
+import { isPoolFilesystem, formatCapacity } from '../utils/filesystem'
 import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
 import BatteryGauge from '../components/BatteryGauge'
@@ -543,40 +544,65 @@ export default function DeviceDetail() {
       )}
 
       {/* Filesystems */}
-      {isEnabled('disk') && tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (
-        <Section title="Filesystems">
-          <div className="max-h-64 overflow-auto scrollbar-thin">
-            <table className="w-full text-sm min-w-[480px]">
-              <thead>
-                <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2 pr-3">Mount</th>
-                  <th className="text-left py-2 pr-3">Device</th>
-                  <th className="text-left py-2 pr-3">Type</th>
-                  <th className="text-right py-2 pr-3">Used</th>
-                  <th className="text-right py-2 pr-3">Total</th>
-                  <th className="text-right py-2 pr-3">Usage</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {tel.disks.filesystems.map((fs) => (
-                  <tr key={fs.mount_point}>
-                    <td className="py-2 pr-3font-mono">{fs.mount_point}</td>
-                    <td className="py-2 pr-3font-mono text-gray-400">{fs.device}</td>
-                    <td className="py-2 pr-3text-gray-400">{fs.fs_type}</td>
-                    <td className="py-2 pr-3text-right font-mono">{fs.used_gb >= 1000 ? `${(fs.used_gb / 1024).toFixed(2)} TB` : `${fs.used_gb.toFixed(1)} GB`}</td>
-                    <td className="py-2 pr-3text-right font-mono text-gray-400">{fs.total_gb >= 1000 ? `${(fs.total_gb / 1024).toFixed(2)} TB` : `${fs.total_gb.toFixed(1)} GB`}</td>
-                    <td className="py-2 pr-3text-right">
-                      <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
-                        {fs.usage_percent.toFixed(1)}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-      )}
+      {isEnabled('disk') && tel?.disks?.filesystems && tel.disks.filesystems.length > 0 && (() => {
+        const poolFilesystems = tel.disks.filesystems.filter(isPoolFilesystem)
+        const regularFilesystems = tel.disks.filesystems.filter(fs => !isPoolFilesystem(fs))
+        return (
+          <Section title="Filesystems">
+            {poolFilesystems.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Storage Pools</h3>
+                <div className="flex flex-wrap gap-4">
+                  {poolFilesystems.map((fs) => (
+                    <div key={fs.mount_point} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 min-w-[280px] flex-1">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-mono text-sm text-gray-100">{fs.mount_point}</span>
+                        <span className="text-xs bg-gray-700 text-gray-300 rounded px-2 py-0.5">{fs.fs_type}</span>
+                      </div>
+                      <GaugeBar label="Usage" value={fs.usage_percent} max={100} unit="%" />
+                      <p className="text-xs text-gray-400 mt-2 font-mono">
+                        {formatCapacity(fs.used_gb)} used of {formatCapacity(fs.total_gb)} ({formatCapacity(fs.free_gb)} free)
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {regularFilesystems.length > 0 && (
+              <div className="max-h-64 overflow-auto scrollbar-thin">
+                <table className="w-full text-sm min-w-[480px]">
+                  <thead>
+                    <tr className="text-gray-500 text-xs uppercase">
+                      <th className="text-left py-2 pr-3">Mount</th>
+                      <th className="text-left py-2 pr-3">Device</th>
+                      <th className="text-left py-2 pr-3">Type</th>
+                      <th className="text-right py-2 pr-3">Used</th>
+                      <th className="text-right py-2 pr-3">Total</th>
+                      <th className="text-right py-2 pr-3">Usage</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/50">
+                    {regularFilesystems.map((fs) => (
+                      <tr key={fs.mount_point}>
+                        <td className="py-2 pr-3font-mono">{fs.mount_point}</td>
+                        <td className="py-2 pr-3font-mono text-gray-400">{fs.device}</td>
+                        <td className="py-2 pr-3text-gray-400">{fs.fs_type}</td>
+                        <td className="py-2 pr-3text-right font-mono">{formatCapacity(fs.used_gb)}</td>
+                        <td className="py-2 pr-3text-right font-mono text-gray-400">{formatCapacity(fs.total_gb)}</td>
+                        <td className="py-2 pr-3text-right">
+                          <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
+                            {fs.usage_percent.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Section>
+        )
+      })()}
 
       {/* Services & Top Processes — side by side */}
       {isEnabled('services') && (

@@ -158,6 +158,7 @@ export interface Filesystem {
   usage_percent: number
   mount_options?: string
   is_network_mount: boolean
+  is_pool?: boolean  // Optional: absent from old agents; use isPoolFilesystem() for classification
 }
 
 export interface NetworkInfo {

@@ -200,4 +200,198 @@ describe('DeviceDetail', () => {
     expect(await screen.findByText('test-host')).toBeInTheDocument()
     expect(screen.queryByText(/Hardware Details/)).not.toBeInTheDocument()
   })
+
+  // Added by QA Engineer
+  // Covers AC-003
+  describe('[AC-003] Pool filesystems render in a distinct subsection', () => {
+    it('renders Storage Pools subsection when at least one filesystem has is_pool true', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/mnt/pool',
+                  device: '/dev/md0',
+                  fs_type: 'fuse.mergerfs',
+                  total_gb: 14000,
+                  used_gb: 7000,
+                  free_gb: 7000,
+                  usage_percent: 50,
+                  is_network_mount: false,
+                  is_pool: true,
+                },
+                {
+                  mount_point: '/',
+                  device: '/dev/sda1',
+                  fs_type: 'ext4',
+                  total_gb: 100,
+                  used_gb: 40,
+                  free_gb: 60,
+                  usage_percent: 40,
+                  is_network_mount: false,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      expect(await screen.findByText('Storage Pools')).toBeInTheDocument()
+    })
+
+    it('displays mount point and filesystem type in the pool card', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/mnt/pool',
+                  device: '/dev/md0',
+                  fs_type: 'fuse.mergerfs',
+                  total_gb: 14000,
+                  used_gb: 7000,
+                  free_gb: 7000,
+                  usage_percent: 50,
+                  is_network_mount: false,
+                  is_pool: true,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      expect(await screen.findByText('/mnt/pool')).toBeInTheDocument()
+      expect(await screen.findByText('fuse.mergerfs')).toBeInTheDocument()
+    })
+
+    it('excludes pool filesystem from the regular filesystem table', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/mnt/pool',
+                  device: '/dev/md0',
+                  fs_type: 'fuse.mergerfs',
+                  total_gb: 14000,
+                  used_gb: 7000,
+                  free_gb: 7000,
+                  usage_percent: 50,
+                  is_network_mount: false,
+                  is_pool: true,
+                },
+                {
+                  mount_point: '/',
+                  device: '/dev/sda1',
+                  fs_type: 'ext4',
+                  total_gb: 100,
+                  used_gb: 40,
+                  free_gb: 60,
+                  usage_percent: 40,
+                  is_network_mount: false,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      // Regular table should exist (contains '/')
+      expect(await screen.findByText('/')).toBeInTheDocument()
+      // '/mnt/pool' appears exactly once — in the pool card, NOT also in the table
+      const poolMountElements = await screen.findAllByText('/mnt/pool')
+      expect(poolMountElements).toHaveLength(1)
+    })
+  })
+
+  // Added by QA Engineer
+  // Covers AC-004
+  describe('[AC-004] No pool subsection when no pools exist', () => {
+    it('does not render Storage Pools subsection when no filesystems have is_pool true', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/',
+                  device: '/dev/sda1',
+                  fs_type: 'ext4',
+                  total_gb: 100,
+                  used_gb: 40,
+                  free_gb: 60,
+                  usage_percent: 40,
+                  is_network_mount: false,
+                },
+                {
+                  mount_point: '/boot',
+                  device: '/dev/sda2',
+                  fs_type: 'vfat',
+                  total_gb: 0.5,
+                  used_gb: 0.1,
+                  free_gb: 0.4,
+                  usage_percent: 20,
+                  is_network_mount: false,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      // Wait for data to load
+      expect(await screen.findByText('/')).toBeInTheDocument()
+      expect(screen.queryByText('Storage Pools')).not.toBeInTheDocument()
+    })
+
+    it('renders regular filesystem table when no pools exist', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/',
+                  device: '/dev/sda1',
+                  fs_type: 'ext4',
+                  total_gb: 100,
+                  used_gb: 40,
+                  free_gb: 60,
+                  usage_percent: 40,
+                  is_network_mount: false,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      expect(await screen.findByText('/')).toBeInTheDocument()
+      expect(await screen.findByText('ext4')).toBeInTheDocument()
+    })
+  })
 })

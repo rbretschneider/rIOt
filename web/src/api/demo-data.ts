@@ -317,7 +317,7 @@ function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
       filesystems: [
         { mount_point: '/', device: '/dev/sda1', fs_type: 'ext4', total_gb: 460, used_gb: 185, free_gb: 275, usage_percent: 40, is_network_mount: false },
         ...(d.hostname === 'nas-synology' ? [
-          { mount_point: '/volume1', device: '/dev/md0', fs_type: 'btrfs', total_gb: 14400, used_gb: 8640, free_gb: 5760, usage_percent: 60, is_network_mount: false },
+          { mount_point: '/volume1', device: '/dev/md0', fs_type: 'btrfs', total_gb: 14400, used_gb: 8640, free_gb: 5760, usage_percent: 60, is_network_mount: false, is_pool: true },
         ] : []),
       ],
     },
