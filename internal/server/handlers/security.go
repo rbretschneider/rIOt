@@ -16,18 +16,23 @@ type securityOverview struct {
 	FirewallInactive  int `json:"firewall_inactive"`
 	SELinuxEnforcing  int `json:"selinux_enforcing"`
 	AppArmorEnabled   int `json:"apparmor_enabled"`
+	CertsExpiringSoon int `json:"certs_expiring_soon"`
+	TotalCerts        int `json:"total_certs"`
 }
 
 type deviceSecurityInfo struct {
-	DeviceID        string `json:"device_id"`
-	Hostname        string `json:"hostname"`
-	Status          string `json:"status"`
-	SELinux         string `json:"selinux"`
-	AppArmor        string `json:"apparmor"`
-	FirewallStatus  string `json:"firewall_status"`
-	FailedLogins24h int    `json:"failed_logins_24h"`
-	LoggedInUsers   int    `json:"logged_in_users"`
-	OpenPorts       []int  `json:"open_ports"`
+	DeviceID             string `json:"device_id"`
+	Hostname             string `json:"hostname"`
+	Status               string `json:"status"`
+	SELinux              string `json:"selinux"`
+	AppArmor             string `json:"apparmor"`
+	FirewallStatus       string `json:"firewall_status"`
+	FailedLogins24h      int    `json:"failed_logins_24h"`
+	LoggedInUsers        int    `json:"logged_in_users"`
+	OpenPorts            []int  `json:"open_ports"`
+	PendingSecurityCount int    `json:"pending_security_count"`
+	UnattendedUpgrades   *bool  `json:"unattended_upgrades"`
+	CertsExpiringSoon    int    `json:"certs_expiring_soon"`
 }
 
 // SecurityOverview handles GET /api/v1/security/overview.
@@ -47,6 +52,19 @@ func (h *Handlers) SecurityOverview(w http.ResponseWriter, r *http.Request) {
 	overview := securityOverview{TotalDevices: len(devices)}
 
 	for _, snap := range snapshots {
+		// Cert counting runs before the sec == nil guard so that devices running
+		// the webservers collector but not the security collector still contribute
+		// their certificates to the fleet-wide totals.
+		if ws := snap.Data.WebServers; ws != nil {
+			for _, srv := range ws.Servers {
+				for _, cert := range srv.Certs {
+					overview.TotalCerts++
+					if cert.DaysLeft <= 30 {
+						overview.CertsExpiringSoon++
+					}
+				}
+			}
+		}
 		sec := snap.Data.Security
 		if sec == nil {
 			continue
@@ -110,6 +128,20 @@ func (h *Handlers) SecurityDevices(w http.ResponseWriter, r *http.Request) {
 		}
 		if info.OpenPorts == nil {
 			info.OpenPorts = []int{}
+		}
+		if upd := snap.Data.Updates; upd != nil {
+			info.PendingSecurityCount = upd.PendingSecurityCount
+			v := upd.UnattendedUpgrades
+			info.UnattendedUpgrades = &v
+		}
+		if ws := snap.Data.WebServers; ws != nil {
+			for _, srv := range ws.Servers {
+				for _, cert := range srv.Certs {
+					if cert.DaysLeft <= 30 {
+						info.CertsExpiringSoon++
+					}
+				}
+			}
 		}
 		result = append(result, info)
 	}

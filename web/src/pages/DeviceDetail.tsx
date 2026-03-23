@@ -563,8 +563,8 @@ export default function DeviceDetail() {
                     <td className="py-2 pr-3font-mono">{fs.mount_point}</td>
                     <td className="py-2 pr-3font-mono text-gray-400">{fs.device}</td>
                     <td className="py-2 pr-3text-gray-400">{fs.fs_type}</td>
-                    <td className="py-2 pr-3text-right font-mono">{fs.used_gb.toFixed(1)} GB</td>
-                    <td className="py-2 pr-3text-right font-mono text-gray-400">{fs.total_gb.toFixed(1)} GB</td>
+                    <td className="py-2 pr-3text-right font-mono">{fs.used_gb >= 1000 ? `${(fs.used_gb / 1024).toFixed(2)} TB` : `${fs.used_gb.toFixed(1)} GB`}</td>
+                    <td className="py-2 pr-3text-right font-mono text-gray-400">{fs.total_gb >= 1000 ? `${(fs.total_gb / 1024).toFixed(2)} TB` : `${fs.total_gb.toFixed(1)} GB`}</td>
                     <td className="py-2 pr-3text-right">
                       <span className={fs.usage_percent > 90 ? 'text-red-400' : fs.usage_percent > 75 ? 'text-amber-400' : 'text-emerald-400'}>
                         {fs.usage_percent.toFixed(1)}%
@@ -873,7 +873,7 @@ export default function DeviceDetail() {
                         <td className="py-1.5 pr-4 text-xs font-mono font-medium">{d.name}</td>
                         <td className="py-1.5 pr-4 text-xs">{d.model || '-'}</td>
                         <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{d.serial || '-'}</td>
-                        <td className="py-1.5 pr-4 text-xs">{d.size_gb >= 1 ? `${d.size_gb.toFixed(1)} GB` : `${(d.size_gb * 1024).toFixed(0)} MB`}</td>
+                        <td className="py-1.5 pr-4 text-xs">{d.size_gb >= 1000 ? `${(d.size_gb / 1024).toFixed(2)} TB` : d.size_gb >= 1 ? `${d.size_gb.toFixed(1)} GB` : `${(d.size_gb * 1024).toFixed(0)} MB`}</td>
                         <td className="py-1.5 pr-4 text-xs">
                           {d.type && (
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
@@ -1308,7 +1308,7 @@ export default function DeviceDetail() {
 
       {/* Device Logs */}
       {isEnabled('logs') && (
-      <Section title="Device Logs">
+      <Section title="Device System Logs">
         <div className="flex items-center justify-between mb-3">
           <div className="flex gap-2">
             {([
@@ -1438,7 +1438,7 @@ export default function DeviceDetail() {
       })()}
 
       {/* Activity Log */}
-      <Section title="Activity Log">
+      <Section title="Agent Activity Log">
         <ActivityLog deviceId={id!} />
       </Section>
 
@@ -1582,5 +1582,6 @@ function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(1)} TB`
 }

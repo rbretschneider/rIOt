@@ -5,10 +5,8 @@ import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
-import type { SecurityScoreResult } from '../types/models'
 
 import ConfirmModal from '../components/ConfirmModal'
-import SecurityScoreModal from '../components/SecurityScoreModal'
 import SetupGuide from '../components/SetupGuide'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
@@ -103,8 +101,6 @@ export default function FleetOverview() {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [scoreModal, setScoreModal] = useState<{ score: SecurityScoreResult; hostname?: string } | null>(null)
-
   const filtered = useMemo(() => {
     if (!devices) return []
     let list = devices.filter((d) => {
@@ -219,9 +215,6 @@ export default function FleetOverview() {
                   </svg>
                 </th>
                 )}
-                {isEnabled('security_score') && (
-                <th className="px-2 py-3 text-center text-xs font-medium text-gray-400 uppercase w-12">Score</th>
-                )}
                 <SortHeader k="short_id">ID</SortHeader>
                 <SortHeader k="arch">Arch</SortHeader>
                 <SortHeader k="agent_version">Version</SortHeader>
@@ -268,11 +261,6 @@ export default function FleetOverview() {
                     ) : (
                       <span className="text-gray-700">-</span>
                     )}
-                  </td>
-                  )}
-                  {isEnabled('security_score') && (
-                  <td className="px-2 py-3 text-center">
-                    <MiniScore deviceId={d.id} onShowModal={(score) => setScoreModal({ score, hostname: d.hostname })} />
                   </td>
                   )}
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
@@ -357,10 +345,6 @@ export default function FleetOverview() {
           onConfirm={() => { bulkUpdateMutation.mutate(); setShowUpdateConfirm(false) }}
           onCancel={() => setShowUpdateConfirm(false)}
         />
-      )}
-
-      {scoreModal && (
-        <SecurityScoreModal score={scoreModal.score} hostname={scoreModal.hostname} onClose={() => setScoreModal(null)} />
       )}
 
     </div>
@@ -488,52 +472,3 @@ function StatCard({ label, value, color = 'text-white' }: { label: string; value
   )
 }
 
-function miniScoreColor(grade: string): string {
-  switch (grade) {
-    case 'A': return 'text-emerald-400'
-    case 'B': return 'text-blue-400'
-    case 'C': return 'text-amber-400'
-    case 'D': return 'text-orange-400'
-    default:  return 'text-red-400'
-  }
-}
-
-function miniStrokeColor(grade: string): string {
-  switch (grade) {
-    case 'A': return 'stroke-emerald-500'
-    case 'B': return 'stroke-blue-500'
-    case 'C': return 'stroke-amber-500'
-    case 'D': return 'stroke-orange-500'
-    default:  return 'stroke-red-500'
-  }
-}
-
-function MiniScore({ deviceId, onShowModal }: { deviceId: string; onShowModal: (s: SecurityScoreResult) => void }) {
-  const { data: score } = useQuery({
-    queryKey: ['security-score', deviceId],
-    queryFn: () => api.getSecurityScore(deviceId),
-    staleTime: 5 * 60_000,
-  })
-
-  if (!score) return <span className="text-gray-700">-</span>
-
-  const r = 10
-  const circ = 2 * Math.PI * r
-  const offset = circ * (1 - Math.max(0, Math.min(100, score.overall_score)) / 100)
-
-  return (
-    <button
-      onClick={() => onShowModal(score)}
-      className="inline-flex items-center gap-1 group cursor-pointer"
-      title={`Security: ${score.overall_score}/100 (${score.grade})`}
-    >
-      <svg viewBox="0 0 24 24" className="w-6 h-6 -rotate-90 flex-shrink-0">
-        <circle cx="12" cy="12" r={r} fill="none" className="stroke-gray-700" strokeWidth="3" />
-        <circle cx="12" cy="12" r={r} fill="none" className={`${miniStrokeColor(score.grade)} transition-all duration-500`} strokeWidth="3" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-      </svg>
-      <span className={`text-xs font-semibold ${miniScoreColor(score.grade)} group-hover:brightness-125 transition`}>
-        {score.overall_score}
-      </span>
-    </button>
-  )
-}

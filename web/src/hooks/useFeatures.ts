@@ -3,7 +3,7 @@ import { settingsApi } from '../api/settings'
 
 // All toggleable features with their default state (true = visible).
 export const FEATURES = {
-  security_score: { label: 'Security Score', description: 'Security score column on fleet dashboard and score gauge on device detail' },
+  security_score: { label: 'Security Score', description: 'Security score gauge on device detail' },
   docker: { label: 'Docker', description: 'Docker column on fleet dashboard and container sections on device detail' },
   usb: { label: 'USB Devices', description: 'USB device table on device detail' },
   hardware: { label: 'Hardware Details', description: 'PCI devices, disk drives, serial ports, GPUs on device detail' },

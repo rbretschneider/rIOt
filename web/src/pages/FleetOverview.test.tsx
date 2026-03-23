@@ -67,3 +67,22 @@ describe('FleetOverview', () => {
     expect(screen.queryByText('*')).not.toBeInTheDocument()
   })
 })
+
+describe('[AC-001] Score column removed from Fleet Overview', () => {
+  it('does not render a Score column header in the device table', async () => {
+    renderWithProviders()
+    await screen.findByText('node-1')
+    const headers = screen.getAllByRole('columnheader')
+    const headerTexts = headers.map(h => h.textContent?.trim() ?? '')
+    const hasScoreColumn = headerTexts.some(t => t === 'Score')
+    expect(hasScoreColumn).toBe(false)
+  })
+
+  it('does not render a MiniScore radial indicator for any device', async () => {
+    renderWithProviders()
+    await screen.findByText('node-1')
+    // MiniScore renders an SVG with a title attribute like "Security: ..."
+    const scoreTitles = document.querySelectorAll('[title^="Security:"]')
+    expect(scoreTitles.length).toBe(0)
+  })
+})

@@ -175,6 +175,8 @@ export const api = {
       firewall_inactive: number
       selinux_enforcing: number
       apparmor_enabled: number
+      certs_expiring_soon: number
+      total_certs: number
     }>(`${BASE}/security/overview`),
 
   getSecurityDevices: () =>
@@ -188,6 +190,9 @@ export const api = {
       failed_logins_24h: number
       logged_in_users: number
       open_ports: number[]
+      pending_security_count: number
+      unattended_upgrades: boolean | null
+      certs_expiring_soon: number
     }[]>(`${BASE}/security/devices`),
 
   bulkUpdateAgents: async (version: string): Promise<{ sent: number; skipped: number; total: number }> => {
