@@ -77,7 +77,7 @@ func (h *Hub) Run() {
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Error("ws upgrade", "error", err)
+		slog.Error("ws upgrade", "error", err.Error())
 		return
 	}
 	client := &Client{hub: h, conn: conn, send: make(chan []byte, 256)}
@@ -89,7 +89,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) broadcastMsg(msg WSMessage) {
 	data, err := json.Marshal(msg)
 	if err != nil {
-		slog.Error("ws marshal", "error", err)
+		slog.Error("ws marshal", "error", err.Error())
 		return
 	}
 	h.broadcast <- data

@@ -135,7 +135,7 @@ func (s *Server) Start() error {
 	// Set up admin password
 	if s.Config.AdminPasswordHash != "" {
 		if err := s.AdminRepo.SetPasswordHash(ctx, s.Config.AdminPasswordHash); err != nil {
-			slog.Error("failed to store admin password hash", "error", err)
+			slog.Error("failed to store admin password hash", "error", err.Error())
 		} else {
 			slog.Info("admin password configured")
 		}
@@ -223,7 +223,7 @@ func (s *Server) Start() error {
 				err = s.httpServer.ListenAndServeTLS("", "")
 			}
 			if err != nil && err != http.ErrServerClosed {
-				slog.Error("server error", "error", err)
+				slog.Error("server error", "error", err.Error())
 				os.Exit(1)
 			}
 		} else {
@@ -233,7 +233,7 @@ func (s *Server) Start() error {
 				slog.Info("server starting", "port", s.Config.Port)
 			}
 			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("server error", "error", err)
+				slog.Error("server error", "error", err.Error())
 				os.Exit(1)
 			}
 		}
@@ -258,7 +258,7 @@ func (s *Server) loadDBConfig(ctx context.Context) {
 	keys := []string{"jwt_secret", "tls_enabled", "tls_mode", "tls_domain", "mtls_enabled", "registration_key"}
 	dbCfg, err := s.AdminRepo.GetConfigMap(ctx, keys)
 	if err != nil {
-		slog.Debug("could not load config from DB", "error", err)
+		slog.Debug("could not load config from DB", "error", err.Error())
 		return
 	}
 
@@ -366,7 +366,7 @@ func (s *Server) applyTLSAndRestart() {
 	// Load mTLS CA if now enabled
 	if s.Config.MTLSEnabled && s.CA == nil {
 		if err := s.loadOrCreateCA(ctx); err != nil {
-			slog.Error("post-setup: failed to load/create CA", "error", err)
+			slog.Error("post-setup: failed to load/create CA", "error", err.Error())
 		}
 	}
 
@@ -396,12 +396,12 @@ func (s *Server) applyTLSAndRestart() {
 	}
 
 	if err := s.configureTLS(); err != nil {
-		slog.Error("post-setup: TLS configuration failed", "error", err)
+		slog.Error("post-setup: TLS configuration failed", "error", err.Error())
 		// Fall back to plain HTTP
 		go func() {
 			slog.Info("falling back to HTTP", "port", s.Config.Port)
 			if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("server error", "error", err)
+				slog.Error("server error", "error", err.Error())
 			}
 		}()
 		return
@@ -416,7 +416,7 @@ func (s *Server) applyTLSAndRestart() {
 			err = s.httpServer.ListenAndServeTLS("", "")
 		}
 		if err != nil && err != http.ErrServerClosed {
-			slog.Error("server error after TLS restart", "error", err)
+			slog.Error("server error after TLS restart", "error", err.Error())
 		}
 	}()
 }
@@ -440,77 +440,77 @@ func (s *Server) runRetention(ctx context.Context) {
 
 	hbDeleted, err := s.TelemetryRepo.PurgeHeartbeats(ctx, now.AddDate(0, 0, -7))
 	if err != nil {
-		slog.Error("purge heartbeats failed", "error", err)
+		slog.Error("purge heartbeats failed", "error", err.Error())
 	} else if hbDeleted > 0 {
 		slog.Info("purged old heartbeats", "count", hbDeleted)
 	}
 
 	snapDeleted, err := s.TelemetryRepo.PurgeSnapshots(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
 	if err != nil {
-		slog.Error("purge snapshots failed", "error", err)
+		slog.Error("purge snapshots failed", "error", err.Error())
 	} else if snapDeleted > 0 {
 		slog.Info("purged old snapshots", "count", snapDeleted)
 	}
 
 	evtDeleted, err := s.EventRepo.Purge(ctx, now.AddDate(0, 0, -90))
 	if err != nil {
-		slog.Error("purge events failed", "error", err)
+		slog.Error("purge events failed", "error", err.Error())
 	} else if evtDeleted > 0 {
 		slog.Info("purged old events", "count", evtDeleted)
 	}
 
 	prDeleted, err := s.ProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
 	if err != nil {
-		slog.Error("purge probe results failed", "error", err)
+		slog.Error("purge probe results failed", "error", err.Error())
 	} else if prDeleted > 0 {
 		slog.Info("purged old probe results", "count", prDeleted)
 	}
 
 	nlDeleted, err := s.NotifyRepo.PurgeNotificationLog(ctx, now.AddDate(0, 0, -90))
 	if err != nil {
-		slog.Error("purge notification log failed", "error", err)
+		slog.Error("purge notification log failed", "error", err.Error())
 	} else if nlDeleted > 0 {
 		slog.Info("purged old notification log entries", "count", nlDeleted)
 	}
 
 	logDeleted, err := s.LogRepo.Purge(ctx, now.AddDate(0, 0, -7))
 	if err != nil {
-		slog.Error("purge server logs failed", "error", err)
+		slog.Error("purge server logs failed", "error", err.Error())
 	} else if logDeleted > 0 {
 		slog.Info("purged old server logs", "count", logDeleted)
 	}
 
 	clDeleted, err := s.ContainerLogRepo.Purge(ctx, now.AddDate(0, 0, -7))
 	if err != nil {
-		slog.Error("purge container logs failed", "error", err)
+		slog.Error("purge container logs failed", "error", err.Error())
 	} else if clDeleted > 0 {
 		slog.Info("purged old container logs", "count", clDeleted)
 	}
 
 	cmDeleted, err := s.ContainerMetricRepo.Purge(ctx, now.AddDate(0, 0, -7))
 	if err != nil {
-		slog.Error("purge container metrics failed", "error", err)
+		slog.Error("purge container metrics failed", "error", err.Error())
 	} else if cmDeleted > 0 {
 		slog.Info("purged old container metrics", "count", cmDeleted)
 	}
 
 	dpDeleted, err := s.DeviceProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
 	if err != nil {
-		slog.Error("purge device probe results failed", "error", err)
+		slog.Error("purge device probe results failed", "error", err.Error())
 	} else if dpDeleted > 0 {
 		slog.Info("purged old device probe results", "count", dpDeleted)
 	}
 
 	dlDeleted, err := s.DeviceLogRepo.Purge(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
 	if err != nil {
-		slog.Error("purge device logs failed", "error", err)
+		slog.Error("purge device logs failed", "error", err.Error())
 	} else if dlDeleted > 0 {
 		slog.Info("purged old device logs", "count", dlDeleted)
 	}
 
 	bkDeleted, err := s.CARepo.PurgeStaleBootstrapKeys(ctx)
 	if err != nil {
-		slog.Error("purge stale bootstrap keys failed", "error", err)
+		slog.Error("purge stale bootstrap keys failed", "error", err.Error())
 	} else if bkDeleted > 0 {
 		slog.Info("purged stale bootstrap keys", "count", bkDeleted)
 	}
@@ -641,7 +641,7 @@ func (s *Server) loadOrCreateCA(ctx context.Context) error {
 func (s *Server) seedDefaultAlertRules(ctx context.Context) {
 	existing, err := s.AlertRuleRepo.List(ctx)
 	if err != nil {
-		slog.Error("seed alert rules: list", "error", err)
+		slog.Error("seed alert rules: list", "error", err.Error())
 		return
 	}
 	if len(existing) > 0 {
@@ -658,7 +658,7 @@ func (s *Server) seedDefaultAlertRules(ctx context.Context) {
 	}
 	for _, rule := range defaults {
 		if err := s.AlertRuleRepo.Create(ctx, &rule); err != nil {
-			slog.Error("seed alert rule", "name", rule.Name, "error", err)
+			slog.Error("seed alert rule", "name", rule.Name, "error", err.Error())
 		}
 	}
 	slog.Info("seeded default alert rules", "count", len(defaults))

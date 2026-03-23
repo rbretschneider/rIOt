@@ -19,14 +19,14 @@ func (h *Handlers) ListAllDeviceProbes(w http.ResponseWriter, r *http.Request) {
 
 	probes, err := h.deviceProbeRepo.ListAll(ctx)
 	if err != nil {
-		slog.Error("list all device probes", "error", err)
+		slog.Error("list all device probes", "error", err.Error())
 		http.Error(w, `{"error":"failed to list all device probes"}`, http.StatusInternalServerError)
 		return
 	}
 
 	devices, err := h.devices.List(ctx)
 	if err != nil {
-		slog.Error("list devices for device probes", "error", err)
+		slog.Error("list devices for device probes", "error", err.Error())
 		http.Error(w, `{"error":"failed to list all device probes"}`, http.StatusInternalServerError)
 		return
 	}
@@ -109,7 +109,7 @@ func (h *Handlers) CreateDeviceProbe(w http.ResponseWriter, r *http.Request) {
 		probe.TimeoutSeconds = 10
 	}
 	if err := h.deviceProbeRepo.Create(r.Context(), &probe); err != nil {
-		slog.Error("create device probe", "error", err)
+		slog.Error("create device probe", "error", err.Error())
 		http.Error(w, `{"error":"failed to create device probe"}`, http.StatusInternalServerError)
 		return
 	}
@@ -138,7 +138,7 @@ func (h *Handlers) UpdateDeviceProbe(w http.ResponseWriter, r *http.Request) {
 		probe.Assertions = []models.ProbeAssertion{}
 	}
 	if err := h.deviceProbeRepo.Update(r.Context(), &probe); err != nil {
-		slog.Error("update device probe", "error", err)
+		slog.Error("update device probe", "error", err.Error())
 		http.Error(w, `{"error":"failed to update device probe"}`, http.StatusInternalServerError)
 		return
 	}
@@ -153,7 +153,7 @@ func (h *Handlers) DeleteDeviceProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deviceProbeRepo.Delete(r.Context(), pid); err != nil {
-		slog.Error("delete device probe", "error", err)
+		slog.Error("delete device probe", "error", err.Error())
 		http.Error(w, `{"error":"failed to delete device probe"}`, http.StatusInternalServerError)
 		return
 	}
@@ -192,7 +192,7 @@ func (h *Handlers) RunDeviceProbe(w http.ResponseWriter, r *http.Request) {
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create run_device_probe command", "error", err)
+		slog.Error("create run_device_probe command", "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
@@ -263,7 +263,7 @@ func (h *Handlers) ReceiveDeviceProbeResults(w http.ResponseWriter, r *http.Requ
 	for i := range results {
 		results[i].DeviceID = deviceID
 		if err := h.deviceProbeRepo.StoreResult(r.Context(), &results[i]); err != nil {
-			slog.Error("store device probe result", "probe_id", results[i].ProbeID, "error", err)
+			slog.Error("store device probe result", "probe_id", results[i].ProbeID, "error", err.Error())
 			continue
 		}
 		stored++
@@ -287,7 +287,7 @@ func (h *Handlers) ReceiveDeviceProbeResults(w http.ResponseWriter, r *http.Requ
 				CreatedAt: time.Now().UTC(),
 			}
 			if err := h.events.Create(r.Context(), evt); err != nil {
-				slog.Error("create device probe event", "error", err)
+				slog.Error("create device probe event", "error", err.Error())
 			} else {
 				h.hub.BroadcastEvent(evt)
 			}

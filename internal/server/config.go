@@ -62,7 +62,7 @@ func LoadConfig() *Config {
 	if v := os.Getenv("RIOT_ADMIN_PASSWORD"); v != "" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(v), bcrypt.DefaultCost)
 		if err != nil {
-			slog.Error("failed to hash admin password", "error", err)
+			slog.Error("failed to hash admin password", "error", err.Error())
 		} else {
 			cfg.AdminPasswordHash = string(hash)
 		}

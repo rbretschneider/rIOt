@@ -55,7 +55,7 @@ func (r *Runner) Start(ctx context.Context) {
 func (r *Runner) reload(ctx context.Context) {
 	probes, err := r.repo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("probe runner: list enabled", "error", err)
+		slog.Error("probe runner: list enabled", "error", err.Error())
 		return
 	}
 
@@ -142,7 +142,7 @@ func (r *Runner) executeProbe(ctx context.Context, probe models.Probe) {
 	}
 
 	if err := r.repo.StoreResult(ctx, result); err != nil {
-		slog.Error("probe: store result", "probe", probe.Name, "error", err)
+		slog.Error("probe: store result", "probe", probe.Name, "error", err.Error())
 		return
 	}
 
@@ -175,7 +175,7 @@ func (r *Runner) createProbeEvent(ctx context.Context, probe models.Probe, event
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := r.eventRepo.Create(ctx, evt); err != nil {
-		slog.Error("probe: create event", "error", err)
+		slog.Error("probe: create event", "error", err.Error())
 		return
 	}
 	r.hub.BroadcastEvent(evt)

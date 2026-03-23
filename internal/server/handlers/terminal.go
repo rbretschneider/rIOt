@@ -81,7 +81,7 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := terminalUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Error("agent ws upgrade failed", "error", err)
+		slog.Error("agent ws upgrade failed", "error", err.Error())
 		return
 	}
 
@@ -162,12 +162,12 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleCommandResult(ctx context.Context, msg agentWSMessage) {
 	var result models.CommandResult
 	if err := json.Unmarshal(msg.Data, &result); err != nil {
-		slog.Warn("terminal: invalid command_result", "error", err)
+		slog.Warn("terminal: invalid command_result", "error", err.Error())
 		return
 	}
 	if h.commandRepo != nil {
 		if err := h.commandRepo.UpdateCommandResult(ctx, result.CommandID, result.Status, result.Message, result.DurationMs, result.ExitCode); err != nil {
-			slog.Error("terminal: update command result", "error", err)
+			slog.Error("terminal: update command result", "error", err.Error())
 		}
 		// Save captured output if present
 		if result.Output != "" {
@@ -177,7 +177,7 @@ func (h *Handlers) handleCommandResult(ctx context.Context, msg agentWSMessage) 
 				Content:   result.Output,
 			}
 			if err := h.commandRepo.SaveCommandOutput(ctx, output); err != nil {
-				slog.Error("terminal: save command output", "error", err)
+				slog.Error("terminal: save command output", "error", err.Error())
 			}
 		}
 	}
@@ -220,7 +220,7 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := terminalUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		slog.Error("terminal ws upgrade failed", "error", err)
+		slog.Error("terminal ws upgrade failed", "error", err.Error())
 		return
 	}
 
@@ -233,7 +233,7 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// Audit log: record terminal session start
 	if h.terminalRepo != nil {
 		if err := h.terminalRepo.LogSessionStart(r.Context(), deviceID, containerID, sessionID, r.RemoteAddr); err != nil {
-			slog.Error("terminal: failed to log session start", "error", err)
+			slog.Error("terminal: failed to log session start", "error", err.Error())
 		}
 	}
 
@@ -246,7 +246,7 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		// Audit log: record terminal session end
 		if h.terminalRepo != nil {
 			if err := h.terminalRepo.LogSessionEnd(r.Context(), sessionID); err != nil {
-				slog.Error("terminal: failed to log session end", "error", err)
+				slog.Error("terminal: failed to log session end", "error", err.Error())
 			}
 		}
 
@@ -261,7 +261,7 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		SessionID:   sessionID,
 		ContainerID: containerID,
 	}); err != nil {
-		slog.Error("terminal: failed to send start to agent", "error", err)
+		slog.Error("terminal: failed to send start to agent", "error", err.Error())
 		return
 	}
 

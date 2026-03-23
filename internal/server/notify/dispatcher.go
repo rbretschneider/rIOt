@@ -54,7 +54,7 @@ func (d *Dispatcher) SetHTTPClient(c *http.Client) {
 func (d *Dispatcher) Dispatch(ctx context.Context, alert models.Alert) {
 	channels, err := d.repo.ListEnabledChannels(ctx)
 	if err != nil {
-		slog.Error("dispatch: list channels", "error", err)
+		slog.Error("dispatch: list channels", "error", err.Error())
 		return
 	}
 	if len(channels) == 0 {
@@ -85,7 +85,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, alert models.Alert) {
 		if err != nil {
 			logEntry.Status = "failed"
 			logEntry.ErrorMsg = err.Error()
-			slog.Error("dispatch: send failed", "channel", ch.Name, "type", ch.Type, "error", err)
+			slog.Error("dispatch: send failed", "channel", ch.Name, "type", ch.Type, "error", err.Error())
 		}
 		if logErr := d.repo.LogNotification(ctx, logEntry); logErr != nil {
 			slog.Error("dispatch: log notification", "error", logErr)

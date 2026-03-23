@@ -158,7 +158,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 				existing.Tags = reg.Tags
 			}
 			if err := h.devices.Update(r.Context(), existing); err != nil {
-				slog.Error("update device", "error", err)
+				slog.Error("update device", "error", err.Error())
 				http.Error(w, `{"error":"failed to update device"}`, http.StatusInternalServerError)
 				return
 			}
@@ -171,7 +171,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			if agentKey == "" {
 				apiKey = generateAPIKey()
 				if err := h.devices.StoreAPIKey(r.Context(), apiKey, device.ID); err != nil {
-					slog.Error("store API key for enrolled device", "error", err)
+					slog.Error("store API key for enrolled device", "error", err.Error())
 					http.Error(w, `{"error":"failed to store API key"}`, http.StatusInternalServerError)
 					return
 				}
@@ -211,12 +211,12 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.devices.Create(r.Context(), device); err != nil {
-		slog.Error("create device", "error", err)
+		slog.Error("create device", "error", err.Error())
 		http.Error(w, `{"error":"failed to create device"}`, http.StatusInternalServerError)
 		return
 	}
 	if err := h.devices.StoreAPIKey(r.Context(), deviceKey, deviceID); err != nil {
-		slog.Error("store api key", "error", err)
+		slog.Error("store api key", "error", err.Error())
 		http.Error(w, `{"error":"failed to store api key"}`, http.StatusInternalServerError)
 		return
 	}
@@ -246,7 +246,7 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.telemetry.StoreHeartbeat(r.Context(), &hb); err != nil {
-		slog.Error("store heartbeat", "error", err)
+		slog.Error("store heartbeat", "error", err.Error())
 		http.Error(w, `{"error":"failed to store heartbeat"}`, http.StatusInternalServerError)
 		return
 	}
@@ -312,7 +312,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.telemetry.StoreSnapshot(r.Context(), &snap); err != nil {
-		slog.Error("store telemetry", "error", err)
+		slog.Error("store telemetry", "error", err.Error())
 		http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
 		return
 	}
@@ -339,7 +339,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// Extract and store device logs
 	if len(snap.Data.Logs) > 0 && h.deviceLogRepo != nil {
 		if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.Logs); err != nil {
-			slog.Error("store device logs", "error", err)
+			slog.Error("store device logs", "error", err.Error())
 		}
 		snap.Data.Logs = nil // Don't persist logs in the telemetry snapshot
 	}
@@ -347,7 +347,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// Extract and store container logs
 	if len(snap.Data.ContainerLogs) > 0 && h.containerLogRepo != nil {
 		if err := h.containerLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.ContainerLogs); err != nil {
-			slog.Error("store container logs", "error", err)
+			slog.Error("store container logs", "error", err.Error())
 		}
 		snap.Data.ContainerLogs = nil // Don't persist logs in the telemetry snapshot
 	}
@@ -371,7 +371,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(metrics) > 0 {
 			if err := h.containerMetricRepo.StoreBatch(r.Context(), deviceID, metrics); err != nil {
-				slog.Error("store container metrics", "error", err)
+				slog.Error("store container metrics", "error", err.Error())
 			}
 		}
 	}
@@ -517,7 +517,7 @@ func (h *Handlers) ReceiveDeviceLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, entries); err != nil {
-		slog.Error("receive device logs", "device", deviceID, "error", err)
+		slog.Error("receive device logs", "device", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to store logs"}`, http.StatusInternalServerError)
 		return
 	}
@@ -607,7 +607,7 @@ func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.devices.Delete(r.Context(), id); err != nil {
-		slog.Error("failed to delete device", "id", id, "error", err)
+		slog.Error("failed to delete device", "id", id, "error", err.Error())
 		http.Error(w, fmt.Sprintf(`{"error":"failed to delete device: %s"}`, err), http.StatusInternalServerError)
 		return
 	}
@@ -733,7 +733,7 @@ func (h *Handlers) GetContainerLogs(w http.ResponseWriter, r *http.Request) {
 
 	entries, err := h.containerLogRepo.List(r.Context(), deviceID, containerID, limit, stream, since)
 	if err != nil {
-		slog.Error("get container logs", "error", err)
+		slog.Error("get container logs", "error", err.Error())
 		http.Error(w, `{"error":"failed to fetch container logs"}`, http.StatusInternalServerError)
 		return
 	}
@@ -770,7 +770,7 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := h.events.Create(r.Context(), e); err != nil {
-		slog.Error("create agent event", "error", err)
+		slog.Error("create agent event", "error", err.Error())
 		http.Error(w, `{"error":"failed to create event"}`, http.StatusInternalServerError)
 		return
 	}
@@ -908,7 +908,7 @@ func (h *Handlers) RotateKey(w http.ResponseWriter, r *http.Request) {
 
 	// Delete old keys
 	if err := h.devices.DeleteAPIKeysByDevice(r.Context(), id); err != nil {
-		slog.Error("rotate key: delete old keys", "error", err)
+		slog.Error("rotate key: delete old keys", "error", err.Error())
 		http.Error(w, `{"error":"failed to rotate key"}`, http.StatusInternalServerError)
 		return
 	}
@@ -916,7 +916,7 @@ func (h *Handlers) RotateKey(w http.ResponseWriter, r *http.Request) {
 	// Generate and store new key
 	newKey := generateAPIKey()
 	if err := h.devices.StoreAPIKey(r.Context(), newKey, id); err != nil {
-		slog.Error("rotate key: store new key", "error", err)
+		slog.Error("rotate key: store new key", "error", err.Error())
 		http.Error(w, `{"error":"failed to store new key"}`, http.StatusInternalServerError)
 		return
 	}
@@ -991,7 +991,7 @@ func (h *Handlers) SetRegistrationKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.adminRepo.SetConfig(r.Context(), "registration_key", body.RegistrationKey); err != nil {
-		slog.Error("set registration key", "error", err)
+		slog.Error("set registration key", "error", err.Error())
 		http.Error(w, `{"error":"failed to save registration key"}`, http.StatusInternalServerError)
 		return
 	}

@@ -55,7 +55,7 @@ func (h *Handlers) SetAutoUpdate(w http.ResponseWriter, r *http.Request) {
 		Enabled:        body.Enabled,
 	}
 	if err := h.autoUpdateRepo.Upsert(r.Context(), p); err != nil {
-		slog.Error("upsert auto-update policy", "error", err)
+		slog.Error("upsert auto-update policy", "error", err.Error())
 		http.Error(w, `{"error":"failed to save auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
@@ -67,7 +67,7 @@ func (h *Handlers) DeleteAutoUpdate(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 	target := chi.URLParam(r, "target")
 	if err := h.autoUpdateRepo.Delete(r.Context(), deviceID, target); err != nil {
-		slog.Error("delete auto-update policy", "error", err)
+		slog.Error("delete auto-update policy", "error", err.Error())
 		http.Error(w, `{"error":"failed to delete auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
@@ -111,7 +111,7 @@ func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
 
 	data, _ := json.Marshal(cfg)
 	if err := h.adminRepo.SetConfig(r.Context(), "automation_config", string(data)); err != nil {
-		slog.Error("save automation config", "error", err)
+		slog.Error("save automation config", "error", err.Error())
 		http.Error(w, `{"error":"failed to save automation config"}`, http.StatusInternalServerError)
 		return
 	}
@@ -268,7 +268,7 @@ func (h *Handlers) dispatchAutoUpdate(ctx context.Context, deviceID string, pol 
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(ctx, cmd); err != nil {
-		slog.Error("auto-update: create command", "error", err)
+		slog.Error("auto-update: create command", "error", err.Error())
 		return
 	}
 
@@ -308,7 +308,7 @@ func (h *Handlers) SetAutoPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.devices.UpdateAutoPatch(r.Context(), deviceID, body.Enabled); err != nil {
-		slog.Error("update auto-patch", "error", err)
+		slog.Error("update auto-patch", "error", err.Error())
 		http.Error(w, `{"error":"failed to update auto-patch setting"}`, http.StatusInternalServerError)
 		return
 	}
@@ -353,7 +353,7 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(ctx, cmd); err != nil {
-		slog.Error("auto-patch: create command", "error", err)
+		slog.Error("auto-patch: create command", "error", err.Error())
 		return
 	}
 

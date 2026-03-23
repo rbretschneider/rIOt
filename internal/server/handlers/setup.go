@@ -78,12 +78,12 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// 1. Hash and store password
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		slog.Error("setup: hash password", "error", err)
+		slog.Error("setup: hash password", "error", err.Error())
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
 	if err := h.adminRepo.SetPasswordHash(ctx, string(hash)); err != nil {
-		slog.Error("setup: store password", "error", err)
+		slog.Error("setup: store password", "error", err.Error())
 		http.Error(w, `{"error":"failed to store password"}`, http.StatusInternalServerError)
 		return
 	}
@@ -93,14 +93,14 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	rand.Read(jwtBytes)
 	jwtSecret := hex.EncodeToString(jwtBytes)
 	if err := h.adminRepo.SetConfig(ctx, "jwt_secret", jwtSecret); err != nil {
-		slog.Error("setup: store jwt secret", "error", err)
+		slog.Error("setup: store jwt secret", "error", err.Error())
 		http.Error(w, `{"error":"failed to store jwt secret"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// 3. TLS configuration
 	if err := h.adminRepo.SetConfig(ctx, "tls_mode", req.TLSMode); err != nil {
-		slog.Error("setup: store tls_mode", "error", err)
+		slog.Error("setup: store tls_mode", "error", err.Error())
 		http.Error(w, `{"error":"failed to store tls config"}`, http.StatusInternalServerError)
 		return
 	}
@@ -108,7 +108,7 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	switch req.TLSMode {
 	case "self-signed":
 		if err := h.adminRepo.SetConfig(ctx, "tls_enabled", "true"); err != nil {
-			slog.Error("setup: store tls_enabled", "error", err)
+			slog.Error("setup: store tls_enabled", "error", err.Error())
 			http.Error(w, `{"error":"failed to store tls config"}`, http.StatusInternalServerError)
 			return
 		}
@@ -133,17 +133,17 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 			}
 			sansJSON, _ := json.Marshal(req.ExtraSANs)
 			if err := h.adminRepo.SetConfig(ctx, "tls_extra_sans", string(sansJSON)); err != nil {
-				slog.Error("setup: store tls_extra_sans", "error", err)
+				slog.Error("setup: store tls_extra_sans", "error", err.Error())
 			}
 		}
 		certPEM, keyPEM, err := ca.GenerateServerTLS(hostname, extraIPs, 3650, req.ExtraSANs...)
 		if err != nil {
-			slog.Error("setup: generate server TLS cert", "error", err)
+			slog.Error("setup: generate server TLS cert", "error", err.Error())
 			http.Error(w, `{"error":"failed to generate TLS certificate"}`, http.StatusInternalServerError)
 			return
 		}
 		if err := h.adminRepo.StoreServerTLSCert(ctx, string(certPEM), string(keyPEM)); err != nil {
-			slog.Error("setup: store TLS cert", "error", err)
+			slog.Error("setup: store TLS cert", "error", err.Error())
 			http.Error(w, `{"error":"failed to store TLS certificate"}`, http.StatusInternalServerError)
 			return
 		}
@@ -155,12 +155,12 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.adminRepo.SetConfig(ctx, "tls_enabled", "true"); err != nil {
-			slog.Error("setup: store tls_enabled", "error", err)
+			slog.Error("setup: store tls_enabled", "error", err.Error())
 			http.Error(w, `{"error":"failed to store tls config"}`, http.StatusInternalServerError)
 			return
 		}
 		if err := h.adminRepo.SetConfig(ctx, "tls_domain", req.TLSDomain); err != nil {
-			slog.Error("setup: store tls_domain", "error", err)
+			slog.Error("setup: store tls_domain", "error", err.Error())
 			http.Error(w, `{"error":"failed to store tls config"}`, http.StatusInternalServerError)
 			return
 		}
@@ -168,7 +168,7 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	default: // "none"
 		if err := h.adminRepo.SetConfig(ctx, "tls_enabled", "false"); err != nil {
-			slog.Error("setup: store tls_enabled", "error", err)
+			slog.Error("setup: store tls_enabled", "error", err.Error())
 		}
 	}
 
@@ -178,12 +178,12 @@ func (h *SetupHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		mtlsVal = "true"
 	}
 	if err := h.adminRepo.SetConfig(ctx, "mtls_enabled", mtlsVal); err != nil {
-		slog.Error("setup: store mtls_enabled", "error", err)
+		slog.Error("setup: store mtls_enabled", "error", err.Error())
 	}
 
 	// 5. Mark setup complete
 	if err := h.adminRepo.SetConfig(ctx, "setup_complete", "true"); err != nil {
-		slog.Error("setup: mark complete", "error", err)
+		slog.Error("setup: mark complete", "error", err.Error())
 		http.Error(w, `{"error":"failed to finalize setup"}`, http.StatusInternalServerError)
 		return
 	}
@@ -249,7 +249,7 @@ func (h *SetupHandler) RegenerateTLS(w http.ResponseWriter, r *http.Request) {
 	if certPEM == nil {
 		certPEM, keyPEM, err = ca.GenerateServerTLS(hostname, extraIPs, 3650, extraSANs...)
 		if err != nil {
-			slog.Error("regenerate TLS: generate cert", "error", err)
+			slog.Error("regenerate TLS: generate cert", "error", err.Error())
 			http.Error(w, `{"error":"failed to generate TLS certificate"}`, http.StatusInternalServerError)
 			return
 		}
@@ -257,7 +257,7 @@ func (h *SetupHandler) RegenerateTLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.adminRepo.StoreServerTLSCert(ctx, string(certPEM), string(keyPEM)); err != nil {
-		slog.Error("regenerate TLS: store cert", "error", err)
+		slog.Error("regenerate TLS: store cert", "error", err.Error())
 		http.Error(w, `{"error":"failed to store TLS certificate"}`, http.StatusInternalServerError)
 		return
 	}
@@ -309,7 +309,7 @@ func (h *SetupHandler) SetTLSSANs(w http.ResponseWriter, r *http.Request) {
 
 	sansJSON, _ := json.Marshal(req.SANs)
 	if err := h.adminRepo.SetConfig(r.Context(), "tls_extra_sans", string(sansJSON)); err != nil {
-		slog.Error("set TLS SANs: store", "error", err)
+		slog.Error("set TLS SANs: store", "error", err.Error())
 		http.Error(w, `{"error":"failed to store SANs"}`, http.StatusInternalServerError)
 		return
 	}

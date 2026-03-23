@@ -76,7 +76,7 @@ func (h *EnrollHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	device.UpdatedAt = now
 
 	if err := h.devices.Create(r.Context(), device); err != nil {
-		slog.Error("enroll: create device", "error", err)
+		slog.Error("enroll: create device", "error", err.Error())
 		http.Error(w, `{"error":"failed to create device"}`, http.StatusInternalServerError)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *EnrollHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	validity := 10 * 365 * 24 * time.Hour // 10 years
 	certPEM, serialHex, notBefore, notAfter, err := h.ca.SignCSR([]byte(req.CSRPEM), deviceID, validity)
 	if err != nil {
-		slog.Error("enroll: sign CSR", "error", err)
+		slog.Error("enroll: sign CSR", "error", err.Error())
 		http.Error(w, `{"error":"failed to sign certificate"}`, http.StatusInternalServerError)
 		return
 	}
@@ -99,14 +99,14 @@ func (h *EnrollHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		NotAfter:     notAfter,
 	}
 	if err := h.caRepo.StoreCert(r.Context(), deviceCert); err != nil {
-		slog.Error("enroll: store cert", "error", err)
+		slog.Error("enroll: store cert", "error", err.Error())
 		http.Error(w, `{"error":"failed to store certificate"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Mark bootstrap key used
 	if err := h.caRepo.MarkBootstrapKeyUsed(r.Context(), keyHash, deviceID); err != nil {
-		slog.Error("enroll: mark key used", "error", err)
+		slog.Error("enroll: mark key used", "error", err.Error())
 	}
 
 	slog.Info("device enrolled via mTLS", "device_id", deviceID, "hostname", hostname, "serial", serialHex)
@@ -225,14 +225,14 @@ func (h *EnrollHandler) Renew(w http.ResponseWriter, r *http.Request) {
 	// Get current cert to revoke after renewal
 	oldCert, err := h.caRepo.GetCertByDevice(r.Context(), devID)
 	if err != nil {
-		slog.Error("renew: get old cert", "error", err)
+		slog.Error("renew: get old cert", "error", err.Error())
 	}
 
 	// Sign new CSR
 	validity := 10 * 365 * 24 * time.Hour
 	certPEM, serialHex, notBefore, notAfter, err := h.ca.SignCSR([]byte(req.CSRPEM), devID, validity)
 	if err != nil {
-		slog.Error("renew: sign CSR", "error", err)
+		slog.Error("renew: sign CSR", "error", err.Error())
 		http.Error(w, `{"error":"failed to sign certificate"}`, http.StatusInternalServerError)
 		return
 	}
@@ -246,7 +246,7 @@ func (h *EnrollHandler) Renew(w http.ResponseWriter, r *http.Request) {
 		NotAfter:     notAfter,
 	}
 	if err := h.caRepo.StoreCert(r.Context(), deviceCert); err != nil {
-		slog.Error("renew: store cert", "error", err)
+		slog.Error("renew: store cert", "error", err.Error())
 		http.Error(w, `{"error":"failed to store certificate"}`, http.StatusInternalServerError)
 		return
 	}
@@ -254,7 +254,7 @@ func (h *EnrollHandler) Renew(w http.ResponseWriter, r *http.Request) {
 	// Revoke old cert
 	if oldCert != nil && !oldCert.Revoked {
 		if err := h.caRepo.RevokeCert(r.Context(), oldCert.SerialNumber); err != nil {
-			slog.Error("renew: revoke old cert", "error", err)
+			slog.Error("renew: revoke old cert", "error", err.Error())
 		}
 	}
 

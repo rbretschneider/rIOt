@@ -80,7 +80,7 @@ func (c *Checker) check() {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", c.repo)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		slog.Warn("update check: failed to create request", "error", err)
+		slog.Warn("update check: failed to create request", "error", err.Error())
 		return
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
@@ -88,7 +88,7 @@ func (c *Checker) check() {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		slog.Warn("update check: request failed", "error", err)
+		slog.Warn("update check: request failed", "error", err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -100,7 +100,7 @@ func (c *Checker) check() {
 
 	var release GitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		slog.Warn("update check: decode failed", "error", err)
+		slog.Warn("update check: decode failed", "error", err.Error())
 		return
 	}
 

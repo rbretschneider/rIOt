@@ -56,7 +56,7 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create command", "error", err)
+		slog.Error("create command", "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
@@ -77,7 +77,7 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 			Type: "command",
 			Data: payloadJSON,
 		}); err != nil {
-			slog.Warn("send command via ws failed, queued for heartbeat", "error", err)
+			slog.Warn("send command via ws failed, queued for heartbeat", "error", err.Error())
 			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat delivery")
 			cmd.Status = "queued"
 		} else {
@@ -124,7 +124,7 @@ func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create bulk update command", "error", err)
+		slog.Error("create bulk update command", "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}

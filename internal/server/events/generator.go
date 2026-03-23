@@ -57,7 +57,7 @@ func (g *Generator) onCooldown(key string, cooldown time.Duration) bool {
 
 func (g *Generator) createEvent(ctx context.Context, e *models.Event) {
 	if err := g.repo.Create(ctx, e); err != nil {
-		slog.Error("create event", "error", err)
+		slog.Error("create event", "error", err.Error())
 		return
 	}
 	g.hub.BroadcastEvent(e)
@@ -284,7 +284,7 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID, hostname string, services []models.ServiceInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("check service alerts", "error", err)
+		slog.Error("check service alerts", "error", err.Error())
 		return
 	}
 
@@ -333,7 +333,7 @@ func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID, hostname s
 func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID, hostname string, interfaces []models.NetworkInterface) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("check nic alerts", "error", err)
+		slog.Error("check nic alerts", "error", err.Error())
 		return
 	}
 
@@ -382,7 +382,7 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID, hostname strin
 func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID, hostname string, procs *models.ProcessInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("check process alerts", "error", err)
+		slog.Error("check process alerts", "error", err.Error())
 		return
 	}
 
@@ -530,7 +530,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID, hostname strin
 func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, hostname string, containers []models.ContainerInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("check container thresholds", "error", err)
+		slog.Error("check container thresholds", "error", err.Error())
 		return
 	}
 
@@ -745,7 +745,7 @@ func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID, hostname
 func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID, hostname string, usb *models.USBInfo) {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("check usb alerts", "error", err)
+		slog.Error("check usb alerts", "error", err.Error())
 		return
 	}
 
@@ -919,7 +919,7 @@ func (g *Generator) evaluateMetric(ctx context.Context, deviceID, metric string,
 func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, hostname string, value float64) *models.AlertRule {
 	rules, err := g.alertRuleRepo.ListEnabled(ctx)
 	if err != nil {
-		slog.Error("find matching rule", "error", err)
+		slog.Error("find matching rule", "error", err.Error())
 		return nil
 	}
 	for i := range rules {

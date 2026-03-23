@@ -104,7 +104,7 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 			Status:   "pending",
 		}
 		if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-			slog.Error("bulk update: create command", "device", d.ID, "error", err)
+			slog.Error("bulk update: create command", "device", d.ID, "error", err.Error())
 			skipped++
 			continue
 		}
@@ -196,7 +196,7 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 			Status:   "pending",
 		}
 		if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-			slog.Error("bulk patch: create command", "device", d.ID, "error", err)
+			slog.Error("bulk patch: create command", "device", d.ID, "error", err.Error())
 			skipped++
 			continue
 		}
