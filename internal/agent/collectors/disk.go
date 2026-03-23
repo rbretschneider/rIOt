@@ -15,7 +15,7 @@ func (c *DiskCollector) Name() string { return "disk" }
 func (c *DiskCollector) Collect(ctx context.Context) (interface{}, error) {
 	info := &models.DiskInfo{}
 
-	// Mounted filesystems
+	// Mounted filesystems — physical partitions first.
 	partitions, err := disk.PartitionsWithContext(ctx, false)
 	if err == nil {
 		for _, p := range partitions {
@@ -44,6 +44,36 @@ func (c *DiskCollector) Collect(ctx context.Context) (interface{}, error) {
 				MountOptions:   strings.Join(p.Opts, ","),
 				IsNetworkMount: isNetwork,
 				IsPool:         models.IsPoolFSType(p.Fstype),
+			})
+		}
+	}
+
+	// Second pass with all=true to pick up FUSE-based pool filesystems
+	// (e.g. fuse.mergerfs) that gopsutil excludes from physical partitions.
+	seen := make(map[string]bool, len(info.Filesystems))
+	for _, fs := range info.Filesystems {
+		seen[fs.MountPoint] = true
+	}
+	allPartitions, err := disk.PartitionsWithContext(ctx, true)
+	if err == nil {
+		for _, p := range allPartitions {
+			if seen[p.Mountpoint] || !models.IsPoolFSType(p.Fstype) {
+				continue
+			}
+			usage, err := disk.UsageWithContext(ctx, p.Mountpoint)
+			if err != nil || usage.Total == 0 {
+				continue
+			}
+			info.Filesystems = append(info.Filesystems, models.Filesystem{
+				MountPoint:   p.Mountpoint,
+				Device:       p.Device,
+				FSType:       p.Fstype,
+				TotalGB:      float64(usage.Total) / 1024 / 1024 / 1024,
+				UsedGB:       float64(usage.Used) / 1024 / 1024 / 1024,
+				FreeGB:       float64(usage.Free) / 1024 / 1024 / 1024,
+				UsagePercent: usage.UsedPercent,
+				MountOptions: strings.Join(p.Opts, ","),
+				IsPool:       true,
 			})
 		}
 	}
