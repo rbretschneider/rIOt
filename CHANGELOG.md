@@ -15,6 +15,9 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 - [POOL-001] `Filesystem` telemetry model gains an `is_pool` boolean field (JSON: `is_pool`, omitted when false). Updated agents set this field automatically — no agent configuration change is required. Old agents without the field are handled by a client-side fallback that classifies pool types from `fs_type`.
 - [POOL-001] `internal/models.PoolFSTypes` and `IsPoolFSType()` exported from the models package as the single authoritative pool-type list for Go code. `web/src/utils/filesystem.ts` exports `POOL_FS_TYPES`, `isPoolFilesystem()`, and `formatCapacity()` as the frontend equivalents.
 
+- [POOL-002] Storage pool detection now recognizes Unraid arrays (`shfs`, `fuse.shfs` filesystem types), Linux software RAID arrays (device path prefix `/dev/md`), and LVM/device-mapper volumes (device path prefixes `/dev/mapper/` and `/dev/dm-`). Docker device-mapper volumes (`/dev/mapper/docker-*`) and live-boot overlay devices (`/dev/mapper/live-rw`, `/dev/mapper/live-base`) are explicitly excluded. All newly detected pool types appear in the existing "Storage Pools" card section without any configuration change.
+- [POOL-002] Pool cards on the device detail page now display the underlying block device path (e.g., `/dev/md0`, `/dev/mapper/vg0-data`) below the mount point, making mdraid and LVM pools identifiable at a glance.
+
 - [SEC-001] Security page now displays a per-device "Sec. Updates" column showing the count of pending security-classified package updates; amber/red when greater than zero.
 - [SEC-001] Security page now displays a per-device "Auto-Updates" column showing whether unattended OS upgrades are enabled; green for enabled, amber for disabled, dash when no update telemetry is available.
 - [SEC-001] Security page now displays a fleet score banner (arithmetic mean of all per-device scores) above the device table, color-coded by letter grade.
@@ -24,6 +27,9 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 - [SEC-001] `MiniScore` component extracted to `web/src/components/MiniScore.tsx` for reuse.
 
 ### Changed
+
+- [POOL-002] `internal/models.IsPoolFSType()` replaced by `IsPoolFilesystem(fsType, device string) bool`. The new function combines filesystem-type and device-path detection in one call. The disk collector call site in `internal/agent/collectors/disk.go` is updated accordingly. Any code calling `IsPoolFSType` directly must migrate to `IsPoolFilesystem`.
+- [POOL-002] `POOL_FS_TYPES` in `web/src/utils/filesystem.ts` and `PoolFSTypes` in `internal/models/telemetry.go` each gain two entries: `shfs` and `fuse.shfs`. The frontend `isPoolFilesystem()` fallback (used for pre-POOL-002 agents) now also checks device path prefixes in addition to filesystem type.
 
 - [SEC-001] The Security page is now the primary location for security posture data. The per-device security score column has moved from Fleet Overview to the Security page. Fleet Overview no longer shows security scores.
 - [SEC-001] `GET /api/v1/security/devices` response extended with three new fields: `pending_security_count` (int), `unattended_upgrades` (bool or null), `certs_expiring_soon` (int). Existing consumers that ignore unknown fields are unaffected.

@@ -103,11 +103,109 @@ describe('[AC-008] ZFS and Btrfs filesystems are classified as pools', () => {
     expect(isPoolFilesystem(fs)).toBe(true)
   })
 
-  it('POOL_FS_TYPES covers all expected pool filesystem types', () => {
-    const expected = ['bcachefs', 'btrfs', 'fuse.mergerfs', 'fuse.unionfs', 'mergerfs', 'zfs']
+  it('POOL_FS_TYPES covers all expected pool filesystem types including shfs and fuse.shfs', () => {
+    const expected = [
+      'bcachefs', 'btrfs', 'fuse.mergerfs', 'fuse.shfs', 'fuse.unionfs', 'mergerfs', 'shfs', 'zfs',
+    ]
     for (const fsType of expected) {
       expect(POOL_FS_TYPES).toContain(fsType)
     }
+  })
+})
+
+describe('[AC-001] Unraid shfs filesystem type is classified as a pool', () => {
+  it('classifies shfs as a pool via fs_type fallback (old agent)', () => {
+    const fs = makeFS({ fs_type: 'shfs' })
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies shfs as a pool when is_pool is true (updated agent)', () => {
+    const fs = makeFS({ fs_type: 'shfs', is_pool: true })
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+})
+
+describe('[AC-002] Unraid fuse.shfs filesystem type is classified as a pool', () => {
+  it('classifies fuse.shfs as a pool via fs_type fallback (old agent)', () => {
+    const fs = makeFS({ fs_type: 'fuse.shfs' })
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies fuse.shfs as a pool when is_pool is true (updated agent)', () => {
+    const fs = makeFS({ fs_type: 'fuse.shfs', is_pool: true })
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+})
+
+describe('[AC-011] Frontend fallback for old agents -- fuse.shfs fs_type', () => {
+  it('classifies fuse.shfs as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'fuse.shfs' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies shfs as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'shfs' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+})
+
+describe('[AC-012] Frontend fallback for old agents -- mdraid device path', () => {
+  it('classifies ext4 on /dev/md0 as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/md0' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies xfs on /dev/md127 as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'xfs', device: '/dev/md127' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('does not classify ext4 on /dev/sda1 as pool via device path fallback', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/sda1' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(false)
+  })
+})
+
+describe('[AC-013] Frontend fallback for old agents -- LVM device path', () => {
+  it('classifies ext4 on /dev/mapper/vg-data as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/mapper/vg-data' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies xfs on /dev/mapper/vg0-lv0 as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'xfs', device: '/dev/mapper/vg0-lv0' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('classifies ext4 on /dev/dm-3 as pool when is_pool is undefined', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/dm-3' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(true)
+  })
+
+  it('does not classify Docker device-mapper as pool in fallback', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/mapper/docker-253:0-1234-abcdef' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(false)
+  })
+
+  it('does not classify /dev/mapper/live-rw as pool in fallback', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/mapper/live-rw' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(false)
+  })
+
+  it('does not classify /dev/mapper/live-base as pool in fallback', () => {
+    const fs = makeFS({ fs_type: 'ext4', device: '/dev/mapper/live-base' })
+    expect(fs.is_pool).toBeUndefined()
+    expect(isPoolFilesystem(fs)).toBe(false)
   })
 })
 

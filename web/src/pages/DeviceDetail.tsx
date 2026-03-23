@@ -559,6 +559,9 @@ export default function DeviceDetail() {
                         <span className="font-mono text-sm text-gray-100">{fs.mount_point}</span>
                         <span className="text-xs bg-gray-700 text-gray-300 rounded px-2 py-0.5">{fs.fs_type}</span>
                       </div>
+                      {fs.device && (
+                        <span className="text-xs text-gray-500 font-mono block mb-2">{fs.device}</span>
+                      )}
                       <GaugeBar label="Usage" value={fs.usage_percent} max={100} unit="%" />
                       <p className="text-xs text-gray-400 mt-2 font-mono">
                         {formatCapacity(fs.used_gb)} used of {formatCapacity(fs.total_gb)} ({formatCapacity(fs.free_gb)} free)

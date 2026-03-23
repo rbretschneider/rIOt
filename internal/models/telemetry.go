@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // HeartbeatData is the lightweight ping payload.
 type HeartbeatData struct {
@@ -147,22 +150,62 @@ type Filesystem struct {
 // PoolFSTypes is the authoritative list of filesystem types classified as storage pools.
 // Mirror list also exists in web/src/utils/filesystem.ts (POOL_FS_TYPES) for frontend fallback.
 // When adding a new pool type, both locations must be updated.
+// Device-path-based detection (mdraid, LVM) is handled in IsPoolFilesystem.
 var PoolFSTypes = []string{
 	"bcachefs",
 	"btrfs",
 	"fuse.mergerfs",
+	"fuse.shfs",
 	"fuse.unionfs",
 	"mergerfs",
+	"shfs",
 	"zfs",
 }
 
-// IsPoolFSType returns true if the given filesystem type is a known pool/union filesystem.
-func IsPoolFSType(fsType string) bool {
+// IsPoolFilesystem returns true if the filesystem should be classified as a
+// storage pool based on its filesystem type or device path.
+//
+// Detection is additive: a match on any rule returns true.
+// Rules are checked in order: filesystem type list, mdraid device prefix,
+// device-mapper prefix (with exclusions for Docker and live-boot), dm- kernel name.
+//
+// Exclusions apply only to device-path detection:
+//   - /dev/mapper/docker-* (Docker storage driver, not user-facing storage)
+//   - /dev/mapper/live-rw and /dev/mapper/live-base (live-boot overlays)
+//
+// The mirror of this logic lives in web/src/utils/filesystem.ts (isPoolFilesystem).
+// Both locations must be kept in sync when detection rules change.
+func IsPoolFilesystem(fsType, device string) bool {
+	// 1. Filesystem type check
 	for _, t := range PoolFSTypes {
 		if fsType == t {
 			return true
 		}
 	}
+
+	// 2. mdraid: /dev/md*
+	if strings.HasPrefix(device, "/dev/md") {
+		return true
+	}
+
+	// 3. Device-mapper: /dev/mapper/*
+	if strings.HasPrefix(device, "/dev/mapper/") {
+		// Exclude Docker device-mapper volumes
+		if strings.HasPrefix(device, "/dev/mapper/docker-") {
+			return false
+		}
+		// Exclude live-boot overlay devices
+		if device == "/dev/mapper/live-rw" || device == "/dev/mapper/live-base" {
+			return false
+		}
+		return true
+	}
+
+	// 4. Device-mapper kernel name: /dev/dm-*
+	if strings.HasPrefix(device, "/dev/dm-") {
+		return true
+	}
+
 	return false
 }
 

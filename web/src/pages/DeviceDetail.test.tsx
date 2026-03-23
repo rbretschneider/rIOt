@@ -394,4 +394,73 @@ describe('DeviceDetail', () => {
       expect(await screen.findByText('ext4')).toBeInTheDocument()
     })
   })
+
+  // Added by QA Engineer
+  // Covers AC-014
+  describe('[AC-014] Pool card displays the device path', () => {
+    it('renders the device path on the pool card', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/mnt/storage',
+                  device: '/dev/md0',
+                  fs_type: 'ext4',
+                  total_gb: 4000,
+                  used_gb: 1000,
+                  free_gb: 3000,
+                  usage_percent: 25,
+                  is_network_mount: false,
+                  is_pool: true,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      // Wait for pool card header to confirm section rendered
+      expect(await screen.findByText('Storage Pools')).toBeInTheDocument()
+      // AC-014: device path must be visible on the pool card
+      expect(await screen.findByText('/dev/md0')).toBeInTheDocument()
+    })
+
+    it('renders device path for LVM pool card', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            disks: {
+              filesystems: [
+                {
+                  mount_point: '/mnt/data',
+                  device: '/dev/mapper/vg0-data',
+                  fs_type: 'xfs',
+                  total_gb: 2000,
+                  used_gb: 500,
+                  free_gb: 1500,
+                  usage_percent: 25,
+                  is_network_mount: false,
+                  is_pool: true,
+                },
+              ],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      expect(await screen.findByText('Storage Pools')).toBeInTheDocument()
+      // AC-014: LVM device path must be visible on the pool card
+      expect(await screen.findByText('/dev/mapper/vg0-data')).toBeInTheDocument()
+    })
+  })
 })
