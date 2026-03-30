@@ -20,7 +20,7 @@
 ## Features
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
-- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks
+- **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, container log viewer, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -357,10 +357,11 @@ New installs via `install.sh` include all rules automatically.
 | `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
 | `hardware` | PCI devices (vendor/device/class/driver via sysfs + `/usr/share/hwdata/pci.ids`), disk drives (model, serial, size, type — NVMe/SSD/HDD, transport, scheduler, **SMART health/temp/power-on hours/reallocated sectors**), serial ports, GPUs (filtered from PCI display class devices, optional VRAM via DRM). Linux-only; SMART requires `smartmontools`. |
 | `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
+| `gpu` | NVIDIA GPU runtime metrics — temperature, utilization %, memory used/total, fan speed, power draw/limit, per GPU (requires `nvidia-smi`; Linux-only; see [GPU Monitoring](#gpu-monitoring)) |
 
 **Note:** The `usb` and `hardware` collectors are Linux-only. They read from sysfs (`/sys/bus/usb/devices/`, `/sys/bus/pci/devices/`, `/sys/block/`, `/sys/class/tty/`) and use the system ID databases (shipped with `usbutils` or `hwdata`) to resolve vendor/product names. No additional packages are required for basic hardware info. **SMART disk health** requires `smartmontools` — the installer installs it automatically and adds a sudoers rule for `smartctl`. SMART scans run every 4 hours by default (configurable via `collectors.smart_interval` in agent YAML).
 
-**Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware` and `container_logs` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
+**Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware`, `container_logs`, and `gpu` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
 
 ---
 
@@ -398,11 +399,89 @@ Every alert rule supports **Include** and **Exclude** device lists. When both ar
 
 ### One-Click Alert Creation
 
-From the device detail view, click the alert icon next to any service, process, network interface, USB device, or UPS to instantly create a targeted alert rule.
+From the device detail view, click the alert icon next to any service, process, network interface, USB device, UPS, or GPU to instantly create a targeted alert rule.
 
 ### Event Acknowledgement
 
 The Alerts tab in the navigation bar shows a red badge with the count of unacknowledged warning/critical events. Events can be acknowledged individually or in bulk from the Alerts page. The badge updates in real-time via WebSocket.
+
+---
+
+## GPU Monitoring
+
+The `gpu` collector reads runtime metrics from NVIDIA GPUs via `nvidia-smi`. It is Linux-only and is **not enabled by default**.
+
+### Requirements
+
+- Linux agent (the collector is a no-op on macOS and Windows)
+- NVIDIA proprietary driver installed (driver version 400 or newer)
+- `nvidia-smi` present in `PATH` (ships with the NVIDIA driver, typically at `/usr/bin/nvidia-smi`)
+- The `riot` user must be able to execute `nvidia-smi` without `sudo` — `nvidia-smi` is a user-space read-only tool and does not require elevated privileges
+
+### Enabling the GPU Collector
+
+> **Important:** The `gpu` collector is not in the default `collectors.enabled` list. You must add it manually.
+
+1. Edit `/etc/riot/agent.yaml` on each device with an NVIDIA GPU:
+
+   ```yaml
+   collectors:
+     enabled:
+       - system
+       - cpu
+       # ... your existing collectors ...
+       - gpu      # add this line
+   ```
+
+2. Restart the agent:
+
+   ```bash
+   sudo systemctl restart riot-agent
+   ```
+
+3. Verify with `riot-agent doctor` — the output will show `gpu` as enabled and report whether `nvidia-smi` is found in `PATH`.
+
+### What Is Collected
+
+For each NVIDIA GPU on the host, the `gpu` collector reports:
+
+| Field | Unit | Notes |
+|---|---|---|
+| Temperature | °C | Omitted if GPU does not support temperature reporting |
+| Fan speed | % | Omitted on GPUs without a controllable fan (e.g., blower-cooled server cards) |
+| GPU utilization | % | Shader utilization |
+| Memory utilization | % | Memory controller utilization |
+| Memory used / total | MiB | |
+| Power draw / limit | W | Omitted on GPUs without power management support |
+| GPU name, UUID, PCI bus ID | — | Static identifiers; reported every collection cycle |
+
+If `nvidia-smi` is not installed or reports a field as unsupported, that field is omitted from the telemetry payload. The collector never returns an error for a missing `nvidia-smi` binary — it silently returns no data.
+
+Multiple GPUs are fully supported. Each GPU appears as a separate entry in the GPU Telemetry card on the device detail page.
+
+### Relationship to the hardware Collector
+
+The `hardware` collector provides static GPU identity (vendor, model, PCI slot, driver, VRAM) by reading sysfs and the DRM subsystem. The `gpu` collector provides runtime metrics via `nvidia-smi`. The two collectors are independent — you can enable either or both.
+
+### GPU Alerts
+
+Two alert templates are available in **Settings > Alert Rules > Create from Template** under the `gpu` category:
+
+| Template | Metric | Default Threshold | Severity | Cooldown |
+|---|---|---|---|---|
+| GPU Temperature Warning | `gpu_temp` | > 80°C | warning | 1 hour |
+| GPU Temperature Critical | `gpu_temp` | > 90°C | critical | 30 minutes |
+
+GPU alert rules fire per-GPU. If a device has multiple GPUs and one exceeds the threshold, the alert fires and the event message identifies the GPU by name and index.
+
+You can also create custom alert rules using the following GPU metrics:
+
+| Metric | Description |
+|---|---|
+| `gpu_temp` | GPU temperature in °C |
+| `gpu_util_percent` | GPU utilization percentage |
+| `gpu_mem_percent` | GPU memory controller utilization percentage |
+| `gpu_power_watts` | GPU power draw in watts |
 
 ---
 

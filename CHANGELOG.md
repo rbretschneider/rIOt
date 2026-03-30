@@ -11,6 +11,12 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Added
 
+- [GPU-001] New `gpu` collector that reads runtime metrics from NVIDIA GPUs via `nvidia-smi`: temperature, utilization %, memory used/total, fan speed, and power draw/limit. Linux-only. Must be explicitly added to `collectors.enabled` in the agent config — not enabled by default. Silently returns no data when `nvidia-smi` is not installed.
+- [GPU-001] GPU Telemetry card on the device detail page, visible when GPU telemetry data is present. Displays each GPU's name, index, temperature (color-coded: green < 60°C, amber 60–79°C, orange 80–89°C, red ≥ 90°C), utilization gauge, memory used/total with percentage gauge, fan speed, and power draw/limit. Updates in real-time via WebSocket.
+- [GPU-001] Two GPU alert templates in Settings > Alert Rules > Create from Template (category `gpu`): "GPU Temperature Warning" (> 80°C, warning, 1h cooldown) and "GPU Temperature Critical" (> 90°C, critical, 30m cooldown). Alert events identify the GPU by name and index.
+- [GPU-001] Four new alert metrics for custom GPU rules: `gpu_temp` (temperature in °C), `gpu_util_percent` (utilization %), `gpu_mem_percent` (memory controller utilization %), `gpu_power_watts` (power draw in W). All metrics are evaluated per-GPU.
+- [GPU-001] `riot-agent doctor` now checks for `nvidia-smi` in `PATH` when the `gpu` collector is enabled, consistent with the `smartctl` check for `hardware` and `upsc` check for `ups`.
+
 - [POOL-001] Storage pool filesystems (mergerfs, ZFS, Btrfs, bcachefs, unionfs) now appear as a distinct "Storage Pools" card section above the regular Filesystems table on the device detail page. Each card shows mount point, filesystem type, a color-coded capacity gauge, and used/total/free in human-readable units (GB or TB). Devices without any pool filesystem show no change.
 - [POOL-001] `Filesystem` telemetry model gains an `is_pool` boolean field (JSON: `is_pool`, omitted when false). Updated agents set this field automatically — no agent configuration change is required. Old agents without the field are handled by a client-side fallback that classifies pool types from `fs_type`.
 - [POOL-001] `internal/models.PoolFSTypes` and `IsPoolFSType()` exported from the models package as the single authoritative pool-type list for Go code. `web/src/utils/filesystem.ts` exports `POOL_FS_TYPES`, `isPoolFilesystem()`, and `formatCapacity()` as the frontend equivalents.
