@@ -278,6 +278,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 	if data.Hardware != nil {
 		g.CheckDiskSmartAlerts(ctx, deviceID, hostname, data.Hardware.DiskDrives)
 	}
+	if data.GPUTelemetry != nil {
+		g.CheckGPUAlerts(ctx, deviceID, hostname, data.GPUTelemetry)
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.
@@ -846,6 +849,61 @@ func (g *Generator) CheckDiskSmartAlerts(ctx context.Context, deviceID, hostname
 				models.EventDiskSmartTemp,
 				func(val float64) string {
 					return fmt.Sprintf("Disk %s temperature at %.0f°C", label, val)
+				})
+		}
+	}
+}
+
+// CheckGPUAlerts evaluates GPU metrics from telemetry against alert rules.
+// Each GPU is evaluated independently so the event message identifies which GPU
+// triggered the alert (FR-019). The GPUs slice is capped at 32 to prevent
+// memory exhaustion from a compromised agent sending a pathological payload
+// (SEC-001).
+func (g *Generator) CheckGPUAlerts(ctx context.Context, deviceID, hostname string, gpuTel *models.GPUTelemetry) {
+	if gpuTel == nil || len(gpuTel.GPUs) == 0 {
+		return
+	}
+
+	// Cap iteration to a reasonable maximum (SEC-001 / SEC-003).
+	const maxGPUs = 32
+	gpus := gpuTel.GPUs
+	if len(gpus) > maxGPUs {
+		gpus = gpus[:maxGPUs]
+	}
+
+	for i := range gpus {
+		gpu := &gpus[i]
+		label := fmt.Sprintf("%s (index %d)", gpu.Name, gpu.Index)
+
+		if gpu.TemperatureC != nil {
+			temp := float64(*gpu.TemperatureC)
+			g.evaluateMetric(ctx, deviceID, "gpu_temp", temp, hostname, models.EventGPUTemp,
+				func(val float64) string {
+					return fmt.Sprintf("GPU %s temperature at %.0f°C", label, val)
+				})
+		}
+
+		if gpu.UtilizationPct != nil {
+			util := float64(*gpu.UtilizationPct)
+			g.evaluateMetric(ctx, deviceID, "gpu_util_percent", util, hostname, models.EventGPUMetric,
+				func(val float64) string {
+					return fmt.Sprintf("GPU %s utilization at %.0f%%", label, val)
+				})
+		}
+
+		if gpu.MemUtilPct != nil {
+			memUtil := float64(*gpu.MemUtilPct)
+			g.evaluateMetric(ctx, deviceID, "gpu_mem_percent", memUtil, hostname, models.EventGPUMetric,
+				func(val float64) string {
+					return fmt.Sprintf("GPU %s memory utilization at %.0f%%", label, val)
+				})
+		}
+
+		if gpu.PowerDrawW != nil {
+			power := *gpu.PowerDrawW
+			g.evaluateMetric(ctx, deviceID, "gpu_power_watts", power, hostname, models.EventGPUMetric,
+				func(val float64) string {
+					return fmt.Sprintf("GPU %s power draw at %.1fW", label, val)
 				})
 		}
 	}

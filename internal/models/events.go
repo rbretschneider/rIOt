@@ -44,6 +44,8 @@ const (
 	EventUSBDisconnected      EventType = "usb_disconnected"
 	EventDiskSmartFailing     EventType = "disk_smart_failing"
 	EventDiskSmartTemp        EventType = "disk_smart_temp"
+	EventGPUTemp              EventType = "gpu_temp"
+	EventGPUMetric            EventType = "gpu_metric"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

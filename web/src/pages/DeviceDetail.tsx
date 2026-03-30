@@ -825,6 +825,67 @@ export default function DeviceDetail() {
         </Section>
       )}
 
+      {/* GPU Telemetry */}
+      {tel?.gpu_telemetry?.gpus && tel.gpu_telemetry.gpus.length > 0 && (
+        <Section title={`GPU Telemetry (${tel.gpu_telemetry.gpus.length})`}>
+          <div className="space-y-6">
+            {tel.gpu_telemetry.gpus.map((gpu) => (
+              <div key={gpu.uuid} className="border border-gray-800 rounded-lg p-4">
+                <h3 className="text-sm font-semibold text-white mb-3">{gpu.name} <span className="text-gray-500 font-normal text-xs">— Index {gpu.index}</span></h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
+                  {gpu.temperature_c != null && (
+                    <div>
+                      <div className="text-xs text-gray-500 mb-0.5">Temperature</div>
+                      <div className={`text-sm font-medium ${
+                        gpu.temperature_c >= 90 ? 'text-red-400' :
+                        gpu.temperature_c >= 80 ? 'text-orange-400' :
+                        gpu.temperature_c >= 60 ? 'text-amber-400' :
+                        'text-emerald-400'
+                      }`}>{gpu.temperature_c}°C</div>
+                    </div>
+                  )}
+                  {gpu.fan_speed_percent != null && (
+                    <div>
+                      <div className="text-xs text-gray-500 mb-0.5">Fan Speed</div>
+                      <div className="text-sm text-gray-300">{gpu.fan_speed_percent}%</div>
+                    </div>
+                  )}
+                  {gpu.power_draw_w != null && (
+                    <div>
+                      <div className="text-xs text-gray-500 mb-0.5">Power</div>
+                      <div className="text-sm text-gray-300">
+                        {gpu.power_draw_w.toFixed(1)}{gpu.power_limit_w != null ? ` / ${gpu.power_limit_w.toFixed(0)}` : ''} W
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {gpu.utilization_pct != null && (
+                  <div className="mb-2">
+                    <GaugeBar label="GPU Utilization" value={gpu.utilization_pct} />
+                  </div>
+                )}
+                {gpu.mem_used_mib != null && gpu.mem_total_mib != null && (
+                  <div className="mb-2">
+                    <GaugeBar
+                      label={`Memory  ${gpu.mem_used_mib} / ${gpu.mem_total_mib} MiB`}
+                      value={gpu.mem_util_pct ?? Math.round((gpu.mem_used_mib / gpu.mem_total_mib) * 100)}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={() => setAlertDialog({ metric: 'gpu_temp', targetName: '' })}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-amber-400 border border-gray-700 hover:border-amber-600/50 rounded-md transition-colors"
+            >
+              <AlertIcon /> GPU Temp Alert
+            </button>
+          </div>
+        </Section>
+      )}
+
       {/* Hardware Details */}
       {isEnabled('hardware') && tel?.hardware && (
         (tel.hardware.pci_devices && tel.hardware.pci_devices.length > 0) ||

@@ -65,6 +65,7 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 	r.Register(&USBCollector{})
 	r.Register(&HardwareCollector{})
 	r.Register(&CronCollector{})
+	r.Register(&GPUCollector{})
 }
 
 func (r *Registry) FilterEnabled(enabled []string) {

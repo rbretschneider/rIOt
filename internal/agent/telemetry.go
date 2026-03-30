@@ -80,6 +80,8 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.Hardware = v
 		case *models.CronInfo:
 			data.CronJobs = v
+		case *models.GPUTelemetry:
+			data.GPUTelemetry = v
 		case []models.ContainerLogEntry:
 			data.ContainerLogs = v
 		case []models.LogEntry:

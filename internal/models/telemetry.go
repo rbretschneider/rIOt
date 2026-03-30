@@ -55,6 +55,29 @@ type FullTelemetryData struct {
 	Hardware   *HardwareInfo   `json:"hardware,omitempty"`
 	CronJobs       *CronInfo            `json:"cron_jobs,omitempty"`
 	ContainerLogs  []ContainerLogEntry  `json:"container_logs,omitempty"`
+	GPUTelemetry   *GPUTelemetry        `json:"gpu_telemetry,omitempty"`
+}
+
+// GPUDeviceMetrics holds runtime metrics for a single NVIDIA GPU.
+// Pointer fields are nil when nvidia-smi reports [Not Supported] or N/A.
+type GPUDeviceMetrics struct {
+	Index           int      `json:"index"`
+	Name            string   `json:"name"`
+	UUID            string   `json:"uuid"`
+	PCIBusID        string   `json:"pci_bus_id"`
+	TemperatureC    *int     `json:"temperature_c,omitempty"`
+	FanSpeedPercent *int     `json:"fan_speed_percent,omitempty"`
+	UtilizationPct  *int     `json:"utilization_pct,omitempty"`
+	MemUtilPct      *int     `json:"mem_util_pct,omitempty"`
+	MemUsedMiB      *int     `json:"mem_used_mib,omitempty"`
+	MemTotalMiB     *int     `json:"mem_total_mib,omitempty"`
+	PowerDrawW      *float64 `json:"power_draw_w,omitempty"`
+	PowerLimitW     *float64 `json:"power_limit_w,omitempty"`
+}
+
+// GPUTelemetry holds runtime GPU metrics for all GPUs on a host.
+type GPUTelemetry struct {
+	GPUs []GPUDeviceMetrics `json:"gpus"`
 }
 
 // TelemetrySnapshot wraps full telemetry with metadata.

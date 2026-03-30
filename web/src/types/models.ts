@@ -82,6 +82,26 @@ export interface FullTelemetryData {
   usb?: USBInfo
   hardware?: HardwareInfo
   cron_jobs?: CronInfo
+  gpu_telemetry?: GPUTelemetry
+}
+
+export interface GPUDeviceMetrics {
+  index: number
+  name: string
+  uuid: string
+  pci_bus_id: string
+  temperature_c?: number
+  fan_speed_percent?: number
+  utilization_pct?: number
+  mem_util_pct?: number
+  mem_used_mib?: number
+  mem_total_mib?: number
+  power_draw_w?: number
+  power_limit_w?: number
+}
+
+export interface GPUTelemetry {
+  gpus: GPUDeviceMetrics[]
 }
 
 export interface SystemInfo {

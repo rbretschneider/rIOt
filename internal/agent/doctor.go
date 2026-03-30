@@ -22,6 +22,7 @@ var collectorDeps = map[string][]string{
 	"logs":       {"journalctl"},
 	"security":   {"journalctl"},
 	"cron":       {"systemctl"},
+	"gpu":        {"nvidia-smi"},
 }
 
 // Doctor runs diagnostic checks and prints a summary of the agent's health.
@@ -111,6 +112,7 @@ func Doctor(configPath string) {
 		"system", "cpu", "memory", "disk", "network", "os_info",
 		"updates", "services", "processes", "docker", "container_logs",
 		"security", "logs", "ups", "webservers", "usb", "hardware", "cron",
+		"gpu",
 	}
 	enabled := make(map[string]bool)
 	for _, name := range cfg.Collector.Enabled {

@@ -40,6 +40,7 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   ups_battery_percent: { operator: '<', threshold: 20, severity: 'critical', cooldown: 300, hint: 'UPS battery charge percentage (0–100)' },
   usb_missing:     { operator: '==', threshold: 1, severity: 'critical', cooldown: 300, hint: 'Fires when the USB device is not found' },
   disk_smart_temp: { operator: '>', threshold: 55, severity: 'warning',  cooldown: 3600, hint: 'Disk temperature in °C (applies to all drives on the device)' },
+  gpu_temp:        { operator: '>', threshold: 80, severity: 'warning',  cooldown: 3600, hint: 'GPU temperature in °C (applies to all GPUs on the device)' },
 }
 
 export default function CreateAlertDialog({ metric, targetName, targetState, includeDevices, excludeDevices, onClose }: CreateAlertDialogProps) {
@@ -62,6 +63,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, inc
     ups_battery_percent: 'UPS Battery %',
     usb_missing: 'USB Device Missing',
     disk_smart_temp: 'Disk Temperature',
+    gpu_temp: 'GPU Temperature',
   }
 
   // Use provided targetState or sensible defaults

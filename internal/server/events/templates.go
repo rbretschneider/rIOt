@@ -273,5 +273,30 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when any disk temperature exceeds a critical threshold (°C)",
 		},
+		// GPU
+		{
+			ID:              "gpu_temp_warn",
+			Name:            "GPU Temperature Warning",
+			Category:        "gpu",
+			Metric:          "gpu_temp",
+			Operator:        ">",
+			Threshold:       80,
+			Severity:        "warning",
+			CooldownSeconds: 3600,
+			NeedsTargetName: false,
+			Description:     "Fires when any GPU temperature exceeds the threshold",
+		},
+		{
+			ID:              "gpu_temp_crit",
+			Name:            "GPU Temperature Critical",
+			Category:        "gpu",
+			Metric:          "gpu_temp",
+			Operator:        ">",
+			Threshold:       90,
+			Severity:        "critical",
+			CooldownSeconds: 1800,
+			NeedsTargetName: false,
+			Description:     "Fires when any GPU temperature exceeds a critical threshold",
+		},
 	}
 }

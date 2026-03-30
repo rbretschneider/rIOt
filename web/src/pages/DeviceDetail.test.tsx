@@ -463,4 +463,182 @@ describe('DeviceDetail', () => {
       expect(await screen.findByText('/dev/mapper/vg0-data')).toBeInTheDocument()
     })
   })
+
+  // GPU-001 tests
+
+  // [AC-007] GPU telemetry card is visible with correct fields when data is present.
+  describe('[AC-007] GPU telemetry card renders when gpu_telemetry data is present', () => {
+    it('renders GPU Telemetry section with GPU name, temperature, utilization, memory, fan, power', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            gpu_telemetry: {
+              gpus: [
+                {
+                  index: 0,
+                  name: 'NVIDIA GeForce RTX 3090',
+                  uuid: 'GPU-aaaa-bbbb-cccc-dddd',
+                  pci_bus_id: '00000000:01:00.0',
+                  temperature_c: 72,
+                  fan_speed_percent: 65,
+                  utilization_pct: 85,
+                  mem_util_pct: 42,
+                  mem_used_mib: 10240,
+                  mem_total_mib: 24576,
+                  power_draw_w: 285.5,
+                  power_limit_w: 350,
+                },
+              ],
+            },
+          },
+        },
+      })
+
+      renderWithProviders()
+
+      // Section header
+      expect(await screen.findByText(/GPU Telemetry/)).toBeInTheDocument()
+      // GPU name
+      expect(await screen.findByText('NVIDIA GeForce RTX 3090')).toBeInTheDocument()
+      // Temperature
+      expect(await screen.findByText('72°C')).toBeInTheDocument()
+      // Fan speed
+      expect(await screen.findByText('65%')).toBeInTheDocument()
+      // Power draw / limit
+      expect(await screen.findByText(/285\.5.*\/.*350.*W/)).toBeInTheDocument()
+      // Utilization gauge label
+      expect(await screen.findByText(/GPU Utilization/)).toBeInTheDocument()
+      // Memory gauge label
+      expect(await screen.findByText(/Memory.*10240.*\/.*24576/)).toBeInTheDocument()
+    })
+  })
+
+  // [AC-008] GPU card must not appear when no gpu_telemetry data exists.
+  describe('[AC-008] GPU telemetry card is absent when no gpu_telemetry data', () => {
+    it('does not render GPU Telemetry section when telemetry has no gpu_telemetry', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {},
+        },
+      })
+
+      renderWithProviders()
+
+      expect(await screen.findByText('test-host')).toBeInTheDocument()
+      expect(screen.queryByText(/GPU Telemetry/)).not.toBeInTheDocument()
+    })
+
+    it('does not render GPU Telemetry section when gpu_telemetry.gpus is empty', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            gpu_telemetry: { gpus: [] },
+          },
+        },
+      })
+
+      renderWithProviders()
+
+      expect(await screen.findByText('test-host')).toBeInTheDocument()
+      expect(screen.queryByText(/GPU Telemetry/)).not.toBeInTheDocument()
+    })
+  })
+
+  // [AC-010] Temperature color-coding thresholds.
+  describe('[AC-010] GPU temperature color-coding', () => {
+    async function renderWithTemp(temp: number) {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            gpu_telemetry: {
+              gpus: [{
+                index: 0,
+                name: 'Test GPU',
+                uuid: 'GPU-test',
+                pci_bus_id: '00:01.0',
+                temperature_c: temp,
+              }],
+            },
+          },
+        },
+      })
+      renderWithProviders()
+      return await screen.findByText(`${temp}°C`)
+    }
+
+    it('renders temperature in green (text-emerald-400) when below 60°C', async () => {
+      const el = await renderWithTemp(45)
+      expect(el.className).toContain('emerald')
+    })
+
+    it('renders temperature in amber (text-amber-400) when between 60°C and 79°C', async () => {
+      const el = await renderWithTemp(75)
+      expect(el.className).toContain('amber')
+    })
+
+    it('renders temperature in orange (text-orange-400) when between 80°C and 89°C', async () => {
+      const el = await renderWithTemp(85)
+      expect(el.className).toContain('orange')
+    })
+
+    it('renders temperature in red (text-red-400) when 90°C or above', async () => {
+      const el = await renderWithTemp(92)
+      expect(el.className).toContain('red')
+    })
+  })
+
+  // [AC-014] One-click alert button opens CreateAlertDialog pre-filled with gpu_temp.
+  describe('[AC-014] GPU Temp Alert button opens alert dialog pre-filled with gpu_temp', () => {
+    it('clicking GPU Temp Alert button shows metric label "GPU Temperature" in dialog', async () => {
+      mockGetDevice.mockResolvedValue({
+        ...baseDevice,
+        latest_telemetry: {
+          id: 1,
+          device_id: 'dev-1',
+          timestamp: new Date().toISOString(),
+          data: {
+            gpu_telemetry: {
+              gpus: [{
+                index: 0,
+                name: 'NVIDIA RTX 3090',
+                uuid: 'GPU-test',
+                pci_bus_id: '00:01.0',
+                temperature_c: 72,
+              }],
+            },
+          },
+        },
+      })
+
+      const { getByRole } = renderWithProviders()
+
+      // Wait for the GPU section to render
+      expect(await screen.findByText(/GPU Telemetry/)).toBeInTheDocument()
+
+      // Click the GPU Temp Alert button
+      const alertBtn = getByRole('button', { name: /GPU Temp Alert/i })
+      alertBtn.click()
+
+      // CreateAlertDialog should open showing the GPU Temperature label
+      expect(await screen.findByText('GPU Temperature')).toBeInTheDocument()
+      // The dialog should also show the hint text
+      expect(await screen.findByText(/GPU temperature in °C/)).toBeInTheDocument()
+    })
+  })
 })
