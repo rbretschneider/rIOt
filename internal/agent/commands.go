@@ -64,6 +64,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = "success", "image freshness cache cleared, will re-check on next telemetry cycle"
 	case "reboot":
 		status, message = a.handleReboot(payload)
+	case "shutdown":
+		status, message = a.handleShutdown(payload)
 	case "os_update":
 		r := a.handleOSUpdateWithOutput(ctx, payload)
 		status, message, execOutput, exitCode = r.Status, r.Message, r.Output, r.ExitCode
@@ -158,6 +160,25 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 		return "error", fmt.Sprintf("reboot: %s", err)
 	}
 	return "success", "reboot initiated"
+}
+
+// handleShutdown triggers a system shutdown if allowed by config.
+func (a *Agent) handleShutdown(payload models.CommandPayload) (string, string) {
+	if !a.config.Commands.AllowShutdown {
+		return "error", "shutdown not allowed by agent config (set commands.allow_shutdown: true)"
+	}
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("shutdown", "/s", "/t", "5")
+	} else {
+		cmd = exec.Command("sudo", "systemctl", "poweroff")
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "error", fmt.Sprintf("shutdown: %s", err)
+	}
+	return "success", "shutdown initiated"
 }
 
 // handleOSUpdateWithOutput runs package manager updates and captures full output.

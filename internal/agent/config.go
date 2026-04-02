@@ -30,6 +30,7 @@ type DNSCacheConfig struct {
 // CommandsConfig controls remote command execution.
 type CommandsConfig struct {
 	AllowReboot   bool `yaml:"allow_reboot"`   // opt-in for remote reboot
+	AllowShutdown bool `yaml:"allow_shutdown"` // opt-in for remote shutdown
 	AllowPatching bool `yaml:"allow_patching"` // opt-in for remote OS patching
 	AllowProbes   bool `yaml:"allow_probes"`   // opt-in for device probe execution
 }
@@ -175,6 +176,7 @@ docker:
 
 commands:
   allow_reboot: false      # Allow remote reboot commands
+  allow_shutdown: false    # Allow remote shutdown commands
   allow_patching: false    # Allow remote OS patching commands
 
 host_terminal:

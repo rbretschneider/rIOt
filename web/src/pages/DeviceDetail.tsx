@@ -233,6 +233,13 @@ export default function DeviceDetail() {
               >
                 Reboot
               </button>
+              <button
+                onClick={() => setConfirmAction('shutdown')}
+                disabled={commandMutation.isPending}
+                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Shutdown
+              </button>
               <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
                 <span className="text-xs text-gray-500">Auto-patch</span>
                 <button
@@ -357,18 +364,21 @@ export default function DeviceDetail() {
         <ConfirmModal
           title={
             confirmAction === 'reboot' ? 'Reboot Device'
+              : confirmAction === 'shutdown' ? 'Shutdown Device'
               : confirmAction === 'os_update' ? 'Patch Device'
               : 'Update Agent'
           }
           message={
             confirmAction === 'reboot'
               ? `Are you sure you want to reboot "${device.hostname}"? This will temporarily take the device offline.`
+              : confirmAction === 'shutdown'
+              ? `Are you sure you want to shut down "${device.hostname}"? The device will go offline and require physical or out-of-band access to turn back on.`
               : confirmAction === 'os_update'
               ? `Run OS package updates on "${device.hostname}"? This will upgrade all pending packages.`
               : `Trigger an agent update check on "${device.hostname}"?`
           }
-          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : confirmAction === 'os_update' ? 'Patch' : 'Update'}
-          confirmVariant={confirmAction === 'reboot' ? 'danger' : 'primary'}
+          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : confirmAction === 'shutdown' ? 'Shut Down' : confirmAction === 'os_update' ? 'Patch' : 'Update'}
+          confirmVariant={confirmAction === 'reboot' || confirmAction === 'shutdown' ? 'danger' : 'primary'}
           onConfirm={() => {
             const params = confirmAction === 'os_update' ? { mode: 'full' } : {}
             commandMutation.mutate({ action: confirmAction, params })
@@ -828,7 +838,7 @@ export default function DeviceDetail() {
       {/* GPU Telemetry */}
       {tel?.gpu_telemetry?.gpus && tel.gpu_telemetry.gpus.length > 0 && (
         <Section title={`GPU Telemetry (${tel.gpu_telemetry.gpus.length})`}>
-          <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {tel.gpu_telemetry.gpus.map((gpu) => (
               <div key={gpu.uuid} className="border border-gray-800 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-white mb-3">{gpu.name} <span className="text-gray-500 font-normal text-xs">— Index {gpu.index}</span></h3>

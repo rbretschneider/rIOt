@@ -205,6 +205,7 @@ func Doctor(configPath string) {
 	fmt.Println()
 	section("Permissions")
 	fmt.Printf("  Reboot:       %v\n", cfg.Commands.AllowReboot)
+	fmt.Printf("  Shutdown:     %v\n", cfg.Commands.AllowShutdown)
 	fmt.Printf("  Patching:     %v\n", cfg.Commands.AllowPatching)
 	fmt.Printf("  Probes:       %v\n", cfg.Commands.AllowProbes)
 	fmt.Printf("  Host shell:   %v\n", cfg.HostTerminal.Enabled)

@@ -19,6 +19,7 @@ var validActions = map[string]bool{
 	"docker_update":        true,
 	"docker_check_updates": true,
 	"reboot":               true,
+	"shutdown":             true,
 	"agent_update":         true,
 	"os_update":            true,
 	"fetch_logs":           true,

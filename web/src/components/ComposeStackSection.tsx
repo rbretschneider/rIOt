@@ -77,7 +77,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
   return (
     <section className="border border-gray-700/30 rounded-lg bg-gray-900/30 p-4">
       {/* Stack Header */}
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
+      <div className="flex items-center gap-2 mb-3">
         <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
@@ -85,19 +85,6 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         <span className="text-xs text-gray-600">{runningCount}/{stack.containers.length}</span>
 
         <div className="flex-1" />
-
-        <button
-          onClick={() => autoUpdateMutation.mutate(!isStackAutoUpdate)}
-          className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded transition-colors ${
-            isStackAutoUpdate
-              ? 'bg-emerald-500/15 text-emerald-400'
-              : 'text-gray-600 hover:text-gray-400'
-          }`}
-          title={isStackAutoUpdate ? 'Auto-update enabled' : 'Enable auto-update'}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${isStackAutoUpdate ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-          Auto
-        </button>
 
         {updatable.length > 0 && (
           <button
@@ -108,6 +95,19 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
             {stackMutation.isPending ? 'Updating...' : `Update Stack (${updatable.length})`}
           </button>
         )}
+
+        <button
+          onClick={() => autoUpdateMutation.mutate(!isStackAutoUpdate)}
+          className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded transition-colors flex-shrink-0 ${
+            isStackAutoUpdate
+              ? 'bg-emerald-500/15 text-emerald-400'
+              : 'text-gray-600 hover:text-gray-400'
+          }`}
+          title={isStackAutoUpdate ? 'Auto-update enabled' : 'Enable auto-update'}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${isStackAutoUpdate ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+          Auto
+        </button>
       </div>
 
       {stackMutation.isSuccess && (

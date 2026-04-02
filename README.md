@@ -36,7 +36,7 @@
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
-- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
+- **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot, system shutdown (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
 - **Feature toggles** — 16 individually toggleable dashboard features (including device terminal and Docker terminal) via Settings > Features with search/filter; toggles control UI visibility only — agents continue collecting all data
 - **Web server monitoring** — auto-detects nginx, Caddy, and Ferron reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
@@ -251,6 +251,7 @@ Run `riot-agent doctor` to troubleshoot a misbehaving agent. The command checks 
 
    commands:
      allow_reboot: false            # set to true to allow remote reboot
+     allow_shutdown: false          # set to true to allow remote shutdown (device requires physical/OOB access to power back on)
      allow_patching: false          # set to true to allow remote OS updates and enable auto-updates
 
    host_terminal:
@@ -282,6 +283,7 @@ The installer creates `/etc/sudoers.d/riot-agent` with least-privilege rules tha
 | `/usr/bin/dnf -y update` | Remote patching | Install available package updates |
 | `/usr/bin/dnf -y --security update` | Remote patching | Install security-only updates |
 | `/usr/bin/systemctl reboot` | Remote reboot | Reboot the device from the dashboard |
+| `sudo systemctl poweroff` | Remote shutdown | Shut down the device from the dashboard (Linux) |
 | `/bin/sh -c mv ... && cp ... && chmod ...` | Agent self-update | Atomically swap the agent binary on disk |
 | `/usr/bin/systemd-run --unit=riot-agent-update sh -c *` | Agent self-update | Run the update in a transient systemd unit |
 | `/usr/bin/systemctl reset-failed riot-agent-update` | Agent self-update | Clear failed state from a previous update unit |
@@ -325,6 +327,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard |
+| `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
 | `host_terminal.shell` | auto-detect | Override default shell (e.g., `/bin/bash`) |
