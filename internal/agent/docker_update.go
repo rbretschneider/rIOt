@@ -98,7 +98,7 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	}
 
 	// Build pull command
-	pullArgs := []string{"compose", "--project-directory", workDir, "pull"}
+	pullArgs := []string{"compose", "--compatibility", "--project-directory", workDir, "pull"}
 	if service != "" {
 		pullArgs = append(pullArgs, service)
 	}
@@ -110,7 +110,7 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 	}
 
 	// Build up command
-	upArgs := []string{"compose", "--project-directory", workDir, "up", "-d"}
+	upArgs := []string{"compose", "--compatibility", "--project-directory", workDir, "up", "-d"}
 	if service != "" {
 		upArgs = append(upArgs, service)
 	}
