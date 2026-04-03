@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"gopkg.in/yaml.v3"
 )
 
 // dockerUpdate pulls a newer image and recreates the container.
@@ -97,20 +99,48 @@ func (a *Agent) dockerUpdateCompose(workDir, service string) (string, string) {
 			"stack", stackName, "stopped", stoppedDependents)
 	}
 
-	// Build pull command
-	pullArgs := []string{"compose", "--compatibility", "--project-directory", workDir, "pull"}
+	// Build pull command — try without --compatibility first (it doesn't help with validation)
+	pullArgs := []string{"compose", "--project-directory", workDir, "pull"}
 	if service != "" {
 		pullArgs = append(pullArgs, service)
 	}
 	pullCmd := exec.CommandContext(updateCtx, "docker", pullArgs...)
 	pullOut, err := pullCmd.CombinedOutput()
+
+	// If pull failed due to compose file validation (e.g. deploy.resources not allowed),
+	// sanitize the compose file by stripping unsupported keys and retry.
+	var sanitizedFile string
+	if err != nil && isComposeValidationError(string(pullOut)) {
+		slog.Info("docker_update: compose validation failed, retrying with sanitized file",
+			"stack", stackName, "error", string(pullOut))
+		sf, serr := sanitizeComposeFile(workDir)
+		if serr != nil {
+			a.sendDockerLifecycleEvent(updateCtx, target, "", "update_failed")
+			return "error", fmt.Sprintf("compose pull failed: %s\n%s\nsanitize fallback also failed: %s",
+				err, truncateOutput(pullOut, 4000), serr)
+		}
+		sanitizedFile = sf
+		defer os.Remove(sanitizedFile)
+
+		pullArgs = []string{"compose", "-f", sanitizedFile, "--project-directory", workDir, "pull"}
+		if service != "" {
+			pullArgs = append(pullArgs, service)
+		}
+		pullCmd = exec.CommandContext(updateCtx, "docker", pullArgs...)
+		pullOut, err = pullCmd.CombinedOutput()
+	}
+
 	if err != nil {
 		a.sendDockerLifecycleEvent(updateCtx, target, "", "update_failed")
 		return "error", fmt.Sprintf("compose pull failed: %s\n%s", err, truncateOutput(pullOut, 4000))
 	}
 
-	// Build up command
-	upArgs := []string{"compose", "--compatibility", "--project-directory", workDir, "up", "-d"}
+	// Build up command — use sanitized file if we needed it for pull
+	upArgs := []string{"compose"}
+	if sanitizedFile != "" {
+		upArgs = append(upArgs, "-f", sanitizedFile)
+	}
+	upArgs = append(upArgs, "--project-directory", workDir, "up", "-d")
 	if service != "" {
 		upArgs = append(upArgs, service)
 	}
@@ -410,4 +440,65 @@ func (a *Agent) clearFreshnessCache() {
 			return
 		}
 	}
+}
+
+// isComposeValidationError checks if compose output indicates a file validation error
+// (e.g. "services.deploy additional properties 'resources' not allowed").
+func isComposeValidationError(output string) bool {
+	return strings.Contains(output, "validating") && strings.Contains(output, "not allowed")
+}
+
+// sanitizeComposeFile creates a temporary copy of the compose file in workDir with
+// problematic keys removed (version, deploy sections) so that Docker Compose doesn't
+// reject files with Swarm-only config in non-Swarm environments.
+func sanitizeComposeFile(workDir string) (string, error) {
+	// Find compose file — Docker Compose checks these names in order
+	var composeFile string
+	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
+		candidate := filepath.Join(workDir, name)
+		if _, err := os.Stat(candidate); err == nil {
+			composeFile = candidate
+			break
+		}
+	}
+	if composeFile == "" {
+		return "", fmt.Errorf("no compose file found in %s", workDir)
+	}
+
+	data, err := os.ReadFile(composeFile)
+	if err != nil {
+		return "", err
+	}
+
+	var compose map[string]interface{}
+	if err := yaml.Unmarshal(data, &compose); err != nil {
+		return "", fmt.Errorf("parse compose file: %w", err)
+	}
+
+	// Remove version key — without it, Docker Compose uses compose-spec which is more lenient
+	delete(compose, "version")
+
+	// Remove deploy sections from all services — these are Swarm-only and cause
+	// validation errors in non-Swarm Docker Compose environments
+	if services, ok := compose["services"].(map[string]interface{}); ok {
+		for svcName, svc := range services {
+			if svcMap, ok := svc.(map[string]interface{}); ok {
+				delete(svcMap, "deploy")
+				services[svcName] = svcMap
+			}
+		}
+	}
+
+	out, err := yaml.Marshal(compose)
+	if err != nil {
+		return "", fmt.Errorf("marshal sanitized compose: %w", err)
+	}
+
+	tmpFile := filepath.Join(workDir, ".compose.riot-sanitized.yml")
+	if err := os.WriteFile(tmpFile, out, 0644); err != nil {
+		return "", err
+	}
+
+	slog.Info("docker_update: created sanitized compose file", "original", composeFile, "sanitized", tmpFile)
+	return tmpFile, nil
 }
