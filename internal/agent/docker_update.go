@@ -33,6 +33,7 @@ func (a *Agent) dockerUpdate(ctx context.Context, payload models.CommandPayload)
 		status, msg := a.dockerUpdateCompose(workDir, "")
 		if status == "success" {
 			a.clearFreshnessCache()
+			a.triggerTelemetry()
 		}
 		return status, msg
 	}
@@ -68,6 +69,7 @@ func (a *Agent) dockerUpdate(ctx context.Context, payload models.CommandPayload)
 
 	if status == "success" {
 		a.clearFreshnessCache()
+		a.triggerTelemetry()
 	}
 	return status, msg
 }
@@ -423,12 +425,23 @@ func (a *Agent) dockerBulkUpdate(ctx context.Context, payload models.CommandPayl
 	}
 
 	a.clearFreshnessCache()
+	a.triggerTelemetry()
 
 	summary := fmt.Sprintf("bulk update: %d/%d succeeded\n%s", len(nodes)-failed, len(nodes), strings.Join(results, "\n"))
 	if failed > 0 {
 		return "error", summary
 	}
 	return "success", summary
+}
+
+// triggerTelemetry signals the telemetry loop to send immediately so the
+// dashboard reflects updated container state without waiting for the next cycle.
+func (a *Agent) triggerTelemetry() {
+	select {
+	case a.telemetryNow <- struct{}{}:
+	default:
+		// Already pending — no need to queue another
+	}
 }
 
 // clearFreshnessCache clears the docker collector's image freshness cache

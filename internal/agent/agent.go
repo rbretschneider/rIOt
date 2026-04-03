@@ -32,6 +32,10 @@ type Agent struct {
 	wsClient   *agentWSClient
 	logErrors  atomic.Int64
 
+	// telemetryNow signals the telemetry loop to send immediately
+	// (e.g. after a docker update so the dashboard reflects new state).
+	telemetryNow chan struct{}
+
 	// Disk I/O tracking for delta computation between heartbeats.
 	prevDiskIO     map[string]diskIOSnapshot
 	prevDiskIOTime time.Time
@@ -61,10 +65,11 @@ func New(configPath, version string) (*Agent, error) {
 	}
 
 	return &Agent{
-		config:     cfg,
-		configPath: configPath,
-		version:    version,
-		registry:   registry,
+		config:       cfg,
+		configPath:   configPath,
+		version:      version,
+		registry:     registry,
+		telemetryNow: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -235,6 +240,9 @@ func (a *Agent) telemetryLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			a.sendTelemetry(ctx)
+		case <-a.telemetryNow:
+			a.sendTelemetry(ctx)
+			ticker.Reset(interval) // reset ticker so we don't double-send
 		}
 	}
 }
