@@ -4,6 +4,8 @@ import (
 	"embed"
 	"io/fs"
 	"log"
+	"os"
+	"runtime/debug"
 
 	"github.com/DesyncTheThird/rIOt/internal/server"
 )
@@ -17,6 +19,12 @@ var migrationsFS embed.FS
 var version = "dev"
 
 func main() {
+	// Set a soft memory limit so Go returns unused memory to the OS instead of
+	// holding onto it. Default 512MB; override with GOMEMLIMIT env var.
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(512 * 1024 * 1024) // 512 MiB
+	}
+
 	cfg := server.LoadConfig()
 	srv := server.New(cfg)
 	srv.Version = version

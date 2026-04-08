@@ -312,6 +312,13 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		snap.Timestamp = time.Now().UTC()
 	}
 
+	// Extract logs BEFORE storing the snapshot so they don't bloat the JSONB blob.
+	// Logs are stored in their own tables, not in the telemetry snapshot.
+	deviceLogs := snap.Data.Logs
+	snap.Data.Logs = nil
+	containerLogs := snap.Data.ContainerLogs
+	snap.Data.ContainerLogs = nil
+
 	if err := h.telemetry.StoreSnapshot(r.Context(), &snap); err != nil {
 		slog.Error("store telemetry", "error", err.Error())
 		http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
@@ -337,20 +344,18 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		h.serverHostID.Store(deviceID)
 	}
 
-	// Extract and store device logs
-	if len(snap.Data.Logs) > 0 && h.deviceLogRepo != nil {
-		if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.Logs); err != nil {
+	// Store device logs in their dedicated table
+	if len(deviceLogs) > 0 && h.deviceLogRepo != nil {
+		if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, deviceLogs); err != nil {
 			slog.Error("store device logs", "error", err.Error())
 		}
-		snap.Data.Logs = nil // Don't persist logs in the telemetry snapshot
 	}
 
-	// Extract and store container logs
-	if len(snap.Data.ContainerLogs) > 0 && h.containerLogRepo != nil {
-		if err := h.containerLogRepo.InsertBatch(r.Context(), deviceID, snap.Data.ContainerLogs); err != nil {
+	// Store container logs in their dedicated table
+	if len(containerLogs) > 0 && h.containerLogRepo != nil {
+		if err := h.containerLogRepo.InsertBatch(r.Context(), deviceID, containerLogs); err != nil {
 			slog.Error("store container logs", "error", err.Error())
 		}
-		snap.Data.ContainerLogs = nil // Don't persist logs in the telemetry snapshot
 	}
 
 	// Extract and store per-container metrics
@@ -395,8 +400,11 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// Check auto-patch (OS updates)
 	h.checkAutoPatch(r.Context(), deviceID, &snap.Data)
 
-	// Broadcast via WebSocket
-	h.hub.BroadcastTelemetry(deviceID, &snap.Data)
+	// Broadcast a lightweight view via WebSocket — strip heavy fields that the
+	// dashboard doesn't need in real-time (it fetches full telemetry on demand).
+	// This avoids serializing multi-MB JSON per device per broadcast cycle.
+	broadcastData := stripHeavyTelemetry(&snap.Data)
+	h.hub.BroadcastTelemetry(deviceID, broadcastData)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -896,6 +904,52 @@ func isLoopback(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// stripHeavyTelemetry returns a shallow copy of the telemetry data with
+// expensive fields removed. The dashboard only needs live metrics (CPU, memory,
+// disk usage, service status, container state) for real-time updates — it
+// fetches full details on demand. This cuts broadcast JSON from multi-MB to ~KB.
+func stripHeavyTelemetry(data *models.FullTelemetryData) *models.FullTelemetryData {
+	light := *data // shallow copy
+
+	// Strip fields the dashboard doesn't need in real-time broadcasts
+	light.Hardware = nil   // PCI devices, disk drives, serial ports, GPUs (static inventory)
+	light.WebServers = nil // Full proxy configs, certs, sites, upstreams
+	light.CronJobs = nil   // Cron jobs and systemd timers
+	light.Procs = nil      // Process lists (top by CPU/mem)
+	light.USB = nil        // USB device inventory
+
+	// Strip per-container heavy fields by creating a slim container list
+	if light.Docker != nil && len(light.Docker.Containers) > 0 {
+		dockerCopy := *light.Docker
+		slimContainers := make([]models.ContainerInfo, len(dockerCopy.Containers))
+		for i, c := range dockerCopy.Containers {
+			slimContainers[i] = models.ContainerInfo{
+				ID:            c.ID,
+				ShortID:       c.ShortID,
+				Name:          c.Name,
+				Image:         c.Image,
+				State:         c.State,
+				Status:        c.Status,
+				CPUPercent:    c.CPUPercent,
+				MemUsage:      c.MemUsage,
+				MemLimit:      c.MemLimit,
+				CPULimit:      c.CPULimit,
+				HealthStatus:  c.HealthStatus,
+				RestartCount:  c.RestartCount,
+				RestartPolicy: c.RestartPolicy,
+				Ports:         c.Ports,
+				NetworkMode:   c.NetworkMode,
+				UpdateAvailable: c.UpdateAvailable,
+				Riot:          c.Riot,
+			}
+		}
+		dockerCopy.Containers = slimContainers
+		light.Docker = &dockerCopy
+	}
+
+	return &light
 }
 
 // RotateKey handles POST /api/v1/devices/{id}/rotate-key.

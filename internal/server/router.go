@@ -2,12 +2,26 @@ package server
 
 import (
 	"net/http"
+	"net/http/pprof"
 
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
+
+func pprofHandler() http.Handler {
+	mux := chi.NewMux()
+	mux.HandleFunc("/", pprof.Index)
+	mux.HandleFunc("/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/profile", pprof.Profile)
+	mux.HandleFunc("/symbol", pprof.Symbol)
+	mux.HandleFunc("/trace", pprof.Trace)
+	mux.Handle("/heap", pprof.Handler("heap"))
+	mux.Handle("/goroutine", pprof.Handler("goroutine"))
+	mux.Handle("/allocs", pprof.Handler("allocs"))
+	return mux
+}
 
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
@@ -149,6 +163,9 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	// === ADMIN routes (JWT cookie auth) ===
 	adminAuth := middleware.AdminAuth(s.JWTSecret)
+
+	// Debug profiling (admin-only)
+	r.With(adminAuth).Mount("/debug/pprof", pprofHandler())
 
 	r.Group(func(r chi.Router) {
 		r.Use(adminAuth)
