@@ -106,15 +106,22 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 		return nil
 	})
+	pingDone := make(chan struct{})
+	defer close(pingDone)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			ac.mu.Lock()
-			err := conn.WriteControl(ws.PingMessage, nil, time.Now().Add(10*time.Second))
-			ac.mu.Unlock()
-			if err != nil {
+		for {
+			select {
+			case <-pingDone:
 				return
+			case <-ticker.C:
+				ac.mu.Lock()
+				err := conn.WriteControl(ws.PingMessage, nil, time.Now().Add(10*time.Second))
+				ac.mu.Unlock()
+				if err != nil {
+					return
+				}
 			}
 		}
 	}()

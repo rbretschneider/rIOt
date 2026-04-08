@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -20,13 +21,26 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 	if len(entries) == 0 {
 		return nil
 	}
-	for _, e := range entries {
-		_, err := r.db.Pool.Exec(ctx,
-			`INSERT INTO device_logs (device_id, timestamp, priority, unit, message) VALUES ($1, $2, $3, $4, $5)
-			 ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`,
-			deviceID, e.Timestamp, e.Priority, e.Unit, e.Message,
-		)
-		if err != nil {
+	const batchSize = 500
+	for i := 0; i < len(entries); i += batchSize {
+		end := i + batchSize
+		if end > len(entries) {
+			end = len(entries)
+		}
+		batch := entries[i:end]
+
+		query := `INSERT INTO device_logs (device_id, timestamp, priority, unit, message) VALUES `
+		args := make([]interface{}, 0, len(batch)*5)
+		for j, e := range batch {
+			if j > 0 {
+				query += ","
+			}
+			base := j * 5
+			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4, base+5)
+			args = append(args, deviceID, e.Timestamp, e.Priority, e.Unit, e.Message)
+		}
+		query += ` ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`
+		if _, err := r.db.Pool.Exec(ctx, query, args...); err != nil {
 			return err
 		}
 	}

@@ -38,6 +38,7 @@ type TelemetryRepository interface {
 	StoreSnapshot(ctx context.Context, snap *models.TelemetrySnapshot) error
 	GetLatestSnapshot(ctx context.Context, deviceID string) (*models.TelemetrySnapshot, error)
 	GetAllLatestSnapshots(ctx context.Context) ([]models.TelemetrySnapshot, error)
+	GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error)
 	GetHistory(ctx context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error)
 	GetHeartbeatHistory(ctx context.Context, deviceID string, since time.Time) ([]models.Heartbeat, error)
 	PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error)

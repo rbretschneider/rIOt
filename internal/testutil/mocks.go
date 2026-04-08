@@ -318,6 +318,31 @@ func (m *MockTelemetryRepo) GetAllLatestSnapshots(_ context.Context) ([]models.T
 	return result, nil
 }
 
+func (m *MockTelemetryRepo) GetAllLatestSummaries(_ context.Context) ([]db.SnapshotSummary, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var result []db.SnapshotSummary
+	for deviceID, snaps := range m.Snapshots {
+		if len(snaps) == 0 {
+			continue
+		}
+		s := snaps[len(snaps)-1]
+		summary := db.SnapshotSummary{
+			DeviceID: deviceID,
+			Updates:  s.Data.Updates,
+			Security: s.Data.Security,
+		}
+		if s.Data.WebServers != nil {
+			for _, srv := range s.Data.WebServers.Servers {
+				summary.WebCerts = append(summary.WebCerts, srv.Certs...)
+			}
+		}
+		result = append(result, summary)
+	}
+	return result, nil
+}
+
 func (m *MockTelemetryRepo) GetHistory(_ context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error) {
 	if m.Err != nil {
 		return nil, m.Err

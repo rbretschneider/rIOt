@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -20,13 +21,25 @@ func (r *ContainerMetricRepo) StoreBatch(ctx context.Context, deviceID string, m
 	if len(metrics) == 0 {
 		return nil
 	}
-	for _, m := range metrics {
-		_, err := r.db.Pool.Exec(ctx,
-			`INSERT INTO container_metrics (device_id, container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit, cpu_limit)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			deviceID, m.ContainerName, m.ContainerID, m.Timestamp, m.CPUPercent, m.MemUsage, m.MemLimit, m.CPULimit,
-		)
-		if err != nil {
+	const batchSize = 500
+	for i := 0; i < len(metrics); i += batchSize {
+		end := i + batchSize
+		if end > len(metrics) {
+			end = len(metrics)
+		}
+		batch := metrics[i:end]
+
+		query := `INSERT INTO container_metrics (device_id, container_name, container_id, timestamp, cpu_percent, mem_usage, mem_limit, cpu_limit) VALUES `
+		args := make([]interface{}, 0, len(batch)*8)
+		for j, m := range batch {
+			if j > 0 {
+				query += ","
+			}
+			base := j * 8
+			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8)
+			args = append(args, deviceID, m.ContainerName, m.ContainerID, m.Timestamp, m.CPUPercent, m.MemUsage, m.MemLimit, m.CPULimit)
+		}
+		if _, err := r.db.Pool.Exec(ctx, query, args...); err != nil {
 			return err
 		}
 	}

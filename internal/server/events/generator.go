@@ -29,6 +29,7 @@ type Generator struct {
 	mu            sync.Mutex
 	lastSent      map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
 	activeUpdates map[string]int       // key: deviceID → count of in-progress container updates
+	updateStarted map[string]time.Time // key: deviceID → when the first update_started was received
 }
 
 func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.AlertRuleRepository, dispatcher Dispatcher, commandRepo db.CommandRepository) *Generator {
@@ -40,6 +41,47 @@ func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.
 		commandRepo:   commandRepo,
 		lastSent:      make(map[string]time.Time),
 		activeUpdates: make(map[string]int),
+		updateStarted: make(map[string]time.Time),
+	}
+}
+
+// StartCleanup runs a background goroutine that periodically prunes stale
+// entries from the lastSent and activeUpdates maps to prevent unbounded growth.
+func (g *Generator) StartCleanup(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(10 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				g.pruneStaleEntries()
+			}
+		}
+	}()
+}
+
+func (g *Generator) pruneStaleEntries() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Prune lastSent entries older than 1 hour — well beyond any cooldown period
+	cutoff := time.Now().Add(-1 * time.Hour)
+	for key, t := range g.lastSent {
+		if t.Before(cutoff) {
+			delete(g.lastSent, key)
+		}
+	}
+
+	// Prune activeUpdates entries stuck for over 30 minutes — the agent
+	// likely crashed mid-update if it hasn't sent a completion event by now.
+	updateCutoff := time.Now().Add(-30 * time.Minute)
+	for deviceID, started := range g.updateStarted {
+		if started.Before(updateCutoff) {
+			delete(g.activeUpdates, deviceID)
+			delete(g.updateStarted, deviceID)
+		}
 	}
 }
 
@@ -688,6 +730,9 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		})
 	case "update_started":
 		g.mu.Lock()
+		if g.activeUpdates[deviceID] == 0 {
+			g.updateStarted[deviceID] = time.Now()
+		}
 		g.activeUpdates[deviceID]++
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
@@ -701,6 +746,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		}
 		if g.activeUpdates[deviceID] == 0 {
 			delete(g.activeUpdates, deviceID)
+			delete(g.updateStarted, deviceID)
 		}
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
@@ -714,6 +760,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		}
 		if g.activeUpdates[deviceID] == 0 {
 			delete(g.activeUpdates, deviceID)
+			delete(g.updateStarted, deviceID)
 		}
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{

@@ -8,6 +8,16 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
+// SnapshotSummary is a lightweight projection of a telemetry snapshot
+// containing only the fields needed by fleet and security overview endpoints.
+// This avoids deserializing the full multi-MB JSONB blob per device.
+type SnapshotSummary struct {
+	DeviceID string
+	Updates  *models.UpdateInfo
+	Security *models.SecurityInfo
+	WebCerts []models.ProxyCert // flattened from WebServers.Servers[].Certs
+}
+
 // TelemetryRepo handles telemetry database operations.
 type TelemetryRepo struct {
 	db *DB
@@ -71,6 +81,52 @@ func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.Tel
 		snapshots = append(snapshots, s)
 	}
 	return snapshots, nil
+}
+
+// GetAllLatestSummaries returns lightweight projections of the latest snapshot
+// per device, extracting only the updates, security, and web_servers.certs
+// fields via PostgreSQL JSONB operators. This avoids loading multi-MB blobs.
+func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT device_id,
+			data->'updates' AS updates,
+			data->'security' AS security,
+			data->'web_servers'->'servers' AS servers
+		 FROM (
+			SELECT DISTINCT ON (device_id) device_id, data
+			FROM telemetry_snapshots
+			ORDER BY device_id, timestamp DESC
+		 ) latest`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var summaries []SnapshotSummary
+	for rows.Next() {
+		var s SnapshotSummary
+		var updatesJSON, securityJSON, serversJSON []byte
+		if err := rows.Scan(&s.DeviceID, &updatesJSON, &securityJSON, &serversJSON); err != nil {
+			return nil, err
+		}
+		if len(updatesJSON) > 0 && string(updatesJSON) != "null" {
+			s.Updates = &models.UpdateInfo{}
+			json.Unmarshal(updatesJSON, s.Updates)
+		}
+		if len(securityJSON) > 0 && string(securityJSON) != "null" {
+			s.Security = &models.SecurityInfo{}
+			json.Unmarshal(securityJSON, s.Security)
+		}
+		if len(serversJSON) > 0 && string(serversJSON) != "null" {
+			var servers []models.ProxyServer
+			json.Unmarshal(serversJSON, &servers)
+			for _, srv := range servers {
+				s.WebCerts = append(s.WebCerts, srv.Certs...)
+			}
+		}
+		summaries = append(summaries, s)
+	}
+	return summaries, nil
 }
 
 // GetHistory returns paginated telemetry snapshots for a device.

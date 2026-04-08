@@ -13,7 +13,7 @@ import (
 // Returns pending update details per device from latest telemetry.
 // Use ?detail=true to include the full package list per device.
 func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
-	snaps, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	summaries, err := h.telemetry.GetAllLatestSummaries(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
 		return
@@ -37,18 +37,18 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		PackageManager string                `json:"package_manager,omitempty"`
 		Updates        []models.PendingUpdate `json:"updates,omitempty"`
 	}
-	result := make([]devicePatchInfo, 0, len(snaps))
-	for _, s := range snaps {
-		if s.Data.Updates != nil && s.Data.Updates.PendingUpdates > 0 {
+	result := make([]devicePatchInfo, 0, len(summaries))
+	for _, s := range summaries {
+		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
 			info := devicePatchInfo{
 				DeviceID:       s.DeviceID,
 				Hostname:       hostnames[s.DeviceID],
-				PendingUpdates: s.Data.Updates.PendingUpdates,
-				SecurityCount:  s.Data.Updates.PendingSecurityCount,
+				PendingUpdates: s.Updates.PendingUpdates,
+				SecurityCount:  s.Updates.PendingSecurityCount,
 			}
 			if detail {
-				info.PackageManager = s.Data.Updates.PackageManager
-				info.Updates = s.Data.Updates.Updates
+				info.PackageManager = s.Updates.PackageManager
+				info.Updates = s.Updates.Updates
 			}
 			result = append(result, info)
 		}
@@ -160,15 +160,15 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 		req.Mode = "full"
 	}
 
-	// Get telemetry to find devices with pending patches
-	snaps, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	// Get lightweight telemetry summaries to find devices with pending patches
+	summaries, err := h.telemetry.GetAllLatestSummaries(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
 		return
 	}
-	needsPatch := make(map[string]bool, len(snaps))
-	for _, s := range snaps {
-		if s.Data.Updates != nil && s.Data.Updates.PendingUpdates > 0 {
+	needsPatch := make(map[string]bool, len(summaries))
+	for _, s := range summaries {
+		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
 			needsPatch[s.DeviceID] = true
 		}
 	}

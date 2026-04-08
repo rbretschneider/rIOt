@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -21,13 +22,26 @@ func (r *ContainerLogRepo) InsertBatch(ctx context.Context, deviceID string, ent
 	if len(entries) == 0 {
 		return nil
 	}
-	for _, e := range entries {
-		_, err := r.db.Pool.Exec(ctx,
-			`INSERT INTO container_logs (device_id, container_id, container_name, timestamp, stream, line)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line,
-		)
-		if err != nil {
+	// Build multi-row VALUES insert in batches of 500 to stay within PG param limits
+	const batchSize = 500
+	for i := 0; i < len(entries); i += batchSize {
+		end := i + batchSize
+		if end > len(entries) {
+			end = len(entries)
+		}
+		batch := entries[i:end]
+
+		query := `INSERT INTO container_logs (device_id, container_id, container_name, timestamp, stream, line) VALUES `
+		args := make([]interface{}, 0, len(batch)*6)
+		for j, e := range batch {
+			if j > 0 {
+				query += ","
+			}
+			base := j * 6
+			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4, base+5, base+6)
+			args = append(args, deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line)
+		}
+		if _, err := r.db.Pool.Exec(ctx, query, args...); err != nil {
 			return err
 		}
 	}

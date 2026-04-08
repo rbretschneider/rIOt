@@ -37,7 +37,7 @@ type deviceSecurityInfo struct {
 
 // SecurityOverview handles GET /api/v1/security/overview.
 func (h *Handlers) SecurityOverview(w http.ResponseWriter, r *http.Request) {
-	snapshots, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	summaries, err := h.telemetry.GetAllLatestSummaries(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
 		return
@@ -51,21 +51,17 @@ func (h *Handlers) SecurityOverview(w http.ResponseWriter, r *http.Request) {
 
 	overview := securityOverview{TotalDevices: len(devices)}
 
-	for _, snap := range snapshots {
+	for _, s := range summaries {
 		// Cert counting runs before the sec == nil guard so that devices running
 		// the webservers collector but not the security collector still contribute
 		// their certificates to the fleet-wide totals.
-		if ws := snap.Data.WebServers; ws != nil {
-			for _, srv := range ws.Servers {
-				for _, cert := range srv.Certs {
-					overview.TotalCerts++
-					if cert.DaysLeft <= 30 {
-						overview.CertsExpiringSoon++
-					}
-				}
+		for _, cert := range s.WebCerts {
+			overview.TotalCerts++
+			if cert.DaysLeft <= 30 {
+				overview.CertsExpiringSoon++
 			}
 		}
-		sec := snap.Data.Security
+		sec := s.Security
 		if sec == nil {
 			continue
 		}
@@ -90,7 +86,7 @@ func (h *Handlers) SecurityOverview(w http.ResponseWriter, r *http.Request) {
 
 // SecurityDevices handles GET /api/v1/security/devices.
 func (h *Handlers) SecurityDevices(w http.ResponseWriter, r *http.Request) {
-	snapshots, err := h.telemetry.GetAllLatestSnapshots(r.Context())
+	summaries, err := h.telemetry.GetAllLatestSummaries(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get telemetry"}`, http.StatusInternalServerError)
 		return
@@ -109,14 +105,14 @@ func (h *Handlers) SecurityDevices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var result []deviceSecurityInfo
-	for _, snap := range snapshots {
-		sec := snap.Data.Security
+	for _, s := range summaries {
+		sec := s.Security
 		if sec == nil {
 			continue
 		}
-		dev := deviceMap[snap.DeviceID]
+		dev := deviceMap[s.DeviceID]
 		info := deviceSecurityInfo{
-			DeviceID:        snap.DeviceID,
+			DeviceID:        s.DeviceID,
 			Hostname:        dev.hostname,
 			Status:          dev.status,
 			SELinux:         sec.SELinux,
@@ -129,18 +125,14 @@ func (h *Handlers) SecurityDevices(w http.ResponseWriter, r *http.Request) {
 		if info.OpenPorts == nil {
 			info.OpenPorts = []int{}
 		}
-		if upd := snap.Data.Updates; upd != nil {
+		if upd := s.Updates; upd != nil {
 			info.PendingSecurityCount = upd.PendingSecurityCount
 			v := upd.UnattendedUpgrades
 			info.UnattendedUpgrades = &v
 		}
-		if ws := snap.Data.WebServers; ws != nil {
-			for _, srv := range ws.Servers {
-				for _, cert := range srv.Certs {
-					if cert.DaysLeft <= 30 {
-						info.CertsExpiringSoon++
-					}
-				}
+		for _, cert := range s.WebCerts {
+			if cert.DaysLeft <= 30 {
+				info.CertsExpiringSoon++
 			}
 		}
 		result = append(result, info)
