@@ -52,6 +52,8 @@ export default function DeviceDetail() {
   const queryClient = useQueryClient()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
+  const [downloadState, setDownloadState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const [copyState, setCopyState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [tagInput, setTagInput] = useState('')
   const [locationEdit, setLocationEdit] = useState<string | null>(null)
   const [metricHours, setMetricHours] = useState(24)
@@ -140,6 +142,45 @@ export default function DeviceDetail() {
   const tel = latest_telemetry?.data
   const canCommand = device.status === 'online' && agent_connected !== false
 
+  // Download Summary: fetch Markdown, create a Blob URL, trigger download.
+  const handleDownloadSummary = async () => {
+    if (!id || !latest_telemetry) return
+    setDownloadState('loading')
+    try {
+      const markdown = await api.getDeviceSummary(id)
+      const blob = new Blob([markdown], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const today = new Date().toISOString().slice(0, 10)
+      const filename = `${device.hostname.replace(/[^a-zA-Z0-9_-]/g, '_')}-summary-${today}.md`
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      setDownloadState('idle')
+    } catch {
+      setDownloadState('error')
+      setTimeout(() => setDownloadState('idle'), 2000)
+    }
+  }
+
+  // Copy to Clipboard: fetch Markdown, write to clipboard, show feedback.
+  const handleCopySummary = async () => {
+    if (!id || !latest_telemetry) return
+    setCopyState('loading')
+    try {
+      const markdown = await api.getDeviceSummary(id)
+      await navigator.clipboard.writeText(markdown)
+      setCopyState('success')
+      setTimeout(() => setCopyState('idle'), 2000)
+    } catch {
+      setCopyState('error')
+      setTimeout(() => setCopyState('idle'), 2000)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -203,6 +244,35 @@ export default function DeviceDetail() {
           {isEnabled('security_score') && securityScore && (
             <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
           )}
+          {/* Export summary buttons — always visible, disabled when no telemetry */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleDownloadSummary}
+              disabled={!latest_telemetry || downloadState === 'loading'}
+              aria-label="Download device summary as Markdown file"
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                downloadState === 'error'
+                  ? 'text-red-400 border-red-800/50'
+                  : 'text-gray-400 hover:text-gray-300 border-gray-600/50 hover:border-gray-500/50'
+              }`}
+            >
+              {downloadState === 'loading' ? 'Downloading…' : downloadState === 'error' ? 'Download Failed' : 'Download Summary'}
+            </button>
+            <button
+              onClick={handleCopySummary}
+              disabled={!latest_telemetry || copyState === 'loading'}
+              aria-label="Copy device summary to clipboard"
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                copyState === 'success'
+                  ? 'text-emerald-400 border-emerald-800/50'
+                  : copyState === 'error'
+                  ? 'text-red-400 border-red-800/50'
+                  : 'text-gray-400 hover:text-gray-300 border-gray-600/50 hover:border-gray-500/50'
+              }`}
+            >
+              {copyState === 'loading' ? 'Copying…' : copyState === 'success' ? 'Copied!' : copyState === 'error' ? 'Copy Failed' : 'Copy Summary'}
+            </button>
+          </div>
           <StatusBadge status={device.status} />
           {device.status === 'online' && (
             <div className="flex gap-2">

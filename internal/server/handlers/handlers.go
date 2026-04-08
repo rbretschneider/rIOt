@@ -21,6 +21,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
+	devicesummary "github.com/DesyncTheThird/rIOt/internal/server/summary"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/go-chi/chi/v5"
@@ -997,4 +998,68 @@ func (h *Handlers) SetRegistrationKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeviceSummary generates and returns a Markdown inventory summary for the given device.
+// It uses the most recent telemetry snapshot available for the device.
+//
+// GET /api/v1/devices/{id}/summary
+// Responses:
+//
+//	200 OK — text/markdown; charset=utf-8 with Content-Disposition attachment header
+//	404 Not Found — device not found or no telemetry data available
+//	500 Internal Server Error — template rendering failure
+func (h *Handlers) DeviceSummary(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	device, err := h.devices.GetByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"device not found"}`, http.StatusNotFound)
+		return
+	}
+
+	snapshot, err := h.telemetry.GetLatestSnapshot(r.Context(), id)
+	if err != nil {
+		http.Error(w, `{"error":"no telemetry data available"}`, http.StatusNotFound)
+		return
+	}
+
+	markdown, err := devicesummary.Render(device, snapshot)
+	if err != nil {
+		slog.Error("render device summary", "device_id", id, "error", err.Error())
+		http.Error(w, `{"error":"failed to generate summary"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// SEC-001: Sanitize hostname for Content-Disposition — only ASCII alphanumeric,
+	// hyphens, and underscores. Replace any other character with underscore.
+	safeHostname := sanitizeFilename(device.Hostname)
+	dateStr := time.Now().UTC().Format("2006-01-02")
+	filename := fmt.Sprintf("%s-summary-%s.md", safeHostname, dateStr)
+
+	// Quote the filename per RFC 6266 to handle any edge cases.
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprint(w, markdown)
+}
+
+// sanitizeFilename replaces any character that is not ASCII alphanumeric, a hyphen,
+// or an underscore with an underscore, then trims any leading/trailing underscores.
+// If the result is empty (e.g., all-special-char hostname), returns "device" as a
+// safe fallback. This prevents Content-Disposition header injection via hostile
+// hostnames (SEC-001).
+func sanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	result := strings.Trim(b.String(), "_")
+	if result == "" {
+		return "device"
+	}
+	return result
 }

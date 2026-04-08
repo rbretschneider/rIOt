@@ -345,6 +345,19 @@ export const api = {
   getDeviceProbeResults: (deviceId: string, probeId: number, limit = 100) =>
     fetchJSON<import('../types/models').DeviceProbeResult[]>(`${BASE}/devices/${deviceId}/device-probes/${probeId}/results?limit=${limit}`),
 
+  getDeviceSummary: async (id: string): Promise<string> => {
+    const res = await fetch(`${BASE}/devices/${id}/summary`, { credentials: 'same-origin' })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    return res.text()
+  },
+
   bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number }> => {
     const res = await fetch(`${BASE}/fleet/bulk-patch`, {
       method: 'POST',

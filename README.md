@@ -21,6 +21,7 @@
 
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
+- **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, container log viewer, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
@@ -734,6 +735,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/PUT/DELETE` | `/api/v1/devices/:id/device-probes[/:pid]` | Device probe CRUD for a specific device |
 | `POST` | `/api/v1/devices/:id/device-probes/:pid/run` | Run device probe on demand |
 | `GET` | `/api/v1/devices/:id/device-probes/:pid/results` | Device probe result history |
+| `GET` | `/api/v1/devices/:id/summary` | Device inventory summary as Markdown (`text/markdown`; includes `Content-Disposition` for direct download) |
 
 ### WebSocket
 

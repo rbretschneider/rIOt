@@ -135,6 +135,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Put("/auto-updates", h.SetAutoUpdate)
 		r.With(adminAuth).Delete("/auto-updates/{target}", h.DeleteAutoUpdate)
 		r.With(adminAuth).Get("/security-score", h.GetSecurityScore)
+		r.With(adminAuth).Get("/summary", h.DeviceSummary)
 
 		// Device probes
 		r.With(adminAuth).Get("/device-probes", h.ListDeviceProbes)

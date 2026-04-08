@@ -1,10 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import DeviceDetail from './DeviceDetail'
 
 const mockGetDevice = vi.fn()
+const mockGetDeviceSummary = vi.fn()
 vi.mock('../api/client', () => ({
   api: {
     getDevice: (...args: unknown[]) => mockGetDevice(...args),
@@ -12,6 +13,7 @@ vi.mock('../api/client', () => ({
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),
     getDeviceAlertRules: vi.fn().mockResolvedValue([]),
     getDeviceCommands: vi.fn().mockResolvedValue([]),
+    getDeviceSummary: (...args: unknown[]) => mockGetDeviceSummary(...args),
   },
 }))
 
@@ -640,5 +642,266 @@ describe('DeviceDetail', () => {
       // The dialog should also show the hint text
       expect(await screen.findByText(/GPU temperature in °C/)).toBeInTheDocument()
     })
+  })
+})
+
+// SYS-EXPORT-001 tests
+
+const deviceWithTelemetry = {
+  ...{
+    device: {
+      id: 'dev-1',
+      hostname: 'export-host',
+      short_id: 'abc123',
+      arch: 'amd64',
+      status: 'online' as const,
+      agent_version: '2.0.5',
+      primary_ip: '192.168.1.1',
+      tags: [],
+      docker_available: false,
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    latest_telemetry: {
+      id: 1,
+      device_id: 'dev-1',
+      timestamp: new Date().toISOString(),
+      data: { system: { hostname: 'export-host', arch: 'amd64' } },
+    },
+    agent_connected: true,
+  },
+}
+
+function renderExportDevice() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/devices/dev-1']}>
+        <Routes>
+          <Route path="/devices/:id" element={<DeviceDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('[AC-006] Export buttons disabled when no telemetry', () => {
+  it('Download Summary button is disabled when latest_telemetry is null', async () => {
+    mockGetDevice.mockResolvedValue({
+      device: {
+        id: 'dev-1',
+        hostname: 'no-tel-host',
+        short_id: 'abc123',
+        arch: 'amd64',
+        status: 'online' as const,
+        agent_version: '2.0.5',
+        primary_ip: '',
+        tags: [],
+        docker_available: false,
+        last_heartbeat: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      latest_telemetry: null,
+      agent_connected: true,
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    expect(btn).toBeDisabled()
+  })
+
+  it('Copy Summary button is disabled when latest_telemetry is null', async () => {
+    mockGetDevice.mockResolvedValue({
+      device: {
+        id: 'dev-1',
+        hostname: 'no-tel-host',
+        short_id: 'abc123',
+        arch: 'amd64',
+        status: 'online' as const,
+        agent_version: '2.0.5',
+        primary_ip: '',
+        tags: [],
+        docker_available: false,
+        last_heartbeat: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      latest_telemetry: null,
+      agent_connected: true,
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    expect(btn).toBeDisabled()
+  })
+})
+
+describe('[AC-001] Download Summary button triggers file download', () => {
+  beforeEach(() => {
+    mockGetDevice.mockResolvedValue(deviceWithTelemetry)
+    mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ntest content')
+    // Stub browser APIs that are not available in jsdom
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn().mockReturnValue('blob:test-url'), writable: true, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), writable: true, configurable: true })
+  })
+
+  it('Download Summary button is enabled when telemetry exists', async () => {
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    expect(btn).not.toBeDisabled()
+  })
+
+  it('clicking Download Summary calls getDeviceSummary', async () => {
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(mockGetDeviceSummary).toHaveBeenCalledWith('dev-1')
+    })
+  })
+})
+
+describe('[AC-002] Copy to Clipboard confirms success', () => {
+  beforeEach(() => {
+    mockGetDevice.mockResolvedValue(deviceWithTelemetry)
+    mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ncopy content')
+  })
+
+  it('Copy Summary button shows Copied! after successful clipboard write', async () => {
+    // Mock the clipboard API to resolve successfully
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      writable: true,
+      configurable: true,
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    fireEvent.click(btn)
+
+    // Wait for the success state to appear
+    expect(await screen.findByText('Copied!')).toBeInTheDocument()
+  })
+})
+
+describe('[AC-007] Copy to Clipboard shows error on failure', () => {
+  beforeEach(() => {
+    mockGetDevice.mockResolvedValue(deviceWithTelemetry)
+    mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ncopy content')
+  })
+
+  it('Copy Summary button shows Copy Failed when clipboard.writeText rejects', async () => {
+    // Mock the clipboard API to reject (permission denied)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('Permission denied')) },
+      writable: true,
+      configurable: true,
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    fireEvent.click(btn)
+
+    expect(await screen.findByText('Copy Failed')).toBeInTheDocument()
+  })
+
+  it('Copy Summary button shows Copy Failed when API fetch fails', async () => {
+    mockGetDeviceSummary.mockRejectedValue(new Error('Network error'))
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    fireEvent.click(btn)
+
+    expect(await screen.findByText('Copy Failed')).toBeInTheDocument()
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-002: confirmation reverts to idle within 3 seconds (implementation uses 2s)
+describe('[AC-002] Copied! confirmation reverts to Copy Summary label', () => {
+  beforeEach(() => {
+    mockGetDevice.mockResolvedValue(deviceWithTelemetry)
+    mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ncopy content')
+  })
+
+  it('Copied! label reverts to Copy Summary after 2 seconds (FRD max 3s)', async () => {
+    // Use real timers — wait for the actual 2s setTimeout to fire.
+    // This directly validates that the confirmation does not persist beyond 3 seconds
+    // as required by AC-002 (maps to FR-009).
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      writable: true,
+      configurable: true,
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    fireEvent.click(btn)
+
+    // Success state must appear
+    expect(await screen.findByText('Copied!')).toBeInTheDocument()
+
+    // Wait up to 3 seconds (FRD upper bound) for the label to revert
+    await waitFor(
+      () => {
+        expect(screen.queryByText('Copied!')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Copy device summary/i })).toBeInTheDocument()
+      },
+      { timeout: 3000 },
+    )
+  }, 6000)
+})
+
+// Added by QA Engineer
+// Covers AC-001: file download is initiated (Blob URL created and anchor triggered)
+describe('[AC-001] Download Summary creates a Blob and initiates download', () => {
+  beforeEach(() => {
+    mockGetDevice.mockResolvedValue(deviceWithTelemetry)
+    mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ntest content')
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn().mockReturnValue('blob:test-url'), writable: true, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), writable: true, configurable: true })
+  })
+
+  it('clicking Download Summary creates a Blob URL and revokes it after use', async () => {
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      // Blob URL must have been created (initiating the download)
+      expect(URL.createObjectURL).toHaveBeenCalled()
+      // Blob URL must be revoked to free memory
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-url')
+    })
+  })
+
+  it('Download Summary filename matches {hostname}-summary-{YYYY-MM-DD}.md pattern', async () => {
+    // Spy on createElement to capture the anchor element's download attribute
+    const originalCreateElement = document.createElement.bind(document)
+    let capturedFilename: string | null = null
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = originalCreateElement(tag)
+      if (tag === 'a') {
+        Object.defineProperty(el, 'download', {
+          get() { return capturedFilename ?? '' },
+          set(val) { capturedFilename = val },
+          configurable: true,
+        })
+      }
+      return el
+    })
+
+    renderExportDevice()
+    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(capturedFilename).toMatch(/^export-host-summary-\d{4}-\d{2}-\d{2}\.md$/)
+    })
+
+    vi.restoreAllMocks()
   })
 })
