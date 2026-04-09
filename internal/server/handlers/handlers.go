@@ -941,6 +941,7 @@ func stripHeavyTelemetry(data *models.FullTelemetryData) *models.FullTelemetryDa
 				RestartPolicy: c.RestartPolicy,
 				Ports:         c.Ports,
 				NetworkMode:   c.NetworkMode,
+				Labels:        c.Labels,
 				UpdateAvailable: c.UpdateAvailable,
 				Riot:          c.Riot,
 			}
