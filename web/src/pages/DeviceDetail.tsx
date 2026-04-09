@@ -208,12 +208,13 @@ export default function DeviceDetail() {
                 onClick={() => setShowSummaryMenu(!showSummaryMenu)}
                 disabled={!latest_telemetry}
                 aria-label="Export device summary"
-                className="p-1 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2 py-1 text-xs text-gray-400 hover:text-gray-300 border border-gray-600/50 hover:border-gray-500/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                   <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
                   <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z" />
                 </svg>
+                Export
               </button>
               {showSummaryMenu && (
                 <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-1 min-w-[160px]">
@@ -247,12 +248,13 @@ export default function DeviceDetail() {
                 <button
                   onClick={() => setShowPowerMenu(!showPowerMenu)}
                   aria-label="Device power actions"
-                  className="p-1 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer"
+                  className="px-2 py-1 text-xs text-gray-400 hover:text-gray-300 border border-gray-600/50 hover:border-gray-500/50 rounded-md transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M10 2a1 1 0 011 1v5a1 1 0 11-2 0V3a1 1 0 011-1z" clipRule="evenodd" />
                     <path fillRule="evenodd" d="M5.757 5.757A6 6 0 1016 10a1 1 0 112 0 8 8 0 11-3.172-6.364 1 1 0 01-1.414 1.414A6 6 0 005.757 5.757z" clipRule="evenodd" />
                   </svg>
+                  Power
                 </button>
                 {showPowerMenu && (
                   <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-1 min-w-[140px]">
