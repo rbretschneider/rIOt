@@ -25,7 +25,7 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
   return (
     <div
       onClick={() => onClick(c)}
-      className={`inline-flex flex-col px-2 py-1 rounded border cursor-pointer transition-colors
+      className={`inline-flex flex-col px-2.5 py-1.5 rounded border cursor-pointer transition-colors
         ${c.update_available ? 'border-l-2 border-l-amber-400 border-y-gray-700/40 border-r-gray-700/40' : 'border-gray-700/40'}
         ${updating ? 'animate-pulse border-l-2 border-l-blue-400' : ''}
         ${isRunning ? 'bg-gray-800/30 hover:bg-gray-700/30' : 'bg-gray-800/20 opacity-60 hover:opacity-80'}
@@ -33,25 +33,25 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
     >
       <div className="flex items-center gap-1.5 min-w-0">
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} />
-        <span className="text-[11px] font-medium text-white truncate max-w-[140px]" title={c.name}>{name}</span>
+        <span className="text-xs font-medium text-white truncate max-w-[160px]" title={c.name}>{name}</span>
         {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
       </div>
       <div className="flex items-center gap-1.5 min-w-0">
-        <span className="text-[9px] font-mono text-gray-600 truncate max-w-[80px]">{imageTag}</span>
+        <span className="text-[10px] font-mono text-gray-600 truncate max-w-[90px]">{imageTag}</span>
         {isRunning && (
-          <span className="text-[9px] font-mono text-gray-500">
+          <span className="text-[10px] font-mono text-gray-500">
             {c.cpu_percent.toFixed(0)}%
             <span className="text-gray-600 mx-0.5">/</span>
             {formatBytes(c.mem_usage)}
           </span>
         )}
         {crossStackParent && (
-          <span className="text-[9px] text-blue-400/70 truncate" title={`Network via ${crossStackParent}`}>
+          <span className="text-[10px] text-blue-400/70 truncate" title={`Network via ${crossStackParent}`}>
             via {crossStackParent}
           </span>
         )}
         {networkParentDown && (
-          <span className="text-[9px] text-red-400 font-medium" title="Network parent is not running">
+          <span className="text-[10px] text-red-400 font-medium" title="Network parent is not running">
             net down
           </span>
         )}
