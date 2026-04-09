@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -319,16 +320,21 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	containerLogs := snap.Data.ContainerLogs
 	snap.Data.ContainerLogs = nil
 
-	if err := h.telemetry.StoreSnapshot(r.Context(), &snap); err != nil {
+	// Use a detached context for all DB/processing work so that agent
+	// disconnects (which cancel r.Context()) don't abort in-flight writes.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := h.telemetry.StoreSnapshot(ctx, &snap); err != nil {
 		slog.Error("store telemetry", "error", err.Error())
 		http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
 		return
 	}
-	h.devices.UpdateTelemetryTime(r.Context(), deviceID)
+	h.devices.UpdateTelemetryTime(ctx, deviceID)
 
 	// Extract and store primary IP from network telemetry
 	if ip := extractPrimaryIP(&snap.Data); ip != "" {
-		h.devices.UpdatePrimaryIP(r.Context(), deviceID, ip)
+		h.devices.UpdatePrimaryIP(ctx, deviceID, ip)
 	}
 
 	// Track whether Docker is available on this device
@@ -337,7 +343,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	if snap.Data.Docker != nil {
 		containerCount = snap.Data.Docker.TotalContainers
 	}
-	h.devices.UpdateDockerAvailable(r.Context(), deviceID, dockerAvail, containerCount)
+	h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount)
 
 	// Detect if this device hosts the rIOt server (check docker containers)
 	if hasRiotServerContainer(&snap.Data) {
@@ -346,14 +352,14 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 
 	// Store device logs in their dedicated table
 	if len(deviceLogs) > 0 && h.deviceLogRepo != nil {
-		if err := h.deviceLogRepo.InsertBatch(r.Context(), deviceID, deviceLogs); err != nil {
+		if err := h.deviceLogRepo.InsertBatch(ctx, deviceID, deviceLogs); err != nil {
 			slog.Error("store device logs", "error", err.Error())
 		}
 	}
 
 	// Store container logs in their dedicated table
 	if len(containerLogs) > 0 && h.containerLogRepo != nil {
-		if err := h.containerLogRepo.InsertBatch(r.Context(), deviceID, containerLogs); err != nil {
+		if err := h.containerLogRepo.InsertBatch(ctx, deviceID, containerLogs); err != nil {
 			slog.Error("store container logs", "error", err.Error())
 		}
 	}
@@ -376,7 +382,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if len(metrics) > 0 {
-			if err := h.containerMetricRepo.StoreBatch(r.Context(), deviceID, metrics); err != nil {
+			if err := h.containerMetricRepo.StoreBatch(ctx, deviceID, metrics); err != nil {
 				slog.Error("store container metrics", "error", err.Error())
 			}
 		}
@@ -387,18 +393,18 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	if snap.Data.System != nil {
 		telHostname = snap.Data.System.Hostname
 	}
-	h.eventGen.CheckTelemetryThresholds(r.Context(), deviceID, telHostname, &snap.Data)
+	h.eventGen.CheckTelemetryThresholds(ctx, deviceID, telHostname, &snap.Data)
 
 	// Set device status to "warning" if UPS is on battery power
 	if snap.Data.UPS != nil && snap.Data.UPS.OnBattery {
-		h.devices.SetStatus(r.Context(), deviceID, models.DeviceStatusWarning)
+		h.devices.SetStatus(ctx, deviceID, models.DeviceStatusWarning)
 	}
 
 	// Check auto-update policies (Docker containers)
-	h.checkAutoUpdates(r.Context(), deviceID, &snap.Data)
+	h.checkAutoUpdates(ctx, deviceID, &snap.Data)
 
 	// Check auto-patch (OS updates)
-	h.checkAutoPatch(r.Context(), deviceID, &snap.Data)
+	h.checkAutoPatch(ctx, deviceID, &snap.Data)
 
 	// Broadcast a lightweight view via WebSocket — strip heavy fields that the
 	// dashboard doesn't need in real-time (it fetches full telemetry on demand).
