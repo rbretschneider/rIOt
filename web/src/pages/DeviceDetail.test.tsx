@@ -687,7 +687,7 @@ function renderExportDevice() {
 }
 
 describe('[AC-006] Export buttons disabled when no telemetry', () => {
-  it('Download Summary button is disabled when latest_telemetry is null', async () => {
+  it('Export summary menu trigger is disabled when latest_telemetry is null', async () => {
     mockGetDevice.mockResolvedValue({
       device: {
         id: 'dev-1',
@@ -708,32 +708,7 @@ describe('[AC-006] Export buttons disabled when no telemetry', () => {
     })
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Download device summary/i })
-    expect(btn).toBeDisabled()
-  })
-
-  it('Copy Summary button is disabled when latest_telemetry is null', async () => {
-    mockGetDevice.mockResolvedValue({
-      device: {
-        id: 'dev-1',
-        hostname: 'no-tel-host',
-        short_id: 'abc123',
-        arch: 'amd64',
-        status: 'online' as const,
-        agent_version: '2.0.5',
-        primary_ip: '',
-        tags: [],
-        docker_available: false,
-        last_heartbeat: new Date().toISOString(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      latest_telemetry: null,
-      agent_connected: true,
-    })
-
-    renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    const btn = await screen.findByRole('button', { name: /Export device summary/i })
     expect(btn).toBeDisabled()
   })
 })
@@ -747,15 +722,17 @@ describe('[AC-001] Download Summary button triggers file download', () => {
     Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), writable: true, configurable: true })
   })
 
-  it('Download Summary button is enabled when telemetry exists', async () => {
+  it('Export menu trigger is enabled when telemetry exists', async () => {
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    const btn = await screen.findByRole('button', { name: /Export device summary/i })
     expect(btn).not.toBeDisabled()
   })
 
-  it('clicking Download Summary calls getDeviceSummary', async () => {
+  it('clicking Download as Markdown calls getDeviceSummary', async () => {
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Download as Markdown')
     fireEvent.click(btn)
 
     await waitFor(() => {
@@ -779,7 +756,9 @@ describe('[AC-002] Copy to Clipboard confirms success', () => {
     })
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Copy to Clipboard')
     fireEvent.click(btn)
 
     // Wait for the success state to appear
@@ -793,7 +772,7 @@ describe('[AC-007] Copy to Clipboard shows error on failure', () => {
     mockGetDeviceSummary.mockResolvedValue('# Device Summary: export-host\n\ncopy content')
   })
 
-  it('Copy Summary button shows Copy Failed when clipboard.writeText rejects', async () => {
+  it('Copy to Clipboard shows Copy Failed when clipboard.writeText rejects', async () => {
     // Mock the clipboard API to reject (permission denied)
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: vi.fn().mockRejectedValue(new Error('Permission denied')) },
@@ -802,17 +781,21 @@ describe('[AC-007] Copy to Clipboard shows error on failure', () => {
     })
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Copy to Clipboard')
     fireEvent.click(btn)
 
     expect(await screen.findByText('Copy Failed')).toBeInTheDocument()
   })
 
-  it('Copy Summary button shows Copy Failed when API fetch fails', async () => {
+  it('Copy to Clipboard shows Copy Failed when API fetch fails', async () => {
     mockGetDeviceSummary.mockRejectedValue(new Error('Network error'))
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Copy to Clipboard')
     fireEvent.click(btn)
 
     expect(await screen.findByText('Copy Failed')).toBeInTheDocument()
@@ -838,7 +821,9 @@ describe('[AC-002] Copied! confirmation reverts to Copy Summary label', () => {
     })
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Copy device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Copy to Clipboard')
     fireEvent.click(btn)
 
     // Success state must appear
@@ -848,7 +833,7 @@ describe('[AC-002] Copied! confirmation reverts to Copy Summary label', () => {
     await waitFor(
       () => {
         expect(screen.queryByText('Copied!')).not.toBeInTheDocument()
-        expect(screen.getByRole('button', { name: /Copy device summary/i })).toBeInTheDocument()
+        expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument()
       },
       { timeout: 3000 },
     )
@@ -865,9 +850,11 @@ describe('[AC-001] Download Summary creates a Blob and initiates download', () =
     Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), writable: true, configurable: true })
   })
 
-  it('clicking Download Summary creates a Blob URL and revokes it after use', async () => {
+  it('clicking Download as Markdown creates a Blob URL and revokes it after use', async () => {
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Download as Markdown')
     fireEvent.click(btn)
 
     await waitFor(() => {
@@ -878,7 +865,7 @@ describe('[AC-001] Download Summary creates a Blob and initiates download', () =
     })
   })
 
-  it('Download Summary filename matches {hostname}-summary-{YYYY-MM-DD}.md pattern', async () => {
+  it('Download as Markdown filename matches {hostname}-summary-{YYYY-MM-DD}.md pattern', async () => {
     // Spy on createElement to capture the anchor element's download attribute
     const originalCreateElement = document.createElement.bind(document)
     let capturedFilename: string | null = null
@@ -895,7 +882,9 @@ describe('[AC-001] Download Summary creates a Blob and initiates download', () =
     })
 
     renderExportDevice()
-    const btn = await screen.findByRole('button', { name: /Download device summary/i })
+    const trigger = await screen.findByRole('button', { name: /Export device summary/i })
+    fireEvent.click(trigger)
+    const btn = await screen.findByText('Download as Markdown')
     fireEvent.click(btn)
 
     await waitFor(() => {

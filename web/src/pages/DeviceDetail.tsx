@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -58,8 +58,21 @@ export default function DeviceDetail() {
   const [locationEdit, setLocationEdit] = useState<string | null>(null)
   const [metricHours, setMetricHours] = useState(24)
   const [showSecurityModal, setShowSecurityModal] = useState(false)
+  const [showSummaryMenu, setShowSummaryMenu] = useState(false)
+  const [showPowerMenu, setShowPowerMenu] = useState(false)
+  const summaryMenuRef = useRef<HTMLDivElement>(null)
+  const powerMenuRef = useRef<HTMLDivElement>(null)
   const [logPriority, setLogPriority] = useState(7)
   const [eventsPage, setEventsPage] = useState(0)
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (summaryMenuRef.current && !summaryMenuRef.current.contains(e.target as Node)) setShowSummaryMenu(false)
+      if (powerMenuRef.current && !powerMenuRef.current.contains(e.target as Node)) setShowPowerMenu(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const { data: deviceLogs } = useQuery({
     queryKey: ['device-logs', id, logPriority],
     queryFn: () => api.getDeviceLogs(id!, logPriority, 500, logPriority !== 7),
@@ -185,10 +198,91 @@ export default function DeviceDetail() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        {/* Left: name, subtitle, navigation links */}
+        {/* Left: name, status, summary menu, subtitle, navigation links */}
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white truncate uppercase">{device.hostname}</h1>
-          <p className="text-sm text-gray-500 font-mono">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-white truncate uppercase">{device.hostname}</h1>
+            {/* Summary export dropdown */}
+            <div className="relative" ref={summaryMenuRef}>
+              <button
+                onClick={() => setShowSummaryMenu(!showSummaryMenu)}
+                disabled={!latest_telemetry}
+                aria-label="Export device summary"
+                className="p-1 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+                  <path d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z" />
+                </svg>
+              </button>
+              {showSummaryMenu && (
+                <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-1 min-w-[160px]">
+                  <button
+                    onClick={handleCopySummary}
+                    disabled={copyState === 'loading'}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                      <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                    </svg>
+                    {copyState === 'loading' ? 'Copying…' : copyState === 'success' ? 'Copied!' : copyState === 'error' ? 'Copy Failed' : 'Copy to Clipboard'}
+                  </button>
+                  <button
+                    onClick={() => { handleDownloadSummary(); setShowSummaryMenu(false) }}
+                    disabled={downloadState === 'loading'}
+                    className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                    {downloadState === 'loading' ? 'Downloading…' : 'Download as Markdown'}
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Device power/actions dropdown */}
+            {device.status === 'online' && (
+              <div className="relative" ref={powerMenuRef}>
+                <button
+                  onClick={() => setShowPowerMenu(!showPowerMenu)}
+                  aria-label="Device power actions"
+                  className="p-1 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 2a1 1 0 011 1v5a1 1 0 11-2 0V3a1 1 0 011-1z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M5.757 5.757A6 6 0 1016 10a1 1 0 112 0 8 8 0 11-3.172-6.364 1 1 0 01-1.414 1.414A6 6 0 005.757 5.757z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {showPowerMenu && (
+                  <div className="absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-1 min-w-[140px]">
+                    <button
+                      onClick={() => { setConfirmAction('reboot'); setShowPowerMenu(false) }}
+                      disabled={commandMutation.isPending}
+                      className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-700 hover:text-red-300 transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                      </svg>
+                      Reboot
+                    </button>
+                    <button
+                      onClick={() => { setConfirmAction('shutdown'); setShowPowerMenu(false) }}
+                      disabled={commandMutation.isPending}
+                      className="w-full text-left px-3 py-1.5 text-xs text-red-400 hover:bg-gray-700 hover:text-red-300 transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clipRule="evenodd" />
+                      </svg>
+                      Shutdown
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <StatusBadge status={device.status} />
+          <p className="text-sm text-gray-500 font-mono mt-0.5">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (
               <>
@@ -239,43 +333,13 @@ export default function DeviceDetail() {
             </button>
           </div>
         </div>
-        {/* Right: security gauge + status badge + action buttons */}
+        {/* Right: security gauge + agent actions */}
         <div className="flex items-center gap-3 flex-shrink-0">
           {isEnabled('security_score') && securityScore && (
             <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
           )}
-          {/* Export summary buttons — always visible, disabled when no telemetry */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleDownloadSummary}
-              disabled={!latest_telemetry || downloadState === 'loading'}
-              aria-label="Download device summary as Markdown file"
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                downloadState === 'error'
-                  ? 'text-red-400 border-red-800/50'
-                  : 'text-gray-400 hover:text-gray-300 border-gray-600/50 hover:border-gray-500/50'
-              }`}
-            >
-              {downloadState === 'loading' ? 'Downloading…' : downloadState === 'error' ? 'Download Failed' : 'Download Summary'}
-            </button>
-            <button
-              onClick={handleCopySummary}
-              disabled={!latest_telemetry || copyState === 'loading'}
-              aria-label="Copy device summary to clipboard"
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                copyState === 'success'
-                  ? 'text-emerald-400 border-emerald-800/50'
-                  : copyState === 'error'
-                  ? 'text-red-400 border-red-800/50'
-                  : 'text-gray-400 hover:text-gray-300 border-gray-600/50 hover:border-gray-500/50'
-              }`}
-            >
-              {copyState === 'loading' ? 'Copying…' : copyState === 'success' ? 'Copied!' : copyState === 'error' ? 'Copy Failed' : 'Copy Summary'}
-            </button>
-          </div>
-          <StatusBadge status={device.status} />
           {device.status === 'online' && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <button
                 onClick={() => setConfirmAction('agent_update')}
                 disabled={!agentOutdated || commandMutation.isPending || (commandMutation.isSuccess && commandMutation.variables?.action === 'agent_update')}
@@ -296,20 +360,6 @@ export default function DeviceDetail() {
                   Patch ({tel.updates.pending_updates})
                 </button>
               )}
-              <button
-                onClick={() => setConfirmAction('reboot')}
-                disabled={commandMutation.isPending}
-                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Reboot
-              </button>
-              <button
-                onClick={() => setConfirmAction('shutdown')}
-                disabled={commandMutation.isPending}
-                className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300 border border-red-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Shutdown
-              </button>
               <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
                 <span className="text-xs text-gray-500">Auto-patch</span>
                 <button
