@@ -233,7 +233,8 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 				Usage uint64 `json:"usage"`
 				Limit uint64 `json:"limit"`
 				Stats struct {
-					Cache uint64 `json:"cache"`
+					Cache        uint64 `json:"cache"`         // cgroup v1
+					InactiveFile uint64 `json:"inactive_file"` // cgroup v2
 				} `json:"stats"`
 			} `json:"memory_stats"`
 		}
@@ -248,7 +249,13 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			containers[i].CPUPercent = (cpuDelta / sysDelta) * float64(stats.CPUStats.OnlineCPUs) * 100.0
 		}
 
-		containers[i].MemUsage = int64(stats.MemoryStats.Usage - stats.MemoryStats.Stats.Cache)
+		// Subtract filesystem cache from memory usage to match docker stats.
+		// cgroup v1 reports "cache", cgroup v2 reports "inactive_file".
+		cacheBytes := stats.MemoryStats.Stats.Cache
+		if cacheBytes == 0 {
+			cacheBytes = stats.MemoryStats.Stats.InactiveFile
+		}
+		containers[i].MemUsage = int64(stats.MemoryStats.Usage - cacheBytes)
 		containers[i].MemLimit = int64(stats.MemoryStats.Limit)
 
 		// Read CPU limit (NanoCPUs) from container inspect
