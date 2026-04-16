@@ -322,6 +322,7 @@ New installs via `install.sh` include all rules automatically.
 | `agent.auto_update` | `true` | Automatically install agent updates when available |
 | `collectors.enabled` | all | List of collectors to run |
 | `collectors.smart_interval` | `4h` | Interval between SMART disk health scans (e.g. `1h`, `4h`, `12h`) |
+| `collectors.webservers.nginx.access_log` | — | Absolute path to the nginx access log file. When set, the `webservers` collector parses the log each interval and includes HTTP status code counts in telemetry. Omit to disable access log monitoring (no default path is assumed). |
 | `docker.enabled` | `auto` | Docker collection mode: `auto` (detect), `true`, `false` |
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
@@ -357,7 +358,7 @@ New installs via `install.sh` include all rules automatically.
 | `security` | SELinux/AppArmor, firewall, open ports, failed logins, logged-in users |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
-| `webservers` | Reverse proxy detection (nginx, Caddy, Ferron) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below) |
+| `webservers` | Reverse proxy detection (nginx, Caddy, Ferron) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below); optional nginx access log monitoring (HTTP error rate counting — see [Nginx Access Log Monitoring](#nginx-access-log-monitoring)) |
 | `usb` | Connected USB devices — vendor/product names (via sysfs + `/usr/share/hwdata/usb.ids` fallback), serial numbers, device class, speed; supports disconnect alerts |
 | `hardware` | PCI devices (vendor/device/class/driver via sysfs + `/usr/share/hwdata/pci.ids`), disk drives (model, serial, size, type — NVMe/SSD/HDD, transport, scheduler, **SMART health/temp/power-on hours/reallocated sectors**), serial ports, GPUs (filtered from PCI display class devices, optional VRAM via DRM). Linux-only; SMART requires `smartmontools`. |
 | `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
@@ -392,6 +393,7 @@ Monitor service, network, process, USB, and UPS state changes:
 - **USB device monitoring** — alert when a USB device disappears (matched by vendor:product ID, serial number, or device description)
 - **UPS monitoring** — alert when UPS switches to battery or battery charge drops below threshold
 - **Certificate expiry** — warning when an SSL certificate has fewer than 30 days remaining; critical when expired
+- **Nginx error rates** — alert when HTTP 5xx or 4xx error counts exceed a threshold per telemetry interval (requires `webservers` collector with `access_log` configured — see [Nginx Access Log Monitoring](#nginx-access-log-monitoring))
 
 ### Alert Templates
 
@@ -486,6 +488,104 @@ You can also create custom alert rules using the following GPU metrics:
 | `gpu_util_percent` | GPU utilization percentage |
 | `gpu_mem_percent` | GPU memory controller utilization percentage |
 | `gpu_power_watts` | GPU power draw in watts |
+
+---
+
+## Nginx Access Log Monitoring
+
+The `webservers` collector can parse the nginx access log and report per-interval HTTP status code counts. This lets you create alert rules that fire when error rates spike — for example, when a service starts returning 5xx errors.
+
+Only the default nginx **combined** log format is supported. Custom log formats are not parsed; lines that do not match are silently skipped.
+
+This feature uses O(1) memory regardless of traffic volume. It is safe to run on Raspberry Pi and other memory-constrained devices.
+
+### Requirements
+
+- Linux agent (the webservers collector is Linux-only)
+- nginx installed and the `webservers` collector enabled in the agent config
+- The agent process must have read access to the access log file (typically `/var/log/nginx/access.log`)
+
+The nginx sudoers rules installed by the install script cover config inspection but not access log reads. If the agent runs as a non-root user (the `riot` service account), grant read access to the log file:
+
+```bash
+sudo setfacl -m u:riot:r /var/log/nginx/access.log
+```
+
+Or adjust the log file group and permissions:
+
+```bash
+sudo chown root:riot /var/log/nginx/access.log
+sudo chmod 640 /var/log/nginx/access.log
+```
+
+### Enabling Nginx Access Log Monitoring
+
+1. Edit `/etc/riot/agent.yaml` on the device running nginx:
+
+   ```yaml
+   collectors:
+     enabled:
+       - system
+       - cpu
+       # ... your existing collectors ...
+       - webservers      # must be in the enabled list
+     webservers:
+       nginx:
+         access_log: /var/log/nginx/access.log
+   ```
+
+2. Restart the agent:
+
+   ```bash
+   sudo systemctl restart riot-agent
+   ```
+
+On first start after enabling, the agent seeks to the end of the access log and begins counting from that point forward. It does not process historical entries. The first telemetry push after enabling will report zero counts.
+
+The agent stores its read position in `/etc/riot/nginx-access-log.offset` and resumes from that offset on restart. Log rotation is detected automatically — when the file shrinks below the stored offset, the agent resets to the beginning of the new file.
+
+### What Is Collected
+
+Per telemetry interval (default 60 seconds), the agent counts:
+
+| Metric | Description |
+|---|---|
+| `total_requests` | Total HTTP requests parsed |
+| `status_2xx` | Count of 2xx (success) responses |
+| `status_3xx` | Count of 3xx (redirect) responses |
+| `status_4xx` | Count of 4xx (client error) responses |
+| `status_5xx` | Count of 5xx (server error) responses |
+
+Only aggregate counts leave the agent. No IP addresses, URIs, user-agent strings, or other data from the access log are transmitted.
+
+### Creating Nginx Alert Rules
+
+Go to **Settings > Alert Rules** and click **Create from Template**. Two pre-built templates are available under the `webserver` category:
+
+| Template | Metric | Default Threshold | Severity | Cooldown |
+|---|---|---|---|---|
+| Nginx 5xx Errors High | `nginx_5xx_count` | > 10 per interval | critical | 5 minutes |
+| Nginx 4xx Errors High | `nginx_4xx_count` | > 50 per interval | warning | 15 minutes |
+
+You can also create custom rules using these metrics in the metric dropdown:
+
+| Metric | Description |
+|---|---|
+| `nginx_5xx_count` | 5xx response count per telemetry interval |
+| `nginx_4xx_count` | 4xx response count per telemetry interval |
+| `nginx_request_count` | Total request count per telemetry interval |
+
+Thresholds are raw counts per interval, not rates per second. A threshold of `10` on `nginx_5xx_count` means "more than 10 5xx errors occurred since the last telemetry push." Adjust thresholds based on your `agent.poll_interval` setting (default 60 seconds) and your application's typical error baseline.
+
+All standard alert rule features apply: device scoping (include/exclude), cooldown periods, severity levels, and notification dispatch. Nginx alert rules do not fire on devices that do not report nginx access metrics — you can safely create a global rule without affecting devices that do not have nginx.
+
+### Limitations
+
+- Only the nginx **combined** log format is supported.
+- Access log parsing does not run if `webservers` is absent from `collectors.enabled`, even if `access_log` is configured.
+- No per-URL, per-upstream, or per-virtual-host breakdown. Counts are global across all nginx traffic.
+- Nginx `error.log` is not parsed — only `access.log`.
+- Access log metrics appear in telemetry data only, not in the lightweight heartbeat.
 
 ---
 

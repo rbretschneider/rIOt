@@ -35,6 +35,11 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 - [SEC-001] New shared utility module `web/src/utils/security.ts` exporting `gradeColor`, `gradeStrokeColor`, and `gradeFromScore` for consistent score display across the dashboard.
 - [SEC-001] `MiniScore` component extracted to `web/src/components/MiniScore.tsx` for reuse.
 
+- [NGINX-ALERTS] New nginx access log monitoring capability in the `webservers` collector. When `collectors.webservers.nginx.access_log` is set in the agent config, the agent tails the nginx access log each telemetry interval and reports per-interval counts of total requests, 2xx, 3xx, 4xx, and 5xx responses. Memory usage is O(1) regardless of log volume — safe for Raspberry Pi. Byte offset is persisted to `/etc/riot/nginx-access-log.offset` so the agent resumes correctly after a restart. Log rotation is detected automatically.
+- [NGINX-ALERTS] Three new alertable metrics for nginx access log data: `nginx_5xx_count` (5xx responses per interval), `nginx_4xx_count` (4xx responses per interval), `nginx_request_count` (total requests per interval). All three appear in the Settings > Alert Rules metric dropdown with pre-filled defaults.
+- [NGINX-ALERTS] Two new alert templates in Settings > Alert Rules > Create from Template under the `webserver` category: "Nginx 5xx Errors High" (metric `nginx_5xx_count`, threshold > 10, critical, 5-minute cooldown) and "Nginx 4xx Errors High" (metric `nginx_4xx_count`, threshold > 50, warning, 15-minute cooldown).
+- [NGINX-ALERTS] Three new event types: `nginx_5xx_high`, `nginx_4xx_high`, `nginx_request_high`. Alert events include the actual count and the device hostname in the message. No hardcoded fallback thresholds — nginx alerts only fire when the user has explicitly configured a rule.
+
 ### Changed
 
 - [POOL-002] `internal/models.IsPoolFSType()` replaced by `IsPoolFilesystem(fsType, device string) bool`. The new function combines filesystem-type and device-path detection in one call. The disk collector call site in `internal/agent/collectors/disk.go` is updated accordingly. Any code calling `IsPoolFSType` directly must migrate to `IsPoolFilesystem`.
