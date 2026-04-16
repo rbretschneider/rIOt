@@ -136,13 +136,13 @@ func (r *nginxAccessLogReader) ReadAndCount() (*models.NginxAccessMetrics, error
 
 	// SEC-002: validate that the path is absolute and a regular file.
 	if err := validatePath(r.path); err != nil {
-		slog.Debug("nginx access log: path validation failed", "path", r.path, "error", err)
+		slog.Warn("nginx access log: path validation failed", "path", r.path, "error", err)
 		return metrics, err
 	}
 
 	info, err := os.Stat(r.path)
 	if err != nil {
-		slog.Debug("nginx access log: stat failed", "path", r.path, "error", err)
+		slog.Warn("nginx access log: stat failed", "path", r.path, "error", err)
 		return metrics, err
 	}
 
@@ -219,11 +219,11 @@ func (r *nginxAccessLogReader) ReadAndCount() (*models.NginxAccessMetrics, error
 		}
 	}
 
-	// Update offset to the current file position after scanning.
-	// Seek to current position to get precise offset.
-	if pos, err := f.Seek(0, 1); err == nil {
-		r.offset = pos
-	}
+	// Update offset arithmetically from the starting offset plus bytes consumed.
+	// We cannot use f.Seek(0, 1) because bufio.Scanner reads ahead into its
+	// internal buffer, so the file position may be up to 64 KiB past the last
+	// line yielded — which would silently skip lines on the next cycle (AF-001).
+	r.offset += bytesRead
 
 	slog.Debug("nginx access log: processed lines", "path", r.path,
 		"lines", linesProcessed, "offset", r.offset)
