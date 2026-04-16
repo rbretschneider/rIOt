@@ -71,6 +71,8 @@ jobs:
         with:
           context: .
           push: true
+          provenance: false
+          sbom: false
           build-args: VERSION=${{ steps.version.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

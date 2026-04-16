@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -371,7 +372,9 @@ func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Clie
 		return nil
 	}
 
-	// Compare: RepoDigests contains "repo@sha256:..." strings
+	// Strategy 1: Direct comparison — RepoDigests contains "repo@sha256:..." strings.
+	// This works when the registry manifest digest matches the pulled image digest
+	// (single-platform images built without provenance attestations).
 	for _, rd := range localInfo.RepoDigests {
 		if atIdx := strings.LastIndex(rd, "@"); atIdx != -1 {
 			localDigest := rd[atIdx+1:]
@@ -382,6 +385,68 @@ func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Clie
 		}
 	}
 
+	// Strategy 2: Manifest list fallback — images built with buildx (provenance: true)
+	// wrap the image in an OCI index (manifest list) whose digest differs from the
+	// per-platform image manifest digest stored in RepoDigests. When the direct
+	// comparison fails, use `docker manifest inspect` to get per-platform digests
+	// and compare those against local RepoDigests. This avoids false "update
+	// available" for images with attestation manifests.
+	if resolved := c.checkViaManifestInspect(ctx, imageRef, localInfo.RepoDigests); resolved != nil {
+		return resolved
+	}
+
+	slog.Info("image freshness: digest mismatch, could not resolve manifest list",
+		"image", imageRef, "remote_digest", remoteDigest)
+	return nil // unknown rather than false positive
+}
+
+// checkViaManifestInspect shells out to `docker manifest inspect` to get the
+// full manifest list contents, then checks if any per-platform sub-manifest
+// digest matches a local RepoDigest entry. Returns nil if the command fails
+// or the output can't be parsed (caller should fall back).
+func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef string, repoDigests []string) *bool {
+	out, err := exec.CommandContext(ctx, "docker", "manifest", "inspect", imageRef).Output()
+	if err != nil {
+		return nil
+	}
+
+	var idx struct {
+		MediaType string `json:"mediaType"`
+		Manifests []struct {
+			Digest   string `json:"digest"`
+			Platform *struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+			} `json:"platform,omitempty"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(out, &idx); err != nil {
+		return nil
+	}
+	if len(idx.Manifests) == 0 {
+		return nil
+	}
+
+	// Build set of local digests for fast lookup
+	localDigests := make(map[string]bool, len(repoDigests))
+	for _, rd := range repoDigests {
+		if atIdx := strings.LastIndex(rd, "@"); atIdx != -1 {
+			localDigests[rd[atIdx+1:]] = true
+		}
+	}
+
+	// Check if any platform manifest in the index matches a local digest.
+	// Skip attestation manifests (they have unknown/empty platform).
+	for _, m := range idx.Manifests {
+		if m.Platform != nil && m.Platform.Architecture == "unknown" {
+			continue
+		}
+		if localDigests[m.Digest] {
+			f := false
+			return &f // a platform manifest matches local — up to date
+		}
+	}
+
 	t := true
-	return &t // update available
+	return &t // manifest list exists but no sub-manifest matches — genuine update
 }
