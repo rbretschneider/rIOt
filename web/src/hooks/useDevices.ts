@@ -70,9 +70,18 @@ export function useDevices() {
         })
       }
 
-      // Push full telemetry directly into device detail cache
+      // Push telemetry into device detail cache, merging with existing data.
+      // The server strips heavy fields (processes, hardware, USB, etc.) from
+      // WS broadcasts to save bandwidth, so we keep those from the prior fetch.
       queryClient.setQueryData(['device', msg.device_id], (old: any) => {
         if (!old) return old
+        const existing = old.latest_telemetry?.data as FullTelemetryData | undefined
+        const merged: Record<string, unknown> = { ...existing }
+        for (const [key, value] of Object.entries(telData)) {
+          if (value != null) {
+            merged[key] = value
+          }
+        }
         return {
           ...old,
           device: {
@@ -80,7 +89,7 @@ export function useDevices() {
             ...(upsOnBattery ? { status: 'warning' as const } : {}),
             last_telemetry: new Date().toISOString(),
           },
-          latest_telemetry: { device_id: msg.device_id, timestamp: new Date().toISOString(), data: msg.data },
+          latest_telemetry: { device_id: msg.device_id, timestamp: new Date().toISOString(), data: merged },
         }
       })
     } else if (msg.type === 'docker_update' && msg.device_id) {
