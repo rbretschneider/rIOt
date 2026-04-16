@@ -42,6 +42,16 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   )
 }
 
+function UtcClock() {
+  const [time, setTime] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const label = time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'UTC' })
+  return <span className="text-xs text-gray-500 font-mono tabular-nums whitespace-nowrap">{label} UTC</span>
+}
+
 function AlertsBell() {
   const location = useLocation()
   const active = location.pathname === '/alerts' || location.pathname.startsWith('/alerts')
@@ -325,6 +335,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <UtcClock />
               <AlertsBell />
               <div className="hidden sm:block">
                 <UserMenu logout={logout} />
