@@ -217,6 +217,8 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 		}
 
 		var stats struct {
+			Read    time.Time `json:"read"`
+			PreRead time.Time `json:"preread"`
 			CPUStats struct {
 				CPUUsage struct {
 					TotalUsage uint64 `json:"total_usage"`
@@ -243,11 +245,13 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			continue
 		}
 
-		// CPU percent calculation
+		// CPU percent calculation — use wall-clock time delta from Docker's
+		// read/preread timestamps instead of system_cpu_usage, which has unit
+		// inconsistencies on cgroup v2 hosts that inflate readings by 10-100x.
 		cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
-		sysDelta := float64(stats.CPUStats.SystemCPUUsage - stats.PreCPUStats.SystemCPUUsage)
-		if sysDelta > 0 && stats.CPUStats.OnlineCPUs > 0 {
-			containers[i].CPUPercent = (cpuDelta / sysDelta) * float64(stats.CPUStats.OnlineCPUs) * 100.0
+		wallDelta := stats.Read.Sub(stats.PreRead).Nanoseconds()
+		if wallDelta > 0 && cpuDelta > 0 {
+			containers[i].CPUPercent = (cpuDelta / float64(wallDelta)) * 100.0
 		}
 
 		// Subtract filesystem cache from memory usage to match docker stats.
