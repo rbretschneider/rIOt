@@ -93,8 +93,13 @@ export function useDevices() {
         }
       })
     } else if (msg.type === 'docker_update' && msg.device_id) {
-      // Docker container state changed — invalidate device detail to trigger refetch
-      queryClient.invalidateQueries({ queryKey: ['device', msg.device_id] })
+      // Docker events (healthchecks, start/stop) fire frequently with 48+ containers.
+      // Invalidating the device query on every event caused cache conflicts with
+      // telemetry WS updates — the refetch could return stale/null data that
+      // overwrites the WS-merged cache, causing "container not found" flicker.
+      // Instead, mark the device list stale so the fleet overview picks up state
+      // changes, and let the next telemetry WS push update the detail view.
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
     }
     // Note: 'event' messages are handled by GlobalWSHandler in App.tsx
     // so the alert badge updates on ALL pages, not just pages using useDevices().
