@@ -15,6 +15,7 @@ services:
       - RIOT_ADMIN_PASSWORD=changeme
       - RIOT_JWT_SECRET=
       # - RIOT_ALLOWED_ORIGINS=https://my-riot.example.com
+      # - GOMEMLIMIT=2GiB              # Go runtime memory limit (default: 2 GiB)
     depends_on:
       riot-db:
         condition: service_healthy

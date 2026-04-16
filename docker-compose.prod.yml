@@ -8,6 +8,7 @@ services:
       - RIOT_DB_URL=postgres://${POSTGRES_USER:-riot}:${POSTGRES_PASSWORD:-riot}@riot-db:5432/${POSTGRES_DB:-riot}?sslmode=disable
       - RIOT_PORT=7331
       - RIOT_RETENTION_DAYS=${RIOT_RETENTION_DAYS:-30}
+      - GOMEMLIMIT=${GOMEMLIMIT:-2GiB}
     depends_on:
       riot-db:
         condition: service_healthy

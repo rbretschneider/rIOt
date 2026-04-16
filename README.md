@@ -141,6 +141,7 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_TLS_CERT_FILE` | — | Manual TLS certificate file path |
 | `RIOT_TLS_KEY_FILE` | — | Manual TLS key file path |
 | `RIOT_MTLS_ENABLED` | `false` | Enable mTLS device authentication (see [mTLS](#mtls-device-authentication)) |
+| `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
 
 ---
 

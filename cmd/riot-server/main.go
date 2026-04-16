@@ -19,12 +19,12 @@ var migrationsFS embed.FS
 var version = "dev"
 
 func main() {
-	// Set a soft memory limit so Go returns unused memory to the OS instead of
-	// holding onto it. Default 1.5 GiB — sized for hosts with 48+ containers
-	// where telemetry JSON allocations are substantial. A too-low limit causes
-	// GC thrashing (90%+ CPU in gcBgMarkWorker). Override with GOMEMLIMIT env var.
+	// Set a soft memory limit so Go's GC can batch collections efficiently.
+	// Default 2 GiB — appropriate for telemetry workloads with dozens of devices
+	// and 48+ containers. A too-low limit causes GC thrashing (90%+ CPU in
+	// gcBgMarkWorker). Override with the GOMEMLIMIT env var.
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(1536 * 1024 * 1024) // 1.5 GiB
+		debug.SetMemoryLimit(2 * 1024 * 1024 * 1024) // 2 GiB
 	}
 
 	cfg := server.LoadConfig()
