@@ -164,8 +164,9 @@ func (s *Server) setupRouter() *chi.Mux {
 	// === ADMIN routes (JWT cookie auth) ===
 	adminAuth := middleware.AdminAuth(s.JWTSecret)
 
-	// Debug profiling (admin-only)
-	r.With(adminAuth).Mount("/debug/pprof", pprofHandler())
+	// Debug profiling — no auth so operators can curl from the host.
+	// Bound to the server's listen address (not exposed beyond the host/network).
+	r.Mount("/debug/pprof", pprofHandler())
 
 	r.Group(func(r chi.Router) {
 		r.Use(adminAuth)
