@@ -98,6 +98,11 @@ func (c *agentWSClient) connect(ctx context.Context) error {
 
 	slog.Info("agent ws: connected to server")
 
+	// Trigger an immediate telemetry push so the server has fresh data
+	// (e.g. after a server restart, the DB has stale telemetry and the
+	// dashboard would show outdated container status/uptime).
+	c.agent.triggerTelemetry()
+
 	for {
 		_, msgBytes, err := conn.ReadMessage()
 		if err != nil {
