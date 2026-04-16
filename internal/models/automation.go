@@ -14,17 +14,20 @@ type MaintenanceWindow struct {
 	CooldownMinutes int    `json:"cooldown_minutes"` // minimum minutes between triggers
 }
 
-// DefaultAutomationConfig returns the default config (current behavior).
+// DefaultAutomationConfig returns the default config. Both Docker updates and
+// OS patches default to "disabled" — auto-updates must be explicitly configured
+// with a maintenance window or set to "anytime". This prevents surprise container
+// recreations (and broken dashboard sessions) when the agent detects a new image.
 func DefaultAutomationConfig() AutomationConfig {
 	return AutomationConfig{
 		OSPatch: MaintenanceWindow{
-			Mode:            "anytime",
+			Mode:            "disabled",
 			StartTime:       "23:00",
 			EndTime:         "05:00",
 			CooldownMinutes: 360, // 6 hours
 		},
 		DockerUpdate: MaintenanceWindow{
-			Mode:            "anytime",
+			Mode:            "disabled",
 			StartTime:       "23:00",
 			EndTime:         "05:00",
 			CooldownMinutes: 30,

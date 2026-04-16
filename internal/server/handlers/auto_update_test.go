@@ -30,14 +30,14 @@ func TestGetAutomationConfig_Default(t *testing.T) {
 	var cfg models.AutomationConfig
 	json.NewDecoder(w.Body).Decode(&cfg)
 
-	if cfg.OSPatch.Mode != "anytime" {
-		t.Errorf("expected os_patch mode 'anytime', got %q", cfg.OSPatch.Mode)
+	if cfg.OSPatch.Mode != "disabled" {
+		t.Errorf("expected os_patch mode 'disabled', got %q", cfg.OSPatch.Mode)
 	}
 	if cfg.OSPatch.CooldownMinutes != 360 {
 		t.Errorf("expected os_patch cooldown 360, got %d", cfg.OSPatch.CooldownMinutes)
 	}
-	if cfg.DockerUpdate.Mode != "anytime" {
-		t.Errorf("expected docker_update mode 'anytime', got %q", cfg.DockerUpdate.Mode)
+	if cfg.DockerUpdate.Mode != "disabled" {
+		t.Errorf("expected docker_update mode 'disabled', got %q", cfg.DockerUpdate.Mode)
 	}
 	if cfg.DockerUpdate.CooldownMinutes != 30 {
 		t.Errorf("expected docker_update cooldown 30, got %d", cfg.DockerUpdate.CooldownMinutes)
@@ -179,9 +179,9 @@ func TestInMaintenanceWindow(t *testing.T) {
 			want: false, // start == end means zero-width window
 		},
 		{
-			name:   "unknown mode defaults to true",
+			name:   "unknown mode defaults to false",
 			window: models.MaintenanceWindow{Mode: ""},
-			want:   true,
+			want:   false,
 		},
 	}
 

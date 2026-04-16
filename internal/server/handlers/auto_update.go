@@ -123,13 +123,22 @@ func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadAutomationConfig reads the automation config from the admin config store.
+// Falls back to DefaultAutomationConfig (all disabled) on any error — the safe
+// default is to NOT auto-update when we can't confirm the user's preferences.
 func (h *Handlers) loadAutomationConfig(ctx context.Context) models.AutomationConfig {
 	raw, err := h.adminRepo.GetConfig(ctx, "automation_config")
-	if err != nil || raw == "" {
+	if err != nil {
+		slog.Warn("auto-update: failed to load automation config, falling back to disabled",
+			"error", err.Error())
+		return models.DefaultAutomationConfig()
+	}
+	if raw == "" {
 		return models.DefaultAutomationConfig()
 	}
 	var cfg models.AutomationConfig
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		slog.Warn("auto-update: failed to parse automation config, falling back to disabled",
+			"error", err.Error())
 		return models.DefaultAutomationConfig()
 	}
 	return cfg
@@ -155,7 +164,7 @@ func inMaintenanceWindow(w models.MaintenanceWindow) bool {
 		// Overnight window (e.g. 23:00 - 05:00)
 		return currentMin >= startMin || currentMin < endMin
 	default:
-		return true
+		return false // unknown mode — safe default is to not auto-update
 	}
 }
 
