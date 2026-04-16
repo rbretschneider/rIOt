@@ -20,9 +20,11 @@ var version = "dev"
 
 func main() {
 	// Set a soft memory limit so Go returns unused memory to the OS instead of
-	// holding onto it. Default 512MB; override with GOMEMLIMIT env var.
+	// holding onto it. Default 1.5 GiB — sized for hosts with 48+ containers
+	// where telemetry JSON allocations are substantial. A too-low limit causes
+	// GC thrashing (90%+ CPU in gcBgMarkWorker). Override with GOMEMLIMIT env var.
 	if os.Getenv("GOMEMLIMIT") == "" {
-		debug.SetMemoryLimit(512 * 1024 * 1024) // 512 MiB
+		debug.SetMemoryLimit(1536 * 1024 * 1024) // 1.5 GiB
 	}
 
 	cfg := server.LoadConfig()
