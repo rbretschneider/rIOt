@@ -1,13 +1,16 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { displayName } from '../utils/docker'
 import { ContainerDetailContent } from '../components/ContainerDetail'
+import type { ContainerInfo } from '../types/models'
 
 export default function ContainerDetailPage() {
   const { id, cid } = useParams<{ id: string; cid: string }>()
+  const navigate = useNavigate()
   const { wsConnected } = useDevices()
   const { isEnabled } = useFeatures()
   const { data, isLoading } = useQuery({
@@ -17,12 +20,32 @@ export default function ContainerDetailPage() {
     enabled: !!id,
   })
 
+  // Keep a ref to the last successfully found container so that transient
+  // WS cache updates (stripped telemetry, Docker events) don't flash
+  // "Container not found" while the container is still running.
+  const lastContainer = useRef<ContainerInfo | null>(null)
+
+  const containers = data?.latest_telemetry?.data?.docker?.containers ?? []
+  const found = containers.find(c => c.short_id === cid)
+  if (found) lastContainer.current = found
+
+  // When the short_id from the URL no longer matches any container but the
+  // container was previously seen, attempt a name-based lookup. If a container
+  // with the same name exists under a new short_id (recreation event), navigate
+  // to the new URL, replacing the history entry to prevent a back-button loop.
+  useEffect(() => {
+    if (found || !lastContainer.current || !containers.length) return
+    const match = containers.find(c => c.name === lastContainer.current!.name)
+    if (match && match.short_id !== cid) {
+      navigate(`/devices/${id}/containers/${match.short_id}`, { replace: true })
+    }
+  }, [containers, found, cid, id, navigate])
+
   if (isLoading) return <div className="text-gray-500">Loading...</div>
   if (!data) return <div className="text-gray-500">Device not found</div>
 
-  const { device, latest_telemetry } = data
-  const containers = latest_telemetry?.data?.docker?.containers ?? []
-  const container = containers.find(c => c.short_id === cid)
+  const { device } = data
+  const container = found ?? lastContainer.current
 
   if (!container) {
     return (

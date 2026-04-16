@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
-import type { Device, HeartbeatData, FullTelemetryData, WSMessage } from '../types/models'
+import type { Device, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
 
 export function useDevices() {
   const queryClient = useQueryClient()
@@ -93,19 +93,71 @@ export function useDevices() {
         }
       })
     } else if (msg.type === 'docker_update' && msg.device_id) {
-      // Docker events (healthchecks, start/stop) fire frequently with 48+ containers.
-      // Invalidating the device query on every event caused cache conflicts with
-      // telemetry WS updates — the refetch could return stale/null data that
-      // overwrites the WS-merged cache, causing "container not found" flicker.
-      // Instead, mark the device list stale so the fleet overview picks up state
-      // changes, and let the next telemetry WS push update the detail view.
+      const evt = msg.data as DockerEvent
+      // Significant actions get a targeted state update in the device detail
+      // cache. We never call invalidateQueries on ['device', ...] here — that
+      // races with the telemetry WS setQueryData merge and causes "container
+      // not found" flicker. The telemetry push is the authoritative full refresh.
+      const significant = ['start', 'stop', 'die', 'create', 'destroy', 'pause', 'unpause']
+      if (evt?.action && significant.includes(evt.action)) {
+        const stateMap: Record<string, string> = {
+          start: 'running',
+          stop: 'exited',
+          die: 'exited',
+          pause: 'paused',
+          unpause: 'running',
+          // 'create' and 'destroy' intentionally omitted — no state to apply
+        }
+        const newState = stateMap[evt.action]
+        if (newState) {
+          // Strip leading '/' that Docker sometimes includes in container_name
+          const name = evt.container_name?.replace(/^\//, '')
+          queryClient.setQueryData(['device', msg.device_id], (old: any) => {
+            if (!old?.latest_telemetry?.data?.docker?.containers) return old
+            const containers = old.latest_telemetry.data.docker.containers as ContainerInfo[]
+            const idx = containers.findIndex((c: ContainerInfo) => c.name === name)
+            if (idx < 0) return old
+            const updatedContainers = [...containers]
+            updatedContainers[idx] = { ...updatedContainers[idx], state: newState }
+            return {
+              ...old,
+              latest_telemetry: {
+                ...old.latest_telemetry,
+                data: {
+                  ...old.latest_telemetry.data,
+                  docker: {
+                    ...old.latest_telemetry.data.docker,
+                    containers: updatedContainers,
+                  },
+                },
+              },
+            }
+          })
+        }
+      }
+      // Fleet list invalidation remains for all docker_update events (unchanged)
       queryClient.invalidateQueries({ queryKey: ['devices'] })
     }
     // Note: 'event' messages are handled by GlobalWSHandler in App.tsx
     // so the alert badge updates on ALL pages, not just pages using useDevices().
   }, [queryClient])
 
+  // Track the previous connected state so we can detect the false→true
+  // transition (reconnect) without firing on the initial connection.
+  // Initialized to true so the first connect does not trigger an invalidation.
+  const prevConnectedRef = useRef(true)
+
   const { connected } = useWebSocket(handleWS)
+
+  // On WS reconnect, invalidate all cached device detail queries so they
+  // refetch fresh data. This covers the window where the WS was down and
+  // we may have missed telemetry pushes.
+  useEffect(() => {
+    if (connected && !prevConnectedRef.current) {
+      queryClient.invalidateQueries({ queryKey: ['device'], exact: false })
+    }
+    prevConnectedRef.current = connected
+  }, [connected, queryClient])
 
   const query = useQuery({
     queryKey: ['devices'],
