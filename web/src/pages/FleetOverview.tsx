@@ -221,7 +221,9 @@ export default function FleetOverview() {
                 <SortHeader k="last_heartbeat">Last Seen</SortHeader>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">IP</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Updates</th>
+                {isEnabled('tags') && (
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Tags</th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/50">
@@ -280,12 +282,21 @@ export default function FleetOverview() {
                   <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
                   <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3 text-sm">
-                    {(() => {
-                      const count = patchMap.get(d.id)
-                      if (!count) return <span className="text-gray-600">-</span>
-                      return <span className="text-cyan-400">{count}</span>
-                    })()}
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const count = patchMap.get(d.id)
+                        if (!count) return <span className="text-gray-600">-</span>
+                        return <span className="text-cyan-400">{count}</span>
+                      })()}
+                      {d.auto_patch && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-900/40 text-[10px] font-medium text-emerald-400 border border-emerald-800/50" title="OS auto-patch enabled">Auto</span>
+                      )}
+                      {d.has_auto_update && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-900/40 text-[10px] font-medium text-blue-400 border border-blue-800/50" title="Docker auto-update enabled">Auto</span>
+                      )}
+                    </div>
                   </td>
+                  {isEnabled('tags') && (
                   <td className="px-4 py-3">
                     <div className="flex gap-1 flex-wrap">
                       {d.tags?.map(t => (
@@ -293,6 +304,7 @@ export default function FleetOverview() {
                       ))}
                     </div>
                   </td>
+                  )}
                 </tr>
               ))}
               {filtered.length === 0 && search && (

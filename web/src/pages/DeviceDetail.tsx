@@ -419,6 +419,7 @@ export default function DeviceDetail() {
             </button>
           )}
         </div>
+        {isEnabled('tags') && (<>
         <span className="text-gray-700">|</span>
       <div className="flex items-center gap-2 flex-wrap">
         {(device.tags ?? []).map(tag => (
@@ -449,6 +450,7 @@ export default function DeviceDetail() {
           className="px-2 py-0.5 bg-transparent border border-gray-700 rounded text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500 w-24"
         />
       </div>
+        </>)}
       </div>
 
       {/* Agent not connected warning */}

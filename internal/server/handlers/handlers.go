@@ -424,13 +424,34 @@ func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []models.Device{}
 	}
+	// Build a set of device IDs that have any enabled auto-update policy.
+	autoUpdateDevices := make(map[string]bool)
+	if h.autoUpdateRepo != nil {
+		for _, d := range devices {
+			policies, err := h.autoUpdateRepo.ListByDevice(r.Context(), d.ID)
+			if err == nil {
+				for _, p := range policies {
+					if p.Enabled {
+						autoUpdateDevices[d.ID] = true
+						break
+					}
+				}
+			}
+		}
+	}
+
 	type deviceWithConn struct {
 		models.Device
-		AgentConnected bool `json:"agent_connected"`
+		AgentConnected  bool `json:"agent_connected"`
+		HasAutoUpdate   bool `json:"has_auto_update"`
 	}
 	result := make([]deviceWithConn, len(devices))
 	for i, d := range devices {
-		result[i] = deviceWithConn{Device: d, AgentConnected: IsAgentConnected(d.ID)}
+		result[i] = deviceWithConn{
+			Device:         d,
+			AgentConnected: IsAgentConnected(d.ID),
+			HasAutoUpdate:  autoUpdateDevices[d.ID],
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

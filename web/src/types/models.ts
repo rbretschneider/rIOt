@@ -12,6 +12,7 @@ export interface Device {
   docker_available: boolean
   docker_container_count: number
   auto_patch: boolean
+  has_auto_update: boolean
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
   last_telemetry?: string

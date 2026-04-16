@@ -19,6 +19,7 @@ export const FEATURES = {
   systemd_timers: { label: 'Systemd Timers', description: 'Systemd timer units on device detail' },
   device_terminal: { label: 'Device Terminal', description: 'SSH terminal access to devices from the dashboard' },
   docker_terminal: { label: 'Docker Terminal', description: 'Shell access to running Docker containers from the dashboard' },
+  tags: { label: 'Device Tags', description: 'Tags column on fleet dashboard and tag management on device detail' },
 } as const
 
 export type FeatureKey = keyof typeof FEATURES
