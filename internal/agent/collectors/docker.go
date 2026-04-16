@@ -24,17 +24,33 @@ type DockerCollector struct {
 	CollectStats bool
 	SocketPath   string
 	CheckUpdates bool
+	CachePath    string
 
 	// Image freshness cache
 	cacheMu     sync.RWMutex
 	digestCache map[string]*imageFreshness
+	cacheOnce   sync.Once
 }
 
 const freshnessCacheTTL = 30 * time.Minute
 
+// perCallTimeout is the per-call timeout applied to every individual Docker
+// API call and subprocess invocation (FR-019).
+const perCallTimeout = 10 * time.Second
+
+// Worker pool size limits (FR-002, FR-006, FR-010).
+const (
+	statsWorkerLimit       = 10
+	freshnessWorkerLimit   = 5
+	networkModeWorkerLimit = 10
+)
+
+// imageFreshness caches the result of a single image freshness check.
+// Fields are exported so encoding/json can serialize them for disk persistence
+// (AD-004). The struct remains unexported; only its fields are exported.
 type imageFreshness struct {
-	updateAvailable *bool
-	checkedAt       time.Time
+	UpdateAvailable *bool     `json:"update_available"`
+	CheckedAt       time.Time `json:"checked_at"`
 }
 
 func (c *DockerCollector) Name() string { return "docker" }
@@ -89,17 +105,17 @@ func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
 		info.Containers = append(info.Containers, ci)
 	}
 
-	// Collect CPU/mem stats for running containers
+	// Phase 1: Collect CPU/mem stats for running containers (BR-004)
 	if c.CollectStats {
 		c.collectStats(ctx, cli, info.Containers)
 	}
 
-	// Check for image updates
+	// Phase 2: Check for image updates (BR-004)
 	if c.CheckUpdates {
 		c.checkImageUpdates(ctx, cli, info.Containers)
 	}
 
-	// Collect network modes for dependency awareness
+	// Phase 3: Collect network modes for dependency awareness (BR-004)
 	c.collectNetworkModes(ctx, cli, info.Containers)
 
 	return info, nil
@@ -200,78 +216,103 @@ func containerFromAPI(c container.Summary) models.ContainerInfo {
 	return ci
 }
 
-// collectStats gathers CPU/mem for running containers.
+// collectStats gathers CPU/mem for running containers using a bounded worker
+// pool (FR-001, FR-002). Each Docker API call has its own per-call timeout
+// (FR-003, FR-004, FR-019). A failure for one container does not affect others
+// (FR-018).
 func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+	sem := make(chan struct{}, statsWorkerLimit)
+	var wg sync.WaitGroup
+
 	for i := range containers {
 		if containers[i].State != "running" {
 			continue
 		}
-		resp, err := cli.ContainerStats(ctx, containers[i].ID, false)
-		if err != nil {
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil || len(body) == 0 {
-			continue
-		}
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
 
-		var stats struct {
-			Read    time.Time `json:"read"`
-			PreRead time.Time `json:"preread"`
-			CPUStats struct {
-				CPUUsage struct {
-					TotalUsage uint64 `json:"total_usage"`
-				} `json:"cpu_usage"`
-				SystemCPUUsage uint64 `json:"system_cpu_usage"`
-				OnlineCPUs     uint32 `json:"online_cpus"`
-			} `json:"cpu_stats"`
-			PreCPUStats struct {
-				CPUUsage struct {
-					TotalUsage uint64 `json:"total_usage"`
-				} `json:"cpu_usage"`
-				SystemCPUUsage uint64 `json:"system_cpu_usage"`
-			} `json:"precpu_stats"`
-			MemoryStats struct {
-				Usage uint64 `json:"usage"`
-				Limit uint64 `json:"limit"`
-				Stats struct {
-					Cache        uint64 `json:"cache"`         // cgroup v1
-					InactiveFile uint64 `json:"inactive_file"` // cgroup v2
-				} `json:"stats"`
-			} `json:"memory_stats"`
-		}
-		if err := json.Unmarshal(body, &stats); err != nil {
-			continue
-		}
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		// CPU percent calculation — use wall-clock time delta from Docker's
-		// read/preread timestamps instead of system_cpu_usage, which has unit
-		// inconsistencies on cgroup v2 hosts that inflate readings by 10-100x.
-		cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
-		wallDelta := stats.Read.Sub(stats.PreRead).Nanoseconds()
-		if wallDelta > 0 && cpuDelta > 0 {
-			containers[i].CPUPercent = (cpuDelta / float64(wallDelta)) * 100.0
-		}
+			callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+			defer cancel()
 
-		// Subtract filesystem cache from memory usage to match docker stats.
-		// cgroup v1 reports "cache", cgroup v2 reports "inactive_file".
-		cacheBytes := stats.MemoryStats.Stats.Cache
-		if cacheBytes == 0 {
-			cacheBytes = stats.MemoryStats.Stats.InactiveFile
-		}
-		containers[i].MemUsage = int64(stats.MemoryStats.Usage - cacheBytes)
-		containers[i].MemLimit = int64(stats.MemoryStats.Limit)
+			resp, err := cli.ContainerStats(callCtx, containers[idx].ID, false)
+			if err != nil {
+				slog.Debug("docker: ContainerStats failed", "container", containers[idx].ID, "error", err)
+				return
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || len(body) == 0 {
+				return
+			}
 
-		// Read CPU limit (NanoCPUs) from container inspect
-		inspect, err := cli.ContainerInspect(ctx, containers[i].ID)
-		if err == nil && inspect.HostConfig != nil && inspect.HostConfig.NanoCPUs > 0 {
-			containers[i].CPULimit = inspect.HostConfig.NanoCPUs
-		}
-		if err == nil && inspect.HostConfig != nil {
-			containers[i].NetworkMode = string(inspect.HostConfig.NetworkMode)
-		}
+			var stats struct {
+				Read    time.Time `json:"read"`
+				PreRead time.Time `json:"preread"`
+				CPUStats struct {
+					CPUUsage struct {
+						TotalUsage uint64 `json:"total_usage"`
+					} `json:"cpu_usage"`
+					SystemCPUUsage uint64 `json:"system_cpu_usage"`
+					OnlineCPUs     uint32 `json:"online_cpus"`
+				} `json:"cpu_stats"`
+				PreCPUStats struct {
+					CPUUsage struct {
+						TotalUsage uint64 `json:"total_usage"`
+					} `json:"cpu_usage"`
+					SystemCPUUsage uint64 `json:"system_cpu_usage"`
+				} `json:"precpu_stats"`
+				MemoryStats struct {
+					Usage uint64 `json:"usage"`
+					Limit uint64 `json:"limit"`
+					Stats struct {
+						Cache        uint64 `json:"cache"`         // cgroup v1
+						InactiveFile uint64 `json:"inactive_file"` // cgroup v2
+					} `json:"stats"`
+				} `json:"memory_stats"`
+			}
+			if err := json.Unmarshal(body, &stats); err != nil {
+				return
+			}
+
+			// CPU percent calculation — use wall-clock time delta from Docker's
+			// read/preread timestamps instead of system_cpu_usage, which has unit
+			// inconsistencies on cgroup v2 hosts that inflate readings by 10-100x.
+			cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+			wallDelta := stats.Read.Sub(stats.PreRead).Nanoseconds()
+			if wallDelta > 0 && cpuDelta > 0 {
+				containers[idx].CPUPercent = (cpuDelta / float64(wallDelta)) * 100.0
+			}
+
+			// Subtract filesystem cache from memory usage to match docker stats.
+			// cgroup v1 reports "cache", cgroup v2 reports "inactive_file".
+			cacheBytes := stats.MemoryStats.Stats.Cache
+			if cacheBytes == 0 {
+				cacheBytes = stats.MemoryStats.Stats.InactiveFile
+			}
+			containers[idx].MemUsage = int64(stats.MemoryStats.Usage - cacheBytes)
+			containers[idx].MemLimit = int64(stats.MemoryStats.Limit)
+
+			// Read CPU limit (NanoCPUs) and network mode from container inspect.
+			// Use the same callCtx so this call is also bounded by perCallTimeout.
+			inspect, err := cli.ContainerInspect(callCtx, containers[idx].ID)
+			if err != nil {
+				slog.Debug("docker: ContainerInspect failed in stats phase", "container", containers[idx].ID, "error", err)
+				return
+			}
+			if inspect.HostConfig != nil && inspect.HostConfig.NanoCPUs > 0 {
+				containers[idx].CPULimit = inspect.HostConfig.NanoCPUs
+			}
+			if inspect.HostConfig != nil {
+				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
+			}
+		}(i)
 	}
+
+	wg.Wait()
 }
 
 func portStr(port uint16, proto string) string {
@@ -284,37 +325,73 @@ func portStr(port uint16, proto string) string {
 	return fmt.Sprintf("%d", port)
 }
 
-// collectNetworkModes reads HostConfig.NetworkMode for all containers.
+// collectNetworkModes reads HostConfig.NetworkMode for containers that did not
+// already have their NetworkMode set by collectStats. Uses a bounded worker
+// pool (FR-009, FR-010). Each ContainerInspect call has a per-call timeout
+// (FR-011, FR-019). A failure for one container does not affect others (FR-018).
 func (c *DockerCollector) collectNetworkModes(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+	sem := make(chan struct{}, networkModeWorkerLimit)
+	var wg sync.WaitGroup
+
 	for i := range containers {
-		// Running containers already have NetworkMode from collectStats inspect
+		// Running containers already have NetworkMode from collectStats inspect (AC-012)
 		if containers[i].NetworkMode != "" {
 			continue
 		}
-		inspect, err := cli.ContainerInspect(ctx, containers[i].ID)
-		if err != nil {
-			continue
-		}
-		if inspect.HostConfig != nil {
-			containers[i].NetworkMode = string(inspect.HostConfig.NetworkMode)
-			if inspect.HostConfig.RestartPolicy.Name != "" {
-				containers[i].RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+			defer cancel()
+
+			inspect, err := cli.ContainerInspect(callCtx, containers[idx].ID)
+			if err != nil {
+				slog.Debug("docker: ContainerInspect failed in network mode phase", "container", containers[idx].ID, "error", err)
+				return
 			}
-		}
+			if inspect.HostConfig != nil {
+				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
+				if inspect.HostConfig.RestartPolicy.Name != "" {
+					containers[idx].RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
+				}
+			}
+		}(i)
 	}
+
+	wg.Wait()
 }
 
 // ClearFreshnessCache clears the image freshness cache, forcing the next
-// telemetry cycle to re-check all images against their registries.
+// telemetry cycle to re-check all images against their registries. Also removes
+// the on-disk cache file so a restart does not reload stale entries (AD-006).
 func (c *DockerCollector) ClearFreshnessCache() {
 	c.cacheMu.Lock()
 	c.digestCache = nil
 	c.cacheMu.Unlock()
+
+	if c.CachePath != "" {
+		if err := removeFreshnessCacheFile(c.CachePath); err != nil {
+			slog.Warn("docker: failed to remove freshness cache file", "path", c.CachePath, "error", err)
+		}
+	}
 }
 
 // checkImageUpdates queries registries to determine if running container images
-// have newer versions available. Results are cached for 30 minutes.
+// have newer versions available. Results are cached for 30 minutes in-memory
+// and on disk. Uses a bounded worker pool (FR-005, FR-006). Each individual
+// registry API call has a per-call timeout (FR-007, FR-008, FR-019). A failure
+// for one image does not affect others (FR-018).
 func (c *DockerCollector) checkImageUpdates(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+	// Load the on-disk cache exactly once across all Collect() calls (AD-006).
+	c.cacheOnce.Do(func() { c.loadFreshnessCache() })
+
+	sem := make(chan struct{}, freshnessWorkerLimit)
+	var wg sync.WaitGroup
+
 	for i := range containers {
 		if containers[i].State != "running" {
 			continue
@@ -324,32 +401,49 @@ func (c *DockerCollector) checkImageUpdates(ctx context.Context, cli *client.Cli
 			continue
 		}
 
-		// Check cache
+		// Check in-memory cache before spawning a goroutine. Cache hits never
+		// consume a semaphore slot (AD-001, section 7.3 note).
 		c.cacheMu.RLock()
 		if c.digestCache != nil {
-			if cached, ok := c.digestCache[imageRef]; ok && time.Since(cached.checkedAt) < freshnessCacheTTL {
-				containers[i].UpdateAvailable = cached.updateAvailable
+			if cached, ok := c.digestCache[imageRef]; ok && time.Since(cached.CheckedAt) < freshnessCacheTTL {
+				containers[i].UpdateAvailable = cached.UpdateAvailable
 				c.cacheMu.RUnlock()
 				continue
 			}
 		}
 		c.cacheMu.RUnlock()
 
-		result := c.checkSingleImage(ctx, cli, imageRef)
+		wg.Add(1)
+		go func(idx int, ref string) {
+			defer wg.Done()
 
-		// Cache the result
-		c.cacheMu.Lock()
-		if c.digestCache == nil {
-			c.digestCache = make(map[string]*imageFreshness)
-		}
-		c.digestCache[imageRef] = &imageFreshness{
-			updateAvailable: result,
-			checkedAt:       time.Now(),
-		}
-		c.cacheMu.Unlock()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-		containers[i].UpdateAvailable = result
+			callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+			defer cancel()
+
+			result := c.checkSingleImage(callCtx, cli, ref)
+
+			c.cacheMu.Lock()
+			if c.digestCache == nil {
+				c.digestCache = make(map[string]*imageFreshness)
+			}
+			c.digestCache[ref] = &imageFreshness{
+				UpdateAvailable: result,
+				CheckedAt:       time.Now(),
+			}
+			c.cacheMu.Unlock()
+
+			containers[idx].UpdateAvailable = result
+		}(i, imageRef)
 	}
+
+	wg.Wait()
+
+	// Persist the updated cache to disk once after the entire phase completes
+	// (AD-003, section 7.6).
+	c.saveFreshnessCache()
 }
 
 // checkSingleImage compares the local image digest with the remote registry digest.

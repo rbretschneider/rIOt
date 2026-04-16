@@ -277,3 +277,11 @@ func NginxAccessLogOffsetPath() string {
 	}
 	return "/etc/riot/nginx-access-log.offset"
 }
+
+// FreshnessCachePath returns the path for the Docker image freshness cache file.
+func FreshnessCachePath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\docker-freshness-cache.json"
+	}
+	return "/etc/riot/docker-freshness-cache.json"
+}

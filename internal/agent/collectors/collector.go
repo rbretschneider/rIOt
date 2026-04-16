@@ -33,6 +33,7 @@ type DockerOptions struct {
 	CollectStats bool
 	SocketPath   string
 	CheckUpdates bool
+	CachePath    string
 }
 
 func (r *Registry) RegisterDefaults() {
@@ -53,6 +54,7 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 		CollectStats: opts.CollectStats,
 		SocketPath:   opts.SocketPath,
 		CheckUpdates: opts.CheckUpdates,
+		CachePath:    opts.CachePath,
 	})
 	r.Register(&ContainerLogCollector{
 		SocketPath: opts.SocketPath,
@@ -102,6 +104,17 @@ func (r *Registry) SetNginxAccessLog(path string) {
 	for _, c := range r.ordered {
 		if ws, ok := c.(*WebServersCollector); ok {
 			ws.AccessLogPath = path
+			return
+		}
+	}
+}
+
+// SetDockerCachePath configures the on-disk freshness cache path on the
+// DockerCollector. An empty path disables cache persistence.
+func (r *Registry) SetDockerCachePath(path string) {
+	for _, c := range r.ordered {
+		if dc, ok := c.(*DockerCollector); ok {
+			dc.CachePath = path
 			return
 		}
 	}
