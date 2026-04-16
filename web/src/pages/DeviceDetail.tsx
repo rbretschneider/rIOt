@@ -56,7 +56,10 @@ export default function DeviceDetail() {
   const [copyState, setCopyState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [tagInput, setTagInput] = useState('')
   const [locationEdit, setLocationEdit] = useState<string | null>(null)
-  const [metricHours, setMetricHours] = useState(24)
+  const [metricHours, setMetricHours] = useState(() => {
+    const saved = localStorage.getItem('device-metric-hours')
+    return saved ? Number(saved) : 24
+  })
   const [showSecurityModal, setShowSecurityModal] = useState(false)
   const [showSummaryMenu, setShowSummaryMenu] = useState(false)
   const [showPowerMenu, setShowPowerMenu] = useState(false)
@@ -648,7 +651,7 @@ export default function DeviceDetail() {
             {([1, 6, 24, 168] as const).map(h => (
               <button
                 key={h}
-                onClick={() => setMetricHours(h)}
+                onClick={() => { setMetricHours(h); localStorage.setItem('device-metric-hours', String(h)) }}
                 className={`px-2 py-1 text-xs rounded-md transition-colors ${
                   metricHours === h ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800'
                 }`}

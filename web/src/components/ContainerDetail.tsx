@@ -172,7 +172,10 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
 }
 
 function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; deviceId?: string }) {
-  const [metricHours, setMetricHours] = useState(24)
+  const [metricHours, setMetricHours] = useState(() => {
+    const saved = localStorage.getItem('container-metric-hours')
+    return saved ? Number(saved) : 24
+  })
   const memPct = c.mem_limit > 0 ? (c.mem_usage / c.mem_limit) * 100 : 0
 
   const { data: metrics = [] } = useQuery({
@@ -254,7 +257,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
             {[{ label: '1h', value: 1 }, { label: '6h', value: 6 }, { label: '24h', value: 24 }, { label: '7d', value: 168 }].map(tr => (
               <button
                 key={tr.value}
-                onClick={() => setMetricHours(tr.value)}
+                onClick={() => { setMetricHours(tr.value); localStorage.setItem('container-metric-hours', String(tr.value)) }}
                 className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
                   metricHours === tr.value
                     ? 'bg-gray-700 text-white'
