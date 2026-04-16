@@ -187,10 +187,33 @@ func validTimeStr(s string) bool {
 	return true
 }
 
+// checkAutoUpdatesSuppressed returns true if a docker_check_updates command was
+// sent to this device recently (within 10 minutes). This prevents "check for
+// updates" from silently triggering an auto-update — the user should see the
+// result first and decide whether to update manually.
+func (h *Handlers) checkAutoUpdatesSuppressed(ctx context.Context, deviceID string) bool {
+	cmds, err := h.commandRepo.ListByDevice(ctx, deviceID, 10)
+	if err != nil {
+		return false
+	}
+	for _, cmd := range cmds {
+		if cmd.Action == "docker_check_updates" && time.Since(cmd.CreatedAt) < 10*time.Minute {
+			return true
+		}
+	}
+	return false
+}
+
 // checkAutoUpdates looks at incoming telemetry for containers with update_available=true,
 // matches them against auto-update policies, and sends docker_update commands.
 func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
 	if h.autoUpdateRepo == nil || h.commandRepo == nil || data.Docker == nil {
+		return
+	}
+
+	// Suppress auto-updates when a manual "check for updates" was recently issued.
+	// The user expects to see the result and decide — not have it auto-applied.
+	if h.checkAutoUpdatesSuppressed(ctx, deviceID) {
 		return
 	}
 
