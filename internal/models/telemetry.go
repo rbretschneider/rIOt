@@ -454,19 +454,29 @@ type WebServerInfo struct {
 	Servers []ProxyServer `json:"servers,omitempty"`
 }
 
+// NginxAccessMetrics holds per-interval HTTP status code counts from nginx access log parsing.
+type NginxAccessMetrics struct {
+	TotalRequests int `json:"total_requests"`
+	Status2xx     int `json:"status_2xx"`
+	Status3xx     int `json:"status_3xx"`
+	Status4xx     int `json:"status_4xx"`
+	Status5xx     int `json:"status_5xx"`
+}
+
 // ProxyServer represents a single detected proxy server (nginx, Caddy, etc.).
 type ProxyServer struct {
-	Name           string            `json:"name"`
-	Version        string            `json:"version,omitempty"`
-	Status         string            `json:"status"`
-	PID            int               `json:"pid,omitempty"`
-	ConfigPath     string            `json:"config_path,omitempty"`
-	ConfigValid    *bool             `json:"config_valid,omitempty"`
-	ConfigError    string            `json:"config_error,omitempty"`
-	Sites          []ProxySite       `json:"sites,omitempty"`
-	Certs          []ProxyCert       `json:"certs,omitempty"`
-	Upstreams      []ProxyUpstream   `json:"upstreams,omitempty"`
-	SecurityConfig *ProxySecurityCfg `json:"security_config,omitempty"`
+	Name           string              `json:"name"`
+	Version        string              `json:"version,omitempty"`
+	Status         string              `json:"status"`
+	PID            int                 `json:"pid,omitempty"`
+	ConfigPath     string              `json:"config_path,omitempty"`
+	ConfigValid    *bool               `json:"config_valid,omitempty"`
+	ConfigError    string              `json:"config_error,omitempty"`
+	Sites          []ProxySite         `json:"sites,omitempty"`
+	Certs          []ProxyCert         `json:"certs,omitempty"`
+	Upstreams      []ProxyUpstream     `json:"upstreams,omitempty"`
+	SecurityConfig *ProxySecurityCfg   `json:"security_config,omitempty"`
+	AccessMetrics  *NginxAccessMetrics `json:"access_metrics,omitempty"`
 }
 
 // ProxySite represents a virtual host / site block.

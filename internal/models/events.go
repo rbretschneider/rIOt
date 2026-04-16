@@ -46,6 +46,9 @@ const (
 	EventDiskSmartTemp        EventType = "disk_smart_temp"
 	EventGPUTemp              EventType = "gpu_temp"
 	EventGPUMetric            EventType = "gpu_metric"
+	EventNginx5xxHigh         EventType = "nginx_5xx_high"
+	EventNginx4xxHigh         EventType = "nginx_4xx_high"
+	EventNginxRequestHigh     EventType = "nginx_request_high"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

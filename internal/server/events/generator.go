@@ -770,7 +770,8 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 	}
 }
 
-// CheckWebServerAlerts checks SSL certificates across all proxy servers for expiry.
+// CheckWebServerAlerts checks SSL certificates across all proxy servers for expiry,
+// and evaluates nginx access log metrics against configured alert rules.
 func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID, hostname string, ws *models.WebServerInfo) {
 	for _, srv := range ws.Servers {
 		for _, cert := range srv.Certs {
@@ -788,6 +789,45 @@ func (g *Generator) CheckWebServerAlerts(ctx context.Context, deviceID, hostname
 					})
 			}
 		}
+	}
+	g.CheckNginxAccessAlerts(ctx, deviceID, hostname, ws)
+}
+
+// CheckNginxAccessAlerts evaluates nginx access log metrics from telemetry against
+// user-configured alert rules. Only fires when explicit rules exist — no hardcoded
+// fallback thresholds (AD-006, FR-018). The servers slice is capped at
+// maxNginxProxyServers to prevent a compromised agent from flooding the server
+// with database queries (SEC-005).
+func (g *Generator) CheckNginxAccessAlerts(ctx context.Context, deviceID, hostname string, ws *models.WebServerInfo) {
+	// Cap iteration at a reasonable maximum consistent with CheckGPUAlerts (SEC-005).
+	const maxNginxProxyServers = 16
+
+	servers := ws.Servers
+	if len(servers) > maxNginxProxyServers {
+		servers = servers[:maxNginxProxyServers]
+	}
+
+	for i := range servers {
+		srv := &servers[i]
+		if srv.AccessMetrics == nil {
+			continue
+		}
+		m := srv.AccessMetrics
+
+		g.evaluateMetric(ctx, deviceID, "nginx_5xx_count", float64(m.Status5xx), hostname, models.EventNginx5xxHigh,
+			func(val float64) string {
+				return fmt.Sprintf("Nginx 5xx errors: %d in last interval on %s", int(val), hostname)
+			})
+
+		g.evaluateMetric(ctx, deviceID, "nginx_4xx_count", float64(m.Status4xx), hostname, models.EventNginx4xxHigh,
+			func(val float64) string {
+				return fmt.Sprintf("Nginx 4xx errors: %d in last interval on %s", int(val), hostname)
+			})
+
+		g.evaluateMetric(ctx, deviceID, "nginx_request_count", float64(m.TotalRequests), hostname, models.EventNginxRequestHigh,
+			func(val float64) string {
+				return fmt.Sprintf("Nginx request count: %d in last interval on %s", int(val), hostname)
+			})
 	}
 }
 

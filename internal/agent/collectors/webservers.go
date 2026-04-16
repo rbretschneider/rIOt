@@ -26,7 +26,11 @@ type ProxyParser interface {
 
 // WebServersCollector discovers and inspects reverse proxy / web servers.
 // Linux-only; returns empty on other platforms.
-type WebServersCollector struct{}
+type WebServersCollector struct {
+	// AccessLogPath is the nginx access log file to tail for HTTP status code metrics.
+	// Empty string disables access log parsing.
+	AccessLogPath string
+}
 
 func (c *WebServersCollector) Name() string { return "webservers" }
 
@@ -35,8 +39,9 @@ func (c *WebServersCollector) Collect(ctx context.Context) (interface{}, error) 
 		return &models.WebServerInfo{}, nil
 	}
 
+	nginxParser := &NginxParser{AccessLogPath: c.AccessLogPath}
 	parsers := []ProxyParser{
-		&NginxParser{},
+		nginxParser,
 		&CaddyParser{},
 		&FerronParser{},
 	}

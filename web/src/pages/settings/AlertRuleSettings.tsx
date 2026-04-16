@@ -18,6 +18,9 @@ const METRICS = [
   { value: 'nic_state', label: 'NIC State' },
   { value: 'process_missing', label: 'Process Missing' },
   { value: 'log_errors', label: 'Log Errors' },
+  { value: 'nginx_5xx_count', label: 'Nginx 5xx Errors' },
+  { value: 'nginx_4xx_count', label: 'Nginx 4xx Errors' },
+  { value: 'nginx_request_count', label: 'Nginx Request Count' },
 ]
 
 const STATE_METRICS = ['service_state', 'nic_state', 'process_missing']
@@ -40,6 +43,9 @@ const METRIC_DEFAULTS: Record<string, { operator: string; threshold: number; sev
   container_cpu_percent:   { operator: '>', threshold: 80, severity: 'warning',  cooldown: 900,  hint: 'Container CPU usage percentage (0–100). Requires container name.' },
   container_mem_percent:   { operator: '>', threshold: 90, severity: 'warning',  cooldown: 900,  hint: 'Container memory usage percentage (0–100). Requires container name.' },
   container_cpu_limit_percent: { operator: '>', threshold: 90, severity: 'warning', cooldown: 900, hint: 'CPU usage as % of compose CPU limit. Requires container name and cpus: in compose.' },
+  nginx_5xx_count:     { operator: '>', threshold: 10,   severity: 'critical', cooldown: 300,  hint: 'Number of 5xx responses per telemetry interval. Requires access_log configured in agent.' },
+  nginx_4xx_count:     { operator: '>', threshold: 50,   severity: 'warning',  cooldown: 900,  hint: 'Number of 4xx responses per telemetry interval. Requires access_log configured in agent.' },
+  nginx_request_count: { operator: '>', threshold: 1000, severity: 'info',     cooldown: 900,  hint: 'Total request count per telemetry interval. Requires access_log configured in agent.' },
 }
 
 const TARGET_STATES: Record<string, string[]> = {

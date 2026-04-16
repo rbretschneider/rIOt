@@ -138,6 +138,11 @@ func (a *Agent) Run() error {
 	// Filter collectors by config
 	a.registry.FilterEnabled(a.config.Collector.Enabled)
 
+	// Configure nginx access log path if webservers collector is enabled and path is set.
+	if a.config.Collector.Webservers.Nginx.AccessLog != "" {
+		a.registry.SetNginxAccessLog(a.config.Collector.Webservers.Nginx.AccessLog)
+	}
+
 	// Start loops
 	var wg sync.WaitGroup
 

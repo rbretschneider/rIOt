@@ -14,7 +14,11 @@ import (
 )
 
 // NginxParser detects and parses nginx configuration.
-type NginxParser struct{}
+type NginxParser struct {
+	// AccessLogPath is the nginx access log file to tail for HTTP status code metrics.
+	// Empty string disables access log collection.
+	AccessLogPath string
+}
 
 func (p *NginxParser) Name() string { return "nginx" }
 
@@ -125,6 +129,16 @@ func (p *NginxParser) Parse(ctx context.Context, server *models.ProxyServer) err
 			continue
 		}
 		server.Certs = append(server.Certs, *cert)
+	}
+
+	// Collect nginx access log metrics if configured
+	if p.AccessLogPath != "" {
+		reader := newNginxAccessLogReader(p.AccessLogPath)
+		metrics, err := reader.ReadAndCount()
+		if err != nil {
+			slog.Debug("nginx access log read failed", "path", p.AccessLogPath, "error", err)
+		}
+		server.AccessMetrics = metrics
 	}
 
 	return nil

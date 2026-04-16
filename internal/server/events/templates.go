@@ -211,7 +211,32 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when a device reports error-level or higher log entries",
 		},
-		// Web Server
+		// Web Server — nginx access log metrics
+		{
+			ID:              "nginx_5xx_high",
+			Name:            "Nginx 5xx Errors High",
+			Category:        "webserver",
+			Metric:          "nginx_5xx_count",
+			Operator:        ">",
+			Threshold:       10,
+			Severity:        "critical",
+			CooldownSeconds: 300,
+			NeedsTargetName: false,
+			Description:     "Fires when nginx 5xx error count exceeds the threshold per telemetry interval",
+		},
+		{
+			ID:              "nginx_4xx_high",
+			Name:            "Nginx 4xx Errors High",
+			Category:        "webserver",
+			Metric:          "nginx_4xx_count",
+			Operator:        ">",
+			Threshold:       50,
+			Severity:        "warning",
+			CooldownSeconds: 900,
+			NeedsTargetName: false,
+			Description:     "Fires when nginx 4xx error count exceeds the threshold per telemetry interval",
+		},
+		// Web Server — SSL certificates
 		{
 			ID:              "cert_expiring",
 			Name:            "Certificate Expiring",

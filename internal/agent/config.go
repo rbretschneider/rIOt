@@ -71,8 +71,19 @@ type AgentConfig struct {
 }
 
 type CollectorConfig struct {
-	Enabled       []string `yaml:"enabled"`
-	SMARTInterval int      `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
+	Enabled       []string        `yaml:"enabled"`
+	SMARTInterval int             `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
+	Webservers    WebServersConfig `yaml:"webservers"`
+}
+
+// WebServersConfig holds per-collector configuration for the webservers collector.
+type WebServersConfig struct {
+	Nginx NginxConfig `yaml:"nginx"`
+}
+
+// NginxConfig holds nginx-specific collector configuration.
+type NginxConfig struct {
+	AccessLog string `yaml:"access_log"`
 }
 
 func DefaultConfig() *Config {
@@ -166,6 +177,9 @@ collectors:
     - logs
     - ups
   # smart_interval: 14400  # SMART scan interval in seconds (default 14400 = 4 hours)
+  # webservers:
+  #   nginx:
+  #     access_log: /var/log/nginx/access.log  # Enable nginx access log monitoring
 
 docker:
   enabled: "auto"          # "auto" (detect), "true", or "false"
@@ -254,4 +268,12 @@ func BufferPath() string {
 		return os.Getenv("PROGRAMDATA") + "\\riot\\buffer.db"
 	}
 	return "/var/lib/riot/buffer.db"
+}
+
+// NginxAccessLogOffsetPath returns the path for the nginx access log byte offset file.
+func NginxAccessLogOffsetPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\nginx-access-log.offset"
+	}
+	return "/etc/riot/nginx-access-log.offset"
 }

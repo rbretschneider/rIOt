@@ -96,6 +96,17 @@ func (r *Registry) SetSMARTInterval(d time.Duration) {
 	}
 }
 
+// SetNginxAccessLog configures the nginx access log path on the WebServersCollector.
+// An empty path disables access log parsing.
+func (r *Registry) SetNginxAccessLog(path string) {
+	for _, c := range r.ordered {
+		if ws, ok := c.(*WebServersCollector); ok {
+			ws.AccessLogPath = path
+			return
+		}
+	}
+}
+
 func (r *Registry) Collectors() []Collector {
 	return r.ordered
 }
