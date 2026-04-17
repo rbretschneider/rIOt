@@ -42,6 +42,11 @@ func NewDispatcher(repo db.NotifyRepository) *Dispatcher {
 	d.backends["smtp"] = func(ch models.NotificationChannel) Channel {
 		return NewSMTP(ch)
 	}
+	d.backends["telegram"] = func(ch models.NotificationChannel) Channel {
+		t := NewTelegram(ch)
+		t.client = d.httpClient
+		return t
+	}
 	return d
 }
 

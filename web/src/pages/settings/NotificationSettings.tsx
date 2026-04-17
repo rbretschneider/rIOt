@@ -7,6 +7,7 @@ const CHANNEL_TYPES = [
   { value: 'ntfy', label: 'ntfy' },
   { value: 'webhook', label: 'Webhook' },
   { value: 'smtp', label: 'Email (SMTP)' },
+  { value: 'telegram', label: 'Telegram' },
 ]
 
 function ChannelTypeIcon({ type }: { type: string }) {
@@ -34,6 +35,14 @@ function ChannelTypeIcon({ type }: { type: string }) {
         <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="4" width="20" height="16" rx="2" />
           <path d="M22 4l-10 8L2 4" />
+        </svg>
+      )
+    case 'telegram':
+      // Paper plane icon
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13" />
+          <polygon points="22 2 15 22 11 13 2 9 22 2" />
         </svg>
       )
     default:
@@ -162,6 +171,9 @@ export default function NotificationSettings() {
                   {' → '}{(ch.config.to as string) || '(no recipients)'}
                 </>
               )}
+              {ch.type === 'telegram' && (
+                <>Chat ID: {(ch.config.chat_id as string) || '(not set)'}</>
+              )}
             </div>
           </div>
         ))}
@@ -229,6 +241,12 @@ export default function NotificationSettings() {
               )}
               {editing.type === 'smtp' && (
                 <SmtpConfig
+                  config={(editing.config || {}) as Record<string, unknown>}
+                  onChange={config => setEditing({ ...editing, config })}
+                />
+              )}
+              {editing.type === 'telegram' && (
+                <TelegramConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
                 />
@@ -420,6 +438,34 @@ function SmtpConfig({ config, onChange }: { config: Record<string, unknown>; onC
       </label>
       <p className="text-xs text-gray-500">
         For Gmail, use smtp.gmail.com:587 with an App Password. For local relays, disable STARTTLS and leave credentials empty.
+      </p>
+    </div>
+  )
+}
+
+function TelegramConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+  return (
+    <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
+      <Field label="Bot Token">
+        <input
+          type="password"
+          value={(config.bot_token as string) || ''}
+          onChange={e => onChange({ ...config, bot_token: e.target.value })}
+          placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <Field label="Chat ID">
+        <input
+          value={(config.chat_id as string) || ''}
+          onChange={e => onChange({ ...config, chat_id: e.target.value })}
+          placeholder="-1001234567890"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <p className="text-xs text-gray-500">
+        Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">@BotFather</a> to get the token.
+        For the chat ID, add the bot to a group and send a message, then check <span className="font-mono">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span> for the chat ID.
       </p>
     </div>
   )
