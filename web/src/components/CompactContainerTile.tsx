@@ -33,7 +33,7 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
     >
       <div className="flex items-center gap-1.5 min-w-0">
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} />
-        <span className="text-xs font-medium text-white truncate max-w-[160px]" title={c.name}>{name}</span>
+        <span className="text-sm font-medium text-white truncate max-w-[160px]" title={c.name}>{name}</span>
         {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
       </div>
       <div className="flex items-center gap-1.5 min-w-0">

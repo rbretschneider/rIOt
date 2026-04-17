@@ -46,7 +46,7 @@ export default function ContainerCard({ container: c, onClick, autoUpdate, selec
           />
         )}
         {c.riot?.icon && <span className="text-sm flex-shrink-0">{c.riot.icon}</span>}
-        <span className="text-sm font-medium text-white truncate" title={c.name}>{name}</span>
+        <span className="text-base font-medium text-white truncate" title={c.name}>{name}</span>
         {networkParent && (
           <span className="text-[10px] text-gray-500 flex-shrink-0" title={`Network via container:${networkParent}`}>
             via {networkParent}

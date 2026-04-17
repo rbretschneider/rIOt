@@ -959,6 +959,7 @@ func stripHeavyTelemetry(data *models.FullTelemetryData) *models.FullTelemetryDa
 				Image:         c.Image,
 				State:         c.State,
 				Status:        c.Status,
+				Created:       c.Created,
 				CPUPercent:    c.CPUPercent,
 				MemUsage:      c.MemUsage,
 				MemLimit:      c.MemLimit,
