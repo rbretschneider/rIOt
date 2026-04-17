@@ -563,11 +563,11 @@ export default function DeviceDetail() {
         <Section title="Live Metrics">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {tel.cpu && <GaugeBar label="CPU Usage" value={tel.cpu.usage_percent} />}
-            {tel.memory && <GaugeBar label="RAM Usage" value={tel.memory.usage_percent} />}
+            {tel.memory && <GaugeBar label="RAM Usage" value={tel.memory.usage_percent} detail={`${(tel.memory.used_mb / 1024).toFixed(1)} / ${(tel.memory.total_mb / 1024).toFixed(1)} GB`} />}
             {tel.disks?.filesystems && tel.disks.filesystems.length > 0 && (() => {
               const boot = tel.disks!.filesystems!.find(fs => fs.mount_point === '/' || fs.mount_point === 'C:\\')
                 || tel.disks!.filesystems![0]
-              return <GaugeBar label={`Disk Space (${boot.mount_point})`} value={boot.usage_percent} />
+              return <GaugeBar label={`Disk Space (${boot.mount_point})`} value={boot.usage_percent} detail={`${boot.used_gb.toFixed(1)} / ${boot.total_gb.toFixed(1)} GB`} />
             })()}
           </div>
           {tel.cpu && (

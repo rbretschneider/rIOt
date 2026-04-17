@@ -3,16 +3,17 @@ interface Props {
   value: number
   max?: number
   unit?: string
+  detail?: string
 }
 
-export default function GaugeBar({ label, value, max = 100, unit = '%' }: Props) {
+export default function GaugeBar({ label, value, max = 100, unit = '%', detail }: Props) {
   const pct = Math.min((value / max) * 100, 100)
   const color = pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-emerald-500'
 
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-sm">
-        <span className="text-gray-400">{label}</span>
+        <span className="text-gray-400">{label}{detail && <span className="text-gray-600 ml-1.5 text-xs font-mono">{detail}</span>}</span>
         <span className="text-gray-200 font-mono">{value.toFixed(1)}{unit}</span>
       </div>
       <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
