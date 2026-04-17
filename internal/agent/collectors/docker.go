@@ -483,19 +483,29 @@ func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Clie
 		}
 	}
 
+	// If the remote is a plain image manifest (not a manifest list/OCI index),
+	// the direct digest comparison is reliable — a mismatch means a genuine update.
+	// The manifest list fallback is only needed for buildx provenance images where
+	// the top-level digest is an index that wraps the actual image manifest.
+	mt := string(distInfo.Descriptor.MediaType)
+	if mt == "application/vnd.docker.distribution.manifest.v2+json" ||
+		mt == "application/vnd.oci.image.manifest.v1+json" ||
+		mt == "" {
+		// Single image manifest — direct comparison is authoritative.
+		t := true
+		return &t // update available
+	}
+
 	// Strategy 2: Manifest list fallback — images built with buildx (provenance: true)
-	// wrap the image in an OCI index (manifest list) whose digest differs from the
-	// per-platform image manifest digest stored in RepoDigests. When the direct
-	// comparison fails, use `docker manifest inspect` to get per-platform digests
-	// and compare those against local RepoDigests. This avoids false "update
-	// available" for images with attestation manifests.
+	// wrap the image in an OCI index whose digest differs from the per-platform
+	// image manifest digest stored in RepoDigests.
 	if resolved := c.checkViaManifestInspect(ctx, imageRef, localInfo.RepoDigests); resolved != nil {
 		return resolved
 	}
 
-	slog.Info("image freshness: digest mismatch, could not resolve manifest list",
-		"image", imageRef, "remote_digest", remoteDigest)
-	return nil // unknown rather than false positive
+	// Manifest list but couldn't resolve sub-manifests — trust the mismatch.
+	t := true
+	return &t // update available
 }
 
 // checkViaManifestInspect shells out to `docker manifest inspect` to get the
