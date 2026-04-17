@@ -536,7 +536,7 @@ export default function DeviceDetail() {
               <div className="grid grid-cols-2 gap-4">
                 <InfoItem label="CPU" value={device.hardware_profile.cpu_model} />
                 <InfoItem label="Cores / Threads" value={`${device.hardware_profile.cpu_cores} / ${device.hardware_profile.cpu_threads}`} />
-                <InfoItem label="RAM" value={`${device.hardware_profile.total_ram_mb} MB`} />
+                <InfoItem label="RAM" value={device.hardware_profile.total_ram_mb >= 1024 ? `${(device.hardware_profile.total_ram_mb / 1024).toFixed(1)} GB` : `${device.hardware_profile.total_ram_mb} MB`} />
                 <InfoItem label="Board" value={device.hardware_profile.board_model || '-'} />
                 {device.hardware_profile.virtualization && (
                   <InfoItem label="Virtualization" value={device.hardware_profile.virtualization} />
@@ -1055,7 +1055,7 @@ export default function DeviceDetail() {
                       <tr key={i} className="border-b border-gray-800/50 text-gray-300">
                         <td className="py-1.5 pr-4 text-xs">{gpu.description}</td>
                         <td className="py-1.5 pr-4 text-xs font-mono">{gpu.driver || '-'}</td>
-                        <td className="py-1.5 pr-4 text-xs">{gpu.vram_mb ? `${gpu.vram_mb} MB` : '-'}</td>
+                        <td className="py-1.5 pr-4 text-xs">{gpu.vram_mb ? (gpu.vram_mb >= 1024 ? `${(gpu.vram_mb / 1024).toFixed(1)} GB` : `${gpu.vram_mb} MB`) : '-'}</td>
                         <td className="py-1.5 pr-4 text-xs font-mono text-gray-500">{gpu.pci_slot}</td>
                       </tr>
                     ))}

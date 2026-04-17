@@ -37,21 +37,21 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
         {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
       </div>
       <div className="flex items-center gap-1.5 min-w-0">
-        <span className="text-[10px] font-mono text-gray-600 truncate max-w-[90px]">{imageTag}</span>
+        <span className="text-xs font-mono text-gray-600 truncate max-w-[90px]">{imageTag}</span>
         {isRunning && (
-          <span className="text-[10px] font-mono text-gray-500">
+          <span className="text-xs font-mono text-gray-500">
             {c.cpu_percent.toFixed(0)}%
             <span className="text-gray-600 mx-0.5">/</span>
             {formatBytes(c.mem_usage)}
           </span>
         )}
         {crossStackParent && (
-          <span className="text-[10px] text-blue-400/70 truncate" title={`Network via ${crossStackParent}`}>
+          <span className="text-xs text-blue-400/70 truncate" title={`Network via ${crossStackParent}`}>
             via {crossStackParent}
           </span>
         )}
         {networkParentDown && (
-          <span className="text-[10px] text-red-400 font-medium" title="Network parent is not running">
+          <span className="text-xs text-red-400 font-medium" title="Network parent is not running">
             net down
           </span>
         )}
