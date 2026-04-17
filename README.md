@@ -33,7 +33,7 @@
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
-- **Notification channels** — alert delivery via email (SMTP), ntfy, and webhooks, with test-send support, delivery logging, and automatic retry queue
+- **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
@@ -745,9 +745,16 @@ On consecutive failures, the agent increases retry frequency. When connectivity 
 
 Alert delivery is supported via:
 
-- **Email (SMTP)** — send alerts via any SMTP server (Gmail, Mailgun, self-hosted, etc.) with STARTTLS support
-- **ntfy** — push notifications via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server
-- **Webhooks** — JSON POST to any URL with custom headers
+| Channel | Config Keys | Notes |
+|---------|-------------|-------|
+| **Email (SMTP)** | `host`, `port`, `username`, `password`, `from`, `to` | Any SMTP server (Gmail, Mailgun, self-hosted). STARTTLS supported. |
+| **ntfy** | `server_url`, `topic`, `token` | Push notifications via [ntfy.sh](https://ntfy.sh) or self-hosted. |
+| **Telegram** | `bot_token`, `chat_id` | Free. Create a bot via [@BotFather](https://t.me/BotFather). |
+| **Discord** | `webhook_url` | Server Settings > Integrations > Webhooks. Free. |
+| **Slack** | `webhook_url` | Create an [Incoming Webhook](https://api.slack.com/messaging/webhooks) app. Free. |
+| **Pushover** | `api_token`, `user_key` | [pushover.net](https://pushover.net) — $5 one-time per platform. |
+| **Gotify** | `server_url`, `app_token` | Self-hosted push notification server. Free. |
+| **Webhooks** | `url`, `headers` | Generic JSON POST to any URL with optional custom headers. |
 
 Configure channels in **Settings > Notifications**. Each channel can be tested with a one-click test notification. All delivery attempts are logged in **Settings > Notifications > Delivery Log**.
 

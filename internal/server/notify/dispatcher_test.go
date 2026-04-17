@@ -88,7 +88,7 @@ func TestTestChannel_UnknownType(t *testing.T) {
 	notifyRepo := testutil.NewMockNotifyRepo()
 	d := NewDispatcher(notifyRepo)
 
-	ch := models.NotificationChannel{Type: "slack"}
+	ch := models.NotificationChannel{Type: "carrier_pigeon"}
 	err := d.TestChannel(context.Background(), ch)
 	assert.Error(t, err)
 	assert.IsType(t, &UnsupportedChannelError{}, err)

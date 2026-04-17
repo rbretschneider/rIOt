@@ -8,6 +8,10 @@ const CHANNEL_TYPES = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'smtp', label: 'Email (SMTP)' },
   { value: 'telegram', label: 'Telegram' },
+  { value: 'discord', label: 'Discord' },
+  { value: 'slack', label: 'Slack' },
+  { value: 'pushover', label: 'Pushover' },
+  { value: 'gotify', label: 'Gotify' },
 ]
 
 function ChannelTypeIcon({ type }: { type: string }) {
@@ -38,11 +42,28 @@ function ChannelTypeIcon({ type }: { type: string }) {
         </svg>
       )
     case 'telegram':
-      // Paper plane icon
       return (
         <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13" />
-          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+          <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+        </svg>
+      )
+    case 'discord':
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+        </svg>
+      )
+    case 'slack':
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="currentColor">
+          <path d="M5.042 15.165a2.528 2.528 0 01-2.52 2.523A2.528 2.528 0 010 15.165a2.527 2.527 0 012.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 012.521-2.52 2.527 2.527 0 012.521 2.52v6.313A2.528 2.528 0 018.834 24a2.528 2.528 0 01-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 01-2.521-2.52A2.528 2.528 0 018.834 0a2.528 2.528 0 012.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 012.521 2.521 2.528 2.528 0 01-2.521 2.521H2.522A2.528 2.528 0 010 8.834a2.528 2.528 0 012.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 012.522-2.521A2.528 2.528 0 0124 8.834a2.528 2.528 0 01-2.522 2.521h-2.522V8.834zm-1.27 0a2.528 2.528 0 01-2.523 2.521 2.527 2.527 0 01-2.52-2.521V2.522A2.527 2.527 0 0115.163 0a2.528 2.528 0 012.523 2.522v6.312zM15.163 18.956a2.528 2.528 0 012.523 2.522A2.528 2.528 0 0115.163 24a2.527 2.527 0 01-2.52-2.522v-2.522h2.52zm0-1.27a2.527 2.527 0 01-2.52-2.523 2.527 2.527 0 012.52-2.52h6.315A2.528 2.528 0 0124 15.163a2.528 2.528 0 01-2.522 2.523h-6.315z" />
+        </svg>
+      )
+    case 'pushover':
+    case 'gotify':
+      return (
+        <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 17H2a3 3 0 003 3h14a3 3 0 003-3z" /><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
         </svg>
       )
     default:
@@ -174,6 +195,18 @@ export default function NotificationSettings() {
               {ch.type === 'telegram' && (
                 <>Chat ID: {(ch.config.chat_id as string) || '(not set)'}</>
               )}
+              {ch.type === 'discord' && (
+                <>{(ch.config.webhook_url as string)?.replace(/^https:\/\/discord\.com\/api\/webhooks\//, '.../')  || '(no webhook URL)'}</>
+              )}
+              {ch.type === 'slack' && (
+                <>{(ch.config.webhook_url as string)?.replace(/^https:\/\/hooks\.slack\.com\//, '.../')  || '(no webhook URL)'}</>
+              )}
+              {ch.type === 'pushover' && (
+                <>User: {(ch.config.user_key as string)?.slice(0, 8) || '(not set)'}...</>
+              )}
+              {ch.type === 'gotify' && (
+                <>{(ch.config.server_url as string) || '(no server URL)'}</>
+              )}
             </div>
           </div>
         ))}
@@ -247,6 +280,29 @@ export default function NotificationSettings() {
               )}
               {editing.type === 'telegram' && (
                 <TelegramConfig
+                  config={(editing.config || {}) as Record<string, unknown>}
+                  onChange={config => setEditing({ ...editing, config })}
+                />
+              )}
+              {(editing.type === 'discord' || editing.type === 'slack') && (
+                <WebhookURLConfig
+                  config={(editing.config || {}) as Record<string, unknown>}
+                  onChange={config => setEditing({ ...editing, config })}
+                  label={editing.type === 'discord' ? 'Discord Webhook URL' : 'Slack Webhook URL'}
+                  placeholder={editing.type === 'discord' ? 'https://discord.com/api/webhooks/...' : 'https://hooks.slack.com/services/...'}
+                  hint={editing.type === 'discord'
+                    ? 'Server Settings > Integrations > Webhooks > New Webhook > Copy Webhook URL'
+                    : 'Create an Incoming Webhook app at api.slack.com/apps and copy the webhook URL'}
+                />
+              )}
+              {editing.type === 'pushover' && (
+                <PushoverConfig
+                  config={(editing.config || {}) as Record<string, unknown>}
+                  onChange={config => setEditing({ ...editing, config })}
+                />
+              )}
+              {editing.type === 'gotify' && (
+                <GotifyConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
                 />
@@ -466,6 +522,79 @@ function TelegramConfig({ config, onChange }: { config: Record<string, unknown>;
       <p className="text-xs text-gray-500">
         Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">@BotFather</a> to get the token.
         For the chat ID, add the bot to a group and send a message, then check <span className="font-mono">https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</span> for the chat ID.
+      </p>
+    </div>
+  )
+}
+
+function WebhookURLConfig({ config, onChange, label, placeholder, hint }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; label: string; placeholder: string; hint: string }) {
+  return (
+    <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
+      <Field label={label}>
+        <input
+          value={(config.webhook_url as string) || ''}
+          onChange={e => onChange({ ...config, webhook_url: e.target.value })}
+          placeholder={placeholder}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <p className="text-xs text-gray-500">{hint}</p>
+    </div>
+  )
+}
+
+function PushoverConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+  return (
+    <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="API Token (Application)">
+          <input
+            type="password"
+            value={(config.api_token as string) || ''}
+            onChange={e => onChange({ ...config, api_token: e.target.value })}
+            placeholder="azGDORePK8gMaC0QOYAMyEEuzJnyUI"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+          />
+        </Field>
+        <Field label="User Key">
+          <input
+            type="password"
+            value={(config.user_key as string) || ''}
+            onChange={e => onChange({ ...config, user_key: e.target.value })}
+            placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+          />
+        </Field>
+      </div>
+      <p className="text-xs text-gray-500">
+        Create an application at <a href="https://pushover.net/apps/build" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">pushover.net</a> to get the API token. Your user key is on the Pushover dashboard.
+      </p>
+    </div>
+  )
+}
+
+function GotifyConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+  return (
+    <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
+      <Field label="Server URL">
+        <input
+          value={(config.server_url as string) || ''}
+          onChange={e => onChange({ ...config, server_url: e.target.value })}
+          placeholder="https://gotify.example.com"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <Field label="App Token">
+        <input
+          type="password"
+          value={(config.app_token as string) || ''}
+          onChange={e => onChange({ ...config, app_token: e.target.value })}
+          placeholder="AKShieh.F8-kfha"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
+        />
+      </Field>
+      <p className="text-xs text-gray-500">
+        Create an application in Gotify's web UI to get the app token.
       </p>
     </div>
   )

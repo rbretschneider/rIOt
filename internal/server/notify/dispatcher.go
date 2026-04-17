@@ -47,6 +47,26 @@ func NewDispatcher(repo db.NotifyRepository) *Dispatcher {
 		t.client = d.httpClient
 		return t
 	}
+	d.backends["discord"] = func(ch models.NotificationChannel) Channel {
+		dc := NewDiscord(ch)
+		dc.client = d.httpClient
+		return dc
+	}
+	d.backends["slack"] = func(ch models.NotificationChannel) Channel {
+		s := NewSlack(ch)
+		s.client = d.httpClient
+		return s
+	}
+	d.backends["pushover"] = func(ch models.NotificationChannel) Channel {
+		p := NewPushover(ch)
+		p.client = d.httpClient
+		return p
+	}
+	d.backends["gotify"] = func(ch models.NotificationChannel) Channel {
+		g := NewGotify(ch)
+		g.client = d.httpClient
+		return g
+	}
 	return d
 }
 
