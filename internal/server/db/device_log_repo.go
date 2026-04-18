@@ -40,14 +40,19 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 	}
 	defer conn.Release()
 
-	// TEMP table is scoped to the connection and auto-dropped when released.
-	if _, err := conn.Exec(ctx,
-		`CREATE TEMP TABLE IF NOT EXISTS device_logs_stage (
-			device_id TEXT, timestamp TIMESTAMPTZ, priority INT, unit TEXT, message TEXT
-		) ON COMMIT DROP`); err != nil {
+	// Run COPY into a staging table + dedupe merge inside a single transaction.
+	// ON COMMIT DROP gives us a clean per-batch table without having to manage
+	// connection-scoped state (which the pool makes fragile anyway).
+	tx, err := conn.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	if _, err := conn.Exec(ctx, `TRUNCATE device_logs_stage`); err != nil {
+	defer tx.Rollback(ctx) //nolint:errcheck // best-effort cleanup; commit path returns before this fires
+
+	if _, err := tx.Exec(ctx,
+		`CREATE TEMP TABLE device_logs_stage (
+			device_id TEXT, timestamp TIMESTAMPTZ, priority INT, unit TEXT, message TEXT
+		) ON COMMIT DROP`); err != nil {
 		return err
 	}
 
@@ -55,7 +60,7 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 	for i, e := range entries {
 		rows[i] = []interface{}{deviceID, e.Timestamp, e.Priority, e.Unit, e.Message}
 	}
-	if _, err := conn.CopyFrom(
+	if _, err := tx.CopyFrom(
 		ctx,
 		pgx.Identifier{"device_logs_stage"},
 		[]string{"device_id", "timestamp", "priority", "unit", "message"},
@@ -64,11 +69,13 @@ func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entrie
 		return err
 	}
 
-	_, err = conn.Exec(ctx,
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO device_logs (device_id, timestamp, priority, unit, message)
 		 SELECT device_id, timestamp, priority, unit, message FROM device_logs_stage
-		 ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`)
-	return err
+		 ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *DeviceLogRepo) List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error) {

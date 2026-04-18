@@ -95,16 +95,18 @@ func (d *Dispatcher) Dispatch(ctx context.Context, alert models.Alert) {
 		backend := factory(ch)
 		err := backend.Send(ctx, alert)
 
-		// Log the notification attempt
+		// Log the notification attempt. Only set FK fields when they reference
+		// persisted rows — a zero ID indicates an in-memory-only alert which
+		// would otherwise trip notification_log's FK constraints.
 		logEntry := &models.NotificationLog{
 			ChannelID:   &ch.ID,
 			AlertRuleID: nil,
 			Status:      "sent",
 		}
-		if alert.Event != nil {
+		if alert.Event != nil && alert.Event.ID != 0 {
 			logEntry.EventID = &alert.Event.ID
 		}
-		if alert.Rule != nil {
+		if alert.Rule != nil && alert.Rule.ID != 0 {
 			logEntry.AlertRuleID = &alert.Rule.ID
 		}
 		if err != nil {
@@ -143,10 +145,13 @@ func (d *Dispatcher) SendToChannel(ctx context.Context, channelID int64, alert m
 		ChannelID: &ch.ID,
 		Status:    "sent",
 	}
-	if alert.Event != nil {
+	// Only set EventID / AlertRuleID when they reference a persisted row — the
+	// server-error-rate worker synthesizes an in-memory alert with no DB-backed
+	// event, and passing 0 there trips the notification_log FK constraint.
+	if alert.Event != nil && alert.Event.ID != 0 {
 		logEntry.EventID = &alert.Event.ID
 	}
-	if alert.Rule != nil {
+	if alert.Rule != nil && alert.Rule.ID != 0 {
 		logEntry.AlertRuleID = &alert.Rule.ID
 	}
 	if sendErr != nil {
