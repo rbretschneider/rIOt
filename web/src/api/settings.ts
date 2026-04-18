@@ -126,4 +126,19 @@ export const settingsApi = {
     if (before) url += `&before=${encodeURIComponent(before)}`
     return fetchJSON<{ id: number; timestamp: string; level: string; message: string; attrs?: Record<string, unknown>; source?: string }[]>(url)
   },
+
+  // Server error-rate alert config
+  getServerErrorAlert: () =>
+    fetchJSON<ServerErrorAlertConfig>(`${BASE}/server-error-alert`),
+
+  saveServerErrorAlert: (cfg: ServerErrorAlertConfig) =>
+    mutate<ServerErrorAlertConfig>(`${BASE}/server-error-alert`, 'PUT', cfg),
+}
+
+export interface ServerErrorAlertConfig {
+  enabled: boolean
+  channel_id: number
+  threshold: number
+  window_minutes: number
+  cooldown_minutes: number
 }

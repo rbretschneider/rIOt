@@ -182,6 +182,10 @@ func (s *Server) Start() error {
 	// Start offline detection worker
 	go s.offlineDetectionWorker(ctx)
 
+	// Start server-error-rate alert worker — notifies the user when the server
+	// itself starts logging too many errors in a short window.
+	go newServerErrorAlertWorker(s.AdminRepo, s.LogRepo, s.NotifyRepo, s.Dispatcher).run(ctx)
+
 	// Start probe runner
 	go s.ProbeRunner.Start(ctx)
 

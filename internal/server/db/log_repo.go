@@ -86,6 +86,17 @@ func (r *LogRepo) List(ctx context.Context, level string, limit int, before *tim
 	return logs, err
 }
 
+// CountSince returns the number of server_logs rows with the given level
+// (e.g. "ERROR") emitted at or after the given timestamp. Used by the server
+// error-rate alert worker to evaluate thresholds over a rolling window.
+func (r *LogRepo) CountSince(ctx context.Context, level string, since time.Time) (int, error) {
+	var count int
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM server_logs WHERE level=$1 AND timestamp >= $2`,
+		level, since).Scan(&count)
+	return count, err
+}
+
 // Purge deletes server logs older than the given time.
 func (r *LogRepo) Purge(ctx context.Context, olderThan time.Time) (int64, error) {
 	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM server_logs WHERE timestamp < $1`, olderThan)

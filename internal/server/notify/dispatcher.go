@@ -118,6 +118,48 @@ func (d *Dispatcher) Dispatch(ctx context.Context, alert models.Alert) {
 	}
 }
 
+// SendToChannel sends an alert to a single specific channel by ID and logs
+// the result. Used when an alert is tied to a specific user-selected channel
+// (as opposed to the default fan-out to all enabled channels).
+func (d *Dispatcher) SendToChannel(ctx context.Context, channelID int64, alert models.Alert) error {
+	ch, err := d.repo.GetChannel(ctx, channelID)
+	if err != nil || ch == nil {
+		if err == nil {
+			err = &UnsupportedChannelError{Type: "missing"}
+		}
+		return err
+	}
+	if !ch.Enabled {
+		return nil
+	}
+	factory, ok := d.backends[ch.Type]
+	if !ok {
+		return &UnsupportedChannelError{Type: ch.Type}
+	}
+	backend := factory(*ch)
+	sendErr := backend.Send(ctx, alert)
+
+	logEntry := &models.NotificationLog{
+		ChannelID: &ch.ID,
+		Status:    "sent",
+	}
+	if alert.Event != nil {
+		logEntry.EventID = &alert.Event.ID
+	}
+	if alert.Rule != nil {
+		logEntry.AlertRuleID = &alert.Rule.ID
+	}
+	if sendErr != nil {
+		logEntry.Status = "failed"
+		logEntry.ErrorMsg = sendErr.Error()
+		slog.Error("dispatch: send failed", "channel", ch.Name, "type", ch.Type, "error", sendErr.Error())
+	}
+	if logErr := d.repo.LogNotification(ctx, logEntry); logErr != nil {
+		slog.Error("dispatch: log notification", "error", logErr)
+	}
+	return sendErr
+}
+
 // TestChannel sends a test notification to a specific channel.
 func (d *Dispatcher) TestChannel(ctx context.Context, ch models.NotificationChannel) error {
 	factory, ok := d.backends[ch.Type]

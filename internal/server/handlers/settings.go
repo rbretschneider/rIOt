@@ -50,6 +50,9 @@ func (h *Handlers) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to create alert rule"}`, http.StatusInternalServerError)
 		return
 	}
+	if h.eventGen != nil {
+		h.eventGen.InvalidateRulesCache()
+	}
 	writeJSON(w, http.StatusCreated, rule)
 }
 
@@ -70,6 +73,9 @@ func (h *Handlers) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to update alert rule"}`, http.StatusInternalServerError)
 		return
 	}
+	if h.eventGen != nil {
+		h.eventGen.InvalidateRulesCache()
+	}
 	writeJSON(w, http.StatusOK, rule)
 }
 
@@ -83,6 +89,9 @@ func (h *Handlers) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
 	if err := h.alertRuleRepo.Delete(r.Context(), id); err != nil {
 		http.Error(w, `{"error":"failed to delete alert rule"}`, http.StatusInternalServerError)
 		return
+	}
+	if h.eventGen != nil {
+		h.eventGen.InvalidateRulesCache()
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -240,6 +249,49 @@ func (h *Handlers) GetServerLogs(w http.ResponseWriter, r *http.Request) {
 // ListAlertTemplates handles GET /api/v1/settings/alert-templates.
 func (h *Handlers) ListAlertTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events.AlertTemplates())
+}
+
+// --- Server Error-Rate Alert ---
+
+const serverErrorAlertConfigKey = "server_error_alert_config"
+
+// GetServerErrorAlert handles GET /api/v1/settings/server-error-alert.
+func (h *Handlers) GetServerErrorAlert(w http.ResponseWriter, r *http.Request) {
+	cfg := models.DefaultServerErrorAlertConfig()
+	raw, err := h.adminRepo.GetConfig(r.Context(), serverErrorAlertConfigKey)
+	if err == nil && raw != "" {
+		// Start from defaults so missing fields get sensible values.
+		_ = json.Unmarshal([]byte(raw), &cfg)
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// SetServerErrorAlert handles PUT /api/v1/settings/server-error-alert.
+func (h *Handlers) SetServerErrorAlert(w http.ResponseWriter, r *http.Request) {
+	var cfg models.ServerErrorAlertConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if cfg.WindowMinutes <= 0 {
+		cfg.WindowMinutes = 5
+	}
+	if cfg.Threshold <= 0 {
+		cfg.Threshold = 10
+	}
+	if cfg.CooldownMinutes <= 0 {
+		cfg.CooldownMinutes = 30
+	}
+	if cfg.Enabled && cfg.ChannelID <= 0 {
+		http.Error(w, `{"error":"channel_id required when enabled"}`, http.StatusBadRequest)
+		return
+	}
+	data, _ := json.Marshal(cfg)
+	if err := h.adminRepo.SetConfig(r.Context(), serverErrorAlertConfigKey, string(data)); err != nil {
+		http.Error(w, `{"error":"failed to save server error alert config"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 // --- Feature Toggles ---

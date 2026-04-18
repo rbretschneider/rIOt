@@ -47,4 +47,14 @@ export const settingsApi = {
 
   // Server logs
   getLogs: () => Promise.resolve(demo.getServerLogs()),
+
+  // Server error-rate alert
+  getServerErrorAlert: async () => ({
+    enabled: false,
+    channel_id: 0,
+    threshold: 10,
+    window_minutes: 5,
+    cooldown_minutes: 30,
+  }),
+  saveServerErrorAlert: async (cfg: unknown) => { await delay(); return cfg as any },
 }

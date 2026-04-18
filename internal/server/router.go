@@ -208,6 +208,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		// Settings: server logs
 		r.Get("/api/v1/settings/logs", h.GetServerLogs)
 
+		// Settings: server error-rate alert config
+		r.Get("/api/v1/settings/server-error-alert", h.GetServerErrorAlert)
+		r.Put("/api/v1/settings/server-error-alert", h.SetServerErrorAlert)
+
 		// Settings: device registration
 		r.Get("/api/v1/settings/registration", h.GetRegistrationKey)
 		r.Put("/api/v1/settings/registration", h.SetRegistrationKey)
