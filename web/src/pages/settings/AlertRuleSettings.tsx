@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import { api } from '../../api/client'
+import { useFeatures } from '../../hooks/useFeatures'
 import type { AlertRule, AlertTemplate } from '../../types/models'
 
 const METRICS = [
@@ -145,8 +146,15 @@ export default function AlertRuleSettings() {
   const isContainerThreshold = editing ? CONTAINER_THRESHOLD_METRICS.includes(editing.metric || '') : false
   const isContainerMetric = editing ? CONTAINER_METRICS.includes(editing.metric || '') : false
 
-  const globalRules = useMemo(() => rules.filter(r => !r.include_devices && !r.exclude_devices), [rules])
-  const deviceRules = useMemo(() => rules.filter(r => !!r.include_devices || !!r.exclude_devices), [rules])
+  // A rule is "global" when it has no device or container scope — i.e. it fires
+  // for every device and every container that matches the metric. Anything with
+  // include/exclude on devices OR containers is "granular".
+  const isGranular = (r: AlertRule) =>
+    !!r.include_devices || !!r.exclude_devices || !!r.include_containers || !!r.exclude_containers
+  const globalRules = useMemo(() => rules.filter(r => !isGranular(r)), [rules])
+  const granularRules = useMemo(() => rules.filter(isGranular), [rules])
+  const { isEnabled } = useFeatures()
+  const showContainersCol = isEnabled('docker')
 
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
@@ -185,17 +193,18 @@ export default function AlertRuleSettings() {
       <RulesTable
         rules={globalRules}
         showDevices={false}
+        showContainers={false}
         emptyMessage="No global alert rules configured. Click &quot;Add Rule&quot; to create one."
         onToggle={rule => toggleMutation.mutate(rule)}
         onEdit={openEdit}
         onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
       />
 
-      {/* Device-Specific Alert Rules */}
+      {/* Granular Alert Rules — scoped to specific devices and/or containers */}
       <div className="flex items-center justify-between mb-4 mt-8">
-        <h2 className="text-lg font-semibold text-white">Device-Specific Alert Rules</h2>
+        <h2 className="text-lg font-semibold text-white">Granular Alert Rules</h2>
         <button
-          onClick={() => { setEditing({ ...emptyRule, include_devices: '', exclude_devices: '' }); setIsNew(true) }}
+          onClick={() => { setEditing({ ...emptyRule }); setIsNew(true) }}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
         >
           Add Rule
@@ -203,9 +212,10 @@ export default function AlertRuleSettings() {
       </div>
 
       <RulesTable
-        rules={deviceRules}
+        rules={granularRules}
         showDevices={true}
-        emptyMessage="No device-specific alert rules configured."
+        showContainers={showContainersCol}
+        emptyMessage="No granular alert rules configured."
         onToggle={rule => toggleMutation.mutate(rule)}
         onEdit={openEdit}
         onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
@@ -450,9 +460,10 @@ export default function AlertRuleSettings() {
   )
 }
 
-function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDelete }: {
+function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle, onEdit, onDelete }: {
   rules: AlertRule[]
   showDevices: boolean
+  showContainers: boolean
   emptyMessage: string
   onToggle: (rule: AlertRule) => void
   onEdit: (rule: AlertRule) => void
@@ -480,7 +491,7 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
       .map(entry => idToHostname[entry] || entry)
       .join(', ')
 
-  const colCount = showDevices ? 9 : 8
+  const colCount = 8 + (showDevices ? 1 : 0) + (showContainers ? 1 : 0)
   return (
     <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto scrollbar-thin">
       <table className="w-full text-sm min-w-[640px]">
@@ -494,6 +505,7 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
             <th className="px-4 py-3">Cooldown</th>
             <th className="px-4 py-3">Notify</th>
             {showDevices && <th className="px-4 py-3">Devices</th>}
+            {showContainers && <th className="px-4 py-3">Containers</th>}
             <th className="px-4 py-3"></th>
           </tr>
         </thead>
@@ -538,6 +550,13 @@ function RulesTable({ rules, showDevices, emptyMessage, onToggle, onEdit, onDele
                   {rule.include_devices && <span className="text-emerald-400">+{resolveNames(rule.include_devices)}</span>}
                   {rule.include_devices && rule.exclude_devices && ' '}
                   {rule.exclude_devices && <span className="text-red-400">-{resolveNames(rule.exclude_devices)}</span>}
+                </td>
+              )}
+              {showContainers && (
+                <td className="px-4 py-3 text-xs font-mono">
+                  {rule.include_containers && <span className="text-emerald-400">+{rule.include_containers}</span>}
+                  {rule.include_containers && rule.exclude_containers && ' '}
+                  {rule.exclude_containers && <span className="text-red-400">-{rule.exclude_containers}</span>}
                 </td>
               )}
               <td className="px-4 py-3 text-right">
