@@ -320,8 +320,10 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	containerLogs := snap.Data.ContainerLogs
 	snap.Data.ContainerLogs = nil
 
-	// Use a detached context for all DB/processing work so that agent
-	// disconnects (which cancel r.Context()) don't abort in-flight writes.
+	// Critical path — store the snapshot and update the device's last-seen
+	// timestamp. Anything slow here cascades onto the post-work because of a
+	// shared context, so we keep this section as small as possible and push
+	// everything else into a detached goroutine below.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -336,6 +338,43 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	if ip := extractPrimaryIP(&snap.Data); ip != "" {
 		h.devices.UpdatePrimaryIP(ctx, deviceID, ip)
 	}
+
+	// Detect if this device hosts the rIOt server (no DB — just an atomic swap)
+	if hasRiotServerContainer(&snap.Data) {
+		h.serverHostID.Store(deviceID)
+	}
+
+	// Broadcast a lightweight view via WebSocket — strip heavy fields that the
+	// dashboard doesn't need in real-time (it fetches full telemetry on demand).
+	// This avoids serializing multi-MB JSON per device per broadcast cycle.
+	broadcastData := stripHeavyTelemetry(&snap.Data)
+	h.hub.BroadcastTelemetry(deviceID, broadcastData)
+
+	// Respond to the agent immediately so its request context isn't waiting on
+	// log inserts, alert evaluation, etc.
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	// Detached post-processing: log inserts, container metrics, alert checks,
+	// auto-update and auto-patch evaluation. These share their own independent
+	// 60s budget so a slow op (or DB pool contention) on one of them can't
+	// cascade into "context deadline exceeded" on the others — which was
+	// silently disabling auto-updates because loadAutomationConfig would time
+	// out and fall back to the default (disabled) config.
+	go h.processTelemetryPostWork(deviceID, snap, deviceLogs, containerLogs)
+}
+
+// processTelemetryPostWork runs everything that isn't on the agent's critical
+// path for a telemetry push: Docker stats update, log/metric batch inserts,
+// alert threshold checks, auto-update and auto-patch evaluation. Runs in its
+// own context so each telemetry push has an independent deadline.
+func (h *Handlers) processTelemetryPostWork(
+	deviceID string,
+	snap models.TelemetrySnapshot,
+	deviceLogs []models.LogEntry,
+	containerLogs []models.ContainerLogEntry,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
 	// Track whether Docker is available on this device, plus how many of its
 	// containers are covered by an enabled auto-update policy (stack-level or
@@ -352,11 +391,6 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount, autoUpdateCount)
-
-	// Detect if this device hosts the rIOt server (check docker containers)
-	if hasRiotServerContainer(&snap.Data) {
-		h.serverHostID.Store(deviceID)
-	}
 
 	// Store device logs in their dedicated table
 	if len(deviceLogs) > 0 && h.deviceLogRepo != nil {
@@ -396,7 +430,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check thresholds
+	// Check thresholds (alert evaluation)
 	var telHostname string
 	if snap.Data.System != nil {
 		telHostname = snap.Data.System.Hostname
@@ -413,14 +447,6 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 
 	// Check auto-patch (OS updates)
 	h.checkAutoPatch(ctx, deviceID, &snap.Data)
-
-	// Broadcast a lightweight view via WebSocket — strip heavy fields that the
-	// dashboard doesn't need in real-time (it fetches full telemetry on demand).
-	// This avoids serializing multi-MB JSON per device per broadcast cycle.
-	broadcastData := stripHeavyTelemetry(&snap.Data)
-	h.hub.BroadcastTelemetry(deviceID, broadcastData)
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {

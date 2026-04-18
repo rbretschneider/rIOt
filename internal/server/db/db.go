@@ -24,9 +24,13 @@ func New(ctx context.Context, connStr string) (*DB, error) {
 		return nil, fmt.Errorf("parse database config: %w", err)
 	}
 
-	// Pool tuning: prevent excessive connections while keeping enough for
-	// concurrent telemetry ingestion + dashboard queries.
-	config.MaxConns = 20
+	// Pool tuning: one telemetry ingest fans out to ~10 DB ops (snapshot write,
+	// device updates, log/metric batch inserts, alert rule lookups, policy
+	// lookups, threshold checks). With N devices pushing concurrently and a
+	// small pool, connections queue and the 30s ingest context exhausts,
+	// cascading into "context deadline exceeded" on every subsequent call.
+	// 50 gives headroom for a small fleet without overwhelming PG defaults.
+	config.MaxConns = 50
 	config.MinConns = 2
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute

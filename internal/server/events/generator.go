@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
@@ -37,9 +39,14 @@ type Generator struct {
 	// DB contention this caused cascades of "context deadline exceeded" errors
 	// once the per-snapshot 30s context expired. A 5s TTL collapses the fan-out
 	// to roughly one query per snapshot while keeping rule edits near-real-time.
-	rulesMu       sync.Mutex
-	rulesCache    []models.AlertRule
-	rulesCacheAt  time.Time
+	rulesMu      sync.Mutex
+	rulesCache   []models.AlertRule
+	rulesCacheAt time.Time
+	// singleflight coalesces concurrent cold-cache loads into a single DB
+	// query. Without it, N simultaneous callers on a cold cache all fire
+	// parallel queries — the original thundering-herd pattern the cache was
+	// meant to prevent.
+	rulesLoad singleflight.Group
 }
 
 // rulesCacheTTL is how long a cached enabled-rules snapshot stays valid. Short
@@ -101,7 +108,9 @@ func (g *Generator) pruneStaleEntries() {
 
 // listEnabledRules returns enabled alert rules, serving from an in-process cache
 // when fresh. The cache is invalidated either by age (rulesCacheTTL) or by a
-// direct call to InvalidateRulesCache (used by the settings handlers).
+// direct call to InvalidateRulesCache (used by the settings handlers). Cold-cache
+// loads are coalesced through a singleflight group so a burst of callers only
+// produces one DB query.
 func (g *Generator) listEnabledRules(ctx context.Context) ([]models.AlertRule, error) {
 	g.rulesMu.Lock()
 	if g.rulesCache != nil && time.Since(g.rulesCacheAt) < rulesCacheTTL {
@@ -111,15 +120,21 @@ func (g *Generator) listEnabledRules(ctx context.Context) ([]models.AlertRule, e
 	}
 	g.rulesMu.Unlock()
 
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	v, err, _ := g.rulesLoad.Do("rules", func() (interface{}, error) {
+		rules, err := g.alertRuleRepo.ListEnabled(ctx)
+		if err != nil {
+			return nil, err
+		}
+		g.rulesMu.Lock()
+		g.rulesCache = rules
+		g.rulesCacheAt = time.Now()
+		g.rulesMu.Unlock()
+		return rules, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	g.rulesMu.Lock()
-	g.rulesCache = rules
-	g.rulesCacheAt = time.Now()
-	g.rulesMu.Unlock()
-	return rules, nil
+	return v.([]models.AlertRule), nil
 }
 
 // InvalidateRulesCache drops the cached enabled-rules snapshot so the next
