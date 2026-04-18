@@ -18,7 +18,7 @@ type DeviceRepository interface {
 	UpdateHeartbeatTime(ctx context.Context, id string, agentVersion string) error
 	UpdateTelemetryTime(ctx context.Context, id string) error
 	UpdatePrimaryIP(ctx context.Context, id, ip string) error
-	UpdateDockerAvailable(ctx context.Context, id string, available bool, containerCount ...int) error
+	UpdateDockerAvailable(ctx context.Context, id string, available bool, containerCount, groupCount int) error
 	Summary(ctx context.Context) (*models.FleetSummary, error)
 	AgentVersionSummary(ctx context.Context) ([]AgentVersionCount, error)
 	ListByVersion(ctx context.Context, version string) ([]models.Device, error)
@@ -111,6 +111,7 @@ type ProbeRepository interface {
 type LogRepository interface {
 	Insert(ctx context.Context, entries []models.ServerLog) error
 	List(ctx context.Context, level string, limit int, before *time.Time) ([]models.ServerLog, error)
+	CountSince(ctx context.Context, level string, since time.Time) (int, error)
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 

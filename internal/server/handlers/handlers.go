@@ -339,11 +339,12 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 
 	// Track whether Docker is available on this device
 	dockerAvail := snap.Data.Docker != nil && snap.Data.Docker.Available
-	var containerCount int
+	var containerCount, groupCount int
 	if snap.Data.Docker != nil {
 		containerCount = snap.Data.Docker.TotalContainers
+		groupCount = countComposeStacks(snap.Data.Docker.Containers)
 	}
-	h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount)
+	h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount, groupCount)
 
 	// Detect if this device hosts the rIOt server (check docker containers)
 	if hasRiotServerContainer(&snap.Data) {
@@ -424,17 +425,25 @@ func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {
 	if devices == nil {
 		devices = []models.Device{}
 	}
-	// Build a set of device IDs that have any enabled auto-update policy.
-	autoUpdateDevices := make(map[string]bool)
+	// For each device, collect auto-update policy counts:
+	//  - hasAny: any enabled policy (stack or container) — drives the legacy "Auto" badge
+	//  - enabledStacks: distinct compose stacks with auto-update enabled — paired with
+	//    Device.DockerGroupCount to render X/Y coverage on the fleet view.
+	hasAny := make(map[string]bool)
+	enabledStacks := make(map[string]int)
 	if h.autoUpdateRepo != nil {
 		for _, d := range devices {
 			policies, err := h.autoUpdateRepo.ListByDevice(r.Context(), d.ID)
-			if err == nil {
-				for _, p := range policies {
-					if p.Enabled {
-						autoUpdateDevices[d.ID] = true
-						break
-					}
+			if err != nil {
+				continue
+			}
+			for _, p := range policies {
+				if !p.Enabled {
+					continue
+				}
+				hasAny[d.ID] = true
+				if p.IsStack {
+					enabledStacks[d.ID]++
 				}
 			}
 		}
@@ -442,15 +451,23 @@ func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {
 
 	type deviceWithConn struct {
 		models.Device
-		AgentConnected  bool `json:"agent_connected"`
-		HasAutoUpdate   bool `json:"has_auto_update"`
+		AgentConnected   bool `json:"agent_connected"`
+		HasAutoUpdate    bool `json:"has_auto_update"`
+		AutoUpdateGroups int  `json:"auto_update_groups"`
 	}
 	result := make([]deviceWithConn, len(devices))
 	for i, d := range devices {
+		// Cap by stored group count so stale policies (for a stack no longer
+		// present in telemetry) don't push X above Y.
+		groups := enabledStacks[d.ID]
+		if groups > d.DockerGroupCount {
+			groups = d.DockerGroupCount
+		}
 		result[i] = deviceWithConn{
-			Device:         d,
-			AgentConnected: IsAgentConnected(d.ID),
-			HasAutoUpdate:  autoUpdateDevices[d.ID],
+			Device:           d,
+			AgentConnected:   IsAgentConnected(d.ID),
+			HasAutoUpdate:    hasAny[d.ID],
+			AutoUpdateGroups: groups,
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -921,6 +938,22 @@ func hasRiotServerContainer(data *models.FullTelemetryData) bool {
 		}
 	}
 	return false
+}
+
+// countComposeStacks returns the number of distinct compose projects present
+// in the container list. Used by the fleet view to show auto-update coverage
+// as X/Y (stacks with auto-update / total stacks).
+func countComposeStacks(containers []models.ContainerInfo) int {
+	stacks := make(map[string]struct{})
+	for _, c := range containers {
+		if c.Riot != nil && c.Riot.Hide {
+			continue
+		}
+		if proj := c.Labels["com.docker.compose.project"]; proj != "" {
+			stacks[proj] = struct{}{}
+		}
+	}
+	return len(stacks)
 }
 
 // isLoopback checks if a remote address is a loopback address.

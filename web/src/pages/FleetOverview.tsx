@@ -291,9 +291,16 @@ export default function FleetOverview() {
                       {d.auto_patch && (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-900/40 text-[10px] font-medium text-emerald-400 border border-emerald-800/50" title="OS auto-patch enabled">Auto</span>
                       )}
-                      {d.has_auto_update && (
+                      {d.docker_group_count > 0 ? (
+                        <span
+                          className="px-1.5 py-0.5 rounded bg-blue-900/40 text-[10px] font-medium text-blue-400 border border-blue-800/50 font-mono"
+                          title={`${d.auto_update_groups} of ${d.docker_group_count} compose stack${d.docker_group_count === 1 ? '' : 's'} on auto-update`}
+                        >
+                          {d.auto_update_groups}/{d.docker_group_count}
+                        </span>
+                      ) : d.has_auto_update ? (
                         <span className="px-1.5 py-0.5 rounded bg-blue-900/40 text-[10px] font-medium text-blue-400 border border-blue-800/50" title="Docker auto-update enabled">Auto</span>
-                      )}
+                      ) : null}
                     </div>
                   </td>
                   {isEnabled('tags') && (
