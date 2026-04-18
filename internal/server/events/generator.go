@@ -30,7 +30,21 @@ type Generator struct {
 	lastSent      map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
 	activeUpdates map[string]int       // key: deviceID → count of in-progress container updates
 	updateStarted map[string]time.Time // key: deviceID → when the first update_started was received
+
+	// Short-lived cache for ListEnabled. Each telemetry snapshot fans out into
+	// many alert check paths (service, nic, process, container, UPS, GPU, …),
+	// each of which used to hit the DB for the full enabled-rules set. Under
+	// DB contention this caused cascades of "context deadline exceeded" errors
+	// once the per-snapshot 30s context expired. A 5s TTL collapses the fan-out
+	// to roughly one query per snapshot while keeping rule edits near-real-time.
+	rulesMu       sync.Mutex
+	rulesCache    []models.AlertRule
+	rulesCacheAt  time.Time
 }
+
+// rulesCacheTTL is how long a cached enabled-rules snapshot stays valid. Short
+// enough that edits in the Settings UI feel immediate.
+const rulesCacheTTL = 5 * time.Second
 
 func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.AlertRuleRepository, dispatcher Dispatcher, commandRepo db.CommandRepository) *Generator {
 	return &Generator{
@@ -83,6 +97,40 @@ func (g *Generator) pruneStaleEntries() {
 			delete(g.updateStarted, deviceID)
 		}
 	}
+}
+
+// listEnabledRules returns enabled alert rules, serving from an in-process cache
+// when fresh. The cache is invalidated either by age (rulesCacheTTL) or by a
+// direct call to InvalidateRulesCache (used by the settings handlers).
+func (g *Generator) listEnabledRules(ctx context.Context) ([]models.AlertRule, error) {
+	g.rulesMu.Lock()
+	if g.rulesCache != nil && time.Since(g.rulesCacheAt) < rulesCacheTTL {
+		rules := g.rulesCache
+		g.rulesMu.Unlock()
+		return rules, nil
+	}
+	g.rulesMu.Unlock()
+
+	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	g.rulesMu.Lock()
+	g.rulesCache = rules
+	g.rulesCacheAt = time.Now()
+	g.rulesMu.Unlock()
+	return rules, nil
+}
+
+// InvalidateRulesCache drops the cached enabled-rules snapshot so the next
+// caller refreshes from the DB. Handlers that create, update, or delete alert
+// rules must call this so edits take effect immediately instead of waiting for
+// the TTL to expire.
+func (g *Generator) InvalidateRulesCache() {
+	g.rulesMu.Lock()
+	g.rulesCache = nil
+	g.rulesCacheAt = time.Time{}
+	g.rulesMu.Unlock()
 }
 
 // onCooldown returns true if an event with this key was created within the cooldown period.
@@ -327,7 +375,7 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 
 // CheckServiceAlerts checks service state against service_state alert rules.
 func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID, hostname string, services []models.ServiceInfo) {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("check service alerts", "error", err.Error())
 		return
@@ -376,7 +424,7 @@ func (g *Generator) CheckServiceAlerts(ctx context.Context, deviceID, hostname s
 
 // CheckNICAlerts checks network interface state against nic_state alert rules.
 func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID, hostname string, interfaces []models.NetworkInterface) {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("check nic alerts", "error", err.Error())
 		return
@@ -425,7 +473,7 @@ func (g *Generator) CheckNICAlerts(ctx context.Context, deviceID, hostname strin
 
 // CheckProcessAlerts checks for missing processes against process_missing alert rules.
 func (g *Generator) CheckProcessAlerts(ctx context.Context, deviceID, hostname string, procs *models.ProcessInfo) {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("check process alerts", "error", err.Error())
 		return
@@ -573,7 +621,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID, hostname strin
 
 // CheckContainerThresholds checks per-container CPU and memory against alert rules.
 func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, hostname string, containers []models.ContainerInfo) {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("check container thresholds", "error", err.Error())
 		return
@@ -611,6 +659,9 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, host
 			if !strings.EqualFold(c.Name, r.TargetName) {
 				continue
 			}
+			if !MatchesContainerScope(r.IncludeContainers, r.ExcludeContainers, c.Name) {
+				continue
+			}
 
 			var value float64
 			switch r.Metric {
@@ -641,11 +692,13 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, host
 			}
 
 			e := &models.Event{
-				DeviceID:  deviceID,
-				Type:      eventType,
-				Severity:  models.EventSeverity(r.Severity),
-				Message:   fmt.Sprintf("Container %s %s at %.1f%%", c.Name, metricName, value),
-				CreatedAt: time.Now().UTC(),
+				DeviceID:      deviceID,
+				Type:          eventType,
+				Severity:      models.EventSeverity(r.Severity),
+				Message:       fmt.Sprintf("Container %s %s at %.1f%%", c.Name, metricName, value),
+				ContainerID:   c.ShortID,
+				ContainerName: c.Name,
+				CreatedAt:     time.Now().UTC(),
 			}
 			g.createEventAndNotify(ctx, e, r, hostname, value)
 		}
@@ -655,16 +708,24 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, host
 // CheckDockerEvent creates an event from a Docker container state change.
 func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname string, evt *models.DockerEvent) {
 	now := time.Now().UTC()
+	// Short ID matches ContainerInfo.ShortID used by the dashboard's container detail
+	// route. Docker IDs are typically 64 hex chars; short form is first 12.
+	shortID := evt.ContainerID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
 	switch evt.Action {
 	case "start":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerStart, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s started (%s)", evt.ContainerName, evt.Image), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s started (%s)", evt.ContainerName, evt.Image),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "stop":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerStop, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s stopped", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s stopped", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "die":
 		g.mu.Lock()
@@ -675,14 +736,21 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			// Container died as part of a running update — expected, downgrade to info
 			g.createEvent(ctx, &models.Event{
 				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityInfo,
-				Message: fmt.Sprintf("Container %s died (update in progress)", evt.ContainerName), CreatedAt: now,
+				Message:     fmt.Sprintf("Container %s died (update in progress)", evt.ContainerName),
+				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 			})
 		} else {
+			// User explicitly opted this container out of container_died alerts —
+			// suppress both the stored event and any notification.
+			if g.isContainerExcluded(ctx, "container_died", deviceID, hostname, evt.ContainerName) {
+				return
+			}
 			e := &models.Event{
 				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
-				Message: fmt.Sprintf("Container %s died", evt.ContainerName), CreatedAt: now,
+				Message:     fmt.Sprintf("Container %s died", evt.ContainerName),
+				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 			}
-			rule := g.findMatchingRule(ctx, "container_died", deviceID, hostname, 1)
+			rule := g.findMatchingRuleForContainer(ctx, "container_died", deviceID, hostname, evt.ContainerName, 1)
 			if rule != nil {
 				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -694,11 +762,15 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			}
 		}
 	case "oom":
+		if g.isContainerExcluded(ctx, "container_oom", deviceID, hostname, evt.ContainerName) {
+			return
+		}
 		e := &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerOOM, Severity: models.SeverityCrit,
-			Message: fmt.Sprintf("Container %s OOM killed", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s OOM killed", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		}
-		rule := g.findMatchingRule(ctx, "container_oom", deviceID, hostname, 1)
+		rule := g.findMatchingRuleForContainer(ctx, "container_oom", deviceID, hostname, evt.ContainerName, 1)
 		if rule != nil {
 			key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
 			if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
@@ -711,22 +783,26 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 	case "create":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerCreated, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s created (%s)", evt.ContainerName, evt.Image), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s created (%s)", evt.ContainerName, evt.Image),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "destroy":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerDestroyed, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s removed", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s removed", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "pause":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerPaused, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s paused", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s paused", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "unpause":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUnpaused, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s unpaused", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s unpaused", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "update_started":
 		g.mu.Lock()
@@ -737,7 +813,8 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateStarted, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s update started", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s update started", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "update_completed":
 		g.mu.Lock()
@@ -751,7 +828,8 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateDone, Severity: models.SeverityInfo,
-			Message: fmt.Sprintf("Container %s updated successfully", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s updated successfully", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	case "update_failed":
 		g.mu.Lock()
@@ -765,7 +843,8 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
-			Message: fmt.Sprintf("Container %s update failed", evt.ContainerName), CreatedAt: now,
+			Message:     fmt.Sprintf("Container %s update failed", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
 		})
 	}
 }
@@ -833,7 +912,7 @@ func (g *Generator) CheckNginxAccessAlerts(ctx context.Context, deviceID, hostna
 
 // CheckUSBAlerts checks for missing USB devices against usb_missing alert rules.
 func (g *Generator) CheckUSBAlerts(ctx context.Context, deviceID, hostname string, usb *models.USBInfo) {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("check usb alerts", "error", err.Error())
 		return
@@ -1062,7 +1141,14 @@ func (g *Generator) evaluateMetric(ctx context.Context, deviceID, metric string,
 
 // findMatchingRule returns the first enabled rule that matches the metric, device, and threshold.
 func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, hostname string, value float64) *models.AlertRule {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	return g.findMatchingRuleForContainer(ctx, metric, deviceID, hostname, "", value)
+}
+
+// findMatchingRuleForContainer is like findMatchingRule but also filters rules
+// by container name (via include_containers / exclude_containers). Pass an empty
+// containerName for non-container metrics.
+func (g *Generator) findMatchingRuleForContainer(ctx context.Context, metric, deviceID, hostname, containerName string, value float64) *models.AlertRule {
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		slog.Error("find matching rule", "error", err.Error())
 		return nil
@@ -1075,6 +1161,9 @@ func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, host
 		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
 			continue
 		}
+		if !MatchesContainerScope(r.IncludeContainers, r.ExcludeContainers, containerName) {
+			continue
+		}
 		if !compareValue(value, r.Operator, r.Threshold) {
 			continue
 		}
@@ -1085,7 +1174,7 @@ func (g *Generator) findMatchingRule(ctx context.Context, metric, deviceID, host
 
 // hasRulesForMetric returns true if any enabled rules exist for the given metric.
 func (g *Generator) hasRulesForMetric(ctx context.Context, metric string) bool {
-	rules, err := g.alertRuleRepo.ListEnabled(ctx)
+	rules, err := g.listEnabledRules(ctx)
 	if err != nil {
 		return false
 	}
@@ -1114,6 +1203,67 @@ func matchesTargetState(targetState, actualState string) bool {
 // matchesDeviceScope checks if a device matches the rule's include/exclude lists.
 func matchesDeviceScope(include, exclude, deviceID, hostname string) bool {
 	return MatchesDeviceScope(include, exclude, deviceID, hostname, nil)
+}
+
+// MatchesContainerScope checks if a container name matches include/exclude
+// lists on a rule. Exclude always wins; empty include matches all.
+// Callers pass an empty containerName to short-circuit to true (non-container rules).
+func MatchesContainerScope(include, exclude, containerName string) bool {
+	if containerName == "" {
+		return true
+	}
+	// Container names sometimes come with a leading '/' from Docker — normalize.
+	name := strings.TrimPrefix(containerName, "/")
+	if containerInList(exclude, name) {
+		return false
+	}
+	if include == "" {
+		return true
+	}
+	return containerInList(include, name)
+}
+
+// containerInList reports whether name appears (case-insensitive) in a
+// comma-separated list, ignoring leading slashes on either side.
+func containerInList(list, name string) bool {
+	if list == "" {
+		return false
+	}
+	for _, s := range strings.Split(list, ",") {
+		s = strings.TrimSpace(strings.TrimPrefix(s, "/"))
+		if s != "" && strings.EqualFold(s, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// isContainerExcluded reports whether any enabled rule for the given metric —
+// scoped to this device — explicitly lists the container in its ExcludeContainers.
+// Used to fully suppress container_died / container_oom events (no stored event,
+// no notification) when the user has opted out of alerts for a specific container.
+func (g *Generator) isContainerExcluded(ctx context.Context, metric, deviceID, hostname, containerName string) bool {
+	if containerName == "" {
+		return false
+	}
+	name := strings.TrimPrefix(containerName, "/")
+	rules, err := g.listEnabledRules(ctx)
+	if err != nil {
+		return false
+	}
+	for i := range rules {
+		r := &rules[i]
+		if r.Metric != metric {
+			continue
+		}
+		if !matchesDeviceScope(r.IncludeDevices, r.ExcludeDevices, deviceID, hostname) {
+			continue
+		}
+		if containerInList(r.ExcludeContainers, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // MatchesDeviceScope checks if a device matches include/exclude hostname lists.

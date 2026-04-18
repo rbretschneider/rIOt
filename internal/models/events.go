@@ -78,6 +78,8 @@ type Event struct {
 	Type           EventType     `json:"type"`
 	Severity       EventSeverity `json:"severity"`
 	Message        string        `json:"message"`
+	ContainerID    string        `json:"container_id,omitempty"`
+	ContainerName  string        `json:"container_name,omitempty"`
 	CreatedAt      time.Time     `json:"created_at"`
 	AcknowledgedAt *time.Time    `json:"acknowledged_at,omitempty"`
 }

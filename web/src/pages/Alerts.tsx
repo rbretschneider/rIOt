@@ -42,10 +42,12 @@ export default function Alerts() {
     if (showUnackOnly && e.acknowledged_at) return false
     if (!filter) return true
     const device = deviceMap.get(e.device_id)
+    const f = filter.toLowerCase()
     return e.type.includes(filter) ||
       e.severity.includes(filter) ||
-      e.message.toLowerCase().includes(filter.toLowerCase()) ||
-      device?.hostname.toLowerCase().includes(filter.toLowerCase())
+      e.message.toLowerCase().includes(f) ||
+      device?.hostname.toLowerCase().includes(f) ||
+      e.container_name?.toLowerCase().includes(f)
   }) ?? [], [events, filter, showUnackOnly, deviceMap])
 
   // Reset to first page when filters change
@@ -97,7 +99,7 @@ export default function Alerts() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Severity</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Device</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Device / Container</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Message</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase w-10"></th>
@@ -119,13 +121,28 @@ export default function Alerts() {
                       {new Date(e.created_at).toLocaleString()}
                     </td>
                     <td className="px-4 py-3"><SeverityBadge severity={e.severity} /></td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 whitespace-nowrap">
                       {device ? (
                         <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm uppercase">
                           {device.hostname}
                         </Link>
                       ) : (
                         <span className="text-sm text-gray-500 font-mono">{e.device_id.slice(0, 8)}</span>
+                      )}
+                      {e.container_name && (
+                        <>
+                          <span className="text-gray-600 mx-1.5">:</span>
+                          {device && e.container_id ? (
+                            <Link
+                              to={`/devices/${device.id}/containers/${e.container_id}`}
+                              className="text-blue-400 hover:text-blue-300 text-sm"
+                            >
+                              {e.container_name.replace(/^\//, '')}
+                            </Link>
+                          ) : (
+                            <span className="text-sm text-gray-400">{e.container_name.replace(/^\//, '')}</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400">{e.type.replace(/_/g, ' ')}</td>

@@ -11,8 +11,10 @@ export interface Device {
   tags: string[]
   docker_available: boolean
   docker_container_count: number
+  docker_group_count: number
   auto_patch: boolean
   has_auto_update: boolean
+  auto_update_groups: number
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
   last_telemetry?: string
@@ -622,6 +624,8 @@ export interface Event {
   type: string
   severity: 'info' | 'warning' | 'critical'
   message: string
+  container_id?: string
+  container_name?: string
   created_at: string
   acknowledged_at?: string
 }
@@ -668,6 +672,8 @@ export interface AlertRule {
   severity: string
   include_devices: string
   exclude_devices: string
+  include_containers: string
+  exclude_containers: string
   cooldown_seconds: number
   notify: boolean
   template_id: string
