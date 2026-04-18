@@ -10,6 +10,9 @@ import ContainerMetricChart from './ContainerMetricChart'
 import GaugeBar from './GaugeBar'
 import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
+import { Section, InfoItem } from './Section'
+
+const EVENTS_PER_PAGE = 15
 
 type Tab = 'general' | 'network' | 'volumes' | 'logs' | 'terminal'
 
@@ -189,14 +192,21 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
   const { data: events = [] } = useQuery({
     queryKey: ['container-events', deviceId, c.name],
     queryFn: async () => {
-      const allEvents = await api.getEvents(50, 0)
-      return allEvents.filter(e =>
-        e.device_id === deviceId &&
-        e.message.toLowerCase().includes(c.name.toLowerCase())
-      )
+      const allEvents = await api.getEvents(200, 0)
+      const cname = c.name.replace(/^\//, '').toLowerCase()
+      return allEvents.filter(e => {
+        if (e.device_id !== deviceId) return false
+        // Prefer the structured container_name field; fall back to a substring
+        // match on the message for events written before the field existed.
+        if (e.container_name) {
+          return e.container_name.replace(/^\//, '').toLowerCase() === cname
+        }
+        return e.message.toLowerCase().includes(cname)
+      })
     },
     enabled: !!deviceId,
   })
+  const [eventsPage, setEventsPage] = useState(0)
 
   const { data: alertRules = [] } = useQuery({
     queryKey: ['container-alert-rules', deviceId, c.name],
@@ -225,31 +235,25 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
     if (r.metric === 'container_oom') return 'on OOM'
     return `${r.operator} ${r.threshold}%`
   }
-  const ruleMetricLabel = (r: AlertRule): string => {
-    switch (r.metric) {
-      case 'container_cpu_percent': return 'CPU'
-      case 'container_mem_percent': return 'Memory'
-      case 'container_cpu_limit_percent': return 'CPU (of limit)'
-      case 'container_died': return 'Died'
-      case 'container_oom': return 'OOM'
-      default: return r.metric
-    }
-  }
+
+  const totalEventPages = Math.ceil(events.length / EVENTS_PER_PAGE)
+  const safeEventsPage = Math.min(eventsPage, Math.max(0, totalEventPages - 1))
+  const pagedEvents = events.slice(safeEventsPage * EVENTS_PER_PAGE, (safeEventsPage + 1) * EVENTS_PER_PAGE)
 
   return (
-    <div className="space-y-5">
-      <DetailSection title="Status">
-        <div className="grid grid-cols-2 gap-3">
-          <DetailItem label="State" value={c.state} valueClass={statusColor(c.state)} />
-          <DetailItem label="Status" value={c.status} />
-          {c.state === 'running' && <DetailItem label="Up" value={formatContainerUptime(c.created)} />}
-          {c.restart_policy && <DetailItem label="Restart Policy" value={c.restart_policy} />}
-          {(c.restart_count ?? 0) > 0 && <DetailItem label="Restart Count" value={String(c.restart_count)} />}
-          {c.health_status && <DetailItem label="Health" value={c.health_status} />}
-          {c.update_available === true && <DetailItem label="Image" value="Newer version available" valueClass="text-amber-400" />}
-          {c.update_available === false && <DetailItem label="Image" value="Up to date" valueClass="text-emerald-400/70" />}
+    <div className="space-y-6">
+      <Section title="Status">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <InfoItem label="State" value={c.state} valueClassName={statusColor(c.state)} />
+          <InfoItem label="Status" value={c.status} />
+          {c.state === 'running' && <InfoItem label="Up" value={formatContainerUptime(c.created)} />}
+          {c.restart_policy && <InfoItem label="Restart Policy" value={c.restart_policy} />}
+          {(c.restart_count ?? 0) > 0 && <InfoItem label="Restart Count" value={String(c.restart_count)} />}
+          {c.health_status && <InfoItem label="Health" value={c.health_status} />}
+          {c.update_available === true && <InfoItem label="Image" value="Newer version available" valueClassName="text-amber-400" />}
+          {c.update_available === false && <InfoItem label="Image" value="Up to date" valueClassName="text-emerald-400/70" />}
         </div>
-      </DetailSection>
+      </Section>
 
       {/* Live metrics */}
       {c.state === 'running' && (c.cpu_percent > 0 || c.mem_usage > 0) && (() => {
@@ -257,29 +261,29 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         const cpuLimitPct = cpuLimitCores * 100
         const cpuOfLimit = cpuLimitPct > 0 ? (c.cpu_percent / cpuLimitPct) * 100 : 0
         return (
-          <DetailSection title="Resources">
+          <Section title="Live Metrics">
             <div className="grid grid-cols-2 gap-4">
               <GaugeBar label={cpuLimitCores > 0 ? `CPU (of ${cpuLimitCores.toFixed(1)} cores)` : 'CPU'} value={cpuLimitCores > 0 ? cpuOfLimit : c.cpu_percent} />
               <GaugeBar label="Memory" value={memPct} />
             </div>
-            <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="grid grid-cols-2 gap-3 mt-4">
               {c.cpu_percent > 0 && (
-                <DetailItem label="CPU" value={cpuLimitCores > 0 ? `${c.cpu_percent.toFixed(1)}% (${cpuOfLimit.toFixed(0)}% of limit)` : `${c.cpu_percent.toFixed(1)}%`} />
+                <InfoItem label="CPU" value={cpuLimitCores > 0 ? `${c.cpu_percent.toFixed(1)}% (${cpuOfLimit.toFixed(0)}% of limit)` : `${c.cpu_percent.toFixed(1)}%`} />
               )}
               {c.mem_usage > 0 && (
-                <DetailItem
+                <InfoItem
                   label="Memory"
                   value={`${formatBytes(c.mem_usage)} / ${c.mem_limit > 0 ? formatBytes(c.mem_limit) : '\u221E'}`}
                 />
               )}
             </div>
-          </DetailSection>
+          </Section>
         )
       })()}
 
       {/* Metric history charts */}
       {deviceId && metrics.length > 0 && (
-        <DetailSection title="Metric History">
+        <Section title="Metric History">
           <div className="flex gap-1 mb-3">
             {[{ label: '1h', value: 1 }, { label: '6h', value: 6 }, { label: '24h', value: 24 }, { label: '7d', value: 168 }].map(tr => (
               <button
@@ -298,98 +302,154 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
           <ContainerMetricChart metrics={metrics} mode="cpu" label="CPU Usage" color="#3b82f6" />
           <div className="mt-3" />
           <ContainerMetricChart metrics={metrics} mode="memory" label="Memory Usage" color="#8b5cf6" />
-        </DetailSection>
+        </Section>
       )}
 
-      {/* Alert rules for this container */}
+      {/* Alert rules applicable to this container — matches the DeviceDetail
+          "Alert Rules" table styling, wrapped for horizontal scroll on mobile
+          so long rule names don't break the card layout. */}
       {deviceId && (
-        <DetailSection title="Alert Rules">
-          {alertRules.length > 0 && (
-            <div className="space-y-1 mb-2">
-              {alertRules.map((rule: AlertRule) => {
-                const isGlobal = !rule.target_name && !rule.include_containers
-                return (
-                  <div key={rule.id} className="flex items-center gap-2 text-xs">
-                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-                    <span className="text-gray-300">{rule.name}</span>
-                    <span className="text-gray-500 text-[10px] uppercase tracking-wide">{ruleMetricLabel(rule)}</span>
-                    <span className="text-gray-500 font-mono">{ruleConditionLabel(rule)}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                      rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
-                      rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
-                      'bg-blue-900/50 text-blue-400'
-                    }`}>
-                      {rule.severity}
-                    </span>
-                    {isGlobal && (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-800 text-gray-400 border border-gray-700" title="Applies to all containers on this device">global</span>
-                    )}
-                    <Link
-                      to={`/alert-rules?edit=${rule.id}`}
-                      className="ml-auto px-2 py-0.5 text-[10px] text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded transition-colors"
-                    >
-                      Edit
-                    </Link>
-                  </div>
-                )
-              })}
+        <Section title="Alert Rules">
+          {alertRules.length > 0 ? (
+            <div className="overflow-x-auto scrollbar-thin -mx-5 px-5">
+              <table className="w-full text-sm min-w-[500px]">
+                <thead>
+                  <tr className="text-gray-500 text-xs uppercase">
+                    <th className="text-left py-2 w-6"></th>
+                    <th className="text-left py-2 pr-3">Name</th>
+                    <th className="text-left py-2 pr-3">Metric</th>
+                    <th className="text-left py-2 pr-3">Condition</th>
+                    <th className="text-left py-2 pr-3">Severity</th>
+                    <th className="text-left py-2 pr-3">Scope</th>
+                    <th className="text-left py-2 pr-3"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {alertRules.map((rule: AlertRule) => {
+                    const isGlobal = !rule.target_name && !rule.include_containers
+                    return (
+                      <tr key={rule.id}>
+                        <td className="py-1.5 pr-3">
+                          <span className={`w-2 h-2 rounded-full inline-block ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                        </td>
+                        <td className="py-1.5 pr-3 text-gray-200">{rule.name}</td>
+                        <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">{rule.metric}</td>
+                        <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">{ruleConditionLabel(rule)}</td>
+                        <td className="py-1.5 pr-3">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
+                              : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
+                              : 'bg-amber-500/20 text-amber-400'
+                          }`}>
+                            {rule.severity}
+                          </span>
+                        </td>
+                        <td className="py-1.5 pr-3 text-[10px]">
+                          {isGlobal ? (
+                            <span className="text-gray-500" title="Applies to all containers on this device">global</span>
+                          ) : (
+                            <span className="text-gray-400">scoped</span>
+                          )}
+                        </td>
+                        <td className="py-1.5 pr-3">
+                          <Link
+                            to={`/alert-rules?edit=${rule.id}`}
+                            className="text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            Edit
+                          </Link>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
+          ) : (
+            <p className="text-sm text-gray-500 mb-3">No alert rules apply to this container.</p>
           )}
-          <AddContainerAlertButton containerName={c.name} deviceId={deviceId} />
-        </DetailSection>
+          <div className="mt-3 flex items-center gap-4">
+            <AddContainerAlertButton containerName={c.name} deviceId={deviceId} />
+            <Link to="/alert-rules" className="text-xs text-blue-400 hover:text-blue-300">
+              Manage all rules
+            </Link>
+          </div>
+        </Section>
       )}
 
-      {/* Recent events */}
+      {/* Recent events — same list + pagination pattern as DeviceDetail. */}
       {deviceId && events.length > 0 && (
-        <DetailSection title="Recent Events">
-          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-            {events.slice(0, 20).map(evt => (
-              <div key={evt.id} className="flex items-start gap-2 text-xs">
-                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${
-                  evt.severity === 'critical' ? 'bg-red-400' :
-                  evt.severity === 'warning' ? 'bg-amber-400' :
-                  'bg-blue-400'
+        <Section title={`Recent Events (${events.length})`}>
+          <div className="space-y-2">
+            {pagedEvents.map(evt => (
+              <div key={evt.id} className="flex items-center gap-3 text-sm">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  evt.severity === 'critical' ? 'bg-red-400' : evt.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
                 }`} />
-                <span className="text-gray-400 flex-shrink-0">{new Date(evt.created_at).toLocaleString()}</span>
-                <span className="text-gray-300">{evt.message}</span>
+                <span className="text-gray-400 font-mono text-xs">{new Date(evt.created_at).toLocaleString()}</span>
+                <span className="text-gray-200">{evt.message}</span>
               </div>
             ))}
           </div>
-        </DetailSection>
+          {totalEventPages > 1 && (
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
+              <span className="text-xs text-gray-500">
+                {safeEventsPage * EVENTS_PER_PAGE + 1}–{Math.min((safeEventsPage + 1) * EVENTS_PER_PAGE, events.length)} of {events.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setEventsPage(p => Math.max(0, p - 1))}
+                  disabled={safeEventsPage === 0}
+                  className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30"
+                >
+                  Prev
+                </button>
+                <span className="text-xs text-gray-500 px-1">{safeEventsPage + 1} / {totalEventPages}</span>
+                <button
+                  onClick={() => setEventsPage(p => Math.min(totalEventPages - 1, p + 1))}
+                  disabled={safeEventsPage >= totalEventPages - 1}
+                  className="px-2 py-0.5 rounded text-xs text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-30"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </Section>
       )}
 
       {c.repo_url && (
-        <DetailSection title="Source">
+        <Section title="Source">
           <a href={c.repo_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline text-sm break-all">
             {c.repo_url}
           </a>
-        </DetailSection>
+        </Section>
       )}
 
       {c.riot?.description && (
-        <DetailSection title="Description">
+        <Section title="Description">
           <p className="text-sm text-gray-300">{c.riot.description}</p>
-        </DetailSection>
+        </Section>
       )}
 
       {c.env && c.env.length > 0 && (
-        <DetailSection title="Environment">
-          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+        <Section title="Environment">
+          <div className="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
             {c.env.map((e, i) => (
               <div key={i} className="flex gap-2 text-xs font-mono">
                 <span className="text-gray-400 flex-shrink-0">{e.key}=</span>
-                <span className={isSensitiveKey(e.key) ? 'text-amber-400/70' : 'text-gray-500'}>
+                <span className={`break-all ${isSensitiveKey(e.key) ? 'text-amber-400/70' : 'text-gray-500'}`}>
                   {maskValue(e.key, e.value)}
                 </span>
               </div>
             ))}
           </div>
-        </DetailSection>
+        </Section>
       )}
 
       {c.labels && Object.keys(c.labels).length > 0 && (
-        <DetailSection title="Labels">
-          <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
+        <Section title="Labels">
+          <div className="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
             {Object.entries(c.labels).map(([k, v]) => (
               <div key={k} className="flex gap-2 text-xs font-mono">
                 <span className="text-gray-400 flex-shrink-0">{k}=</span>
@@ -397,63 +457,74 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
               </div>
             ))}
           </div>
-        </DetailSection>
+        </Section>
       )}
     </div>
   )
 }
 
 function NetworkTab({ container: c }: { container: ContainerInfo }) {
-  return (
-    <div className="space-y-5">
-      {c.ports && c.ports.length > 0 && (
-        <DetailSection title="Ports">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-1">Container</th>
-                <th className="text-left py-1">Host</th>
-                <th className="text-left py-1">Protocol</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {c.ports.map((p, i) => (
-                <tr key={i}>
-                  <td className="py-1.5 font-mono text-gray-300">{p.container_port}</td>
-                  <td className="py-1.5 font-mono text-gray-400">{p.host_port ? `${p.host_ip || '0.0.0.0'}:${p.host_port}` : '-'}</td>
-                  <td className="py-1.5 text-gray-500">{p.protocol}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </DetailSection>
-      )}
+  const hasPorts = c.ports && c.ports.length > 0
+  const hasNetworks = c.networks && c.networks.length > 0
 
-      {c.networks && c.networks.length > 0 && (
-        <DetailSection title="Networks">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-gray-500 text-xs uppercase">
-                <th className="text-left py-1">Name</th>
-                <th className="text-left py-1">IP Address</th>
-                <th className="text-left py-1">Gateway</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-800/50">
-              {c.networks.map((n, i) => (
-                <tr key={i}>
-                  <td className="py-1.5 font-mono text-gray-300">{n.name}</td>
-                  <td className="py-1.5 font-mono text-gray-400">{n.ip_address || '-'}</td>
-                  <td className="py-1.5 font-mono text-gray-500">{n.gateway || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </DetailSection>
-      )}
-
-      {(!c.ports || c.ports.length === 0) && (!c.networks || c.networks.length === 0) && (
+  if (!hasPorts && !hasNetworks) {
+    return (
+      <Section title="Network">
         <p className="text-sm text-gray-500">No network information available.</p>
+      </Section>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {hasPorts && (
+        <Section title="Ports">
+          <div className="overflow-x-auto scrollbar-thin -mx-5 px-5">
+            <table className="w-full text-sm min-w-[400px]">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2 pr-3">Container</th>
+                  <th className="text-left py-2 pr-3">Host</th>
+                  <th className="text-left py-2 pr-3">Protocol</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {c.ports!.map((p, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5 pr-3 font-mono text-gray-300">{p.container_port}</td>
+                    <td className="py-1.5 pr-3 font-mono text-gray-400">{p.host_port ? `${p.host_ip || '0.0.0.0'}:${p.host_port}` : '-'}</td>
+                    <td className="py-1.5 pr-3 text-gray-500">{p.protocol}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+      )}
+
+      {hasNetworks && (
+        <Section title="Networks">
+          <div className="overflow-x-auto scrollbar-thin -mx-5 px-5">
+            <table className="w-full text-sm min-w-[400px]">
+              <thead>
+                <tr className="text-gray-500 text-xs uppercase">
+                  <th className="text-left py-2 pr-3">Name</th>
+                  <th className="text-left py-2 pr-3">IP Address</th>
+                  <th className="text-left py-2 pr-3">Gateway</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-800/50">
+                {c.networks!.map((n, i) => (
+                  <tr key={i}>
+                    <td className="py-1.5 pr-3 font-mono text-gray-300 whitespace-nowrap">{n.name}</td>
+                    <td className="py-1.5 pr-3 font-mono text-gray-400 whitespace-nowrap">{n.ip_address || '-'}</td>
+                    <td className="py-1.5 pr-3 font-mono text-gray-500 whitespace-nowrap">{n.gateway || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
       )}
     </div>
   )
@@ -461,31 +532,37 @@ function NetworkTab({ container: c }: { container: ContainerInfo }) {
 
 function VolumesTab({ container: c }: { container: ContainerInfo }) {
   if (!c.mounts || c.mounts.length === 0) {
-    return <p className="text-sm text-gray-500">No volumes or mounts.</p>
+    return (
+      <Section title="Volumes">
+        <p className="text-sm text-gray-500">No volumes or mounts.</p>
+      </Section>
+    )
   }
   return (
-    <DetailSection title="Mounts">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-gray-500 text-xs uppercase">
-            <th className="text-left py-1">Type</th>
-            <th className="text-left py-1">Source</th>
-            <th className="text-left py-1">Destination</th>
-            <th className="text-left py-1">Mode</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-800/50">
-          {c.mounts.map((m, i) => (
-            <tr key={i}>
-              <td className="py-1.5 text-gray-400">{m.type}</td>
-              <td className="py-1.5 font-mono text-xs text-gray-400 break-all">{m.source}</td>
-              <td className="py-1.5 font-mono text-xs text-gray-300">{m.destination}</td>
-              <td className="py-1.5">{m.read_only ? <span className="text-amber-400">RO</span> : <span className="text-gray-500">RW</span>}</td>
+    <Section title="Mounts">
+      <div className="overflow-x-auto scrollbar-thin -mx-5 px-5">
+        <table className="w-full text-sm min-w-[500px]">
+          <thead>
+            <tr className="text-gray-500 text-xs uppercase">
+              <th className="text-left py-2 pr-3">Type</th>
+              <th className="text-left py-2 pr-3">Source</th>
+              <th className="text-left py-2 pr-3">Destination</th>
+              <th className="text-left py-2 pr-3">Mode</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </DetailSection>
+          </thead>
+          <tbody className="divide-y divide-gray-800/50">
+            {c.mounts.map((m, i) => (
+              <tr key={i}>
+                <td className="py-1.5 pr-3 text-gray-400">{m.type}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs text-gray-400 break-all">{m.source}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs text-gray-300 break-all">{m.destination}</td>
+                <td className="py-1.5 pr-3">{m.read_only ? <span className="text-amber-400">RO</span> : <span className="text-gray-500">RW</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
   )
 }
 
@@ -553,24 +630,6 @@ function ContainerLogsTab({ containerID, containerName, deviceId }: { containerI
           ))}
         </div>
       )}
-    </div>
-  )
-}
-
-function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{title}</h3>
-      {children}
-    </div>
-  )
-}
-
-function DetailItem({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <div>
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className={`text-sm ${valueClass || 'text-gray-200'}`}>{value}</p>
     </div>
   )
 }
