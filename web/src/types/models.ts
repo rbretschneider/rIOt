@@ -11,10 +11,9 @@ export interface Device {
   tags: string[]
   docker_available: boolean
   docker_container_count: number
-  docker_group_count: number
+  docker_auto_update_container_count: number
   auto_patch: boolean
   has_auto_update: boolean
-  auto_update_groups: number
   hardware_profile?: HardwareProfile
   last_heartbeat?: string
   last_telemetry?: string

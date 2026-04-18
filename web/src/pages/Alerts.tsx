@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
+import { useFeatures } from '../hooks/useFeatures'
 import SeverityBadge from '../components/SeverityBadge'
 
 const PAGE_SIZE = 25
@@ -12,6 +13,8 @@ export default function Alerts() {
   const [showUnackOnly, setShowUnackOnly] = useState(() => localStorage.getItem('alerts-unack-only') === 'true')
   const [page, setPage] = useState(0)
   const qc = useQueryClient()
+  const { isEnabled } = useFeatures()
+  const showContainer = isEnabled('docker')
   // useDevices sets up WS that pushes new events into the ['events'] cache
   const { data: devices, wsConnected } = useDevices()
   const { data: events, isLoading } = useQuery({
@@ -99,7 +102,7 @@ export default function Alerts() {
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Severity</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Device / Container</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">{showContainer ? 'Device / Container' : 'Device'}</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Message</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase w-10"></th>
@@ -129,7 +132,7 @@ export default function Alerts() {
                       ) : (
                         <span className="text-sm text-gray-500 font-mono">{e.device_id.slice(0, 8)}</span>
                       )}
-                      {e.container_name && (
+                      {showContainer && e.container_name && (
                         <>
                           <span className="text-gray-600 mx-1.5">:</span>
                           {device && e.container_id ? (

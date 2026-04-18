@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { settingsApi } from '../../api/settings'
+import { useFeatures } from '../../hooks/useFeatures'
 import { isVersionOlder } from '../../utils/version'
 import type { AutomationConfig, MaintenanceWindow } from '../../types/models'
 
@@ -165,6 +166,9 @@ function AutomationIntervals() {
     },
   })
 
+  const { isEnabled } = useFeatures()
+  const dockerEnabled = isEnabled('docker')
+
   if (isLoading || !config) return null
 
   const current = draft ?? config
@@ -182,22 +186,24 @@ function AutomationIntervals() {
     <>
       <h2 className="text-lg font-semibold text-white">Automation Intervals</h2>
       <p className="text-xs text-gray-500 -mt-4">
-        Control when automatic OS patching and Docker container updates are allowed to run. Times are in UTC.
+        Control when automatic OS patching{dockerEnabled ? ' and Docker container updates' : ''} are allowed to run. Times are in UTC.
       </p>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className={`grid grid-cols-1 ${dockerEnabled ? 'lg:grid-cols-2' : ''} gap-6`}>
         <WindowCard
           title="OS Auto-Patch"
           description="Automatically apply OS security patches when updates are detected on devices with auto-patch enabled."
           window={current.os_patch}
           onChange={patch => updateWindow('os_patch', patch)}
         />
-        <WindowCard
-          title="Docker Auto-Update"
-          description="Automatically update Docker containers when newer images are available, per container/stack policies."
-          window={current.docker_update}
-          onChange={patch => updateWindow('docker_update', patch)}
-        />
+        {dockerEnabled && (
+          <WindowCard
+            title="Docker Auto-Update"
+            description="Automatically update Docker containers when newer images are available, per container/stack policies."
+            window={current.docker_update}
+            onChange={patch => updateWindow('docker_update', patch)}
+          />
+        )}
       </div>
 
       {/* Save bar */}

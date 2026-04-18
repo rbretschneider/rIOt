@@ -266,7 +266,8 @@ export default function AlertRuleSettings() {
                     }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                   >
-                    {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    {METRICS.filter(m => showContainersCol || !CONTAINER_METRICS.includes(m.value))
+                      .map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
                 </Field>
                 {isStateMetric ? (
@@ -378,7 +379,7 @@ export default function AlertRuleSettings() {
                 onChange={v => setEditing({ ...editing, exclude_devices: v })}
                 placeholder="None"
               />
-              {isContainerMetric && (
+              {isContainerMetric && showContainersCol && (
                 <>
                   <Field label="Include Containers (empty = all)">
                     <input
@@ -591,10 +592,17 @@ function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle
 }
 
 function TemplatePicker({ onSelect, onClose }: { onSelect: (t: AlertTemplate) => void; onClose: () => void }) {
-  const { data: templates = [] } = useQuery({
+  const { isEnabled } = useFeatures()
+  const { data: rawTemplates = [] } = useQuery({
     queryKey: ['alert-templates'],
     queryFn: settingsApi.getAlertTemplates,
   })
+
+  // Hide the container category when the Docker feature flag is off — no
+  // point offering templates whose metrics the user has disabled.
+  const templates = isEnabled('docker')
+    ? rawTemplates
+    : rawTemplates.filter(t => t.category !== 'container')
 
   const categories = [...new Set(templates.map(t => t.category))]
 
