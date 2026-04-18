@@ -1,5 +1,25 @@
 import type { ContainerInfo, RiotLabels } from '../types/models'
 
+// Mirror of generator.MatchesContainerScope — given a rule's include/exclude
+// container lists, returns true when the given container name is in scope.
+// Exclude always wins; empty include matches all.
+export function matchesContainerScope(include: string | undefined, exclude: string | undefined, name: string): boolean {
+  const target = (name || '').replace(/^\//, '').toLowerCase()
+  if (!target) return true
+  if (exclude) {
+    for (const s of exclude.split(',')) {
+      const v = s.trim().replace(/^\//, '').toLowerCase()
+      if (v && v === target) return false
+    }
+  }
+  if (!include || !include.trim()) return true
+  for (const s of include.split(',')) {
+    const v = s.trim().replace(/^\//, '').toLowerCase()
+    if (v && v === target) return true
+  }
+  return false
+}
+
 const sensitiveKeys = [
   'password', 'passwd', 'secret', 'token', 'key', 'apikey',
   'api_key', 'auth', 'credential', 'private',

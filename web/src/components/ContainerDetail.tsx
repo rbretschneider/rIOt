@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { settingsApi } from '../api/settings'
+import { Link } from 'react-router-dom'
 import type { ContainerInfo, AlertRule, ContainerLogEntry } from '../types/models'
-import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, statusColor } from '../utils/docker'
+import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, matchesContainerScope, statusColor } from '../utils/docker'
 import ContainerStatusBadge from './ContainerStatusBadge'
 import ContainerMetricChart from './ContainerMetricChart'
 import GaugeBar from './GaugeBar'
@@ -201,13 +202,39 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
     queryKey: ['container-alert-rules', deviceId, c.name],
     queryFn: async () => {
       const rules = await api.getDeviceAlertRules(deviceId!)
-      return rules.filter((r: AlertRule) =>
-        (r.metric === 'container_cpu_percent' || r.metric === 'container_mem_percent' || r.metric === 'container_cpu_limit_percent') &&
-        r.target_name.toLowerCase() === c.name.toLowerCase()
-      )
+      // Rule applies to this container if:
+      //  - it's a container-scoped metric,
+      //  - the container is in the rule's include/exclude scope, and
+      //  - for threshold rules, target_name matches (or is empty = any container).
+      const cname = c.name.toLowerCase()
+      return rules.filter((r: AlertRule) => {
+        const m = r.metric
+        const isEvent = m === 'container_died' || m === 'container_oom'
+        const isThreshold = m === 'container_cpu_percent' || m === 'container_mem_percent' || m === 'container_cpu_limit_percent'
+        if (!isEvent && !isThreshold) return false
+        if (!matchesContainerScope(r.include_containers, r.exclude_containers, c.name)) return false
+        if (isThreshold && r.target_name && r.target_name.toLowerCase() !== cname) return false
+        return true
+      })
     },
     enabled: !!deviceId,
   })
+
+  const ruleConditionLabel = (r: AlertRule): string => {
+    if (r.metric === 'container_died') return 'on die'
+    if (r.metric === 'container_oom') return 'on OOM'
+    return `${r.operator} ${r.threshold}%`
+  }
+  const ruleMetricLabel = (r: AlertRule): string => {
+    switch (r.metric) {
+      case 'container_cpu_percent': return 'CPU'
+      case 'container_mem_percent': return 'Memory'
+      case 'container_cpu_limit_percent': return 'CPU (of limit)'
+      case 'container_died': return 'Died'
+      case 'container_oom': return 'OOM'
+      default: return r.metric
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -279,20 +306,33 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         <DetailSection title="Alert Rules">
           {alertRules.length > 0 && (
             <div className="space-y-1 mb-2">
-              {alertRules.map((rule: AlertRule) => (
-                <div key={rule.id} className="flex items-center gap-2 text-xs">
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
-                  <span className="text-gray-300">{rule.name}</span>
-                  <span className="text-gray-500 font-mono">{rule.operator} {rule.threshold}%</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                    rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
-                    rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
-                    'bg-blue-900/50 text-blue-400'
-                  }`}>
-                    {rule.severity}
-                  </span>
-                </div>
-              ))}
+              {alertRules.map((rule: AlertRule) => {
+                const isGlobal = !rule.target_name && !rule.include_containers
+                return (
+                  <div key={rule.id} className="flex items-center gap-2 text-xs">
+                    <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${rule.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
+                    <span className="text-gray-300">{rule.name}</span>
+                    <span className="text-gray-500 text-[10px] uppercase tracking-wide">{ruleMetricLabel(rule)}</span>
+                    <span className="text-gray-500 font-mono">{ruleConditionLabel(rule)}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                      rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
+                      rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
+                      'bg-blue-900/50 text-blue-400'
+                    }`}>
+                      {rule.severity}
+                    </span>
+                    {isGlobal && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-800 text-gray-400 border border-gray-700" title="Applies to all containers on this device">global</span>
+                    )}
+                    <Link
+                      to={`/alert-rules?edit=${rule.id}`}
+                      className="ml-auto px-2 py-0.5 text-[10px] text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded transition-colors"
+                    >
+                      Edit
+                    </Link>
+                  </div>
+                )
+              })}
             </div>
           )}
           <AddContainerAlertButton containerName={c.name} deviceId={deviceId} />
@@ -576,6 +616,8 @@ function AddContainerAlertButton({ containerName, deviceId }: { containerName: s
                 severity: preset.severity,
                 include_devices: '',
                 exclude_devices: '',
+                include_containers: '',
+                exclude_containers: '',
                 cooldown_seconds: 900,
                 notify: true,
               })}

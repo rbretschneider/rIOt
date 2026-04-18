@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import { api } from '../../api/client'
@@ -63,6 +64,16 @@ const TARGET_STATE_DEFAULTS: Record<string, string[]> = {
 const OPERATORS = ['>', '<', '>=', '<=', '==', '!=']
 const SEVERITIES = ['info', 'warning', 'critical']
 
+// Metrics that operate on individual containers — they accept include/exclude
+// container name lists so users can opt specific containers in or out.
+const CONTAINER_METRICS = [
+  'container_died',
+  'container_oom',
+  'container_cpu_percent',
+  'container_mem_percent',
+  'container_cpu_limit_percent',
+]
+
 const emptyRule: Partial<AlertRule> = {
   name: '',
   enabled: true,
@@ -74,6 +85,8 @@ const emptyRule: Partial<AlertRule> = {
   severity: 'warning',
   include_devices: '',
   exclude_devices: '',
+  include_containers: '',
+  exclude_containers: '',
   cooldown_seconds: 900,
   notify: true,
   template_id: '',
@@ -88,6 +101,23 @@ export default function AlertRuleSettings() {
   const [editing, setEditing] = useState<Partial<AlertRule> | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Support deep links like /alert-rules?edit=<id> — when another page (e.g. the
+  // container detail page's Alert Rules section) links here, auto-open the
+  // edit modal for that rule once the list has loaded.
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || rules.length === 0 || editing) return
+    const rule = rules.find(r => String(r.id) === editId)
+    if (rule) {
+      setEditing({ ...rule })
+      setIsNew(false)
+    }
+    // Clear the param so refreshing the page doesn't keep re-opening the modal.
+    searchParams.delete('edit')
+    setSearchParams(searchParams, { replace: true })
+  }, [rules, searchParams, setSearchParams, editing])
 
   const saveMutation = useMutation({
     mutationFn: (rule: Partial<AlertRule>) =>
@@ -113,6 +143,7 @@ export default function AlertRuleSettings() {
 
   const isStateMetric = editing ? STATE_METRICS.includes(editing.metric || '') : false
   const isContainerThreshold = editing ? CONTAINER_THRESHOLD_METRICS.includes(editing.metric || '') : false
+  const isContainerMetric = editing ? CONTAINER_METRICS.includes(editing.metric || '') : false
 
   const globalRules = useMemo(() => rules.filter(r => !r.include_devices && !r.exclude_devices), [rules])
   const deviceRules = useMemo(() => rules.filter(r => !!r.include_devices || !!r.exclude_devices), [rules])
@@ -337,6 +368,28 @@ export default function AlertRuleSettings() {
                 onChange={v => setEditing({ ...editing, exclude_devices: v })}
                 placeholder="None"
               />
+              {isContainerMetric && (
+                <>
+                  <Field label="Include Containers (empty = all)">
+                    <input
+                      value={editing.include_containers || ''}
+                      onChange={e => setEditing({ ...editing, include_containers: e.target.value })}
+                      placeholder="All containers"
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">Comma-separated container names.</p>
+                  </Field>
+                  <Field label="Exclude Containers">
+                    <input
+                      value={editing.exclude_containers || ''}
+                      onChange={e => setEditing({ ...editing, exclude_containers: e.target.value })}
+                      placeholder="None"
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">Comma-separated. Excluded containers produce no event and no notification.</p>
+                  </Field>
+                </>
+              )}
               <label className="flex items-center gap-2 text-sm text-gray-300">
                 <input
                   type="checkbox"

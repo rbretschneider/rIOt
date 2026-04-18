@@ -13,8 +13,10 @@ type AlertRule struct {
 	TargetName      string    `json:"target_name"`       // named target (service name, NIC name, process name)
 	TargetState     string    `json:"target_state"`      // state to match ("stopped", "failed", "DOWN", "absent")
 	Severity        string    `json:"severity"`
-	IncludeDevices  string    `json:"include_devices"`   // empty=all, comma-separated hostnames
-	ExcludeDevices  string    `json:"exclude_devices"`   // comma-separated hostnames to exclude
+	IncludeDevices    string    `json:"include_devices"`    // empty=all, comma-separated hostnames
+	ExcludeDevices    string    `json:"exclude_devices"`    // comma-separated hostnames to exclude
+	IncludeContainers string    `json:"include_containers"` // empty=all, comma-separated container names (container rules only)
+	ExcludeContainers string    `json:"exclude_containers"` // comma-separated container names to exclude (container rules only)
 	CooldownSeconds int       `json:"cooldown_seconds"`
 	Notify          bool      `json:"notify"`
 	TemplateID      string    `json:"template_id"`       // reference to a predefined template
@@ -66,4 +68,26 @@ type Alert struct {
 	DeviceID string     `json:"device_id"`
 	Hostname string     `json:"hostname"`
 	Value    float64    `json:"value,omitempty"`
+}
+
+// ServerErrorAlertConfig controls the rIOt server's self-monitoring alert —
+// fires a notification when the server itself logs too many errors in a
+// rolling window. Stored in admin_config as JSON under
+// "server_error_alert_config".
+type ServerErrorAlertConfig struct {
+	Enabled         bool  `json:"enabled"`
+	ChannelID       int64 `json:"channel_id"`
+	Threshold       int   `json:"threshold"`        // errors within WindowMinutes that triggers the alert
+	WindowMinutes   int   `json:"window_minutes"`   // rolling window over which errors are counted
+	CooldownMinutes int   `json:"cooldown_minutes"` // min gap between fires once elevated
+}
+
+// DefaultServerErrorAlertConfig returns a sensible off-by-default config.
+func DefaultServerErrorAlertConfig() ServerErrorAlertConfig {
+	return ServerErrorAlertConfig{
+		Enabled:         false,
+		Threshold:       10,
+		WindowMinutes:   5,
+		CooldownMinutes: 30,
+	}
 }

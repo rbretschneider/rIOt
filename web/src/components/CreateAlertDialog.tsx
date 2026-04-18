@@ -82,6 +82,8 @@ export default function CreateAlertDialog({ metric, targetName, targetState, inc
     severity: defaults?.severity ?? 'warning',
     include_devices: includeDevices || '',
     exclude_devices: excludeDevices || '',
+    include_containers: '',
+    exclude_containers: '',
     cooldown_seconds: defaults?.cooldown ?? 900,
     notify: true,
     template_id: '',

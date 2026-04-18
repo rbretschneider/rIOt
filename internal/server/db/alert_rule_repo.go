@@ -16,12 +16,13 @@ func NewAlertRuleRepo(db *DB) *AlertRuleRepo {
 	return &AlertRuleRepo{db: db}
 }
 
-const alertRuleCols = `id, name, enabled, metric, operator, threshold, target_name, target_state, severity, include_devices, exclude_devices, cooldown_seconds, notify, template_id, created_at, updated_at`
+const alertRuleCols = `id, name, enabled, metric, operator, threshold, target_name, target_state, severity, include_devices, exclude_devices, include_containers, exclude_containers, cooldown_seconds, notify, template_id, created_at, updated_at`
 
 func scanAlertRule(row interface{ Scan(dest ...interface{}) error }, rule *models.AlertRule) error {
 	return row.Scan(&rule.ID, &rule.Name, &rule.Enabled, &rule.Metric, &rule.Operator,
 		&rule.Threshold, &rule.TargetName, &rule.TargetState, &rule.Severity, &rule.IncludeDevices,
-		&rule.ExcludeDevices, &rule.CooldownSeconds, &rule.Notify, &rule.TemplateID, &rule.CreatedAt, &rule.UpdatedAt)
+		&rule.ExcludeDevices, &rule.IncludeContainers, &rule.ExcludeContainers,
+		&rule.CooldownSeconds, &rule.Notify, &rule.TemplateID, &rule.CreatedAt, &rule.UpdatedAt)
 }
 
 // List returns all alert rules ordered by id.
@@ -81,11 +82,12 @@ func (r *AlertRuleRepo) Create(ctx context.Context, rule *models.AlertRule) erro
 	rule.CreatedAt = now
 	rule.UpdatedAt = now
 	return r.db.Pool.QueryRow(ctx,
-		`INSERT INTO alert_rules (name, enabled, metric, operator, threshold, target_name, target_state, severity, include_devices, exclude_devices, cooldown_seconds, notify, template_id, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING id`,
+		`INSERT INTO alert_rules (name, enabled, metric, operator, threshold, target_name, target_state, severity, include_devices, exclude_devices, include_containers, exclude_containers, cooldown_seconds, notify, template_id, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id`,
 		rule.Name, rule.Enabled, rule.Metric, rule.Operator, rule.Threshold,
 		rule.TargetName, rule.TargetState, rule.Severity, rule.IncludeDevices,
-		rule.ExcludeDevices, rule.CooldownSeconds, rule.Notify, rule.TemplateID,
+		rule.ExcludeDevices, rule.IncludeContainers, rule.ExcludeContainers,
+		rule.CooldownSeconds, rule.Notify, rule.TemplateID,
 		rule.CreatedAt, rule.UpdatedAt).Scan(&rule.ID)
 }
 
@@ -95,11 +97,13 @@ func (r *AlertRuleRepo) Update(ctx context.Context, rule *models.AlertRule) erro
 	_, err := r.db.Pool.Exec(ctx,
 		`UPDATE alert_rules SET name=$1, enabled=$2, metric=$3, operator=$4, threshold=$5,
 		 target_name=$6, target_state=$7, severity=$8, include_devices=$9, exclude_devices=$10,
-		 cooldown_seconds=$11, notify=$12, template_id=$13, updated_at=$14
-		 WHERE id=$15`,
+		 include_containers=$11, exclude_containers=$12,
+		 cooldown_seconds=$13, notify=$14, template_id=$15, updated_at=$16
+		 WHERE id=$17`,
 		rule.Name, rule.Enabled, rule.Metric, rule.Operator, rule.Threshold,
 		rule.TargetName, rule.TargetState, rule.Severity, rule.IncludeDevices,
-		rule.ExcludeDevices, rule.CooldownSeconds, rule.Notify, rule.TemplateID,
+		rule.ExcludeDevices, rule.IncludeContainers, rule.ExcludeContainers,
+		rule.CooldownSeconds, rule.Notify, rule.TemplateID,
 		rule.UpdatedAt, rule.ID)
 	return err
 }
