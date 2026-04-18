@@ -2,12 +2,18 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
+
+// MaxContainerLogBatch caps how many rows a single agent push can insert.
+// Anything above this is truncated; the server refuses to act as a DoS vector
+// for a runaway container_logs collector.
+const MaxContainerLogBatch = 20_000
 
 // ContainerLogRepo handles container log database operations.
 type ContainerLogRepo struct {
@@ -22,30 +28,25 @@ func (r *ContainerLogRepo) InsertBatch(ctx context.Context, deviceID string, ent
 	if len(entries) == 0 {
 		return nil
 	}
-	// Build multi-row VALUES insert in batches of 500 to stay within PG param limits
-	const batchSize = 500
-	for i := 0; i < len(entries); i += batchSize {
-		end := i + batchSize
-		if end > len(entries) {
-			end = len(entries)
-		}
-		batch := entries[i:end]
-
-		query := `INSERT INTO container_logs (device_id, container_id, container_name, timestamp, stream, line) VALUES `
-		args := make([]interface{}, 0, len(batch)*6)
-		for j, e := range batch {
-			if j > 0 {
-				query += ","
-			}
-			base := j * 6
-			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4, base+5, base+6)
-			args = append(args, deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line)
-		}
-		if _, err := r.db.Pool.Exec(ctx, query, args...); err != nil {
-			return err
-		}
+	if len(entries) > MaxContainerLogBatch {
+		entries = entries[len(entries)-MaxContainerLogBatch:]
 	}
-	return nil
+	// pgx.CopyFrom uses the binary COPY protocol — dramatically faster than a
+	// multi-row INSERT with thousands of parameters, and crucially it doesn't
+	// keep rebuilding parameter slots per batch. For busy agents with many
+	// containers, the old $1..$3000 INSERT was being cancelled by the ctx
+	// deadline mid-batch and cascading into every other ingest path.
+	rows := make([][]interface{}, len(entries))
+	for i, e := range entries {
+		rows[i] = []interface{}{deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line}
+	}
+	_, err := r.db.Pool.CopyFrom(
+		ctx,
+		pgx.Identifier{"container_logs"},
+		[]string{"device_id", "container_id", "container_name", "timestamp", "stream", "line"},
+		pgx.CopyFromRows(rows),
+	)
+	return err
 }
 
 func (r *ContainerLogRepo) List(ctx context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error) {

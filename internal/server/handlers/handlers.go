@@ -320,6 +320,22 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	containerLogs := snap.Data.ContainerLogs
 	snap.Data.ContainerLogs = nil
 
+	// Guard against runaway collectors shipping gigantic payloads. PG's per-JSONB
+	// limit is ~256MB for array element totals — a single oversized snapshot
+	// would block the INSERT and cascade failures across every other ingest op.
+	// We reject early and log a per-field size breakdown so the operator can
+	// identify which collector to dial down.
+	const maxSnapshotBytes = 20 * 1024 * 1024 // 20 MB
+	if size := approxSnapshotSize(&snap.Data); size > maxSnapshotBytes {
+		slog.Warn("telemetry snapshot rejected: too large",
+			"device", deviceID,
+			"bytes", size,
+			"max_bytes", maxSnapshotBytes,
+			"field_sizes", snapshotFieldSizes(&snap.Data))
+		http.Error(w, `{"error":"telemetry snapshot exceeds maximum size; reduce collector payloads"}`, http.StatusRequestEntityTooLarge)
+		return
+	}
+
 	// Critical path — store the snapshot and update the device's last-seen
 	// timestamp. Anything slow here cascades onto the post-work because of a
 	// shared context, so we keep this section as small as possible and push
@@ -958,6 +974,55 @@ func hasRiotServerContainer(data *models.FullTelemetryData) bool {
 		}
 	}
 	return false
+}
+
+// approxSnapshotSize returns the JSON-encoded byte size of the telemetry body.
+// Only used to reject obviously-oversized payloads; we intentionally marshal
+// the same shape PG will see so the number matches what the INSERT would try
+// to ship.
+func approxSnapshotSize(data *models.FullTelemetryData) int {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return 0
+	}
+	return len(b)
+}
+
+// snapshotFieldSizes returns the JSON-encoded size of each top-level field so
+// the operator can tell which collector blew up. Cheap to compute relative to
+// the cost of actually shipping the snapshot.
+func snapshotFieldSizes(data *models.FullTelemetryData) map[string]int {
+	sizes := map[string]int{}
+	add := func(name string, v interface{}) {
+		if v == nil {
+			return
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return
+		}
+		if len(b) > 2 { // skip "null" / "{}"
+			sizes[name] = len(b)
+		}
+	}
+	add("system", data.System)
+	add("os", data.OS)
+	add("cpu", data.CPU)
+	add("memory", data.Memory)
+	add("disks", data.Disks)
+	add("network", data.Network)
+	add("updates", data.Updates)
+	add("services", data.Services)
+	add("processes", data.Procs)
+	add("docker", data.Docker)
+	add("security", data.Security)
+	add("ups", data.UPS)
+	add("web_servers", data.WebServers)
+	add("usb", data.USB)
+	add("hardware", data.Hardware)
+	add("cron_jobs", data.CronJobs)
+	add("gpu_telemetry", data.GPUTelemetry)
+	return sizes
 }
 
 // countAutoUpdateContainers reports how many of the given containers are

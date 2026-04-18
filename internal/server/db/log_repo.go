@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -16,19 +19,29 @@ func NewLogRepo(db *DB) *LogRepo {
 	return &LogRepo{db: db}
 }
 
-// Insert stores a batch of log entries.
+// Insert stores a batch of server log entries in a single COPY round-trip
+// instead of one INSERT per row. The slog DB handler buffers up to 100 entries
+// between flushes, so this matters when the server itself is spewing errors
+// (exactly the moment the old one-row-per-INSERT loop amplified DB load).
 func (r *LogRepo) Insert(ctx context.Context, entries []models.ServerLog) error {
-	for _, e := range entries {
-		_, err := r.db.Pool.Exec(ctx,
-			`INSERT INTO server_logs (timestamp, level, message, attrs, source)
-			 VALUES ($1, $2, $3, $4, $5)`,
-			e.Timestamp, e.Level, e.Message, e.Attrs, e.Source,
-		)
-		if err != nil {
-			return err
-		}
+	if len(entries) == 0 {
+		return nil
 	}
-	return nil
+	rows := make([][]interface{}, len(entries))
+	for i, e := range entries {
+		var attrs []byte
+		if e.Attrs != nil {
+			attrs, _ = json.Marshal(e.Attrs)
+		}
+		rows[i] = []interface{}{e.Timestamp, e.Level, e.Message, attrs, e.Source}
+	}
+	_, err := r.db.Pool.CopyFrom(
+		ctx,
+		pgx.Identifier{"server_logs"},
+		[]string{"timestamp", "level", "message", "attrs", "source"},
+		pgx.CopyFromRows(rows),
+	)
+	return err
 }
 
 // List returns server log entries with optional level filter and cursor-based pagination.

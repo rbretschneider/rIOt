@@ -2,11 +2,16 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
+
+// MaxDeviceLogBatch caps how many rows a single agent push can insert; protects
+// the DB from a runaway journal collector.
+const MaxDeviceLogBatch = 20_000
 
 // DeviceLogRepo handles device log database operations.
 type DeviceLogRepo struct {
@@ -17,34 +22,53 @@ func NewDeviceLogRepo(db *DB) *DeviceLogRepo {
 	return &DeviceLogRepo{db: db}
 }
 
+// InsertBatch uses a staging table + INSERT ... SELECT ... ON CONFLICT to
+// combine the speed of COPY with the dedupe behavior of the old multi-row
+// INSERT. pgx.CopyFrom doesn't support ON CONFLICT directly so we copy into
+// a per-connection TEMP table and merge from there in a single statement.
 func (r *DeviceLogRepo) InsertBatch(ctx context.Context, deviceID string, entries []models.LogEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
-	const batchSize = 500
-	for i := 0; i < len(entries); i += batchSize {
-		end := i + batchSize
-		if end > len(entries) {
-			end = len(entries)
-		}
-		batch := entries[i:end]
-
-		query := `INSERT INTO device_logs (device_id, timestamp, priority, unit, message) VALUES `
-		args := make([]interface{}, 0, len(batch)*5)
-		for j, e := range batch {
-			if j > 0 {
-				query += ","
-			}
-			base := j * 5
-			query += fmt.Sprintf("($%d,$%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4, base+5)
-			args = append(args, deviceID, e.Timestamp, e.Priority, e.Unit, e.Message)
-		}
-		query += ` ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`
-		if _, err := r.db.Pool.Exec(ctx, query, args...); err != nil {
-			return err
-		}
+	if len(entries) > MaxDeviceLogBatch {
+		entries = entries[len(entries)-MaxDeviceLogBatch:]
 	}
-	return nil
+
+	conn, err := r.db.Pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	// TEMP table is scoped to the connection and auto-dropped when released.
+	if _, err := conn.Exec(ctx,
+		`CREATE TEMP TABLE IF NOT EXISTS device_logs_stage (
+			device_id TEXT, timestamp TIMESTAMPTZ, priority INT, unit TEXT, message TEXT
+		) ON COMMIT DROP`); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, `TRUNCATE device_logs_stage`); err != nil {
+		return err
+	}
+
+	rows := make([][]interface{}, len(entries))
+	for i, e := range entries {
+		rows[i] = []interface{}{deviceID, e.Timestamp, e.Priority, e.Unit, e.Message}
+	}
+	if _, err := conn.CopyFrom(
+		ctx,
+		pgx.Identifier{"device_logs_stage"},
+		[]string{"device_id", "timestamp", "priority", "unit", "message"},
+		pgx.CopyFromRows(rows),
+	); err != nil {
+		return err
+	}
+
+	_, err = conn.Exec(ctx,
+		`INSERT INTO device_logs (device_id, timestamp, priority, unit, message)
+		 SELECT device_id, timestamp, priority, unit, message FROM device_logs_stage
+		 ON CONFLICT (device_id, timestamp, priority, unit, (md5(message))) DO NOTHING`)
+	return err
 }
 
 func (r *DeviceLogRepo) List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error) {
