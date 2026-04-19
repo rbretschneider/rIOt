@@ -3,14 +3,25 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, type ServerErrorAlertConfig } from '../../api/settings'
 
 export default function LogSettings() {
+  const qc = useQueryClient()
   const [level, setLevel] = useState('')
   const [before, setBefore] = useState<string | undefined>()
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  // Persist auto-refresh across navigation so the operator doesn't have to
+  // re-enable it every time they flip tabs.
+  const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem('server-logs-auto-refresh') === 'true')
 
   const { data: logs = [], isLoading, isFetching } = useQuery({
     queryKey: ['server-logs', level, before],
     queryFn: () => settingsApi.getLogs(level, 100, before),
     refetchInterval: autoRefresh ? 5000 : false,
+  })
+
+  const clearMutation = useMutation({
+    mutationFn: () => settingsApi.clearLogs(),
+    onSuccess: () => {
+      setBefore(undefined)
+      qc.invalidateQueries({ queryKey: ['server-logs'] })
+    },
   })
 
   function loadMore() {
@@ -51,7 +62,10 @@ export default function LogSettings() {
             <input
               type="checkbox"
               checked={autoRefresh}
-              onChange={e => setAutoRefresh(e.target.checked)}
+              onChange={e => {
+                setAutoRefresh(e.target.checked)
+                localStorage.setItem('server-logs-auto-refresh', String(e.target.checked))
+              }}
               className="rounded bg-gray-800 border-gray-600"
             />
             Auto-refresh
@@ -59,6 +73,15 @@ export default function LogSettings() {
           {isFetching && !isLoading && (
             <span className="text-xs text-gray-500">Refreshing...</span>
           )}
+          <button
+            onClick={() => {
+              if (confirm('Delete all server logs? This cannot be undone.')) clearMutation.mutate()
+            }}
+            disabled={clearMutation.isPending || logs.length === 0}
+            className="px-3 py-1.5 text-sm text-red-400/80 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded-md transition-colors disabled:opacity-40 disabled:hover:text-red-400/80 disabled:hover:border-red-900/50"
+          >
+            {clearMutation.isPending ? 'Clearing...' : 'Clear'}
+          </button>
         </div>
       </div>
 

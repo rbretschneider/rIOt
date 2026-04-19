@@ -244,6 +244,21 @@ func (h *Handlers) GetServerLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logs)
 }
 
+// DeleteServerLogs handles DELETE /api/v1/settings/logs — clears every stored
+// server log row so the operator can watch for fresh entries after debugging.
+func (h *Handlers) DeleteServerLogs(w http.ResponseWriter, r *http.Request) {
+	if h.logRepo == nil {
+		writeJSON(w, http.StatusOK, map[string]int64{"deleted": 0})
+		return
+	}
+	n, err := h.logRepo.PurgeAll(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to clear server logs"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
 // --- Alert Templates ---
 
 // ListAlertTemplates handles GET /api/v1/settings/alert-templates.

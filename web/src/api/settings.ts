@@ -127,6 +127,8 @@ export const settingsApi = {
     return fetchJSON<{ id: number; timestamp: string; level: string; message: string; attrs?: Record<string, unknown>; source?: string }[]>(url)
   },
 
+  clearLogs: () => mutate<{ deleted: number }>(`${BASE}/logs`, 'DELETE'),
+
   // Server error-rate alert config
   getServerErrorAlert: () =>
     fetchJSON<ServerErrorAlertConfig>(`${BASE}/server-error-alert`),

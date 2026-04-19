@@ -207,6 +207,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 		// Settings: server logs
 		r.Get("/api/v1/settings/logs", h.GetServerLogs)
+		r.Delete("/api/v1/settings/logs", h.DeleteServerLogs)
 
 		// Settings: server error-rate alert config
 		r.Get("/api/v1/settings/server-error-alert", h.GetServerErrorAlert)

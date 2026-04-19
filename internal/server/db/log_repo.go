@@ -119,6 +119,16 @@ func (r *LogRepo) Purge(ctx context.Context, olderThan time.Time) (int64, error)
 	return tag.RowsAffected(), nil
 }
 
+// PurgeAll removes every server_logs row. Exposed so an operator can clear
+// the viewer and wait for fresh entries after debugging a cascade.
+func (r *LogRepo) PurgeAll(ctx context.Context) (int64, error) {
+	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM server_logs`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func scanLogs(rows interface {
 	Next() bool
 	Scan(dest ...interface{}) error

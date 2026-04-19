@@ -47,6 +47,7 @@ export const settingsApi = {
 
   // Server logs
   getLogs: () => Promise.resolve(demo.getServerLogs()),
+  clearLogs: async () => { await delay(); return { deleted: 0 } },
 
   // Server error-rate alert
   getServerErrorAlert: async () => ({

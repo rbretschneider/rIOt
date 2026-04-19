@@ -113,6 +113,7 @@ type LogRepository interface {
 	List(ctx context.Context, level string, limit int, before *time.Time) ([]models.ServerLog, error)
 	CountSince(ctx context.Context, level string, since time.Time) (int, error)
 	Purge(ctx context.Context, olderThan time.Time) (int64, error)
+	PurgeAll(ctx context.Context) (int64, error)
 }
 
 // AdminRepository defines the interface for admin configuration operations.
