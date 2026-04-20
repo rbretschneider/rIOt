@@ -145,7 +145,35 @@ const COOLDOWN_OPTIONS = [
   { label: '6 hours', value: 360 },
   { label: '12 hours', value: 720 },
   { label: '24 hours', value: 1440 },
+  { label: '2 days', value: 2880 },
+  { label: '3 days', value: 4320 },
+  { label: '1 week', value: 10080 },
+  { label: '2 weeks', value: 20160 },
+  { label: '30 days', value: 43200 },
 ]
+
+// Docker-specific stagger presets — delay between successive auto-update
+// dispatches on the same device. Sized so that a device with 50-100
+// auto-update targets stays under Docker Hub's 100-pull-per-6h limit.
+const STAGGER_OPTIONS = [
+  { label: '1 min', value: 60 },
+  { label: '5 min', value: 300 },
+  { label: '10 min (recommended)', value: 600 },
+  { label: '15 min', value: 900 },
+  { label: '30 min', value: 1800 },
+  { label: '1 hour', value: 3600 },
+  { label: '2 hours', value: 7200 },
+]
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const mins = Math.round(seconds / 60)
+  if (mins < 60) return `${mins} min`
+  const hrs = mins / 60
+  if (hrs < 24) return `${hrs.toFixed(hrs % 1 === 0 ? 0 : 1)} hr`
+  const days = hrs / 24
+  return `${days.toFixed(days % 1 === 0 ? 0 : 1)} days`
+}
 
 function AutomationIntervals() {
   const qc = useQueryClient()
@@ -202,9 +230,12 @@ function AutomationIntervals() {
             description="Automatically update Docker containers when newer images are available, per container/stack policies."
             window={current.docker_update}
             onChange={patch => updateWindow('docker_update', patch)}
+            showStagger
           />
         )}
       </div>
+
+      {dockerEnabled && <DockerPullRateLimitHelp window={current.docker_update} />}
 
       {/* Save bar */}
       <div className="flex items-center gap-3">
@@ -234,11 +265,12 @@ function AutomationIntervals() {
   )
 }
 
-function WindowCard({ title, description, window: w, onChange }: {
+function WindowCard({ title, description, window: w, onChange, showStagger }: {
   title: string
   description: string
   window: MaintenanceWindow
   onChange: (patch: Partial<MaintenanceWindow>) => void
+  showStagger?: boolean
 }) {
   const activePreset = w.mode === 'window'
     ? PRESETS.find(p => p.start === w.start_time && p.end === w.end_time)
@@ -324,7 +356,10 @@ function WindowCard({ title, description, window: w, onChange }: {
 
         {/* Cooldown */}
         <div>
-          <label className="text-xs text-gray-500 block mb-1.5">Cooldown Between Runs</label>
+          <label className="text-xs text-gray-500 block mb-1.5">
+            Cooldown Per Target
+            <span className="text-gray-600 ml-1">(minimum time between re-runs of the same container/stack)</span>
+          </label>
           <select
             value={w.cooldown_minutes}
             onChange={e => onChange({ cooldown_minutes: parseInt(e.target.value) })}
@@ -336,7 +371,84 @@ function WindowCard({ title, description, window: w, onChange }: {
             ))}
           </select>
         </div>
+
+        {/* Stagger — only shown for docker_update */}
+        {showStagger && (
+          <div>
+            <label className="text-xs text-gray-500 block mb-1.5">
+              Stagger Between Pulls
+              <span className="text-gray-600 ml-1">(delay between consecutive pulls on the same device)</span>
+            </label>
+            <select
+              value={w.stagger_seconds}
+              onChange={e => onChange({ stagger_seconds: parseInt(e.target.value) })}
+              disabled={w.mode === 'disabled'}
+              className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50"
+            >
+              {STAGGER_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1.5">
+              Spreads pulls across time so fleets with many containers don't hit Docker Hub's 100-pull-per-6h limit.
+            </p>
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+function DockerPullRateLimitHelp({ window: w }: { window: MaintenanceWindow }) {
+  const { data: devices = [] } = useQuery({
+    queryKey: ['devices'],
+    queryFn: api.getDevices,
+    staleTime: 60 * 1000,
+  })
+
+  const byDevice = devices
+    .map(d => ({ name: d.hostname, count: d.docker_auto_update_container_count }))
+    .filter(d => d.count > 0)
+    .sort((a, b) => b.count - a.count)
+
+  const maxCount = byDevice.length > 0 ? byDevice[0].count : 0
+  const passSeconds = maxCount * Math.max(w.stagger_seconds, 1)
+  const estimate = maxCount > 0 && w.stagger_seconds > 0
+    ? `On your busiest device (${byDevice[0].name}: ${maxCount} auto-update targets), a full update pass takes ~${formatDuration(passSeconds)}.`
+    : null
+  const exceeds6h = maxCount > 0 && w.stagger_seconds > 0 && passSeconds <= 6 * 3600 && maxCount > 100
+  const safeIn6h = w.stagger_seconds > 0 ? Math.floor((6 * 3600) / w.stagger_seconds) : 0
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-2">
+      <h3 className="text-sm font-semibold text-gray-300 uppercase">Docker Hub Rate Limits</h3>
+      <p className="text-xs text-gray-400">
+        Docker Hub throttles unauthenticated pulls to <span className="text-white">100 per 6&nbsp;hours per IP</span> (200 for authenticated free accounts).
+        With many auto-update containers on a single host, uncontrolled updates can exhaust this quota within minutes and leave all pulls failing.
+      </p>
+      {w.mode !== 'disabled' && w.stagger_seconds > 0 && (
+        <p className="text-xs text-gray-400">
+          Current settings allow at most <span className="text-white">{safeIn6h}</span> pulls per 6&nbsp;hours per device
+          (one every {formatDuration(w.stagger_seconds)}).
+          {exceeds6h && (
+            <span className="text-amber-400"> Some devices have more auto-update targets than this window allows — the oldest will carry over to the next 6h window.</span>
+          )}
+        </p>
+      )}
+      {estimate && <p className="text-xs text-gray-500">{estimate}</p>}
+      {byDevice.length > 0 && (
+        <div className="pt-1">
+          <p className="text-xs text-gray-500 mb-1">Auto-update targets by device:</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+            {byDevice.slice(0, 8).map(d => (
+              <div key={d.name} className="flex justify-between">
+                <span className="text-gray-400 truncate">{d.name}</span>
+                <span className="text-gray-500 font-mono ml-2">{d.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -107,6 +107,10 @@ func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"cooldown must be at least 1 minute"}`, http.StatusBadRequest)
 			return
 		}
+		if mw.StaggerSeconds < 0 {
+			http.Error(w, `{"error":"stagger_seconds must be >= 0"}`, http.StatusBadRequest)
+			return
+		}
 	}
 
 	data, _ := json.Marshal(cfg)
@@ -140,6 +144,13 @@ func (h *Handlers) loadAutomationConfig(ctx context.Context) models.AutomationCo
 		slog.Warn("auto-update: failed to parse automation config, falling back to disabled",
 			"error", err.Error())
 		return models.DefaultAutomationConfig()
+	}
+	// Back-fill stagger for configs saved before stagger_seconds existed. A
+	// zero value on an active docker_update window is almost certainly "unset"
+	// on a legacy config — and a fleet with many auto-update targets firing at
+	// once will blow past Docker Hub's 100-pull-per-6h anonymous limit.
+	if cfg.DockerUpdate.Mode != "disabled" && cfg.DockerUpdate.StaggerSeconds == 0 {
+		cfg.DockerUpdate.StaggerSeconds = models.DefaultDockerStaggerSeconds
 	}
 	return cfg
 }
@@ -215,6 +226,12 @@ func (h *Handlers) checkAutoUpdatesSuppressed(ctx context.Context, deviceID stri
 
 // checkAutoUpdates looks at incoming telemetry for containers with update_available=true,
 // matches them against auto-update policies, and sends docker_update commands.
+//
+// When stagger_seconds > 0, at most one docker_update command is dispatched per
+// telemetry cycle and no dispatch happens at all until stagger_seconds have
+// passed since the last docker_update command on this device. This throttles
+// fan-out so a device with many auto-update targets does not pull N images in
+// parallel and exhaust Docker Hub's anonymous 100-pull-per-6h rate limit.
 func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
 	if h.autoUpdateRepo == nil || h.commandRepo == nil || data.Docker == nil {
 		return
@@ -232,6 +249,15 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 		return
 	}
 	cooldown := time.Duration(cfg.DockerUpdate.CooldownMinutes) * time.Minute
+	stagger := time.Duration(cfg.DockerUpdate.StaggerSeconds) * time.Second
+
+	// Stagger gate: if the last docker_update for this device was within the
+	// stagger window, skip the entire pass.
+	if stagger > 0 {
+		if last := h.lastDockerUpdateAt(ctx, deviceID); !last.IsZero() && time.Since(last) < stagger {
+			return
+		}
+	}
 
 	policies, err := h.autoUpdateRepo.ListByDevice(ctx, deviceID)
 	if err != nil || len(policies) == 0 {
@@ -268,6 +294,9 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 						"compose_work_dir": workDir,
 					})
 					triggeredStacks[project] = true
+					if stagger > 0 {
+						return
+					}
 				}
 				continue
 			}
@@ -280,9 +309,29 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 				h.dispatchAutoUpdate(ctx, deviceID, pol, map[string]interface{}{
 					"container": name,
 				})
+				if stagger > 0 {
+					return
+				}
 			}
 		}
 	}
+}
+
+// lastDockerUpdateAt returns the creation time of the most recent docker_update
+// or docker_bulk_update command sent to this device, or the zero time if none
+// appears in the last 20 commands. Used by the stagger gate to spread updates
+// out across telemetry cycles.
+func (h *Handlers) lastDockerUpdateAt(ctx context.Context, deviceID string) time.Time {
+	cmds, err := h.commandRepo.ListByDevice(ctx, deviceID, 20)
+	if err != nil {
+		return time.Time{}
+	}
+	for _, cmd := range cmds {
+		if cmd.Action == "docker_update" || cmd.Action == "docker_bulk_update" {
+			return cmd.CreatedAt
+		}
+	}
+	return time.Time{}
 }
 
 // recentlyTriggered returns true if the policy was triggered within the cooldown period.

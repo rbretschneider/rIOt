@@ -720,6 +720,7 @@ export interface MaintenanceWindow {
   start_time: string
   end_time: string
   cooldown_minutes: number
+  stagger_seconds: number
 }
 
 export interface AutomationConfig {
