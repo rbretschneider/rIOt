@@ -60,8 +60,24 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 		SocketPath: opts.SocketPath,
 		TailLines:  50,
 	})
-	r.Register(&SecurityCollector{})
-	r.Register(&LogsCollector{})
+
+	// authCounter is a shared per-interval counter that LogsCollector
+	// increments (inside parseAndCount) and SecurityCollector drains.
+	//
+	// ORDERING CONSTRAINT (AD-002, SEC-005 serialization invariant):
+	// LogsCollector MUST be registered BEFORE SecurityCollector so that
+	// collectAll iterates them in the correct order. LogsCollector populates
+	// the counter and calls MarkReady; SecurityCollector then drains it.
+	// Reversing the order or parallelizing collectAll would silently lose
+	// counts — no error, no race detector warning, just false-negative alerts.
+	// Any future parallelization of collectAll must either preserve this
+	// ordering with an explicit barrier OR replace authFailureCounter with a
+	// channel-based primitive. See docs/security/LOG-001-security-review.md.
+	counter := &authFailureCounter{}
+
+	r.Register(&LogsCollector{authCounter: counter})
+	r.Register(&SecurityCollector{authCounter: counter})
+
 	r.Register(&UPSCollector{})
 	r.Register(&WebServersCollector{})
 	r.Register(&USBCollector{})

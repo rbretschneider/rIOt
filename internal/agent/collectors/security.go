@@ -11,7 +11,13 @@ import (
 	psnet "github.com/shirou/gopsutil/v3/net"
 )
 
-type SecurityCollector struct{}
+type SecurityCollector struct {
+	// authCounter is the shared counter populated by LogsCollector on each
+	// interval. SecurityCollector drains it to compute FailedLoginsInterval.
+	// LogsCollector MUST be registered and collected before SecurityCollector
+	// within each collectAll pass (AD-002, SEC-005 serialization invariant).
+	authCounter *authFailureCounter
+}
 
 func (c *SecurityCollector) Name() string { return "security" }
 
@@ -22,6 +28,7 @@ func (c *SecurityCollector) Collect(ctx context.Context) (interface{}, error) {
 	}
 
 	if runtime.GOOS != "linux" {
+		// Non-Linux: leave FailedLoginsInterval nil → omitted from JSON (FR-011, AD-008).
 		return info, nil
 	}
 
@@ -69,7 +76,8 @@ func (c *SecurityCollector) Collect(ctx context.Context) (interface{}, error) {
 		}
 	}
 
-	// Failed logins (last 24h)
+	// Failed logins (last 24h) — pre-existing path; pattern set and logic are
+	// frozen per FR-009, BR-001. Do NOT apply the SEC-001 origin filter here.
 	if out, err := exec.CommandContext(ctx, "journalctl", "--since", "24 hours ago",
 		"-u", "sshd", "--no-pager", "-q").Output(); err == nil {
 		count := 0
@@ -90,6 +98,18 @@ func (c *SecurityCollector) Collect(ctx context.Context) (interface{}, error) {
 				break
 			}
 		}
+	}
+
+	// Per-interval auth-failure count (FR-001, AD-001).
+	// Drain the shared counter populated by LogsCollector's parseAndCount.
+	// If IsReady() is false (first interval or LogsCollector never ran), report
+	// zero to satisfy FR-005 (no historical backfill on first push).
+	n := c.authCounter.Drain()
+	if c.authCounter.IsReady() {
+		info.FailedLoginsInterval = &n
+	} else {
+		zero := 0
+		info.FailedLoginsInterval = &zero
 	}
 
 	return info, nil

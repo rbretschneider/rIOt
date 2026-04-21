@@ -77,3 +77,41 @@ func TestRegistry_FilterEnabled_Ordering(t *testing.T) {
 	assert.Equal(t, "a", collectors[0].Name(), "preserves registration order")
 	assert.Equal(t, "b", collectors[1].Name())
 }
+
+// [AC-010] RegisterDefaultsWithDocker registers SecurityCollector under the name "security".
+// Filtering by "security" produces exactly one collector with Name() == "security".
+// No new collector name is introduced for the per-interval metric.
+func TestAC010_RegisterDefaultsWithDocker_SecurityCollectorPresent(t *testing.T) {
+	r := NewRegistry()
+	r.RegisterDefaultsWithDocker(DockerOptions{CollectStats: false})
+
+	r.FilterEnabled([]string{"security"})
+
+	cs := r.Collectors()
+	require.Len(t, cs, 1, "[AC-010] exactly one collector must survive filtering by 'security'")
+	assert.Equal(t, "security", cs[0].Name(),
+		"[AC-010] the surviving collector must be named 'security' — no new collector name")
+}
+
+// [AD-002] LogsCollector is registered before SecurityCollector in the default registry.
+// This ordering is load-bearing for the authFailureCounter handoff (SEC-005).
+func TestAD002_RegisterDefaultsWithDocker_LogsBeforeSecurityInOrder(t *testing.T) {
+	r := NewRegistry()
+	r.RegisterDefaultsWithDocker(DockerOptions{CollectStats: false})
+
+	all := r.Collectors()
+	var logsIdx, securityIdx int = -1, -1
+	for i, c := range all {
+		switch c.Name() {
+		case "logs":
+			logsIdx = i
+		case "security":
+			securityIdx = i
+		}
+	}
+
+	require.NotEqual(t, -1, logsIdx, "logs collector must be registered")
+	require.NotEqual(t, -1, securityIdx, "security collector must be registered")
+	assert.Less(t, logsIdx, securityIdx,
+		"[AD-002] logs collector must be registered before security collector (SEC-005 ordering invariant)")
+}

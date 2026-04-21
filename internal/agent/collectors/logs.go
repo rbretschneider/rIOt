@@ -16,8 +16,9 @@ import (
 // LogsCollector gathers recent journal entries (info and above).
 // Linux-only; returns empty on other platforms.
 type LogsCollector struct {
-	mu       sync.Mutex
-	lastSeen time.Time
+	mu          sync.Mutex
+	lastSeen    time.Time
+	authCounter *authFailureCounter
 }
 
 func (c *LogsCollector) Name() string { return "logs" }
@@ -30,6 +31,11 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 	c.mu.Lock()
 	since := c.lastSeen
 	c.mu.Unlock()
+
+	// Record whether this is the first-ever scan (cursor was zero on entry).
+	// We read this BEFORE the exec so that a subsequent mutation of c.lastSeen
+	// cannot affect the first-interval gate decision (AD-001, note 3).
+	firstScan := since.IsZero()
 
 	if since.IsZero() {
 		since = time.Now().Add(-5 * time.Minute)
@@ -44,11 +50,33 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 		"-n", "500",
 	).Output()
 	if err != nil {
+		// Fail-open (FR-006): return empty log slice; do not call MarkReady;
+		// SecurityCollector will drain 0 and report 0.
 		return []models.LogEntry{}, nil
 	}
 
+	entries, _ := c.parseAndCount(out)
+
+	// After a real cursor-based scan (not the first-ever scan), mark the
+	// counter ready so SecurityCollector reports the real count next tick.
+	if !firstScan {
+		c.authCounter.MarkReady()
+	}
+
+	return entries, nil
+}
+
+// parseAndCount parses the raw journalctl JSON output, builds the LogEntry
+// slice, and increments the authFailureCounter for each line that passes the
+// trusted-origin + content filters. It also advances c.lastSeen to the
+// timestamp of the latest parsed entry.
+//
+// Extracted as a named helper so unit tests can feed raw JSON without
+// spawning a real journalctl process (ADD Section 12, note 2).
+func (c *LogsCollector) parseAndCount(out []byte) ([]models.LogEntry, time.Time) {
 	var entries []models.LogEntry
 	var latest time.Time
+
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
 			continue
@@ -92,6 +120,12 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 		if ts.After(latest) {
 			latest = ts
 		}
+
+		// Increment the shared auth-failure counter for lines that pass
+		// the trusted-origin filter AND a content pattern match (AD-001, AD-004).
+		if matchesAuthFailure(raw) {
+			c.authCounter.Add(1)
+		}
 	}
 
 	if !latest.IsZero() {
@@ -100,5 +134,5 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 		c.mu.Unlock()
 	}
 
-	return entries, nil
+	return entries, latest
 }
