@@ -49,6 +49,8 @@ const (
 	EventNginx5xxHigh         EventType = "nginx_5xx_high"
 	EventNginx4xxHigh         EventType = "nginx_4xx_high"
 	EventNginxRequestHigh     EventType = "nginx_request_high"
+	EventAuthFailure          EventType = "auth_failure"
+	EventDetectorInitialized  EventType = "detector_initialized"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).

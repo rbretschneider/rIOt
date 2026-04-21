@@ -445,6 +445,12 @@ type SecurityInfo struct {
 	AppArmor       string `json:"apparmor,omitempty"`
 	FirewallStatus string `json:"firewall_status,omitempty"`
 	FailedLogins24h int   `json:"failed_logins_24h"`
+	// FailedLoginsInterval is the count of authentication-failure log
+	// lines observed in journald during the last telemetry interval.
+	// *int so non-Linux agents can omit (nil → absent in JSON).
+	// A value of 0 is explicitly reported on Linux when no failures
+	// were observed or journald was unavailable (fail-open, FR-006).
+	FailedLoginsInterval *int `json:"failed_logins_interval,omitempty"`
 	LoggedInUsers  int    `json:"logged_in_users"`
 	OpenPorts      []int  `json:"open_ports,omitempty"`
 }
