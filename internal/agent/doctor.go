@@ -187,6 +187,15 @@ func Doctor(configPath string) {
 		}
 	}
 
+	// ── Journal Read Access ──
+	// SEC-003 mitigation (AD-010): detect cases where journalctl is available
+	// but returns empty because the agent user lacks systemd-journal group
+	// membership. Without this check, LogsCollector and the auth-failure
+	// detector silently report zero with no visible error.
+	if runtime.GOOS == "linux" && (enabled["logs"] || enabled["security"]) {
+		checkJournalAccess()
+	}
+
 	// ── Docker ──
 	if enabled["docker"] || enabled["container_logs"] {
 		fmt.Println()
@@ -235,6 +244,47 @@ func Doctor(configPath string) {
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("Doctor complete.")
+}
+
+// checkJournalAccess verifies the agent can read the system journal (AD-010, SEC-003).
+// Called only on Linux when the "logs" or "security" collector is enabled.
+func checkJournalAccess() {
+	fmt.Println()
+	section("Journal Access")
+
+	// Try reading one journal entry with the same flags LogsCollector uses.
+	out, err := exec.Command("journalctl", "--priority=0..6", "-n", "1", "--no-pager").Output()
+	if err != nil {
+		// journalctl binary error — collectorDeps already reported this as missing.
+		// Avoid a double-warn; the Dependencies section covers it.
+		return
+	}
+
+	if len(strings.TrimSpace(string(out))) > 0 {
+		pass("Journal read access OK")
+		return
+	}
+
+	// Empty output — could be permission issue or genuinely empty journal.
+	// Check group membership via "id -Gn".
+	idOut, idErr := exec.Command("id", "-Gn").Output()
+	inGroup := false
+	if idErr == nil {
+		for _, g := range strings.Fields(string(idOut)) {
+			if g == "systemd-journal" {
+				inGroup = true
+				break
+			}
+		}
+	}
+
+	if !inGroup {
+		warn("Journal read returned empty and user is not in 'systemd-journal' group")
+		warn("  Auth-failure detector will silently report zero — fix with:")
+		warn("  sudo usermod -a -G systemd-journal riot && sudo systemctl restart riot-agent")
+	} else {
+		warn("Journal read returned empty — journald may be inactive or priority filter matched nothing")
+	}
 }
 
 func checkServer(cfg *Config) {
