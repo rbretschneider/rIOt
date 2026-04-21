@@ -31,7 +31,7 @@
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
 - **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery; fleet status dot turns yellow when a device is on battery power
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
-- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
+- **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; near-real-time SSH/sudo/console/su authentication failure alerting (Linux; ≤60s latency, journald origin-filtered); include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
@@ -192,6 +192,14 @@ Add `--keep-config` to preserve `/etc/riot` (agent config and device ID).
 ### Agent Diagnostics
 
 Run `riot-agent doctor` to troubleshoot a misbehaving agent. The command checks server connectivity, TLS certificate validity, file permissions, collector health, and system dependencies (e.g. `smartctl`, `upsc`, Docker socket). It prints a pass/fail summary with actionable suggestions for each failing check.
+
+On Linux, when the `logs` or `security` collector is enabled, `doctor` also runs a **Journal Read Access** check. This detects the silent-zero failure mode where `journalctl` is installed but the agent user cannot read system-wide journal entries — which would cause the auth-failure detector to always report zero without any error. If the check warns that the `riot` user is not in the `systemd-journal` group, run:
+
+```bash
+sudo usermod -a -G systemd-journal riot && sudo systemctl restart riot-agent
+```
+
+Then re-run `riot-agent doctor` to confirm the check passes.
 
 ### Manual Install
 
@@ -356,7 +364,7 @@ New installs via `install.sh` include all rules automatically.
 | `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
 | `container_logs` | Docker container stdout/stderr logs — fetched via Docker API, stored server-side with 7-day retention, viewable in the container detail Logs tab |
-| `security` | SELinux/AppArmor, firewall, open ports, failed logins, logged-in users |
+| `security` | SELinux/AppArmor, firewall, open ports, failed logins (24h rolling count), per-interval auth failure count (`failed_logins_interval` — Linux only; entries are origin-filtered to trusted journald sources before counting, see [Auth Failure Alerting](#auth-failure-alerting)), logged-in users |
 | `logs` | Recent journald entries (info and above); auto-deduplicates on the server |
 | `ups` | NUT UPS status — battery charge, runtime, load, voltage, model (requires `upsc`) |
 | `webservers` | Reverse proxy detection (nginx, Caddy, Ferron) — sites, SSL certificates, upstreams, security config (requires nginx sudoers rules; see below); optional nginx access log monitoring (HTTP error rate counting — see [Nginx Access Log Monitoring](#nginx-access-log-monitoring)) |
@@ -395,6 +403,7 @@ Monitor service, network, process, USB, and UPS state changes:
 - **UPS monitoring** — alert when UPS switches to battery or battery charge drops below threshold
 - **Certificate expiry** — warning when an SSL certificate has fewer than 30 days remaining; critical when expired
 - **Nginx error rates** — alert when HTTP 5xx or 4xx error counts exceed a threshold per telemetry interval (requires `webservers` collector with `access_log` configured — see [Nginx Access Log Monitoring](#nginx-access-log-monitoring))
+- **Auth failure** — alert when any SSH, sudo, console, or su authentication failure is observed in the current telemetry interval (Linux only; matched against trusted journald sources — see [Auth Failure Alerting](#auth-failure-alerting))
 
 ### Alert Templates
 
@@ -587,6 +596,56 @@ All standard alert rule features apply: device scoping (include/exclude), cooldo
 - No per-URL, per-upstream, or per-virtual-host breakdown. Counts are global across all nginx traffic.
 - Nginx `error.log` is not parsed — only `access.log`.
 - Access log metrics appear in telemetry data only, not in the lightweight heartbeat.
+
+---
+
+## Auth Failure Alerting
+
+The `security` collector reports `failed_logins_interval`, a per-interval count of SSH, sudo, console, and su authentication failures observed in journald since the previous telemetry push. This enables alert rules that fire within a single telemetry cycle (default 60 seconds) when any auth failure occurs — far faster than the 24-hour rolling `FailedLogins24h` count used by the security score.
+
+This feature is **Linux-only**. Non-Linux agents omit the field from their telemetry payload; auth-failure alert rules are not evaluated against them.
+
+### How origin filtering works
+
+Before counting a log line, the agent verifies the journal entry came from a trusted system daemon. It requires:
+
+1. The entry's kernel-attested `_UID` field equals `0` (written by a root-owned process).
+2. The entry's `_SYSTEMD_UNIT` or `SYSLOG_IDENTIFIER` is in a fixed allow-list: `ssh.service`, `sshd.service`, `sudo.service`, `systemd-logind.service`, `login.service`, `sshd`, `sudo`, `login`, `su`.
+
+Lines written by unprivileged users via `logger(1)` have a non-zero `_UID` and are rejected regardless of their content. This prevents a local shell user from forging auth-failure signals.
+
+### What is matched
+
+Only lines from trusted sources (above) that contain one of these substrings are counted:
+
+- `Failed password` — SSH password authentication failure
+- `authentication failure` — general PAM failure
+- `Invalid user` — SSH invalid username
+- `pam_unix(sudo:auth): authentication failure` — sudo PAM failure
+
+Each matching line increments the counter once. There is no per-IP or per-user deduplication — the count is a raw line count (AC-007).
+
+### First-interval behavior
+
+On the first telemetry push after agent start, `failed_logins_interval` is always `0`. The agent does not backfill auth failures from before it started. If the agent restarts (for example during an upgrade), one telemetry interval reports zero regardless of journal activity during that window.
+
+### Setting up the Auth Failure alert rule
+
+1. Go to **Settings > Alert Rules** and click **Create from Template**.
+2. Select **Auth Failure** under the **security** category.
+3. Review the default settings: metric `failed_logins_interval`, operator `>`, threshold `0`, severity `warning`, cooldown `300s`.
+4. On internet-facing hosts with public SSH, routine bot traffic will trigger this at every cooldown window at the default threshold. Either raise the threshold (e.g. `> 5`) or narrow the **Include Devices** scope to internal hosts before saving.
+5. Attach a notification channel and save.
+
+### Metric reference
+
+| Metric | Type | Platform | Description |
+|--------|------|----------|-------------|
+| `failed_logins_interval` | integer | Linux only | Count of auth failure log lines from trusted journald sources in the last telemetry interval |
+
+### `no-op` on non-Linux and no config change required
+
+The `failed_logins_interval` metric travels inside the existing `security` collector payload. No new collector name exists, so no change to `collectors.enabled` in `agent.yaml` is needed after upgrading agents.
 
 ---
 
