@@ -368,6 +368,7 @@ export interface SecurityInfo {
   apparmor?: string
   firewall_status?: string
   failed_logins_24h: number
+  failed_logins_interval?: number
   logged_in_users: number
   open_ports?: number[]
 }
