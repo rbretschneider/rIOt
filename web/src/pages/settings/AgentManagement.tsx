@@ -153,9 +153,10 @@ const COOLDOWN_OPTIONS = [
 ]
 
 // Docker-specific stagger presets — delay between successive auto-update
-// dispatches on the same device. Sized so that a device with 50-100
-// auto-update targets stays under Docker Hub's 100-pull-per-6h limit.
+// dispatches on the same device. 0 disables staggering entirely (safe only
+// when pulls go through a local registry cache).
 const STAGGER_OPTIONS = [
+  { label: 'Disabled (0s)', value: 0 },
   { label: '1 min', value: 60 },
   { label: '5 min', value: 300 },
   { label: '10 min (recommended)', value: 600 },
@@ -164,6 +165,34 @@ const STAGGER_OPTIONS = [
   { label: '1 hour', value: 3600 },
   { label: '2 hours', value: 7200 },
 ]
+
+// Local timezone abbreviation (e.g. "EST"), for labeling the UTC-stored time inputs.
+function localTZLabel(): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date())
+    return parts.find(p => p.type === 'timeZoneName')?.value ?? 'local'
+  } catch {
+    return 'local'
+  }
+}
+
+// Convert "HH:MM" in UTC to "HH:MM" in the user's local timezone.
+function utcTimeToLocal(hhmm: string): string {
+  if (!/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm
+  const [h, m] = hhmm.split(':').map(Number)
+  const d = new Date()
+  d.setUTCHours(h, m, 0, 0)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+// Convert "HH:MM" in the user's local timezone to "HH:MM" UTC (storage format).
+function localTimeToUTC(hhmm: string): string {
+  if (!/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm
+  const [h, m] = hhmm.split(':').map(Number)
+  const d = new Date()
+  d.setHours(h, m, 0, 0)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
@@ -214,7 +243,7 @@ function AutomationIntervals() {
     <>
       <h2 className="text-lg font-semibold text-white">Automation Intervals</h2>
       <p className="text-xs text-gray-500 -mt-4">
-        Control when automatic OS patching{dockerEnabled ? ' and Docker container updates' : ''} are allowed to run. Times are in UTC.
+        Control when automatic OS patching{dockerEnabled ? ' and Docker container updates' : ''} are allowed to run. Times are shown in your local timezone ({localTZLabel()}) and stored internally as UTC.
       </p>
 
       <div className={`grid grid-cols-1 ${dockerEnabled ? 'lg:grid-cols-2' : ''} gap-6`}>
@@ -272,9 +301,12 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
   onChange: (patch: Partial<MaintenanceWindow>) => void
   showStagger?: boolean
 }) {
+  // Presets are authored as local-time values and compared against the stored
+  // UTC window by converting both sides to UTC.
   const activePreset = w.mode === 'window'
-    ? PRESETS.find(p => p.start === w.start_time && p.end === w.end_time)
+    ? PRESETS.find(p => localTimeToUTC(p.start) === w.start_time && localTimeToUTC(p.end) === w.end_time)
     : null
+  const tzLabel = localTZLabel()
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
@@ -315,7 +347,7 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
                 {PRESETS.map(p => (
                   <button
                     key={p.label}
-                    onClick={() => onChange({ start_time: p.start, end_time: p.end })}
+                    onClick={() => onChange({ start_time: localTimeToUTC(p.start), end_time: localTimeToUTC(p.end) })}
                     className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
                       activePreset?.label === p.label
                         ? 'bg-blue-500/20 text-blue-400 border border-blue-600/50'
@@ -329,24 +361,24 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
               </div>
             </div>
 
-            {/* Custom time inputs */}
+            {/* Custom time inputs — displayed in local time, stored as UTC */}
             <div className="flex items-center gap-3">
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Start (UTC)</label>
+                <label className="text-xs text-gray-500 block mb-1">Start ({tzLabel})</label>
                 <input
                   type="time"
-                  value={w.start_time}
-                  onChange={e => onChange({ start_time: e.target.value })}
+                  value={utcTimeToLocal(w.start_time)}
+                  onChange={e => onChange({ start_time: localTimeToUTC(e.target.value) })}
                   className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 font-mono"
                 />
               </div>
               <span className="text-gray-600 mt-5">to</span>
               <div>
-                <label className="text-xs text-gray-500 block mb-1">End (UTC)</label>
+                <label className="text-xs text-gray-500 block mb-1">End ({tzLabel})</label>
                 <input
                   type="time"
-                  value={w.end_time}
-                  onChange={e => onChange({ end_time: e.target.value })}
+                  value={utcTimeToLocal(w.end_time)}
+                  onChange={e => onChange({ end_time: localTimeToUTC(e.target.value) })}
                   className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 font-mono"
                 />
               </div>
@@ -360,16 +392,31 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
             Cooldown Per Target
             <span className="text-gray-600 ml-1">(minimum time between re-runs of the same container/stack)</span>
           </label>
-          <select
-            value={w.cooldown_minutes}
-            onChange={e => onChange({ cooldown_minutes: parseInt(e.target.value) })}
-            disabled={w.mode === 'disabled'}
-            className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50"
-          >
-            {COOLDOWN_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={COOLDOWN_OPTIONS.find(o => o.value === w.cooldown_minutes)?.value ?? ''}
+              onChange={e => onChange({ cooldown_minutes: parseInt(e.target.value) })}
+              disabled={w.mode === 'disabled'}
+              className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50"
+            >
+              {!COOLDOWN_OPTIONS.some(o => o.value === w.cooldown_minutes) && (
+                <option value="" disabled>Custom</option>
+              )}
+              {COOLDOWN_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={1}
+              value={w.cooldown_minutes}
+              onChange={e => onChange({ cooldown_minutes: Math.max(1, parseInt(e.target.value) || 1) })}
+              disabled={w.mode === 'disabled'}
+              className="w-24 px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50 font-mono"
+              aria-label="Custom cooldown in minutes"
+            />
+            <span className="text-xs text-gray-500">min</span>
+          </div>
         </div>
 
         {/* Stagger — only shown for docker_update */}
@@ -377,20 +424,35 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
           <div>
             <label className="text-xs text-gray-500 block mb-1.5">
               Stagger Between Pulls
-              <span className="text-gray-600 ml-1">(delay between consecutive pulls on the same device)</span>
+              <span className="text-gray-600 ml-1">(delay between consecutive pulls on the same device; 0 disables)</span>
             </label>
-            <select
-              value={w.stagger_seconds}
-              onChange={e => onChange({ stagger_seconds: parseInt(e.target.value) })}
-              disabled={w.mode === 'disabled'}
-              className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50"
-            >
-              {STAGGER_OPTIONS.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <select
+                value={STAGGER_OPTIONS.find(o => o.value === w.stagger_seconds)?.value ?? ''}
+                onChange={e => onChange({ stagger_seconds: parseInt(e.target.value) })}
+                disabled={w.mode === 'disabled'}
+                className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50"
+              >
+                {!STAGGER_OPTIONS.some(o => o.value === w.stagger_seconds) && (
+                  <option value="" disabled>Custom</option>
+                )}
+                {STAGGER_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                min={0}
+                value={w.stagger_seconds}
+                onChange={e => onChange({ stagger_seconds: Math.max(0, parseInt(e.target.value) || 0) })}
+                disabled={w.mode === 'disabled'}
+                className="w-24 px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500 disabled:opacity-50 font-mono"
+                aria-label="Custom stagger in seconds"
+              />
+              <span className="text-xs text-gray-500">sec</span>
+            </div>
             <p className="text-xs text-gray-500 mt-1.5">
-              Spreads pulls across time so fleets with many containers don't hit Docker Hub's 100-pull-per-6h limit.
+              Spreads pulls across time so fleets with many containers don't hit Docker Hub's 100-pull-per-6h limit. Set to 0 if you have a local registry pull-through cache.
             </p>
           </div>
         )}
@@ -433,6 +495,11 @@ function DockerPullRateLimitHelp({ window: w }: { window: MaintenanceWindow }) {
           {exceeds6h && (
             <span className="text-amber-400"> Some devices have more auto-update targets than this window allows — the oldest will carry over to the next 6h window.</span>
           )}
+        </p>
+      )}
+      {w.mode !== 'disabled' && w.stagger_seconds === 0 && (
+        <p className="text-xs text-amber-400">
+          Staggering is disabled — all eligible containers will pull in parallel each pass. Safe only if pulls go through a local registry cache.
         </p>
       )}
       {estimate && <p className="text-xs text-gray-500">{estimate}</p>}
