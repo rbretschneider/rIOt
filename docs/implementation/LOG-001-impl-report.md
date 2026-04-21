@@ -279,6 +279,35 @@ Tests:      234 passed (234)  [baseline was 229]
 
 ---
 
+## Follow-up Revision — QA Finding 2 (2026-04-20)
+
+**Finding:** QA report Finding 2 noted that the exec-error branch in `Collect()` (lines 53-56) returned `[]models.LogEntry{}, nil` without logging the underlying error, violating FR-006 and ADD Section 9 (which both require a `slog.Warn` at exec failure).
+
+**Fix applied to `internal/agent/collectors/logs.go`:**
+
+1. Added `"log/slog"` to the import block.
+2. Added `slog.Warn("journalctl exec failed", "error", err)` immediately before the fail-open return in the exec-error branch.
+3. Extracted the post-exec logic (error branch + parse-and-count branch) into a new `collectFromOutput(out []byte, err error, firstScan bool) (interface{}, error)` method, following the same testability-extraction pattern used for `parseAndCount`. `Collect` now delegates to this helper after the exec call.
+
+**New test in `internal/agent/collectors/logs_test.go`:**
+
+Added `TestAC006_CollectExecError_LogsWarning` which:
+- Captures the default `slog.Logger` output via `bytes.Buffer` + `slog.NewJSONHandler`.
+- Calls `collectFromOutput(nil, errors.New("exec: journalctl not found"), true)` to exercise the exec-error branch without spawning a real process.
+- Asserts: nil caller error (fail-open), empty `[]models.LogEntry` result, counter not incremented, counter not marked ready, and `buf.String()` contains `"journalctl exec failed"`.
+
+**No other files modified.** `MarkReady` logic, fail-open return value, SecurityCollector, templates, generator, models, and doctor are all unchanged.
+
+**Post-fix test results:**
+
+```
+go test ./internal/agent/collectors/...   ok   (all pass including TestAC006_CollectExecError_LogsWarning)
+go test ./...                             all packages ok
+cd web && npm run test:run                15 test files, 234 tests passed
+```
+
+---
+
 ## Follow-up Items for Technical Writer
 
 - README: document `failed_logins_interval` metric under the alert metrics section; note Linux-only availability and the `> 0` internet-facing SSH warning per SEC-004.

@@ -3,6 +3,7 @@ package collectors
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -49,9 +50,19 @@ func (c *LogsCollector) Collect(ctx context.Context) (interface{}, error) {
 		"--no-pager",
 		"-n", "500",
 	).Output()
+	return c.collectFromOutput(out, err, firstScan)
+}
+
+// collectFromOutput handles the post-exec logic: on exec error it logs a
+// warning and returns the fail-open empty slice (FR-006, ADD Section 9); on
+// success it parses the output and conditionally marks the counter ready.
+// Extracted as a named helper so unit tests can inject a pre-computed
+// (output, error) tuple without spawning a real journalctl process.
+func (c *LogsCollector) collectFromOutput(out []byte, err error, firstScan bool) (interface{}, error) {
 	if err != nil {
 		// Fail-open (FR-006): return empty log slice; do not call MarkReady;
 		// SecurityCollector will drain 0 and report 0.
+		slog.Warn("journalctl exec failed", "error", err)
 		return []models.LogEntry{}, nil
 	}
 

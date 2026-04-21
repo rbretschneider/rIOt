@@ -1,11 +1,15 @@
 package collectors
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,6 +122,40 @@ func TestAC006_ParseAndCount_EmptyOutput_NoEntriesNoCount(t *testing.T) {
 	entries, _ := lc.parseAndCount([]byte(""))
 	assert.Empty(t, entries, "[AC-006] empty output must produce no log entries")
 	assert.Equal(t, 0, counter.Drain(), "[AC-006] empty output must not increment counter")
+}
+
+// [AC-006] When journalctl exec fails, the error is logged at Warn level and
+// an empty slice is returned (fail-open, FR-006 / ADD Section 9).
+func TestAC006_CollectExecError_LogsWarning(t *testing.T) {
+	lc, counter := newTestLogsCollector()
+
+	// Capture slog output so we can assert on the warning message.
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	original := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	execErr := errors.New("exec: journalctl not found")
+	result, err := lc.collectFromOutput(nil, execErr, true)
+
+	// Fail-open: nil error returned to the caller.
+	assert.NoError(t, err, "[AC-006] exec error must not propagate to caller")
+
+	// Empty log slice returned.
+	entries, ok := result.([]models.LogEntry)
+	require.True(t, ok, "[AC-006] result must be []models.LogEntry")
+	assert.Empty(t, entries, "[AC-006] exec error must produce no log entries")
+
+	// Counter must not be incremented.
+	assert.Equal(t, 0, counter.Drain(), "[AC-006] exec error must not increment auth counter")
+
+	// Counter must not be marked ready (MarkReady is only called on success).
+	assert.False(t, counter.IsReady(), "[AC-006] exec error must not mark counter ready")
+
+	// Warning must be logged with the correct message key.
+	assert.Contains(t, buf.String(), "journalctl exec failed",
+		"[AC-006] slog.Warn must emit 'journalctl exec failed' on exec error")
 }
 
 // ParseAndCount updates lastSeen to the latest timestamp in the output.
