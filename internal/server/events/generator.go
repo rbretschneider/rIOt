@@ -386,6 +386,23 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 	if data.GPUTelemetry != nil {
 		g.CheckGPUAlerts(ctx, deviceID, hostname, data.GPUTelemetry)
 	}
+	// Per-interval auth-failure metric (LOG-001, AD-005).
+	// Gated on both Security != nil AND FailedLoginsInterval != nil so that
+	// non-Linux agents (which omit the field) never trigger this path (FR-011).
+	// Negative values are clamped to 0 before evaluation (SEC-006).
+	if data.Security != nil && data.Security.FailedLoginsInterval != nil {
+		v := *data.Security.FailedLoginsInterval
+		if v < 0 {
+			v = 0
+		}
+		g.evaluateMetric(ctx, deviceID, "failed_logins_interval",
+			float64(v), hostname,
+			models.EventAuthFailure,
+			func(f float64) string {
+				return fmt.Sprintf("%d authentication failure(s) on %s in last interval",
+					int(f), hostname)
+			})
+	}
 }
 
 // CheckServiceAlerts checks service state against service_state alert rules.

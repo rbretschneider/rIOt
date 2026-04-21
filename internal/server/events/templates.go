@@ -298,6 +298,19 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: false,
 			Description:     "Fires when any disk temperature exceeds a critical threshold (°C)",
 		},
+		// Security
+		{
+			ID:              "auth_failure",
+			Name:            "Auth Failure",
+			Category:        "security",
+			Metric:          "failed_logins_interval",
+			Operator:        ">",
+			Threshold:       0,
+			Severity:        "warning",
+			CooldownSeconds: 300,
+			NeedsTargetName: false,
+			Description:     "Fires when a device reports one or more authentication failures since the last telemetry interval. Note: on internet-facing SSH hosts, routine bot traffic will trigger this at every cooldown window — raise the threshold and/or narrow IncludeDevices before enabling.",
+		},
 		// GPU
 		{
 			ID:              "gpu_temp_warn",
