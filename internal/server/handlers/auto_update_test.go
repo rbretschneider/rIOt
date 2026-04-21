@@ -69,29 +69,11 @@ func TestSetAutomationConfig_NegativeStagger(t *testing.T) {
 	}
 }
 
-func TestLoadAutomationConfig_BackfillsLegacyStagger(t *testing.T) {
+func TestLoadAutomationConfig_PreservesZeroStagger(t *testing.T) {
 	adminRepo := testutil.NewMockAdminRepo("hash")
-	// Seed a pre-stagger-field config: active docker_update window with no stagger key.
-	legacy := `{"os_patch":{"mode":"disabled","start_time":"23:00","end_time":"05:00","cooldown_minutes":360},"docker_update":{"mode":"anytime","start_time":"23:00","end_time":"05:00","cooldown_minutes":30}}`
-	_ = adminRepo.SetConfig(nil, "automation_config", legacy)
-
-	h := New(HandlerDeps{
-		Devices:   &testutil.MockDeviceRepo{},
-		Telemetry: &testutil.MockTelemetryRepo{},
-		Events:    &testutil.MockEventRepo{},
-		AdminRepo: adminRepo,
-	})
-	got := h.loadAutomationConfig(nil)
-	if got.DockerUpdate.StaggerSeconds != models.DefaultDockerStaggerSeconds {
-		t.Errorf("expected legacy config to backfill stagger to %d, got %d",
-			models.DefaultDockerStaggerSeconds, got.DockerUpdate.StaggerSeconds)
-	}
-}
-
-func TestLoadAutomationConfig_PreservesExplicitZeroStaggerWhenDisabled(t *testing.T) {
-	adminRepo := testutil.NewMockAdminRepo("hash")
-	// Disabled docker_update should not be backfilled — user isn't using auto-update.
-	saved := `{"os_patch":{"mode":"disabled","start_time":"23:00","end_time":"05:00","cooldown_minutes":360,"stagger_seconds":0},"docker_update":{"mode":"disabled","start_time":"23:00","end_time":"05:00","cooldown_minutes":30,"stagger_seconds":0}}`
+	// User who explicitly sets stagger to 0 (e.g. has a registry pull-through cache)
+	// must have that choice respected on load.
+	saved := `{"os_patch":{"mode":"disabled","start_time":"23:00","end_time":"05:00","cooldown_minutes":360,"stagger_seconds":0},"docker_update":{"mode":"anytime","start_time":"23:00","end_time":"05:00","cooldown_minutes":30,"stagger_seconds":0}}`
 	_ = adminRepo.SetConfig(nil, "automation_config", saved)
 
 	h := New(HandlerDeps{
@@ -102,8 +84,7 @@ func TestLoadAutomationConfig_PreservesExplicitZeroStaggerWhenDisabled(t *testin
 	})
 	got := h.loadAutomationConfig(nil)
 	if got.DockerUpdate.StaggerSeconds != 0 {
-		t.Errorf("expected stagger to remain 0 on disabled docker_update, got %d",
-			got.DockerUpdate.StaggerSeconds)
+		t.Errorf("expected stagger 0 to be preserved, got %d", got.DockerUpdate.StaggerSeconds)
 	}
 }
 
@@ -418,12 +399,11 @@ func TestCheckAutoUpdates_StaggerAllowsOnePerPass(t *testing.T) {
 	}
 }
 
-// TestCheckAutoUpdates_ZeroStaggerIsBackfilled verifies that an active window
-// saved with stagger_seconds=0 still enforces the default stagger at runtime,
-// since loadAutomationConfig backfills zero to DefaultDockerStaggerSeconds. A
-// user who never configured stagger should still be protected from Docker Hub
-// rate limits.
-func TestCheckAutoUpdates_ZeroStaggerIsBackfilled(t *testing.T) {
+// TestCheckAutoUpdates_ZeroStaggerDispatchesAll verifies that an active window
+// with stagger_seconds=0 disables the stagger gate entirely — all eligible
+// policies dispatch in a single pass. Intended for operators with a local
+// registry pull-through cache where Docker Hub's rate limits don't apply.
+func TestCheckAutoUpdates_ZeroStaggerDispatchesAll(t *testing.T) {
 	h, cmdRepo, autoRepo := staggerTestHandler(t, 0)
 	deviceID := "dev-1"
 	ctx := context.Background()
@@ -442,7 +422,7 @@ func TestCheckAutoUpdates_ZeroStaggerIsBackfilled(t *testing.T) {
 			dispatched++
 		}
 	}
-	if dispatched != 1 {
-		t.Errorf("backfilled stagger should still limit dispatches to 1 per pass, got %d", dispatched)
+	if dispatched != 3 {
+		t.Errorf("with stagger=0 all eligible targets should dispatch in one pass, got %d", dispatched)
 	}
 }

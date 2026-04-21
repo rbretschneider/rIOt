@@ -145,13 +145,6 @@ func (h *Handlers) loadAutomationConfig(ctx context.Context) models.AutomationCo
 			"error", err.Error())
 		return models.DefaultAutomationConfig()
 	}
-	// Back-fill stagger for configs saved before stagger_seconds existed. A
-	// zero value on an active docker_update window is almost certainly "unset"
-	// on a legacy config — and a fleet with many auto-update targets firing at
-	// once will blow past Docker Hub's 100-pull-per-6h anonymous limit.
-	if cfg.DockerUpdate.Mode != "disabled" && cfg.DockerUpdate.StaggerSeconds == 0 {
-		cfg.DockerUpdate.StaggerSeconds = models.DefaultDockerStaggerSeconds
-	}
 	return cfg
 }
 
