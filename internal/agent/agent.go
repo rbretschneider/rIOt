@@ -144,6 +144,11 @@ func (a *Agent) Run() error {
 		a.registry.SetNginxAccessLog(a.config.Collector.Webservers.Nginx.AccessLog)
 	}
 
+	// SEC-002 deferred: emit a startup log line so operators can correlate
+	// agent restart windows against the first-push-zero blind window (AD-001,
+	// FR-005). This line is informational only; it does not change behavior.
+	slog.Info("auth failure detector initialized", "note", "first interval reports zero regardless of journal backfill")
+
 	// Start loops
 	var wg sync.WaitGroup
 
