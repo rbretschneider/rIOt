@@ -305,7 +305,10 @@ export default function AlertRuleSettings() {
                       <input
                         type="number"
                         value={editing.threshold ?? 0}
-                        onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
+                        onChange={e => {
+                          const n = parseFloat(e.target.value)
+                          setEditing({ ...editing, threshold: Number.isNaN(n) ? 0 : n })
+                        }}
                         className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       />
                     </Field>
@@ -329,7 +332,10 @@ export default function AlertRuleSettings() {
                       <input
                         type="number"
                         value={editing.threshold ?? 0}
-                        onChange={e => setEditing({ ...editing, threshold: parseFloat(e.target.value) || 0 })}
+                        onChange={e => {
+                          const n = parseFloat(e.target.value)
+                          setEditing({ ...editing, threshold: Number.isNaN(n) ? 0 : n })
+                        }}
                         className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                       />
                       {METRIC_DEFAULTS[editing.metric || '']?.hint && (
@@ -364,7 +370,10 @@ export default function AlertRuleSettings() {
                   <input
                     type="number"
                     value={editing.cooldown_seconds ?? 900}
-                    onChange={e => setEditing({ ...editing, cooldown_seconds: parseInt(e.target.value) || 900 })}
+                    onChange={e => {
+                      const n = parseInt(e.target.value, 10)
+                      setEditing({ ...editing, cooldown_seconds: Number.isNaN(n) ? 0 : Math.max(0, n) })
+                    }}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                   />
                 </Field>
