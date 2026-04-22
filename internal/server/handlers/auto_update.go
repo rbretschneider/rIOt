@@ -111,6 +111,25 @@ func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"stagger_seconds must be >= 0"}`, http.StatusBadRequest)
 			return
 		}
+		switch mw.Frequency {
+		case "", "daily", "weekly", "monthly":
+			// ok
+		default:
+			http.Error(w, fmt.Sprintf(`{"error":"invalid frequency: %s"}`, mw.Frequency), http.StatusBadRequest)
+			return
+		}
+		if mw.Frequency == "weekly" {
+			if len(mw.DaysOfWeek) == 0 {
+				http.Error(w, `{"error":"weekly frequency requires at least one day_of_week"}`, http.StatusBadRequest)
+				return
+			}
+			for _, d := range mw.DaysOfWeek {
+				if d < 0 || d > 6 {
+					http.Error(w, `{"error":"days_of_week values must be 0 (Sun) through 6 (Sat)"}`, http.StatusBadRequest)
+					return
+				}
+			}
+		}
 	}
 
 	data, _ := json.Marshal(cfg)
@@ -157,6 +176,9 @@ func inMaintenanceWindow(w models.MaintenanceWindow) bool {
 		return true
 	case "window":
 		now := time.Now().UTC()
+		if !frequencyAllowsDay(w, now) {
+			return false
+		}
 		currentMin := now.Hour()*60 + now.Minute()
 		startMin := parseTimeStr(w.StartTime)
 		endMin := parseTimeStr(w.EndTime)
@@ -165,10 +187,39 @@ func inMaintenanceWindow(w models.MaintenanceWindow) bool {
 			// Same-day window (e.g. 09:00 - 17:00)
 			return currentMin >= startMin && currentMin < endMin
 		}
-		// Overnight window (e.g. 23:00 - 05:00)
+		// Overnight window (e.g. 23:00 - 05:00). Day-of-week / last-day-of-month
+		// is evaluated against the START day only — a window starting Sunday
+		// 23:00 that runs into Monday 05:00 counts as Sunday's maintenance pass.
 		return currentMin >= startMin || currentMin < endMin
 	default:
 		return false // unknown mode — safe default is to not auto-update
+	}
+}
+
+// frequencyAllowsDay returns true if the window's frequency rule permits a
+// trigger on `now`'s calendar day. For same-day windows the caller evaluates
+// `now` directly; for overnight windows the caller evaluates `now`'s current
+// day (the start-day convention — see inMaintenanceWindow). An empty or
+// unknown frequency is treated as "daily" for back-compat.
+func frequencyAllowsDay(w models.MaintenanceWindow, now time.Time) bool {
+	switch w.Frequency {
+	case "", "daily":
+		return true
+	case "weekly":
+		wd := int(now.Weekday())
+		for _, d := range w.DaysOfWeek {
+			if d == wd {
+				return true
+			}
+		}
+		return false
+	case "monthly":
+		// Last day of current month: first of next month minus one day.
+		firstOfNext := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, now.Location())
+		lastDay := firstOfNext.Add(-24 * time.Hour).Day()
+		return now.Day() == lastDay
+	default:
+		return true
 	}
 }
 

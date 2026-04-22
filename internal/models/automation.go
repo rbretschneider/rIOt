@@ -13,6 +13,11 @@ type MaintenanceWindow struct {
 	EndTime         string `json:"end_time"`         // "HH:MM" in UTC (e.g. "05:00")
 	CooldownMinutes int    `json:"cooldown_minutes"` // minimum minutes between triggers per target
 	StaggerSeconds  int    `json:"stagger_seconds"`  // minimum seconds between any two dispatches on a single device
+	// Frequency scopes the time window to specific days: "daily" (default; every
+	// day), "weekly" (only on days listed in DaysOfWeek), or "monthly" (only on
+	// the last day of the month). Empty string is treated as "daily" for back-compat.
+	Frequency  string `json:"frequency,omitempty"`
+	DaysOfWeek []int  `json:"days_of_week,omitempty"` // 0=Sunday..6=Saturday; used when Frequency=="weekly"
 }
 
 // Default stagger between per-target auto-update dispatches on the same device.

@@ -426,3 +426,102 @@ func TestCheckAutoUpdates_ZeroStaggerDispatchesAll(t *testing.T) {
 		t.Errorf("with stagger=0 all eligible targets should dispatch in one pass, got %d", dispatched)
 	}
 }
+
+func TestFrequencyAllowsDay_DailyAndEmpty(t *testing.T) {
+	now := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC) // Wednesday
+	for _, freq := range []string{"", "daily"} {
+		w := models.MaintenanceWindow{Frequency: freq}
+		if !frequencyAllowsDay(w, now) {
+			t.Errorf("freq=%q: expected allowed on any day", freq)
+		}
+	}
+}
+
+func TestFrequencyAllowsDay_Weekly(t *testing.T) {
+	wed := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC) // Wednesday = 3
+	sat := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC) // Saturday = 6
+
+	w := models.MaintenanceWindow{Frequency: "weekly", DaysOfWeek: []int{0, 3, 6}}
+	if !frequencyAllowsDay(w, wed) {
+		t.Error("expected Wednesday allowed when 3 is in days_of_week")
+	}
+	if !frequencyAllowsDay(w, sat) {
+		t.Error("expected Saturday allowed when 6 is in days_of_week")
+	}
+
+	tue := time.Date(2026, 4, 21, 10, 0, 0, 0, time.UTC) // Tuesday = 2
+	if frequencyAllowsDay(w, tue) {
+		t.Error("expected Tuesday blocked when 2 not in days_of_week")
+	}
+}
+
+func TestFrequencyAllowsDay_MonthlyLastDay(t *testing.T) {
+	w := models.MaintenanceWindow{Frequency: "monthly"}
+
+	// April 30 is the last day of April (30 days).
+	if !frequencyAllowsDay(w, time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)) {
+		t.Error("expected April 30 allowed (last day of April)")
+	}
+	// April 29 is not.
+	if frequencyAllowsDay(w, time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)) {
+		t.Error("expected April 29 blocked")
+	}
+	// Feb 28 in a non-leap year is the last day.
+	if !frequencyAllowsDay(w, time.Date(2025, 2, 28, 10, 0, 0, 0, time.UTC)) {
+		t.Error("expected Feb 28 2025 allowed (non-leap last day)")
+	}
+	// Feb 29 in a leap year is the last day.
+	if !frequencyAllowsDay(w, time.Date(2024, 2, 29, 10, 0, 0, 0, time.UTC)) {
+		t.Error("expected Feb 29 2024 allowed (leap year last day)")
+	}
+	// Dec 31 rollover sanity.
+	if !frequencyAllowsDay(w, time.Date(2026, 12, 31, 10, 0, 0, 0, time.UTC)) {
+		t.Error("expected Dec 31 allowed (year rollover last day)")
+	}
+}
+
+func TestSetAutomationConfig_RejectsInvalidFrequency(t *testing.T) {
+	adminRepo := testutil.NewMockAdminRepo("hash")
+	h := New(HandlerDeps{
+		Devices: &testutil.MockDeviceRepo{}, Telemetry: &testutil.MockTelemetryRepo{},
+		Events: &testutil.MockEventRepo{}, AdminRepo: adminRepo,
+	})
+	body := `{"os_patch":{"mode":"anytime","start_time":"00:00","end_time":"23:59","cooldown_minutes":60,"stagger_seconds":0},"docker_update":{"mode":"anytime","start_time":"00:00","end_time":"23:59","cooldown_minutes":30,"stagger_seconds":0,"frequency":"quarterly"}}`
+	req := httptest.NewRequest("PUT", "/api/v1/settings/automation", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.SetAutomationConfig(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for invalid frequency, got %d", w.Code)
+	}
+}
+
+func TestSetAutomationConfig_RejectsWeeklyWithoutDays(t *testing.T) {
+	adminRepo := testutil.NewMockAdminRepo("hash")
+	h := New(HandlerDeps{
+		Devices: &testutil.MockDeviceRepo{}, Telemetry: &testutil.MockTelemetryRepo{},
+		Events: &testutil.MockEventRepo{}, AdminRepo: adminRepo,
+	})
+	body := `{"os_patch":{"mode":"anytime","start_time":"00:00","end_time":"23:59","cooldown_minutes":60,"stagger_seconds":0},"docker_update":{"mode":"window","start_time":"23:00","end_time":"05:00","cooldown_minutes":30,"stagger_seconds":0,"frequency":"weekly","days_of_week":[]}}`
+	req := httptest.NewRequest("PUT", "/api/v1/settings/automation", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.SetAutomationConfig(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for weekly without days, got %d", w.Code)
+	}
+}
+
+func TestSetAutomationConfig_RejectsOutOfRangeDayOfWeek(t *testing.T) {
+	adminRepo := testutil.NewMockAdminRepo("hash")
+	h := New(HandlerDeps{
+		Devices: &testutil.MockDeviceRepo{}, Telemetry: &testutil.MockTelemetryRepo{},
+		Events: &testutil.MockEventRepo{}, AdminRepo: adminRepo,
+	})
+	body := `{"os_patch":{"mode":"anytime","start_time":"00:00","end_time":"23:59","cooldown_minutes":60,"stagger_seconds":0},"docker_update":{"mode":"window","start_time":"23:00","end_time":"05:00","cooldown_minutes":30,"stagger_seconds":0,"frequency":"weekly","days_of_week":[7]}}`
+	req := httptest.NewRequest("PUT", "/api/v1/settings/automation", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.SetAutomationConfig(w, req)
+	if w.Code != 400 {
+		t.Fatalf("expected 400 for day_of_week=7, got %d", w.Code)
+	}
+}
+
