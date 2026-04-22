@@ -722,6 +722,8 @@ export interface MaintenanceWindow {
   end_time: string
   cooldown_minutes: number
   stagger_seconds: number
+  frequency?: 'daily' | 'weekly' | 'monthly'
+  days_of_week?: number[] // 0 = Sunday .. 6 = Saturday
 }
 
 export interface AutomationConfig {

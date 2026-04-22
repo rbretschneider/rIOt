@@ -383,6 +383,9 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
                 />
               </div>
             </div>
+
+            {/* Frequency — which days the window applies on */}
+            <FrequencyPicker window={w} onChange={onChange} />
           </>
         )}
 
@@ -457,6 +460,88 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+const DAYS_OF_WEEK = [
+  { value: 0, short: 'Sun' },
+  { value: 1, short: 'Mon' },
+  { value: 2, short: 'Tue' },
+  { value: 3, short: 'Wed' },
+  { value: 4, short: 'Thu' },
+  { value: 5, short: 'Fri' },
+  { value: 6, short: 'Sat' },
+]
+
+function FrequencyPicker({ window: w, onChange }: {
+  window: MaintenanceWindow
+  onChange: (patch: Partial<MaintenanceWindow>) => void
+}) {
+  const freq = w.frequency ?? 'daily'
+  const selectedDays = new Set(w.days_of_week ?? [])
+
+  function toggleDay(d: number) {
+    const next = new Set(selectedDays)
+    if (next.has(d)) next.delete(d)
+    else next.add(d)
+    onChange({ days_of_week: Array.from(next).sort((a, b) => a - b) })
+  }
+
+  return (
+    <div>
+      <label className="text-xs text-gray-500 block mb-1.5">Frequency</label>
+      <select
+        value={freq}
+        onChange={e => {
+          const next = e.target.value as 'daily' | 'weekly' | 'monthly'
+          // Seed days_of_week when switching to weekly so the backend validation
+          // (requires >=1 day) doesn't reject the first save.
+          if (next === 'weekly' && selectedDays.size === 0) {
+            onChange({ frequency: next, days_of_week: [0] })
+          } else {
+            onChange({ frequency: next })
+          }
+        }}
+        className="px-2 py-1.5 text-sm bg-gray-800 border border-gray-700 rounded-md text-gray-200 focus:outline-none focus:border-gray-500"
+      >
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+
+      {freq === 'weekly' && (
+        <div className="mt-2">
+          <div className="flex flex-wrap gap-1.5">
+            {DAYS_OF_WEEK.map(d => {
+              const active = selectedDays.has(d.value)
+              return (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => toggleDay(d.value)}
+                  className={`px-2.5 py-1 text-xs rounded-md transition-colors border ${
+                    active
+                      ? 'bg-blue-500/20 text-blue-400 border-blue-600/50'
+                      : 'bg-gray-800 text-gray-400 hover:text-white border-gray-700'
+                  }`}
+                >
+                  {d.short}
+                </button>
+              )
+            })}
+          </div>
+          {selectedDays.size === 0 && (
+            <p className="text-xs text-amber-400 mt-1.5">Select at least one day.</p>
+          )}
+        </div>
+      )}
+
+      {freq === 'monthly' && (
+        <p className="text-xs text-gray-500 mt-1.5">
+          Runs only on the <span className="text-gray-300">last day of each month</span> (28/29/30/31 auto-adjusted).
+        </p>
+      )}
     </div>
   )
 }
