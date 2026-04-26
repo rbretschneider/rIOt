@@ -150,6 +150,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	if reg.DeviceID != "" {
 		existing, err := h.devices.FindByDeviceUUID(r.Context(), reg.DeviceID)
 		if err == nil && existing != nil {
+			wasOnline := existing.Status == models.DeviceStatusOnline
 			// Update existing device
 			existing.Hostname = reg.Hostname
 			existing.Arch = reg.Arch
@@ -186,7 +187,9 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 				APIKey:   apiKey,
 			})
 			h.hub.BroadcastDeviceUpdate(device)
-			h.eventGen.DeviceOnline(r.Context(), device.ID, device.Hostname)
+			if !wasOnline {
+				h.eventGen.DeviceOnline(r.Context(), device.ID, device.Hostname)
+			}
 			return
 		}
 	}

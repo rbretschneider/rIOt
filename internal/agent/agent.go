@@ -170,6 +170,12 @@ func (a *Agent) Run() error {
 		a.updateCheckLoop(ctx)
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		a.reregisterLoop(ctx)
+	}()
+
 	// Start Docker event watcher if Docker is available
 	if shouldEnableDocker(a.config.Docker) {
 		wg.Add(1)
@@ -254,6 +260,27 @@ func (a *Agent) telemetryLoop(ctx context.Context) {
 		case <-a.telemetryNow:
 			a.sendTelemetry(ctx)
 			ticker.Reset(interval) // reset ticker so we don't double-send
+		}
+	}
+}
+
+// reregisterLoop refreshes the hardware profile on the server once a day.
+// Hardware (CPU, RAM, board) only changes across boots, so the agent restart
+// path already covers most cases — this catches long-running agents whose
+// host hardware was changed without restarting the service.
+func (a *Agent) reregisterLoop(ctx context.Context) {
+	const interval = 24 * time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.register(ctx); err != nil {
+				slog.Warn("periodic re-registration failed", "error", err)
+			}
 		}
 	}
 }
