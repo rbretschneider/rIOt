@@ -39,11 +39,29 @@ type UpdateInfo struct {
 	ChecksumURL    string            `json:"checksum_url,omitempty"`
 }
 
+// defaultStartupBackoff governs how aggressively Start() retries the first
+// release-feed fetch when the server has just booted. A single transient
+// failure (e.g. Docker DNS not yet warm at container start) must not pin the
+// server in a "no release info" state for the full 6h steady-state interval,
+// since the fleet outdated badge and agent_update command both depend on
+// c.latest being populated.
+var defaultStartupBackoff = []time.Duration{
+	1 * time.Minute,
+	5 * time.Minute,
+	15 * time.Minute,
+	30 * time.Minute,
+	1 * time.Hour,
+}
+
 // Checker polls GitHub Releases for new versions.
 type Checker struct {
 	repo           string // "owner/repo"
 	currentVersion string
 	httpClient     *http.Client
+
+	// startupBackoff is the schedule used by Start() to retry the first
+	// successful fetch. Exposed for tests; defaults to defaultStartupBackoff.
+	startupBackoff []time.Duration
 
 	mu     sync.RWMutex
 	latest *GitHubRelease
@@ -55,13 +73,14 @@ func NewChecker(repo, currentVersion string) *Checker {
 		repo:           repo,
 		currentVersion: currentVersion,
 		httpClient:     &http.Client{Timeout: 15 * time.Second},
+		startupBackoff: defaultStartupBackoff,
 	}
 }
 
-// Start begins periodic polling for new releases.
+// Start begins periodic polling for new releases. On startup it retries with
+// backoff until the first successful fetch, then falls back to the 6h cadence.
 func (c *Checker) Start(ctx context.Context) {
-	// Check immediately on startup
-	c.check()
+	awaitFirstSuccess(ctx, c.check, c.startupBackoff)
 
 	ticker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
@@ -76,12 +95,39 @@ func (c *Checker) Start(ctx context.Context) {
 	}
 }
 
-func (c *Checker) check() {
+// awaitFirstSuccess invokes fn until it returns true or ctx is canceled,
+// waiting between attempts according to the backoff schedule. Once the
+// schedule is exhausted, retries continue at the final interval.
+func awaitFirstSuccess(ctx context.Context, fn func() bool, backoff []time.Duration) {
+	if fn() {
+		return
+	}
+	for i := 0; ; i++ {
+		wait := backoff[len(backoff)-1]
+		if i < len(backoff) {
+			wait = backoff[i]
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		if fn() {
+			return
+		}
+	}
+}
+
+// check fetches the latest release. Returns true on success (c.latest is now
+// populated), false on any failure path. The bool drives Start()'s retry loop —
+// silently failing without a signal would leave the server in the broken state
+// it just spent code complexity preventing.
+func (c *Checker) check() bool {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", c.repo)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		slog.Warn("update check: failed to create request", "error", err.Error())
-		return
+		return false
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "rIOt-server/"+c.currentVersion)
@@ -89,19 +135,19 @@ func (c *Checker) check() {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		slog.Warn("update check: request failed", "error", err.Error())
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("update check: unexpected status", "status", resp.StatusCode)
-		return
+		return false
 	}
 
 	var release GitHubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		slog.Warn("update check: decode failed", "error", err.Error())
-		return
+		return false
 	}
 
 	c.mu.Lock()
@@ -112,6 +158,7 @@ func (c *Checker) check() {
 	if latestVer != c.currentVersion && c.currentVersion != "dev" {
 		slog.Info("new version available", "current", c.currentVersion, "latest", latestVer)
 	}
+	return true
 }
 
 // AgentUpdateInfo returns update info for an agent with the given version, OS, and arch.

@@ -1,6 +1,8 @@
 package updates
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,6 +125,64 @@ func TestAgentUpdateInfo_NoDowngrade(t *testing.T) {
 
 	info := c.AgentUpdateInfo("2.6.6", "linux", "amd64", "")
 	assert.False(t, info.UpdateAvail, "agent ahead of latest release should not trigger update")
+}
+
+func TestAwaitFirstSuccess_ReturnsImmediatelyOnFirstSuccess(t *testing.T) {
+	var calls atomic.Int32
+	fn := func() bool {
+		calls.Add(1)
+		return true
+	}
+	start := time.Now()
+	awaitFirstSuccess(context.Background(), fn, []time.Duration{time.Second})
+	elapsed := time.Since(start)
+
+	assert.Equal(t, int32(1), calls.Load(), "fn should be called exactly once on immediate success")
+	assert.Less(t, elapsed, 100*time.Millisecond, "must not sleep when fn succeeds first try")
+}
+
+func TestAwaitFirstSuccess_RetriesUntilSuccess(t *testing.T) {
+	var calls atomic.Int32
+	// Fail twice, then succeed — covers the case where DNS or network is briefly
+	// unavailable at container startup but recovers within the backoff window.
+	fn := func() bool {
+		return calls.Add(1) >= 3
+	}
+	awaitFirstSuccess(context.Background(), fn, []time.Duration{
+		1 * time.Millisecond,
+		1 * time.Millisecond,
+		1 * time.Millisecond,
+	})
+
+	assert.Equal(t, int32(3), calls.Load(), "fn should be retried until it returns true")
+}
+
+func TestAwaitFirstSuccess_StopsOnContextCancel(t *testing.T) {
+	var calls atomic.Int32
+	fn := func() bool {
+		calls.Add(1)
+		return false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel after a short delay so a few retries can run with a tight backoff.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		awaitFirstSuccess(ctx, fn, []time.Duration{1 * time.Millisecond})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// expected
+	case <-time.After(time.Second):
+		t.Fatal("awaitFirstSuccess did not return after context cancel")
+	}
+	assert.Greater(t, calls.Load(), int32(0), "fn should have been called at least once before cancel")
 }
 
 func TestIsNewer(t *testing.T) {
