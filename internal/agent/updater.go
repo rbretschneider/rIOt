@@ -62,6 +62,11 @@ func (a *Agent) checkAndUpdate(ctx context.Context) {
 		return
 	}
 
+	if resp.LatestVersion == "" {
+		slog.Debug("update check: server has no release info yet, will retry next cycle")
+		return
+	}
+
 	if !resp.UpdateAvail {
 		slog.Debug("agent is up to date", "version", a.version)
 		return

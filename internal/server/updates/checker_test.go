@@ -86,7 +86,22 @@ func TestServerUpdateInfo_NoRelease(t *testing.T) {
 	info := c.ServerUpdateInfo()
 
 	assert.Equal(t, "1.0.0", info.CurrentVersion)
-	assert.Equal(t, "1.0.0", info.LatestVersion)
+	// LatestVersion must stay empty when the release feed has not been reached:
+	// defaulting to CurrentVersion would let the dashboard flag agents older
+	// than the server as outdated even when we have no real latest to compare to.
+	assert.Equal(t, "", info.LatestVersion)
+	assert.False(t, info.UpdateAvail)
+}
+
+func TestAgentUpdateInfo_NoReleaseLeavesLatestEmpty(t *testing.T) {
+	c := NewChecker("test/repo", "2.57.0")
+	info := c.AgentUpdateInfo("2.56.0", "linux", "amd64", "")
+
+	// Agent is older than the server's currentVersion, but with no release
+	// data we must not claim a latest — empty signals "unknown" so the agent
+	// does not report a fake "already up to date" success.
+	assert.Equal(t, "2.56.0", info.CurrentVersion)
+	assert.Equal(t, "", info.LatestVersion)
 	assert.False(t, info.UpdateAvail)
 }
 

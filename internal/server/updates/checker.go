@@ -115,10 +115,12 @@ func (c *Checker) check() {
 }
 
 // AgentUpdateInfo returns update info for an agent with the given version, OS, and arch.
+// LatestVersion is left empty when the server has not yet successfully reached the
+// release feed — callers must treat empty LatestVersion as "unknown", not as
+// "agent is current," to avoid masquerading an unreachable feed as a successful update.
 func (c *Checker) AgentUpdateInfo(agentVersion, goos, goarch, goarm string) *UpdateInfo {
 	info := &UpdateInfo{
 		CurrentVersion: agentVersion,
-		LatestVersion:  c.currentVersion,
 		UpdateAvail:    false,
 	}
 
@@ -154,10 +156,13 @@ func (c *Checker) AgentUpdateInfo(agentVersion, goos, goarch, goarm string) *Upd
 }
 
 // ServerUpdateInfo returns update info for the server/dashboard.
+// LatestVersion is left empty when the release feed has not yet been reached
+// successfully. Callers must treat empty LatestVersion as "unknown" — defaulting
+// to currentVersion would let the dashboard flag every agent older than the
+// server as outdated even when we have no real latest to compare against.
 func (c *Checker) ServerUpdateInfo() *UpdateInfo {
 	info := &UpdateInfo{
 		CurrentVersion: c.currentVersion,
-		LatestVersion:  c.currentVersion,
 		UpdateAvail:    false,
 	}
 

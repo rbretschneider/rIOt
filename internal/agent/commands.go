@@ -619,6 +619,13 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 	if err != nil {
 		return "error", fmt.Sprintf("update check failed: %v", err)
 	}
+	// Empty LatestVersion means the server has not been able to reach the
+	// release feed yet — we cannot tell whether this agent is current.
+	// Returning "success" here would mask the real failure (the server's
+	// GitHub DNS / network problem) as a completed update on the dashboard.
+	if resp.LatestVersion == "" {
+		return "error", "server has not reached release feed yet; cannot verify update"
+	}
 	if !resp.UpdateAvail {
 		return "success", fmt.Sprintf("agent is already up to date (%s)", a.version)
 	}
