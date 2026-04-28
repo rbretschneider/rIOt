@@ -11,10 +11,11 @@ export interface ChartPoint {
   value: number
 }
 
-/** Per-device time series for the per-device chart cards. CPU, RAM, and disk
- * are native percentages. Load is normalized as min(load_avg_1m * 25, 100) so
- * all four lines share a 0-100% Y-axis. netRxPoints / netTxPoints are bytes/sec
- * (raw values, not normalised) for the sub-chart added by FLEET-NET. */
+/** Per-device time series for the per-device chart cards. CPU, RAM, and disk-I/O
+ * are native percentages (disk-I/O is the busy-time of the most-utilised drive,
+ * matching `disk_io_percent` on DeviceDetail). Load is normalized as
+ * min(load_avg_1m * 25, 100) so all four lines share a 0-100% Y-axis.
+ * netRxPoints / netTxPoints are bytes/sec for the sub-chart added by FLEET-NET. */
 export interface DeviceSeries {
   deviceId: string
   hostname: string
@@ -78,7 +79,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
       hostname: hostnameByID.get(deviceId) ?? deviceId,
       cpuPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.cpu_percent ?? 0 })),
       memPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.mem_percent ?? 0 })),
-      diskPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_root_percent ?? 0 })),
+      diskPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_io_percent ?? 0 })),
       loadPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: loadPctOf(h.data) })),
       netRxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_rx_bytes_sec) })),
       netTxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_tx_bytes_sec) })),
@@ -103,7 +104,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
         ...s,
         cpuPoints:   [...s.cpuPoints,   { timestamp: ts, value: hb.cpu_percent ?? 0 }].slice(-MAX_POINTS),
         memPoints:   [...s.memPoints,   { timestamp: ts, value: hb.mem_percent ?? 0 }].slice(-MAX_POINTS),
-        diskPoints:  [...s.diskPoints,  { timestamp: ts, value: hb.disk_root_percent ?? 0 }].slice(-MAX_POINTS),
+        diskPoints:  [...s.diskPoints,  { timestamp: ts, value: hb.disk_io_percent ?? 0 }].slice(-MAX_POINTS),
         loadPoints:  [...s.loadPoints,  { timestamp: ts, value: loadPctOf(hb) }].slice(-MAX_POINTS),
         netRxPoints: [...s.netRxPoints, { timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }].slice(-MAX_POINTS),
         netTxPoints: [...s.netTxPoints, { timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }].slice(-MAX_POINTS),
@@ -119,7 +120,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
           hostname:    hostnameByID.get(deviceId) ?? deviceId,
           cpuPoints:   [{ timestamp: ts, value: hb.cpu_percent ?? 0 }],
           memPoints:   [{ timestamp: ts, value: hb.mem_percent ?? 0 }],
-          diskPoints:  [{ timestamp: ts, value: hb.disk_root_percent ?? 0 }],
+          diskPoints:  [{ timestamp: ts, value: hb.disk_io_percent ?? 0 }],
           loadPoints:  [{ timestamp: ts, value: loadPctOf(hb) }],
           netRxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }],
           netTxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }],

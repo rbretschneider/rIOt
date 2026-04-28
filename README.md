@@ -1120,7 +1120,7 @@ Navigate to it via the **Dashboard** link in the header, or go directly to `http
 
 **Per-device performance charts** — One card per device. Each card carries two stacked charts over the last 60 minutes:
 
-- **Top chart** (0–100% Y-axis, 220px tall): four lines — **CPU%** (blue), **RAM%** (green), **root-disk%** (amber), **load saturation** (purple, computed as `min(load_avg_1m × 25, 100)`).
+- **Top chart** (0–100% Y-axis, 220px tall): four lines — **CPU%** (blue), **RAM%** (green), **Disk I/O %** (amber, busy-time of the most-utilised drive — same field as the device detail page), **load saturation** (purple, computed as `min(load_avg_1m × 25, 100)`).
 - **Bottom chart** (bytes/sec Y-axis, 100px tall): two lines — network **In** (cyan) and **Out** (orange). Y-axis auto-scales (B/s → KB/s → MB/s → GB/s) and the tooltip shows the rate in human-readable units. Counters are summed across all non-loopback interfaces (physical, bridges, virtual NICs, etc.).
 
 Colors are consistent across every device card so a glance comparison is meaningful. Cards lay out two-up at viewports ≥768px, one column below.
@@ -1141,7 +1141,6 @@ The full design targets desktop viewports of 768px and above. Below 768px the da
 
 ### v1 limitations
 
-- **Disk line is root mount only.** The disk-percent line on each per-device card reflects root-mount utilization only.
 - **Network is host-summed, not per-interface.** Throughput is summed across all non-loopback interfaces. Per-interface drilldown lives on the device detail page.
 - **Fixed 60-minute window.** The dashboard always shows the last 60 minutes. No time-range selector exists in v1.
 

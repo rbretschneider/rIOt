@@ -15,7 +15,7 @@ import { formatPercent, formatBytesPerSec, formatBytesPerSecAxis } from '../../u
 const METRICS = [
   { key: 'cpu', label: 'CPU',  color: '#3b82f6' },
   { key: 'mem', label: 'RAM',  color: '#10b981' },
-  { key: 'disk', label: 'Disk', color: '#f59e0b' },
+  { key: 'disk', label: 'Disk I/O', color: '#f59e0b' },
   { key: 'load', label: 'Load', color: '#a855f7' },
 ] as const
 
@@ -93,7 +93,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
       data-testid={`device-chart-${series.deviceId}`}
     >
       <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white truncate">{series.hostname}</h3>
+        <h3 className="text-sm font-semibold text-white truncate uppercase tracking-wide">{series.hostname}</h3>
         {last && (
           <div className="flex items-center gap-3 text-[11px] tabular-nums">
             {METRICS.map(m => {

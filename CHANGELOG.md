@@ -60,6 +60,8 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 ### Changed
 
 - [FLEET-DASH] Header navigation gains a "Dashboard" link pointing to `/dashboard`. The existing `/` route and `FleetOverview` device table are unchanged.
+- [FLEET-DASH] Per-device card "Disk" line now plots `disk_io_percent` (busy-time of the most-utilised drive) instead of `disk_root_percent` (root-mount fill level). Fill level is static information that doesn't belong on a 60-min line chart; busy-time is the same field shown on the device detail page. Label updated from "Disk" to "Disk I/O".
+- [FLEET-DASH] Hostnames on per-device cards render in uppercase for visual consistency across the dashboard.
 
 - [POOL-002] `internal/models.IsPoolFSType()` replaced by `IsPoolFilesystem(fsType, device string) bool`. The new function combines filesystem-type and device-path detection in one call. The disk collector call site in `internal/agent/collectors/disk.go` is updated accordingly. Any code calling `IsPoolFSType` directly must migrate to `IsPoolFilesystem`.
 - [POOL-002] `POOL_FS_TYPES` in `web/src/utils/filesystem.ts` and `PoolFSTypes` in `internal/models/telemetry.go` each gain two entries: `shfs` and `fuse.shfs`. The frontend `isPoolFilesystem()` fallback (used for pre-POOL-002 agents) now also checks device path prefixes in addition to filesystem type.
@@ -71,5 +73,4 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 ### Known Limitations (v1)
 
 - [FLEET-DASH] The container leaderboard's "Restarts" sort uses a cumulative restart count rather than a true rolling 60-minute window. A follow-up story is needed to add rolling restart-count projection from historical telemetry.
-- [FLEET-DASH] Disk line on per-device cards reflects root-mount utilization only. Non-root mounts are not surfaced in v1.
 - [FLEET-NET] Network throughput is host-summed only. Per-interface drilldown lives on the device detail page, not the fleet dashboard.
