@@ -241,6 +241,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Post("/api/v1/fleet/bulk-update", h.BulkUpdateAgents)
 		r.Post("/api/v1/fleet/bulk-patch", h.BulkPatchDevices)
 
+		// Fleet dashboard (FLEET-DASH)
+		r.Get("/api/v1/fleet/heartbeats", h.FleetHeartbeats)
+		r.Get("/api/v1/fleet/containers", h.FleetContainers)
+
 		// Security
 		r.Get("/api/v1/security/overview", h.SecurityOverview)
 		r.Get("/api/v1/security/devices", h.SecurityDevices)

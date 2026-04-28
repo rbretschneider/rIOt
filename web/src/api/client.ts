@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -372,6 +372,13 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.json()
   },
+
+  // Fleet Dashboard (FLEET-DASH)
+  getFleetHeartbeats: (window = '60m') =>
+    fetchJSON<FleetHeartbeatsResponse>(`${BASE}/fleet/heartbeats?window=${encodeURIComponent(window)}`),
+
+  getFleetContainers: () =>
+    fetchJSON<FleetContainerRow[]>(`${BASE}/fleet/containers`),
 }
 
 export const authApi = {

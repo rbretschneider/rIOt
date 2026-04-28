@@ -11,6 +11,15 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Added
 
+- [FLEET-DASH] New `/dashboard` route: a fleet-wide health view separate from the existing `/` device table. The dashboard renders five sections — a KPI strip, per-device small-multiples charts, a device heatmap grid, a container leaderboard, and a live activity river — all driven by existing heartbeat, telemetry, and event data. Navigation link added to the header alongside Devices, Probes, Security, and Alerts.
+- [FLEET-DASH] New `GET /api/v1/fleet/heartbeats?window=60m` endpoint (admin auth). Returns the last 60 minutes of heartbeats for every device in a single round trip, grouped by device ID, plus a list of device IDs that have GPU telemetry. The `window` parameter accepts values in the range `1s` – `3600s` / `1m` – `60m`; values outside this range or with invalid format return 400. The fleet-wide 60-minute cap is deliberate and does not match the per-device endpoint's 168-hour cap.
+- [FLEET-DASH] New `GET /api/v1/fleet/containers` endpoint (admin auth). Returns a flat list of containers across the fleet with CPU%, memory usage/limit, restart count, update-available flag, Compose stack name, and device hostname. The response projects only the fields needed by the leaderboard — full telemetry blobs, environment variables, mount paths, networks, and container labels (other than the Compose project name) are not included.
+- [FLEET-DASH] The existing WebSocket connection (`/ws`) is reused for dashboard live updates. No new WebSocket topic or second connection is introduced. KPI values update on every heartbeat; chart and sparkline re-renders are batched to a 5-second cadence.
+- [FLEET-DASH] Heatmap grid sorts devices by a composite stress score (descending): `0.4 × CPU% + 0.3 × RAM% + 0.2 × root-disk% + 0.1 × min(load_avg_1m × 25, 100)`. Offline devices sort to the end regardless of their last-known score.
+- [FLEET-DASH] GPU utilization KPI tile appears only when at least one device in the fleet reports GPU telemetry; the tile slot is absent otherwise.
+- [FLEET-DASH] Dashboard degrades gracefully when the WebSocket disconnects: a non-blocking banner appears and all sections continue showing the last-known values. The banner clears automatically on reconnect.
+- [FLEET-DASH] Full design targets desktop viewports ≥768px. Below 768px the layout stacks vertically and remains readable; no horizontal page scroll occurs at any viewport width down to 360px.
+
 - [SYS-EXPORT-001] New "Download Summary" and "Copy to Clipboard" buttons on the device detail page that export a device's hardware and software inventory as a Markdown document. The export covers system identity (hostname, UUID, board, BIOS), OS, CPU, memory, storage (physical drives with SMART health + filesystems), GPUs, network interfaces, USB devices, Docker containers (name, image, state, status only), and UPS. Sections are omitted entirely when the device has no data for that category. The downloaded file is named `{hostname}-summary-{YYYY-MM-DD}.md`. Both buttons are disabled when the device has no telemetry data. The clipboard button shows a "Copied!" confirmation for 2 seconds on success and "Copy Failed" on error.
 - [SYS-EXPORT-001] New `GET /api/v1/devices/{id}/summary` endpoint that returns a pre-formatted Markdown inventory document (`text/markdown; charset=utf-8`) generated from the device's most recent telemetry snapshot. Returns 404 when the device does not exist or has no telemetry data. Requires admin JWT authentication.
 
@@ -48,9 +57,16 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Changed
 
+- [FLEET-DASH] Header navigation gains a "Dashboard" link pointing to `/dashboard`. The existing `/` route and `FleetOverview` device table are unchanged.
+
 - [POOL-002] `internal/models.IsPoolFSType()` replaced by `IsPoolFilesystem(fsType, device string) bool`. The new function combines filesystem-type and device-path detection in one call. The disk collector call site in `internal/agent/collectors/disk.go` is updated accordingly. Any code calling `IsPoolFSType` directly must migrate to `IsPoolFilesystem`.
 - [POOL-002] `POOL_FS_TYPES` in `web/src/utils/filesystem.ts` and `PoolFSTypes` in `internal/models/telemetry.go` each gain two entries: `shfs` and `fuse.shfs`. The frontend `isPoolFilesystem()` fallback (used for pre-POOL-002 agents) now also checks device path prefixes in addition to filesystem type.
 
 - [SEC-001] The Security page is now the primary location for security posture data. The per-device security score column has moved from Fleet Overview to the Security page. Fleet Overview no longer shows security scores.
 - [SEC-001] `GET /api/v1/security/devices` response extended with three new fields: `pending_security_count` (int), `unattended_upgrades` (bool or null), `certs_expiring_soon` (int). Existing consumers that ignore unknown fields are unaffected.
 - [SEC-001] `GET /api/v1/security/overview` response extended with two new fields: `certs_expiring_soon` (int), `total_certs` (int).
+
+### Known Limitations (v1)
+
+- [FLEET-DASH] The container leaderboard "Restart anomalies" sort and "Restarted recently" filter chip use a cumulative restart count (`restart_count > 3`) rather than a true rolling 60-minute window. This approximation is documented inline. A follow-up story is needed to add rolling restart-count projection from historical telemetry.
+- [FLEET-DASH] The "Network in/out" small-multiples chart (FR-020) is deferred. Heartbeats do not yet carry per-interface byte rates; the dashboard ships with three charts (CPU per device, memory per device, disk I/O) instead of four. A follow-up story will extend the heartbeat schema and reintroduce the chart.

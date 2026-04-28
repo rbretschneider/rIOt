@@ -5,6 +5,7 @@ import { api } from './api/client'
 import { useAuth } from './hooks/useAuth'
 import { WebSocketProvider, useWebSocket } from './contexts/WebSocketProvider'
 import type { WSMessage } from './types/models'
+import Dashboard from './pages/Dashboard'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
 import DeviceContainers from './pages/DeviceContainers'
@@ -319,6 +320,7 @@ export default function App() {
               {/* Desktop nav */}
               <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
+                <NavLink to="/dashboard">Dashboard</NavLink>
                 <NavLink to="/alert-rules">Alert Rules</NavLink>
                 <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/security">Security</NavLink>
@@ -348,6 +350,7 @@ export default function App() {
         {mobileMenuOpen && (
           <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
             <NavLink to="/">Fleet</NavLink>
+            <NavLink to="/dashboard">Dashboard</NavLink>
             <NavLink to="/alert-rules">Alert Rules</NavLink>
             <NavLink to="/probes">Probes</NavLink>
             <NavLink to="/security">Security</NavLink>
@@ -385,6 +388,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Routes>
           <Route path="/" element={<FleetOverview />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/devices/:id/containers" element={<DeviceContainers />} />
           <Route path="/devices/:id/containers/:cid" element={<ContainerDetailPage />} />

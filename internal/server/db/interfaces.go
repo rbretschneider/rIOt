@@ -43,6 +43,42 @@ type TelemetryRepository interface {
 	GetHeartbeatHistory(ctx context.Context, deviceID string, since time.Time) ([]models.Heartbeat, error)
 	PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error)
 	PurgeSnapshots(ctx context.Context, olderThan time.Time) (int64, error)
+	// GetFleetHeartbeats returns heartbeats for all devices since the given time,
+	// grouped by device ID. Used by the fleet dashboard endpoint.
+	GetFleetHeartbeats(ctx context.Context, since time.Time) (map[string][]models.Heartbeat, error)
+	// GetGPUDeviceIDs returns the IDs of devices whose latest telemetry snapshot
+	// contains GPU data (gpu_telemetry.gpus length > 0).
+	GetGPUDeviceIDs(ctx context.Context) ([]string, error)
+	// GetFleetContainerLeaderboard returns a slim container projection per device
+	// from the latest telemetry snapshots. Uses JSONB projection to avoid decoding
+	// full blobs (AD-011).
+	GetFleetContainerLeaderboard(ctx context.Context) ([]FleetContainerProjection, error)
+}
+
+// FleetContainerProjection holds the per-device container data returned by the
+// projected leaderboard query. Only the fields the leaderboard renders are
+// included; full telemetry blobs are never decoded server-side (AD-011).
+type FleetContainerProjection struct {
+	DeviceID   string
+	Containers []FleetContainerProjectionRow
+}
+
+// FleetContainerProjectionRow is the per-container slice of a
+// FleetContainerProjection, mirroring only the fields the dashboard leaderboard
+// requires.
+type FleetContainerProjectionRow struct {
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Image           string            `json:"image"`
+	State           string            `json:"state"`
+	CPUPercent      float64           `json:"cpu_percent"`
+	MemUsage        int64             `json:"mem_usage"`
+	MemLimit        int64             `json:"mem_limit"`
+	RestartCount    int               `json:"restart_count"`
+	UpdateAvailable *bool             `json:"update_available,omitempty"`
+	// Labels is retained solely to extract com.docker.compose.project for the
+	// stack column. The handler MUST NOT serialize any other label key (AD-011/AD-012).
+	Labels          map[string]string `json:"labels,omitempty"`
 }
 
 // EventRepository defines the interface for event database operations.

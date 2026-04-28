@@ -10,6 +10,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 )
 
+
 // --- MockDeviceRepo ---
 
 type MockDeviceRepo struct {
@@ -268,6 +269,10 @@ type MockTelemetryRepo struct {
 	Snapshots  map[string][]models.TelemetrySnapshot // deviceID → snapshots
 	Heartbeats map[string][]models.Heartbeat
 	Err        error
+	// GetAllLatestSnapshotsCalled is set to true whenever GetAllLatestSnapshots
+	// is invoked. Tests for AD-011 assert this is NOT set after calling the
+	// FleetContainers handler.
+	GetAllLatestSnapshotsCalled bool
 }
 
 func NewMockTelemetryRepo() *MockTelemetryRepo {
@@ -306,6 +311,9 @@ func (m *MockTelemetryRepo) GetLatestSnapshot(_ context.Context, deviceID string
 }
 
 func (m *MockTelemetryRepo) GetAllLatestSnapshots(_ context.Context) ([]models.TelemetrySnapshot, error) {
+	// Record the call so AD-011 spy tests can assert this was NOT invoked
+	// during FleetContainers handler execution.
+	m.GetAllLatestSnapshotsCalled = true
 	if m.Err != nil {
 		return nil, m.Err
 	}
@@ -371,6 +379,90 @@ func (m *MockTelemetryRepo) PurgeHeartbeats(_ context.Context, _ time.Time) (int
 
 func (m *MockTelemetryRepo) PurgeSnapshots(_ context.Context, _ time.Time) (int64, error) {
 	return 0, m.Err
+}
+
+// FleetHeartbeats is the fixture map set by tests to control GetFleetHeartbeats output.
+func (m *MockTelemetryRepo) GetFleetHeartbeats(_ context.Context, since time.Time) (map[string][]models.Heartbeat, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	result := make(map[string][]models.Heartbeat)
+	for deviceID, hbs := range m.Heartbeats {
+		for _, hb := range hbs {
+			if !hb.Timestamp.Before(since) {
+				result[deviceID] = append(result[deviceID], hb)
+			}
+		}
+	}
+	return result, nil
+}
+
+// GetGPUDeviceIDs returns device IDs from snapshots that have GPU telemetry.
+// The mock checks the in-memory snapshot store for the presence of gpu_telemetry.gpus.
+func (m *MockTelemetryRepo) GetGPUDeviceIDs(_ context.Context) ([]string, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	var ids []string
+	for deviceID, snaps := range m.Snapshots {
+		if len(snaps) == 0 {
+			continue
+		}
+		latest := snaps[len(snaps)-1]
+		if latest.Data.GPUTelemetry != nil && len(latest.Data.GPUTelemetry.GPUs) > 0 {
+			ids = append(ids, deviceID)
+		}
+	}
+	return ids, nil
+}
+
+// FleetContainerLeaderboardFixture allows tests to set up the fixture data for
+// GetFleetContainerLeaderboard without going through the snapshot store.
+type FleetContainerLeaderboardFixture struct {
+	Rows     []db.FleetContainerProjection
+	GetAllLatestSnapshotsCalled bool
+}
+
+// GetFleetContainerLeaderboard returns the fixture data. It is instrumented to
+// record calls for the AD-011 spy-test that verifies GetAllLatestSnapshots is
+// NOT called during fleet-container requests.
+func (m *MockTelemetryRepo) GetFleetContainerLeaderboard(_ context.Context) ([]db.FleetContainerProjection, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	// Build a slim projection from snapshot store if no explicit fixture is set.
+	var result []db.FleetContainerProjection
+	for deviceID, snaps := range m.Snapshots {
+		if len(snaps) == 0 {
+			continue
+		}
+		latest := snaps[len(snaps)-1]
+		if latest.Data.Docker == nil {
+			continue
+		}
+		proj := db.FleetContainerProjection{DeviceID: deviceID}
+		for _, c := range latest.Data.Docker.Containers {
+			var labels map[string]string
+			if c.Labels != nil {
+				labels = c.Labels
+			}
+			updateAvail := c.UpdateAvailable
+			proj.Containers = append(proj.Containers, db.FleetContainerProjectionRow{
+				ID:              c.ID,
+				Name:            c.Name,
+				Image:           c.Image,
+				State:           c.State,
+				CPUPercent:      c.CPUPercent,
+				MemUsage:        c.MemUsage,
+				MemLimit:        c.MemLimit,
+				RestartCount:    c.RestartCount,
+				UpdateAvailable: updateAvail,
+				Labels:          labels,
+			})
+		}
+		result = append(result, proj)
+	}
+	return result, nil
 }
 
 // --- MockEventRepo ---

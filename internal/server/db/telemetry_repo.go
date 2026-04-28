@@ -197,3 +197,98 @@ func (r *TelemetryRepo) PurgeSnapshots(ctx context.Context, olderThan time.Time)
 	}
 	return tag.RowsAffected(), nil
 }
+
+// GetFleetHeartbeats returns heartbeats for all devices since the given time,
+// grouped by device ID. A single query is used so the dashboard can fetch 60
+// minutes of fleet-wide data in one round trip (AD-001).
+func (r *TelemetryRepo) GetFleetHeartbeats(ctx context.Context, since time.Time) (map[string][]models.Heartbeat, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT device_id, timestamp, data
+		 FROM heartbeats
+		 WHERE timestamp >= $1
+		 ORDER BY device_id, timestamp ASC`,
+		since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string][]models.Heartbeat)
+	for rows.Next() {
+		var hb models.Heartbeat
+		var dataJSON []byte
+		if err := rows.Scan(&hb.DeviceID, &hb.Timestamp, &dataJSON); err != nil {
+			return nil, err
+		}
+		json.Unmarshal(dataJSON, &hb.Data)
+		result[hb.DeviceID] = append(result[hb.DeviceID], hb)
+	}
+	return result, rows.Err()
+}
+
+// GetGPUDeviceIDs returns the IDs of devices whose latest telemetry snapshot
+// contains at least one GPU in gpu_telemetry.gpus. Uses JSONB projection to
+// avoid full-blob decode (AD-008).
+func (r *TelemetryRepo) GetGPUDeviceIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT device_id
+		 FROM (
+			SELECT DISTINCT ON (device_id) device_id, data
+			FROM telemetry_snapshots
+			ORDER BY device_id, timestamp DESC
+		 ) latest
+		 WHERE jsonb_array_length(data->'gpu_telemetry'->'gpus') > 0`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetFleetContainerLeaderboard returns a slim container projection per device
+// from the latest telemetry snapshots. Uses jsonb_path_query_array to project
+// only the container sub-tree, avoiding full-blob decode on the server (AD-011).
+func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]FleetContainerProjection, error) {
+	rows, err := r.db.Pool.Query(ctx,
+		`SELECT
+			device_id,
+			jsonb_path_query_array(
+				data,
+				'$.docker.containers[*] ?
+				   (@.state == "running" || @.state == "restarting" || @.state == "exited" ||
+				    @.state == "paused"  || @.state == "created"    || @.state == "dead")'
+			) AS containers
+		 FROM (
+			SELECT DISTINCT ON (device_id) device_id, data
+			FROM telemetry_snapshots
+			ORDER BY device_id, timestamp DESC
+		 ) latest
+		 WHERE data ? 'docker'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []FleetContainerProjection
+	for rows.Next() {
+		var proj FleetContainerProjection
+		var containersJSON []byte
+		if err := rows.Scan(&proj.DeviceID, &containersJSON); err != nil {
+			return nil, err
+		}
+		if len(containersJSON) > 0 && string(containersJSON) != "null" {
+			json.Unmarshal(containersJSON, &proj.Containers)
+		}
+		result = append(result, proj)
+	}
+	return result, rows.Err()
+}

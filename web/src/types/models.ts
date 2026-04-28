@@ -800,3 +800,41 @@ export interface ProbeResult {
   metadata: Record<string, unknown>
   created_at: string
 }
+
+// --- Fleet Dashboard (FLEET-DASH) ---
+
+/** Per-heartbeat shape in FleetHeartbeatsResponse.devices */
+export interface FleetHeartbeat {
+  device_id: string
+  timestamp: string
+  data: HeartbeatData
+}
+
+/** Response from GET /api/v1/fleet/heartbeats?window=60m */
+export interface FleetHeartbeatsResponse {
+  since: string
+  until: string
+  /** Map of deviceId → heartbeat array (chronological order) */
+  devices: Record<string, FleetHeartbeat[]>
+  /** Device IDs whose latest telemetry contains GPU data */
+  devices_with_gpu: string[]
+}
+
+/**
+ * Per-container row from GET /api/v1/fleet/containers.
+ * Strict 12-field allowlist per AD-012 — no Labels map.
+ */
+export interface FleetContainerRow {
+  device_id: string
+  hostname: string
+  container_id: string
+  container_name: string
+  image: string
+  stack: string
+  state: string
+  cpu_percent: number
+  mem_usage: number
+  mem_limit: number
+  restart_count: number
+  update_available?: boolean | null
+}
