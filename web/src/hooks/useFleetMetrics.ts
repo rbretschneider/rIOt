@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
@@ -13,7 +13,8 @@ export interface ChartPoint {
 
 /** Per-device time series for the per-device chart cards. CPU, RAM, and disk
  * are native percentages. Load is normalized as min(load_avg_1m * 25, 100) so
- * all four lines share a 0-100% Y-axis. */
+ * all four lines share a 0-100% Y-axis. netRxPoints / netTxPoints are bytes/sec
+ * (raw values, not normalised) for the sub-chart added by FLEET-NET. */
 export interface DeviceSeries {
   deviceId: string
   hostname: string
@@ -21,6 +22,8 @@ export interface DeviceSeries {
   memPoints: ChartPoint[]
   diskPoints: ChartPoint[]
   loadPoints: ChartPoint[]
+  netRxPoints: ChartPoint[]
+  netTxPoints: ChartPoint[]
 }
 
 export interface UseFleetMetricsResult {
@@ -32,6 +35,17 @@ const MAX_POINTS = 240 // 60 min @ 15s cadence
 
 function loadPctOf(hb: HeartbeatData): number {
   return Math.min((hb.load_avg_1m ?? 0) * 25, 100)
+}
+
+/**
+ * Coerces a value to a non-negative finite number.
+ * Guards against NaN, +Infinity, -Infinity, and negative values that could
+ * arrive from malformed or malicious heartbeat payloads (SEC-FLEET-NET-001).
+ * The ?? 0 operator only handles null/undefined; this handles non-finite
+ * IEEE-754 values that would otherwise corrupt recharts axis range computation.
+ */
+function finiteOrZero(v: number | undefined): number {
+  return Number.isFinite(v) && (v as number) >= 0 ? (v as number) : 0
 }
 
 /**
@@ -62,10 +76,12 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
     return Object.entries(heartbeatsMap).map(([deviceId, hbs]) => ({
       deviceId,
       hostname: hostnameByID.get(deviceId) ?? deviceId,
-      cpuPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: h.data.cpu_percent ?? 0 })),
-      memPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: h.data.mem_percent ?? 0 })),
-      diskPoints: hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_root_percent ?? 0 })),
-      loadPoints: hbs.map(h => ({ timestamp: h.timestamp, value: loadPctOf(h.data) })),
+      cpuPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.cpu_percent ?? 0 })),
+      memPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.mem_percent ?? 0 })),
+      diskPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_root_percent ?? 0 })),
+      loadPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: loadPctOf(h.data) })),
+      netRxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_rx_bytes_sec) })),
+      netTxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_tx_bytes_sec) })),
     }))
   }, [heartbeatsMap, hostnameByID])
 
@@ -78,17 +94,19 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
 
   const tick = useDashboardTick(5_000)
 
-  useMemo(() => {
+  useEffect(() => {
     const updated = historicalSeries.map(s => {
       const hb = hbBufferRef.current.get(s.deviceId)
       if (!hb) return s
       const ts = new Date().toISOString()
       return {
         ...s,
-        cpuPoints:  [...s.cpuPoints,  { timestamp: ts, value: hb.cpu_percent ?? 0 }].slice(-MAX_POINTS),
-        memPoints:  [...s.memPoints,  { timestamp: ts, value: hb.mem_percent ?? 0 }].slice(-MAX_POINTS),
-        diskPoints: [...s.diskPoints, { timestamp: ts, value: hb.disk_root_percent ?? 0 }].slice(-MAX_POINTS),
-        loadPoints: [...s.loadPoints, { timestamp: ts, value: loadPctOf(hb) }].slice(-MAX_POINTS),
+        cpuPoints:   [...s.cpuPoints,   { timestamp: ts, value: hb.cpu_percent ?? 0 }].slice(-MAX_POINTS),
+        memPoints:   [...s.memPoints,   { timestamp: ts, value: hb.mem_percent ?? 0 }].slice(-MAX_POINTS),
+        diskPoints:  [...s.diskPoints,  { timestamp: ts, value: hb.disk_root_percent ?? 0 }].slice(-MAX_POINTS),
+        loadPoints:  [...s.loadPoints,  { timestamp: ts, value: loadPctOf(hb) }].slice(-MAX_POINTS),
+        netRxPoints: [...s.netRxPoints, { timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }].slice(-MAX_POINTS),
+        netTxPoints: [...s.netTxPoints, { timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }].slice(-MAX_POINTS),
       }
     })
 
@@ -98,11 +116,13 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
         const ts = new Date().toISOString()
         updated.push({
           deviceId,
-          hostname: hostnameByID.get(deviceId) ?? deviceId,
-          cpuPoints:  [{ timestamp: ts, value: hb.cpu_percent ?? 0 }],
-          memPoints:  [{ timestamp: ts, value: hb.mem_percent ?? 0 }],
-          diskPoints: [{ timestamp: ts, value: hb.disk_root_percent ?? 0 }],
-          loadPoints: [{ timestamp: ts, value: loadPctOf(hb) }],
+          hostname:    hostnameByID.get(deviceId) ?? deviceId,
+          cpuPoints:   [{ timestamp: ts, value: hb.cpu_percent ?? 0 }],
+          memPoints:   [{ timestamp: ts, value: hb.mem_percent ?? 0 }],
+          diskPoints:  [{ timestamp: ts, value: hb.disk_root_percent ?? 0 }],
+          loadPoints:  [{ timestamp: ts, value: loadPctOf(hb) }],
+          netRxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }],
+          netTxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }],
         })
       }
     }
@@ -111,7 +131,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
   }, [tick]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Seed series from REST data on initial load
-  useMemo(() => {
+  useEffect(() => {
     if (heartbeatsLoading) return
     setPerDeviceSeries(historicalSeries)
   }, [heartbeatsLoading, historicalSeries])

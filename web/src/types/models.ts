@@ -42,6 +42,8 @@ export interface HeartbeatData {
   disk_read_bytes_sec?: number
   disk_write_bytes_sec?: number
   disk_io_percent?: number
+  net_rx_bytes_sec?: number
+  net_tx_bytes_sec?: number
   agent_version?: string
   log_errors?: number
 }

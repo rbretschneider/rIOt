@@ -1118,7 +1118,12 @@ Navigate to it via the **Dashboard** link in the header, or go directly to `http
 
 ### Sections
 
-**Per-device performance charts** — One card per device. Each card shows four time-series lines over the last 60 minutes on a 0–100% Y-axis: **CPU%** (blue), **RAM%** (green), **root-disk%** (amber), and **load saturation** (purple, computed as `min(load_avg_1m × 25, 100)`). Colors are consistent across every device card so a glance comparison is meaningful. Cards stack to two columns on wide viewports, one column on narrow.
+**Per-device performance charts** — One card per device. Each card carries two stacked charts over the last 60 minutes:
+
+- **Top chart** (0–100% Y-axis, 220px tall): four lines — **CPU%** (blue), **RAM%** (green), **root-disk%** (amber), **load saturation** (purple, computed as `min(load_avg_1m × 25, 100)`).
+- **Bottom chart** (bytes/sec Y-axis, 100px tall): two lines — network **In** (cyan) and **Out** (orange). Y-axis auto-scales (B/s → KB/s → MB/s → GB/s) and the tooltip shows the rate in human-readable units. Counters are summed across all non-loopback interfaces (physical, bridges, virtual NICs, etc.).
+
+Colors are consistent across every device card so a glance comparison is meaningful. Cards lay out two-up at viewports ≥768px, one column below.
 
 **Container leaderboard** — A top-10 table of containers across the fleet, sortable by CPU, memory, restart count, or update availability. Each row shows hostname, container name, Compose stack, current CPU%, memory in MiB, restart count, and an update-available indicator.
 
@@ -1136,8 +1141,8 @@ The full design targets desktop viewports of 768px and above. Below 768px the da
 
 ### v1 limitations
 
-- **Network throughput line deferred.** The heartbeat model does not yet carry per-interface byte rates. The four lines on each per-device card are CPU/RAM/Disk/Load. A follow-up story (FLEET-NET) will extend the heartbeat schema and add a network throughput line to each card.
 - **Disk line is root mount only.** The disk-percent line on each per-device card reflects root-mount utilization only.
+- **Network is host-summed, not per-interface.** Throughput is summed across all non-loopback interfaces. Per-interface drilldown lives on the device detail page.
 - **Fixed 60-minute window.** The dashboard always shows the last 60 minutes. No time-range selector exists in v1.
 
 ---

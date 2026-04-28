@@ -73,10 +73,12 @@ const BASE_DEVICE_SERIES = [
   {
     deviceId: 'dev-1',
     hostname: 'node-1',
-    cpuPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 45 }],
-    memPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 60 }],
-    diskPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 70 }],
-    loadPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 30 }],
+    cpuPoints:   [{ timestamp: '2024-01-01T00:00:00Z', value: 45 }],
+    memPoints:   [{ timestamp: '2024-01-01T00:00:00Z', value: 60 }],
+    diskPoints:  [{ timestamp: '2024-01-01T00:00:00Z', value: 70 }],
+    loadPoints:  [{ timestamp: '2024-01-01T00:00:00Z', value: 30 }],
+    netRxPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 1000 }],
+    netTxPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 500 }],
   },
 ]
 
@@ -196,6 +198,38 @@ describe('Dashboard — per-device charts', () => {
     await screen.findByTestId('dashboard-page')
     expect(screen.queryByTestId('per-device-charts')).not.toBeInTheDocument()
     expect(screen.queryByTestId('per-device-charts-empty')).not.toBeInTheDocument()
+  })
+})
+
+describe('[AC-012] each device card renders network sub-chart', () => {
+  it('[AC-012] device-net-chart testid renders alongside device-chart', async () => {
+    renderDashboard()
+    expect(await screen.findByTestId('device-chart-dev-1')).toBeInTheDocument()
+    expect(await screen.findByTestId('device-net-chart-dev-1')).toBeInTheDocument()
+  })
+})
+
+describe('[AC-016] all-old-agent fleet renders zero net chart, not error', () => {
+  it('[AC-016] net chart renders without error when both series are zero/empty', async () => {
+    const { useFleetMetrics } = await import('../../hooks/useFleetMetrics')
+    vi.mocked(useFleetMetrics).mockReturnValue({
+      perDeviceSeries: [
+        {
+          deviceId: 'dev-1',
+          hostname: 'node-1',
+          cpuPoints:   [{ timestamp: '2024-01-01T00:00:00Z', value: 0 }],
+          memPoints:   [{ timestamp: '2024-01-01T00:00:00Z', value: 0 }],
+          diskPoints:  [{ timestamp: '2024-01-01T00:00:00Z', value: 0 }],
+          loadPoints:  [{ timestamp: '2024-01-01T00:00:00Z', value: 0 }],
+          netRxPoints: [],
+          netTxPoints: [],
+        },
+      ],
+      heartbeatsLoading: false,
+    })
+    renderDashboard()
+    // Chart must render — no error boundary or missing testid
+    expect(await screen.findByTestId('device-net-chart-dev-1')).toBeInTheDocument()
   })
 })
 

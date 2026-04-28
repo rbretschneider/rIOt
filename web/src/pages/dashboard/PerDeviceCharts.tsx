@@ -9,8 +9,8 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
-import type { DeviceSeries } from '../../hooks/useFleetMetrics'
-import { formatPercent } from '../../utils/format'
+import type { DeviceSeries, ChartPoint } from '../../hooks/useFleetMetrics'
+import { formatPercent, formatBytesPerSec, formatBytesPerSecAxis } from '../../utils/format'
 
 const METRICS = [
   { key: 'cpu', label: 'CPU',  color: '#3b82f6' },
@@ -19,12 +19,23 @@ const METRICS = [
   { key: 'load', label: 'Load', color: '#a855f7' },
 ] as const
 
+const NET_METRICS = [
+  { key: 'rx', label: 'In',  color: '#06b6d4' },
+  { key: 'tx', label: 'Out', color: '#f97316' },
+] as const
+
 interface MergedRow {
   ts: string
   cpu: number | null
   mem: number | null
   disk: number | null
   load: number | null
+}
+
+interface MergedNetRow {
+  ts: string
+  rx: number | null
+  tx: number | null
 }
 
 function mergeSeries(s: DeviceSeries): MergedRow[] {
@@ -48,14 +59,33 @@ function mergeSeries(s: DeviceSeries): MergedRow[] {
   }))
 }
 
+function mergeNetSeries(rxPoints: ChartPoint[], txPoints: ChartPoint[]): MergedNetRow[] {
+  const tsSet = new Set<string>()
+  for (const p of rxPoints) tsSet.add(p.timestamp)
+  for (const p of txPoints) tsSet.add(p.timestamp)
+
+  const rxMap = new Map(rxPoints.map(p => [p.timestamp, p.value]))
+  const txMap = new Map(txPoints.map(p => [p.timestamp, p.value]))
+
+  return [...tsSet].sort().map(ts => ({
+    ts,
+    rx: rxMap.get(ts) ?? null,
+    tx: txMap.get(ts) ?? null,
+  }))
+}
+
 interface DeviceChartCardProps {
   series: DeviceSeries
 }
 
 const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCardProps) {
   const data = useMemo(() => mergeSeries(series), [series])
+  const netData = useMemo(() => mergeNetSeries(series.netRxPoints, series.netTxPoints), [series.netRxPoints, series.netTxPoints])
   const last = data[data.length - 1]
+  // Gradient IDs: percent chart uses "grad-<id>-<key>", net chart uses "grad-net-<id>-<key>"
+  // to avoid <defs> collisions between the two charts within the same card.
   const gradId = (key: string) => `grad-${series.deviceId.replace(/[^a-z0-9]/gi, '_')}-${key}`
+  const netGradId = (key: string) => `grad-net-${series.deviceId.replace(/[^a-z0-9]/gi, '_')}-${key}`
 
   return (
     <div
@@ -123,7 +153,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               dataKey={m.key}
               name={m.key}
               stroke={m.color}
-              strokeWidth={2}
+              strokeWidth={1}
               fill={`url(#${gradId(m.key)})`}
               dot={false}
               connectNulls={false}
@@ -132,6 +162,63 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
           ))}
         </AreaChart>
       </ResponsiveContainer>
+
+      {/* Network in/out sub-chart — bytes/sec Y-axis (FLEET-NET) */}
+      <div className="mt-1" data-testid={`device-net-chart-${series.deviceId}`}>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[10px] text-gray-500">Network (B/s)</span>
+        </div>
+        <ResponsiveContainer width="100%" height={100}>
+          <AreaChart data={netData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+            <defs>
+              {NET_METRICS.map(m => (
+                <linearGradient key={m.key} id={netGradId(m.key)} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={m.color} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={m.color} stopOpacity={0} />
+                </linearGradient>
+              ))}
+            </defs>
+            <CartesianGrid strokeDasharray="2 4" stroke="#1f2937" vertical={false} />
+            <XAxis dataKey="ts" hide />
+            <YAxis
+              tick={{ fontSize: 9, fill: '#6b7280' }}
+              width={32}
+              tickFormatter={formatBytesPerSecAxis}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              formatter={(value: number | undefined, key: string | undefined) => {
+                const m = NET_METRICS.find(m => m.key === key)
+                return [value == null ? '—' : formatBytesPerSec(value), m?.label ?? (key ?? '')]
+              }}
+              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: 6 }}
+              labelStyle={{ display: 'none' }}
+            />
+            <Legend
+              wrapperStyle={{ paddingTop: 2 }}
+              formatter={(v: string) => {
+                const m = NET_METRICS.find(m => m.key === v)
+                return <span style={{ fontSize: 10, color: '#9ca3af' }}>{m?.label ?? v}</span>
+              }}
+            />
+            {NET_METRICS.map(m => (
+              <Area
+                key={m.key}
+                type="monotone"
+                dataKey={m.key}
+                name={m.key}
+                stroke={m.color}
+                strokeWidth={1}
+                fill={`url(#${netGradId(m.key)})`}
+                dot={false}
+                connectNulls={false}
+                isAnimationActive={false}
+              />
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 })
@@ -157,7 +244,7 @@ export default memo(function PerDeviceCharts({ series }: PerDeviceChartsProps) {
 
   return (
     <div
-      className="grid grid-cols-1 xl:grid-cols-2 gap-4"
+      className="grid grid-cols-1 md:grid-cols-2 gap-4"
       data-testid="per-device-charts"
       role="region"
       aria-label="Per-device performance charts"

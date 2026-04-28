@@ -15,6 +15,8 @@ type HeartbeatData struct {
 	DiskReadBytesPerSec float64 `json:"disk_read_bytes_sec,omitempty"`
 	DiskWriteBytesPerSec float64 `json:"disk_write_bytes_sec,omitempty"`
 	DiskIOPercent       float64 `json:"disk_io_percent,omitempty"`
+	NetRxBytesPerSec    float64 `json:"net_rx_bytes_sec,omitempty"`
+	NetTxBytesPerSec    float64 `json:"net_tx_bytes_sec,omitempty"`
 	AgentVersion        string  `json:"agent_version,omitempty"`
 	LogErrors           int     `json:"log_errors,omitempty"`
 }

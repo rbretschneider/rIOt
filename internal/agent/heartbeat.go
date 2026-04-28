@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -12,7 +13,46 @@ import (
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
+	psnet "github.com/shirou/gopsutil/v3/net"
 )
+
+// isLoopbackName reports whether a network interface name identifies a loopback
+// interface across Linux (lo), macOS/BSD (lo0), and Windows
+// ("Loopback Pseudo-Interface N"). Name-based detection avoids a second syscall
+// per heartbeat to query interface flags.
+func isLoopbackName(name string) bool {
+	return name == "lo" || name == "lo0" || strings.HasPrefix(name, "Loopback")
+}
+
+// computeNetRates returns (rx, tx) bytes/sec given previous and current
+// per-interface snapshots and elapsed seconds.
+//
+// Returns (0, 0) when prev is nil, elapsed <= 0, or no deltas are available.
+// Per-interface counter rollover (cur < prev) contributes 0 from that interface.
+// New interfaces (present in curr but not prev) contribute 0.
+// Removed interfaces (present in prev but not curr) contribute 0 implicitly.
+func computeNetRates(prev, curr map[string]netIOSnapshot, elapsed float64) (rx float64, tx float64) {
+	if prev == nil || elapsed <= 0 {
+		return 0, 0
+	}
+	var totalRxDelta, totalTxDelta uint64
+	for name, cur := range curr {
+		p, ok := prev[name]
+		if !ok {
+			// Interface added mid-run — no prior baseline; contributes 0.
+			continue
+		}
+		if cur.BytesRecv >= p.BytesRecv {
+			totalRxDelta += cur.BytesRecv - p.BytesRecv
+		}
+		// Else: per-interface rollover — contribute 0 for this interval.
+		if cur.BytesSent >= p.BytesSent {
+			totalTxDelta += cur.BytesSent - p.BytesSent
+		}
+		// Else: per-interface rollover — contribute 0 for this interval.
+	}
+	return float64(totalRxDelta) / elapsed, float64(totalTxDelta) / elapsed
+}
 
 func (a *Agent) sendHeartbeat(ctx context.Context) {
 	data := models.HeartbeatData{
@@ -100,6 +140,29 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 
 		a.prevDiskIO = curr
 		a.prevDiskIOTime = now
+	}
+
+	// Network I/O throughput (delta between heartbeats, sum across non-loopback interfaces)
+	if ifaces, err := psnet.IOCountersWithContext(ctx, true); err == nil {
+		now := time.Now()
+		curr := make(map[string]netIOSnapshot, len(ifaces))
+		for _, c := range ifaces {
+			if isLoopbackName(c.Name) {
+				continue
+			}
+			curr[c.Name] = netIOSnapshot{
+				BytesRecv: c.BytesRecv,
+				BytesSent: c.BytesSent,
+			}
+		}
+
+		if a.prevNetCounters != nil && !a.prevNetCountersTime.IsZero() {
+			elapsed := now.Sub(a.prevNetCountersTime).Seconds()
+			data.NetRxBytesPerSec, data.NetTxBytesPerSec = computeNetRates(a.prevNetCounters, curr, elapsed)
+		}
+
+		a.prevNetCounters = curr
+		a.prevNetCountersTime = now
 	}
 
 	// Log errors since last heartbeat

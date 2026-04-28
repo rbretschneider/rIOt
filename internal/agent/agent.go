@@ -37,14 +37,25 @@ type Agent struct {
 	telemetryNow chan struct{}
 
 	// Disk I/O tracking for delta computation between heartbeats.
+	// owned by heartbeatLoop only — no concurrent access
 	prevDiskIO     map[string]diskIOSnapshot
 	prevDiskIOTime time.Time
+
+	// Network I/O tracking for delta computation between heartbeats.
+	// owned by heartbeatLoop only — no concurrent access
+	prevNetCounters     map[string]netIOSnapshot
+	prevNetCountersTime time.Time
 }
 
 type diskIOSnapshot struct {
 	ReadBytes  uint64
 	WriteBytes uint64
 	IoTime     uint64 // milliseconds spent doing I/O
+}
+
+type netIOSnapshot struct {
+	BytesRecv uint64
+	BytesSent uint64
 }
 
 func New(configPath, version string) (*Agent, error) {
