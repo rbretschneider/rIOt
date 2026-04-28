@@ -1118,33 +1118,26 @@ Navigate to it via the **Dashboard** link in the header, or go directly to `http
 
 ### Sections
 
-**KPI strip** — A row of tiles at the top showing: devices online / total, fleet CPU average and peak (last 5 min), fleet RAM average and peak (last 5 min), worst-disk device (the single device with the highest root-mount utilization, shown with hostname and a gauge), containers running / total, active alerts grouped by severity, and pending OS + Docker updates across the fleet. Each tile includes a 60-minute background sparkline and a delta indicator showing the change from 5 minutes prior. The GPU utilization tile only appears when at least one device in the fleet reports GPU telemetry; the tile slot is absent otherwise.
+**Per-device performance charts** — One card per device. Each card shows four time-series lines over the last 60 minutes on a 0–100% Y-axis: **CPU%** (blue), **RAM%** (green), **root-disk%** (amber), and **load saturation** (purple, computed as `min(load_avg_1m × 25, 100)`). Colors are consistent across every device card so a glance comparison is meaningful. Cards stack to two columns on wide viewports, one column on narrow.
 
-**Small-multiples charts** — Three time-series charts covering the last 60 minutes: CPU% per device (one line per device), Memory% per device (one line per device), and fleet-summed disk I/O. Hover a line in the per-device charts to isolate it and see the device hostname and current value. If a device goes offline mid-window, its line stops at the last received heartbeat and does not extend to the right edge. (A fourth "Network in/out" chart is deferred — see v1 limitations below.)
-
-**Heatmap grid** — A compact card for each registered device. Cards are sorted by a composite stress score (descending) so the most burdened devices appear first. Offline devices sort to the end. The stress score is: `0.4 × CPU% + 0.3 × RAM% + 0.2 × root-disk% + 0.1 × min(load_avg_1m × 25, 100)`. Each card shows a status dot (pulses on each incoming heartbeat), hostname, CPU / RAM / disk mini-bars, a 5-minute CPU sparkline, and a container count badge. Devices with active unacknowledged alerts show a red hairline border. Click any card to go to that device's detail page.
-
-**Container leaderboard** — A top-10 table of containers across the fleet, sortable by CPU, memory, restart count, or update availability. Filter chips narrow the list to containers with pending image updates, recently restarted containers, or containers in a specific Compose stack. The "recently restarted" filter shows containers with a cumulative restart count above 3 (see the v1 limitation note below).
+**Container leaderboard** — A top-10 table of containers across the fleet, sortable by CPU, memory, restart count, or update availability. Each row shows hostname, container name, Compose stack, current CPU%, memory in MiB, restart count, and an update-available indicator.
 
 **Activity river** — A live strip showing the 20 most recent events. New events fade in at the top; the oldest drops when the cap is reached. Filter chips (Alerts, Docker, Agent, Security) are additive; selecting multiple chips shows events matching any of the active chips.
 
 ### Live updates
 
-The dashboard subscribes to the existing WebSocket connection — no additional connection is opened. KPI values update on every incoming heartbeat. Chart and sparkline re-renders are batched to a 5-second cadence to avoid thrash on large fleets.
+The dashboard subscribes to the existing WebSocket connection — no additional connection is opened. Chart re-renders are batched to a 5-second cadence to keep frame budget predictable on large fleets.
 
 When the WebSocket disconnects, a banner appears and all sections continue showing the last-known values. The banner clears automatically when the connection is restored.
 
 ### Browser and viewport support
 
-The full design targets desktop viewports of 768px and above. Below 768px the dashboard degrades gracefully: sections stack vertically, the heatmap grid collapses toward a single column, and charts shrink to fit. No horizontal page scroll occurs at any viewport width down to 360px. Sub-768px layouts are functional but not a polish target for v1.
-
-On a 30-device fleet over LAN, the KPI strip and charts render within approximately 2 seconds of navigating to the route.
+The full design targets desktop viewports of 768px and above. Below 768px the dashboard degrades gracefully: sections stack vertically and charts shrink to fit. No horizontal page scroll occurs at any viewport width down to 360px. Sub-768px layouts are functional but not a polish target for v1.
 
 ### v1 limitations
 
-- **"Restarted recently" is a cumulative count, not a rolling window.** The container leaderboard's "Restart anomalies" sort and the "Restarted recently" filter chip show containers where the total restart count exceeds 3. This is not a true rolling 60-minute count as defined in the FRD — the required historical restart data is not yet available in the telemetry model. The threshold behaves correctly for containers that restart repeatedly in a short period; it may also match long-running containers that accumulated restarts over their lifetime. A future story will add rolling restart-count projection.
-- **Network chart deferred.** The heartbeat model does not yet carry a per-interface byte-rate field, so the small-multiples row ships with three charts (CPU per device, memory per device, disk I/O) instead of four. A follow-up story will add per-interface rates to heartbeats and reintroduce the "Network in/out" chart.
-- **Root disk only.** The "Worst disk" KPI tile and the heatmap card disk bar reflect root-mount utilization only. Non-root mounts are not included in the v1 tile.
+- **Network throughput line deferred.** The heartbeat model does not yet carry per-interface byte rates. The four lines on each per-device card are CPU/RAM/Disk/Load. A follow-up story (FLEET-NET) will extend the heartbeat schema and add a network throughput line to each card.
+- **Disk line is root mount only.** The disk-percent line on each per-device card reflects root-mount utilization only.
 - **Fixed 60-minute window.** The dashboard always shows the last 60 minutes. No time-range selector exists in v1.
 
 ---

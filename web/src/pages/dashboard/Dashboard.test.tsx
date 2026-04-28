@@ -5,10 +5,6 @@ import { MemoryRouter } from 'react-router-dom'
 import Dashboard from '../Dashboard'
 import type { FleetHeartbeatsResponse, FleetContainerRow } from '../../types/models'
 
-// ---------------------------------------------------------------------------
-// Shared test data
-// ---------------------------------------------------------------------------
-
 const DEVICE_1 = {
   id: 'dev-1',
   hostname: 'node-1',
@@ -35,7 +31,7 @@ const DEVICE_2 = {
   docker_container_count: 0,
 }
 
-const HB_RESP_NO_GPU: FleetHeartbeatsResponse = {
+const HB_RESP: FleetHeartbeatsResponse = {
   since: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
   until: new Date().toISOString(),
   devices: {
@@ -56,11 +52,6 @@ const HB_RESP_NO_GPU: FleetHeartbeatsResponse = {
   devices_with_gpu: [],
 }
 
-const HB_RESP_WITH_GPU: FleetHeartbeatsResponse = {
-  ...HB_RESP_NO_GPU,
-  devices_with_gpu: ['dev-1'],
-}
-
 const CONTAINERS: FleetContainerRow[] = [
   {
     device_id: 'dev-1',
@@ -78,29 +69,16 @@ const CONTAINERS: FleetContainerRow[] = [
   },
 ]
 
-const EMPTY_KPIS = {
-  onlineCount: 1,
-  totalCount: 2,
-  cpuAvg: 45,
-  cpuPeak: 45,
-  cpuAvgPrev: 0,
-  cpuPeakPrev: 0,
-  memAvg: 60,
-  memPeak: 60,
-  memAvgPrev: 0,
-  memPeakPrev: 0,
-  worstDiskPercent: 70,
-  worstDiskHostname: 'node-1',
-  containersRunning: 1,
-  containersTotal: 1,
-  alertsBySeverity: { warning: 0, critical: 0 },
-  pendingUpdates: 0,
-  gpuAvg: 0,
-}
-
-// ---------------------------------------------------------------------------
-// Module mocks
-// ---------------------------------------------------------------------------
+const BASE_DEVICE_SERIES = [
+  {
+    deviceId: 'dev-1',
+    hostname: 'node-1',
+    cpuPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 45 }],
+    memPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 60 }],
+    diskPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 70 }],
+    loadPoints: [{ timestamp: '2024-01-01T00:00:00Z', value: 30 }],
+  },
+]
 
 vi.mock('../../components/Sparkline', () => ({
   default: () => <svg data-testid="sparkline-mock" />,
@@ -119,14 +97,12 @@ vi.mock('recharts', async () => {
 const mockGetFleetHeartbeats = vi.fn()
 const mockGetFleetContainers = vi.fn()
 const mockGetEvents = vi.fn()
-const mockGetPatchStatus = vi.fn()
 
 vi.mock('../../api/client', () => ({
   api: {
     getFleetHeartbeats: (...args: unknown[]) => mockGetFleetHeartbeats(...args),
     getFleetContainers: (...args: unknown[]) => mockGetFleetContainers(...args),
     getEvents: (...args: unknown[]) => mockGetEvents(...args),
-    getPatchStatus: (...args: unknown[]) => mockGetPatchStatus(...args),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.0' }),
   },
 }))
@@ -145,26 +121,12 @@ vi.mock('../../hooks/useWebSocket', () => ({
   useWebSocket: vi.fn(),
 }))
 
-vi.mock('../../hooks/usePerDevicePulse', () => ({
-  usePerDevicePulse: vi.fn(() => ({})),
-}))
-
-// Mock useFleetMetrics to avoid the useMemo/setState infinite render loop
 vi.mock('../../hooks/useFleetMetrics', () => ({
   useFleetMetrics: vi.fn(() => ({
-    kpis: EMPTY_KPIS,
-    perDeviceSeries: [],
-    fleetTimeSeries: { diskRead: [], diskWrite: [] },
-    hasGPU: false,
-    containersLoading: false,
+    perDeviceSeries: BASE_DEVICE_SERIES,
     heartbeatsLoading: false,
-    flashedKPIs: new Set<string>(),
   })),
 }))
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
 
 function renderDashboard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -178,12 +140,10 @@ function renderDashboard() {
 }
 
 beforeEach(async () => {
-  mockGetFleetHeartbeats.mockResolvedValue(HB_RESP_NO_GPU)
+  mockGetFleetHeartbeats.mockResolvedValue(HB_RESP)
   mockGetFleetContainers.mockResolvedValue(CONTAINERS)
   mockGetEvents.mockResolvedValue([])
-  mockGetPatchStatus.mockResolvedValue([])
 
-  // Reset useDevices mock to default
   const { useDevices } = await import('../../hooks/useDevices')
   vi.mocked(useDevices).mockReturnValue({
     data: [DEVICE_1, DEVICE_2],
@@ -191,203 +151,74 @@ beforeEach(async () => {
     wsConnected: true,
   } as unknown as ReturnType<typeof useDevices>)
 
-  // Reset useFleetMetrics to default (no GPU)
   const { useFleetMetrics } = await import('../../hooks/useFleetMetrics')
   vi.mocked(useFleetMetrics).mockReturnValue({
-    kpis: EMPTY_KPIS,
-    perDeviceSeries: [],
-    fleetTimeSeries: { diskRead: [], diskWrite: [] },
-    hasGPU: false,
-    containersLoading: false,
+    perDeviceSeries: BASE_DEVICE_SERIES,
     heartbeatsLoading: false,
-    flashedKPIs: new Set<string>(),
   })
 })
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-describe('[AC-001] Dashboard — route renders at /dashboard (FR-001)', () => {
-  it('renders the dashboard page root element', async () => {
+describe('Dashboard — route renders at /dashboard', () => {
+  it('renders the dashboard page root', async () => {
     renderDashboard()
     expect(await screen.findByTestId('dashboard-page')).toBeInTheDocument()
   })
 })
 
-describe('[AC-004] Dashboard — KPI strip renders 7 mandatory tiles (FR-011)', () => {
-  it('renders kpi-strip section', async () => {
+describe('Dashboard — per-device charts', () => {
+  it('renders the per-device charts grid', async () => {
     renderDashboard()
-    expect(await screen.findByTestId('kpi-strip')).toBeInTheDocument()
+    expect(await screen.findByTestId('per-device-charts')).toBeInTheDocument()
   })
 
-  it('renders Devices tile', async () => {
+  it('renders one card per device with series', async () => {
     renderDashboard()
-    expect(await screen.findByTestId('kpi-devices')).toBeInTheDocument()
+    expect(await screen.findByTestId('device-chart-dev-1')).toBeInTheDocument()
   })
 
-  it('renders CPU avg tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-cpu')).toBeInTheDocument()
-  })
-
-  it('renders RAM avg tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-ram')).toBeInTheDocument()
-  })
-
-  it('renders Worst disk tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-worst-disk')).toBeInTheDocument()
-  })
-
-  it('renders Containers tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-containers')).toBeInTheDocument()
-  })
-
-  it('renders Active alerts tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-alerts')).toBeInTheDocument()
-  })
-
-  it('renders Pending updates tile', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('kpi-updates')).toBeInTheDocument()
-  })
-})
-
-describe('[AC-005] Dashboard — GPU tile absent when no GPU in fleet (FR-014)', () => {
-  it('does not render GPU tile when hasGPU is false', async () => {
+  it('renders empty state when no series', async () => {
     const { useFleetMetrics } = await import('../../hooks/useFleetMetrics')
     vi.mocked(useFleetMetrics).mockReturnValue({
-      kpis: EMPTY_KPIS,
       perDeviceSeries: [],
-      fleetTimeSeries: { diskRead: [], diskWrite: [] },
-      hasGPU: false,
-      containersLoading: false,
       heartbeatsLoading: false,
-      flashedKPIs: new Set(),
     })
     renderDashboard()
-    await screen.findByTestId('kpi-strip')
-    expect(screen.queryByTestId('kpi-gpu')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('per-device-charts-empty')).toBeInTheDocument()
   })
-})
 
-describe('[AC-006] Dashboard — GPU tile renders when fleet has GPU devices (FR-014)', () => {
-  it('renders GPU tile when hasGPU is true', async () => {
-    mockGetFleetHeartbeats.mockResolvedValue(HB_RESP_WITH_GPU)
+  it('renders skeleton placeholders while loading', async () => {
     const { useFleetMetrics } = await import('../../hooks/useFleetMetrics')
     vi.mocked(useFleetMetrics).mockReturnValue({
-      kpis: { ...EMPTY_KPIS, gpuAvg: 55 },
       perDeviceSeries: [],
-      fleetTimeSeries: { diskRead: [], diskWrite: [] },
-      hasGPU: true,
-      containersLoading: false,
-      heartbeatsLoading: false,
-      flashedKPIs: new Set(),
+      heartbeatsLoading: true,
     })
     renderDashboard()
-    expect(await screen.findByTestId('kpi-gpu')).toBeInTheDocument()
+    await screen.findByTestId('dashboard-page')
+    expect(screen.queryByTestId('per-device-charts')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('per-device-charts-empty')).not.toBeInTheDocument()
   })
 })
 
-describe('[AC-008] Dashboard — worst-disk tile shows highest-disk device (FR-013 / BR-003)', () => {
-  it('renders worst-disk hostname from KPI data', async () => {
-    renderDashboard()
-    // EMPTY_KPIS has worstDiskHostname: 'node-1'
-    await screen.findByTestId('kpi-worst-disk')
-    expect(screen.getByTestId('kpi-worst-disk').textContent).toContain('node-1')
-  })
-})
-
-describe('[AC-009] Dashboard — KPITile delta glyph with color+text (AC-034)', () => {
-  it('delta zero renders no-change glyph on zero-delta tiles', async () => {
-    renderDashboard()
-    await screen.findByTestId('kpi-strip')
-    const noChanges = screen.queryAllByLabelText('No change')
-    expect(noChanges.length).toBeGreaterThan(0)
-  })
-})
-
-describe('[AC-010] Dashboard — SmallMultiples renders 3 charts (FR-020)', () => {
-  it('renders the small-multiples grid', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('small-multiples')).toBeInTheDocument()
-  })
-
-  it('renders chart for CPU per device', async () => {
-    renderDashboard()
-    await screen.findByTestId('small-multiples')
-    expect(screen.getByTestId('chart-cpu-per-device')).toBeInTheDocument()
-  })
-
-  it('renders chart for Memory per device', async () => {
-    renderDashboard()
-    await screen.findByTestId('small-multiples')
-    expect(screen.getByTestId('chart-mem-per-device')).toBeInTheDocument()
-  })
-
-  it('renders chart for Disk I/O', async () => {
-    renderDashboard()
-    await screen.findByTestId('small-multiples')
-    expect(screen.getByTestId('chart-disk-io')).toBeInTheDocument()
-  })
-
-  it('does not render Network chart (FR-020 deferred)', async () => {
-    renderDashboard()
-    await screen.findByTestId('small-multiples')
-    expect(screen.queryByTestId('chart-network')).not.toBeInTheDocument()
-  })
-})
-
-describe('[AC-013] Dashboard — HeatmapGrid renders device cards (FR-030)', () => {
-  it('renders the heatmap grid', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('heatmap-grid')).toBeInTheDocument()
-  })
-
-  it('renders a card for each device', async () => {
-    renderDashboard()
-    expect(await screen.findByTestId('device-card-dev-1')).toBeInTheDocument()
-    expect(await screen.findByTestId('device-card-dev-2')).toBeInTheDocument()
-  })
-})
-
-describe('[AC-018] Dashboard — heatmap empty state when no devices', () => {
-  it('renders empty state when device list is empty', async () => {
-    const { useDevices } = await import('../../hooks/useDevices')
-    vi.mocked(useDevices).mockReturnValue({
-      data: [],
-      isLoading: false,
-      wsConnected: true,
-    } as unknown as ReturnType<typeof useDevices>)
-    renderDashboard()
-    expect(await screen.findByTestId('heatmap-empty-state')).toBeInTheDocument()
-  })
-})
-
-describe('[AC-022] Dashboard — ContainerLeaderboard renders (FR-040)', () => {
-  it('renders the container leaderboard section', async () => {
+describe('Dashboard — container leaderboard', () => {
+  it('renders the leaderboard section', async () => {
     renderDashboard()
     expect(await screen.findByTestId('container-leaderboard')).toBeInTheDocument()
   })
 
-  it('renders leaderboard row for the container', async () => {
+  it('renders a row for each visible container', async () => {
     renderDashboard()
     expect(await screen.findByTestId('leaderboard-row-plex')).toBeInTheDocument()
   })
 })
 
-describe('[AC-023] Dashboard — ActivityRiver renders (FR-050)', () => {
+describe('Dashboard — activity river', () => {
   it('renders the activity river section', async () => {
     renderDashboard()
     expect(await screen.findByTestId('activity-river')).toBeInTheDocument()
   })
 })
 
-describe('[AC-027] Dashboard — reuses existing WS singleton, no new WebSocket(...) call (AD-002)', () => {
+describe('Dashboard — reuses existing WS singleton', () => {
   it('does not call the WebSocket constructor on dashboard mount', async () => {
     const wsSpy = vi.spyOn(globalThis, 'WebSocket')
     renderDashboard()
@@ -397,8 +228,8 @@ describe('[AC-027] Dashboard — reuses existing WS singleton, no new WebSocket(
   })
 })
 
-describe('[AC-029] Dashboard — DisconnectedBanner when wsConnected=false (FR-063)', () => {
-  it('renders disconnected banner when wsConnected is false', async () => {
+describe('Dashboard — disconnected banner', () => {
+  it('renders banner when wsConnected is false', async () => {
     const { useDevices } = await import('../../hooks/useDevices')
     vi.mocked(useDevices).mockReturnValue({
       data: [DEVICE_1],
@@ -409,13 +240,13 @@ describe('[AC-029] Dashboard — DisconnectedBanner when wsConnected=false (FR-0
     expect(await screen.findByTestId('disconnected-banner')).toBeInTheDocument()
   })
 
-  it('does not render disconnected banner when wsConnected is true', async () => {
+  it('does not render banner when wsConnected is true', async () => {
     renderDashboard()
     await screen.findByTestId('dashboard-page')
     expect(screen.queryByTestId('disconnected-banner')).not.toBeInTheDocument()
   })
 
-  it('KPI strip still renders (last-known values) when disconnected', async () => {
+  it('per-device charts still render under disconnect', async () => {
     const { useDevices } = await import('../../hooks/useDevices')
     vi.mocked(useDevices).mockReturnValue({
       data: [DEVICE_1],
@@ -424,12 +255,12 @@ describe('[AC-029] Dashboard — DisconnectedBanner when wsConnected=false (FR-0
     } as unknown as ReturnType<typeof useDevices>)
     renderDashboard()
     expect(await screen.findByTestId('disconnected-banner')).toBeInTheDocument()
-    expect(await screen.findByTestId('kpi-strip')).toBeInTheDocument()
+    expect(await screen.findByTestId('per-device-charts')).toBeInTheDocument()
   })
 })
 
-describe('[AC-034] Dashboard — non-color signals on all color-bearing elements', () => {
-  it('disconnected banner has SVG icon (aria-hidden) alongside text label', async () => {
+describe('Dashboard — non-color signals on banner', () => {
+  it('banner has SVG icon (aria-hidden) alongside text label', async () => {
     const { useDevices } = await import('../../hooks/useDevices')
     vi.mocked(useDevices).mockReturnValue({
       data: [],
@@ -438,28 +269,17 @@ describe('[AC-034] Dashboard — non-color signals on all color-bearing elements
     } as unknown as ReturnType<typeof useDevices>)
     renderDashboard()
     const banner = await screen.findByTestId('disconnected-banner')
-    const svgs = banner.querySelectorAll('svg[aria-hidden="true"]')
-    expect(svgs.length).toBeGreaterThan(0)
+    expect(banner.querySelectorAll('svg[aria-hidden="true"]').length).toBeGreaterThan(0)
     expect(banner.textContent).toContain('disconnected')
   })
 })
 
-describe('[AC-035] Dashboard — no map, drag-drop, or embedded drill-down panels', () => {
-  it('does not render a data-testid="map" element', async () => {
+describe('Dashboard — no map, drag-drop, or drill-down panels', () => {
+  it('does not render map, drag-handle, or drilldown-panel testids', async () => {
     renderDashboard()
     await screen.findByTestId('dashboard-page')
     expect(screen.queryByTestId('map')).not.toBeInTheDocument()
-  })
-
-  it('does not render a drag-handle element', async () => {
-    renderDashboard()
-    await screen.findByTestId('dashboard-page')
     expect(screen.queryByTestId('drag-handle')).not.toBeInTheDocument()
-  })
-
-  it('does not render a drilldown-panel element', async () => {
-    renderDashboard()
-    await screen.findByTestId('dashboard-page')
     expect(screen.queryByTestId('drilldown-panel')).not.toBeInTheDocument()
   })
 })

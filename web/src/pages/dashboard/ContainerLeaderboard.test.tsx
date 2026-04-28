@@ -111,60 +111,15 @@ describe('[AC-019] ContainerLeaderboard — top-10 cap (FR-042)', () => {
   })
 })
 
-describe('[AC-021] ContainerLeaderboard — filter chips (FR-044)', () => {
-  it('filter-updates chip shows only containers with update_available=true', () => {
-    const containers = [
-      container({ device_id: 'd1', container_name: 'fresh', update_available: false }),
-      container({ device_id: 'd1', container_name: 'old', update_available: true }),
-    ]
-    render(<ContainerLeaderboard containers={containers} />)
-    fireEvent.click(screen.getByTestId('filter-updates'))
-    expect(screen.getByTestId('leaderboard-row-old')).toBeInTheDocument()
-    expect(screen.queryByTestId('leaderboard-row-fresh')).not.toBeInTheDocument()
-  })
-
-  it('filter-restarts chip shows only containers with restart_count > 3', () => {
-    const containers = [
-      container({ device_id: 'd1', container_name: 'stable', restart_count: 1 }),
-      container({ device_id: 'd1', container_name: 'flappy', restart_count: 5 }),
-    ]
-    render(<ContainerLeaderboard containers={containers} />)
-    fireEvent.click(screen.getByTestId('filter-restarts'))
-    expect(screen.getByTestId('leaderboard-row-flappy')).toBeInTheDocument()
-    expect(screen.queryByTestId('leaderboard-row-stable')).not.toBeInTheDocument()
-  })
-
-  it('deactivating a chip restores the unfiltered view', () => {
-    const containers = [
-      container({ device_id: 'd1', container_name: 'fresh', update_available: false }),
-      container({ device_id: 'd1', container_name: 'old', update_available: true }),
-    ]
-    render(<ContainerLeaderboard containers={containers} />)
-    fireEvent.click(screen.getByTestId('filter-updates'))
-    expect(screen.queryByTestId('leaderboard-row-fresh')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('filter-updates'))
-    expect(screen.getByTestId('leaderboard-row-fresh')).toBeInTheDocument()
-  })
-
-  it('stack filter chips appear for each unique stack name', () => {
+describe('ContainerLeaderboard — filter chips removed in redesign', () => {
+  it('does not render filter or stack chip elements', () => {
     const containers = [
       container({ device_id: 'd1', container_name: 'media-app', stack: 'media' }),
-      container({ device_id: 'd1', container_name: 'infra-app', stack: 'infra' }),
     ]
     render(<ContainerLeaderboard containers={containers} />)
-    expect(screen.getByTestId('filter-stack-media')).toBeInTheDocument()
-    expect(screen.getByTestId('filter-stack-infra')).toBeInTheDocument()
-  })
-
-  it('stack chip filters to containers in that stack', () => {
-    const containers = [
-      container({ device_id: 'd1', container_name: 'media-app', stack: 'media' }),
-      container({ device_id: 'd1', container_name: 'infra-app', stack: 'infra' }),
-    ]
-    render(<ContainerLeaderboard containers={containers} />)
-    fireEvent.click(screen.getByTestId('filter-stack-media'))
-    expect(screen.getByTestId('leaderboard-row-media-app')).toBeInTheDocument()
-    expect(screen.queryByTestId('leaderboard-row-infra-app')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('filter-updates')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('filter-restarts')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('filter-stack-media')).not.toBeInTheDocument()
   })
 })
 
