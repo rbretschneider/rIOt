@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import {
   AreaChart,
   Area,
@@ -82,6 +82,26 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
   const data = useMemo(() => mergeSeries(series), [series])
   const netData = useMemo(() => mergeNetSeries(series.netRxPoints, series.netTxPoints), [series.netRxPoints, series.netTxPoints])
   const last = data[data.length - 1]
+  // Per-card hidden-series state. Clicking a legend item toggles the corresponding
+  // Area's `hide` prop; the legend label dims when hidden so users can see the
+  // current toggle state at a glance. Separate sets for the percent chart and the
+  // network sub-chart since they share no series keys.
+  const [hiddenPct, setHiddenPct] = useState<Set<string>>(() => new Set())
+  const [hiddenNet, setHiddenNet] = useState<Set<string>>(() => new Set())
+  const togglePct = useCallback((key: string) => {
+    setHiddenPct(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }, [])
+  const toggleNet = useCallback((key: string) => {
+    setHiddenNet(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }, [])
   // Gradient IDs: percent chart uses "grad-<id>-<key>", net chart uses "grad-net-<id>-<key>"
   // to avoid <defs> collisions between the two charts within the same card.
   const gradId = (key: string) => `grad-${series.deviceId.replace(/[^a-z0-9]/gi, '_')}-${key}`
@@ -140,10 +160,19 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
             labelStyle={{ display: 'none' }}
           />
           <Legend
-            wrapperStyle={{ paddingTop: 4 }}
+            wrapperStyle={{ paddingTop: 4, cursor: 'pointer', userSelect: 'none' }}
+            onClick={(o) => {
+              const k = (o as { dataKey?: unknown }).dataKey
+              if (typeof k === 'string') togglePct(k)
+            }}
             formatter={(v: string) => {
               const m = METRICS.find(m => m.key === v)
-              return <span style={{ fontSize: 10, color: '#9ca3af' }}>{m?.label ?? v}</span>
+              const isHidden = hiddenPct.has(v)
+              return (
+                <span style={{ fontSize: 10, color: isHidden ? '#4b5563' : '#9ca3af', textDecoration: isHidden ? 'line-through' : 'none' }}>
+                  {m?.label ?? v}
+                </span>
+              )
             }}
           />
           {METRICS.map(m => (
@@ -158,6 +187,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               dot={false}
               connectNulls={false}
               isAnimationActive={false}
+              hide={hiddenPct.has(m.key)}
             />
           ))}
         </AreaChart>
@@ -196,10 +226,19 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               labelStyle={{ display: 'none' }}
             />
             <Legend
-              wrapperStyle={{ paddingTop: 2 }}
+              wrapperStyle={{ paddingTop: 2, cursor: 'pointer', userSelect: 'none' }}
+              onClick={(o) => {
+                const k = (o as { dataKey?: unknown }).dataKey
+                if (typeof k === 'string') toggleNet(k)
+              }}
               formatter={(v: string) => {
                 const m = NET_METRICS.find(m => m.key === v)
-                return <span style={{ fontSize: 10, color: '#9ca3af' }}>{m?.label ?? v}</span>
+                const isHidden = hiddenNet.has(v)
+                return (
+                  <span style={{ fontSize: 10, color: isHidden ? '#4b5563' : '#9ca3af', textDecoration: isHidden ? 'line-through' : 'none' }}>
+                    {m?.label ?? v}
+                  </span>
+                )
               }}
             />
             {NET_METRICS.map(m => (
@@ -214,6 +253,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
                 dot={false}
                 connectNulls={false}
                 isAnimationActive={false}
+                hide={hiddenNet.has(m.key)}
               />
             ))}
           </AreaChart>

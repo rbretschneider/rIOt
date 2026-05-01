@@ -13,9 +13,12 @@ export interface ChartPoint {
 
 /** Per-device time series for the per-device chart cards. CPU, RAM, and disk-I/O
  * are native percentages (disk-I/O is the busy-time of the most-utilised drive,
- * matching `disk_io_percent` on DeviceDetail). Load is normalized as
- * min(load_avg_1m * 25, 100) so all four lines share a 0-100% Y-axis.
- * netRxPoints / netTxPoints are bytes/sec for the sub-chart added by FLEET-NET. */
+ * matching `disk_io_percent` on DeviceDetail). Load is normalized per device as
+ * min(load_avg_1m / cpu_threads * 100, 100) so a fully-saturated runqueue maps
+ * to 100% regardless of core count (a load of 4 on a 4-thread box = 100%; on an
+ * 8-thread box = 50%). Falls back to cpu_cores, then 1, if hardware_profile is
+ * unavailable. netRxPoints / netTxPoints are bytes/sec for the sub-chart added
+ * by FLEET-NET. */
 export interface DeviceSeries {
   deviceId: string
   hostname: string
@@ -34,8 +37,9 @@ export interface UseFleetMetricsResult {
 
 const MAX_POINTS = 240 // 60 min @ 15s cadence
 
-function loadPctOf(hb: HeartbeatData): number {
-  return Math.min((hb.load_avg_1m ?? 0) * 25, 100)
+function loadPctOf(hb: HeartbeatData, cpuCount: number): number {
+  const denom = cpuCount > 0 ? cpuCount : 1
+  return Math.min(((hb.load_avg_1m ?? 0) / denom) * 100, 100)
 }
 
 /**
@@ -72,19 +76,34 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
     for (const d of devices) m.set(d.id, d.hostname)
     return m
   }, [devices])
+  // Logical CPU count per device, used to normalize load average into a percent
+  // of capacity. Prefer cpu_threads (logical), fall back to cpu_cores (physical),
+  // then 1 so we never divide by zero for devices missing hardware_profile.
+  const cpuCountByID = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const d of devices) {
+      const hp = d.hardware_profile
+      const n = hp?.cpu_threads ?? hp?.cpu_cores ?? 0
+      if (n > 0) m.set(d.id, n)
+    }
+    return m
+  }, [devices])
 
   const historicalSeries = useMemo((): DeviceSeries[] => {
-    return Object.entries(heartbeatsMap).map(([deviceId, hbs]) => ({
-      deviceId,
-      hostname: hostnameByID.get(deviceId) ?? deviceId,
-      cpuPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.cpu_percent ?? 0 })),
-      memPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.mem_percent ?? 0 })),
-      diskPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_io_percent ?? 0 })),
-      loadPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: loadPctOf(h.data) })),
-      netRxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_rx_bytes_sec) })),
-      netTxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_tx_bytes_sec) })),
-    }))
-  }, [heartbeatsMap, hostnameByID])
+    return Object.entries(heartbeatsMap).map(([deviceId, hbs]) => {
+      const cpuCount = cpuCountByID.get(deviceId) ?? 1
+      return {
+        deviceId,
+        hostname: hostnameByID.get(deviceId) ?? deviceId,
+        cpuPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.cpu_percent ?? 0 })),
+        memPoints:    hbs.map(h => ({ timestamp: h.timestamp, value: h.data.mem_percent ?? 0 })),
+        diskPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: h.data.disk_io_percent ?? 0 })),
+        loadPoints:   hbs.map(h => ({ timestamp: h.timestamp, value: loadPctOf(h.data, cpuCount) })),
+        netRxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_rx_bytes_sec) })),
+        netTxPoints:  hbs.map(h => ({ timestamp: h.timestamp, value: finiteOrZero(h.data.net_tx_bytes_sec) })),
+      }
+    })
+  }, [heartbeatsMap, hostnameByID, cpuCountByID])
 
   const handleWS = useCallback((msg: WSMessage) => {
     if (msg.type === 'heartbeat' && msg.device_id) {
@@ -99,13 +118,14 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
     const updated = historicalSeries.map(s => {
       const hb = hbBufferRef.current.get(s.deviceId)
       if (!hb) return s
+      const cpuCount = cpuCountByID.get(s.deviceId) ?? 1
       const ts = new Date().toISOString()
       return {
         ...s,
         cpuPoints:   [...s.cpuPoints,   { timestamp: ts, value: hb.cpu_percent ?? 0 }].slice(-MAX_POINTS),
         memPoints:   [...s.memPoints,   { timestamp: ts, value: hb.mem_percent ?? 0 }].slice(-MAX_POINTS),
         diskPoints:  [...s.diskPoints,  { timestamp: ts, value: hb.disk_io_percent ?? 0 }].slice(-MAX_POINTS),
-        loadPoints:  [...s.loadPoints,  { timestamp: ts, value: loadPctOf(hb) }].slice(-MAX_POINTS),
+        loadPoints:  [...s.loadPoints,  { timestamp: ts, value: loadPctOf(hb, cpuCount) }].slice(-MAX_POINTS),
         netRxPoints: [...s.netRxPoints, { timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }].slice(-MAX_POINTS),
         netTxPoints: [...s.netTxPoints, { timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }].slice(-MAX_POINTS),
       }
@@ -114,6 +134,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
     // Add series for new devices not yet in historical (just joined fleet)
     for (const [deviceId, hb] of hbBufferRef.current) {
       if (!updated.find(s => s.deviceId === deviceId)) {
+        const cpuCount = cpuCountByID.get(deviceId) ?? 1
         const ts = new Date().toISOString()
         updated.push({
           deviceId,
@@ -121,7 +142,7 @@ export function useFleetMetrics(devices: Device[], _events: Event[]): UseFleetMe
           cpuPoints:   [{ timestamp: ts, value: hb.cpu_percent ?? 0 }],
           memPoints:   [{ timestamp: ts, value: hb.mem_percent ?? 0 }],
           diskPoints:  [{ timestamp: ts, value: hb.disk_io_percent ?? 0 }],
-          loadPoints:  [{ timestamp: ts, value: loadPctOf(hb) }],
+          loadPoints:  [{ timestamp: ts, value: loadPctOf(hb, cpuCount) }],
           netRxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_rx_bytes_sec) }],
           netTxPoints: [{ timestamp: ts, value: finiteOrZero(hb.net_tx_bytes_sec) }],
         })
