@@ -1,5 +1,5 @@
 import type { ContainerInfo } from '../types/models'
-import { displayName, formatContainerUptime, formatBytes } from '../utils/docker'
+import { displayName, formatContainerUptime, formatBytes, healthDisplay } from '../utils/docker'
 
 interface Props {
   container: ContainerInfo
@@ -28,6 +28,7 @@ export default function ContainerCard({ container: c, onClick, autoUpdate, selec
   const name = displayName(c.riot, c.name)
   const memPct = c.mem_limit > 0 ? (c.mem_usage / c.mem_limit) * 100 : 0
   const isRunning = c.state === 'running'
+  const health = isRunning ? healthDisplay(c.health_status) : null
 
   return (
     <div
@@ -63,6 +64,9 @@ export default function ContainerCard({ container: c, onClick, autoUpdate, selec
         )}
         {c.update_available && !autoUpdate && (
           <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />
+        )}
+        {health && (
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${health.dotClass}`} title={`Health: ${health.label}`} />
         )}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} title={c.state} />
       </div>

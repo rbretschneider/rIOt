@@ -309,6 +309,9 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			if inspect.HostConfig != nil {
 				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
 			}
+			if inspect.State != nil && inspect.State.Health != nil {
+				containers[idx].HealthStatus = inspect.State.Health.Status
+			}
 		}(i)
 	}
 
@@ -358,6 +361,9 @@ func (c *DockerCollector) collectNetworkModes(ctx context.Context, cli *client.C
 				if inspect.HostConfig.RestartPolicy.Name != "" {
 					containers[idx].RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
 				}
+			}
+			if inspect.State != nil && inspect.State.Health != nil {
+				containers[idx].HealthStatus = inspect.State.Health.Status
 			}
 		}(i)
 	}

@@ -60,6 +60,21 @@ export function statusBgColor(state: string): string {
   }
 }
 
+export interface HealthDisplay {
+  dotClass: string
+  label: string
+}
+
+export function healthDisplay(status?: string): HealthDisplay | null {
+  if (!status || status === 'none') return null
+  switch (status) {
+    case 'healthy':   return { dotClass: 'bg-emerald-400',              label: 'healthy' }
+    case 'unhealthy': return { dotClass: 'bg-red-400',                  label: 'unhealthy' }
+    case 'starting':  return { dotClass: 'bg-blue-400 animate-pulse',   label: 'starting' }
+    default:          return { dotClass: 'bg-gray-400',                 label: status }
+  }
+}
+
 export function displayName(riot: RiotLabels | undefined, containerName: string): string {
   if (riot?.name) return riot.name
   return containerName

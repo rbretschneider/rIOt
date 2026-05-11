@@ -1,5 +1,5 @@
 import type { ContainerInfo } from '../types/models'
-import { displayName, formatBytes, formatImageTag } from '../utils/docker'
+import { displayName, formatBytes, formatImageTag, healthDisplay } from '../utils/docker'
 
 interface Props {
   container: ContainerInfo
@@ -21,6 +21,7 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
   const name = displayName(c.riot, c.name)
   const isRunning = c.state === 'running'
   const imageTag = formatImageTag(c.image)
+  const health = isRunning ? healthDisplay(c.health_status) : null
 
   return (
     <div
@@ -34,6 +35,7 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
       <div className="flex items-center gap-1.5 min-w-0">
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} />
         <span className="text-sm font-medium text-white truncate max-w-[160px]" title={c.name}>{name}</span>
+        {health && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${health.dotClass}`} title={`Health: ${health.label}`} />}
         {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
       </div>
       <div className="flex items-center gap-1.5 min-w-0">
