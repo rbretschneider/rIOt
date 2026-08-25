@@ -2,6 +2,9 @@ package collectors
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -9,7 +12,38 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
-type UpdatesCollector struct{}
+// Default apt reboot-required marker paths (PATCH-GATE FR-017).
+const (
+	defaultRebootRequiredPath     = "/var/run/reboot-required"
+	defaultRebootRequiredPkgsPath = "/var/run/reboot-required.pkgs"
+)
+
+type UpdatesCollector struct {
+	// holdMgr enforces OS-level reboot-class holds; wired via
+	// Registry.SetHoldManager. Nil in tests that don't exercise holds.
+	holdMgr *HoldManager
+
+	// Test injection points (ADD Implementation Note #2).
+	exitRun                exitRunner // dnf needs-restarting exit-code runner; nil = real exec
+	rebootRequiredPath     string     // apt marker file override
+	rebootRequiredPkgsPath string     // apt package-list file override
+}
+
+// exitRunner runs a command and reports its exit code. err is non-nil only
+// when the command could not run at all (missing binary, context error).
+type exitRunner func(ctx context.Context, name string, args ...string) (int, error)
+
+func defaultExitRunner(ctx context.Context, name string, args ...string) (int, error) {
+	err := exec.CommandContext(ctx, name, args...).Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	return -1, err
+}
 
 func (c *UpdatesCollector) Name() string { return "updates" }
 
@@ -44,12 +78,17 @@ func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateIn
 		}
 	}
 
-	// Count installed packages
+	// Count installed packages; the parsed names also feed hold
+	// reconciliation (NFR-004 — no extra package-manager invocation).
+	var installedNames []string
 	out, err := exec.CommandContext(ctx, "dpkg", "--get-selections").Output()
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		info.TotalInstalled = len(lines)
+		installedNames = parseDpkgSelections(string(out))
 	}
+
+	c.reconcileHolds(ctx, info, "apt", installedNames)
 
 	// Check for updates (requires apt update to have been run)
 	out, err = exec.CommandContext(ctx, "apt", "list", "--upgradable").Output()
@@ -75,14 +114,22 @@ func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateIn
 			}
 		}
 	}
+
+	classifyUpdates(info)
+	c.detectRebootRequiredAPT(info)
 }
 
 func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateInfo) {
-	out, err := exec.CommandContext(ctx, "rpm", "-qa").Output()
+	// Installed names (not name-version-release) so the same invocation
+	// feeds both the installed count and hold reconciliation (AD-010).
+	var installedNames []string
+	out, err := exec.CommandContext(ctx, "rpm", "-qa", "--qf", "%{NAME}\n").Output()
 	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		info.TotalInstalled = len(lines)
+		installedNames = nonEmptyLines(string(out))
+		info.TotalInstalled = len(installedNames)
 	}
+
+	c.reconcileHolds(ctx, info, "dnf", installedNames)
 
 	// Get all pending updates with package details.
 	// dnf check-update exits 100 when updates are available, 0 when up to date.
@@ -108,6 +155,89 @@ func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateIn
 				info.Updates[i].IsSecurity = true
 			}
 		}
+	}
+
+	classifyUpdates(info)
+	c.detectRebootRequiredDNF(ctx, info)
+}
+
+// reconcileHolds runs the per-cycle hold reconciliation (AD-007) and
+// reports hold state in telemetry (FR-016, AD-015). A hold failure never
+// prevents the rest of the cycle (NFR-005) — Reconcile only WARNs.
+func (c *UpdatesCollector) reconcileHolds(ctx context.Context, info *models.UpdateInfo, pm string, installedNames []string) {
+	if c.holdMgr == nil {
+		return
+	}
+	c.holdMgr.Reconcile(ctx, pm, installedNames)
+	info.HeldPackages = c.holdMgr.HeldPackages()
+	info.HoldEnforcement = c.holdMgr.Status()
+}
+
+// classifyUpdates classifies every pending update (FR-001), populates the
+// previously dead kernel fields (FR-008), and the aggregate reboot-class
+// count (FR-009). Pure — shared by the apt and dnf paths.
+func classifyUpdates(info *models.UpdateInfo) {
+	for i := range info.Updates {
+		info.Updates[i].Class = ClassifyPackage(info.Updates[i].Name)
+		if info.Updates[i].Class != "" {
+			info.PendingRebootClassCount++
+		}
+	}
+	_, version := SelectPrimaryKernel(info.Updates)
+	info.PendingKernelUpdate = version != ""
+	info.PendingKernelVersion = version
+}
+
+// detectRebootRequiredAPT checks the apt reboot-required marker file
+// (FR-017). Stat/read errors degrade to false with debug-only logging.
+func (c *UpdatesCollector) detectRebootRequiredAPT(info *models.UpdateInfo) {
+	markerPath := c.rebootRequiredPath
+	if markerPath == "" {
+		markerPath = defaultRebootRequiredPath
+	}
+	pkgsPath := c.rebootRequiredPkgsPath
+	if pkgsPath == "" {
+		pkgsPath = defaultRebootRequiredPkgsPath
+	}
+
+	if _, err := os.Stat(markerPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Debug("updates: reboot-required stat failed", "path", markerPath, "error", err)
+		}
+		return
+	}
+	info.RebootRequired = true
+
+	data, err := os.ReadFile(pkgsPath)
+	if err != nil {
+		return // marker alone is enough; reasons are optional
+	}
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !seen[line] {
+			seen[line] = true
+			info.RebootRequiredReasons = append(info.RebootRequiredReasons, line)
+		}
+	}
+}
+
+// detectRebootRequiredDNF maps `dnf needs-restarting -r` exit codes
+// (FR-017): exit 1 = reboot required, exit 0 = not required, anything else
+// (missing plugin, error) degrades to false with debug-only logging (AC-018
+// no-spam requirement). Runs unprivileged — no sudo rule exists for it.
+func (c *UpdatesCollector) detectRebootRequiredDNF(ctx context.Context, info *models.UpdateInfo) {
+	run := c.exitRun
+	if run == nil {
+		run = defaultExitRunner
+	}
+	code, err := run(ctx, "dnf", "needs-restarting", "-r")
+	switch {
+	case err != nil:
+		slog.Debug("updates: dnf needs-restarting unavailable", "error", err)
+	case code == 1:
+		info.RebootRequired = true
+	case code != 0:
+		slog.Debug("updates: dnf needs-restarting unexpected exit", "code", code)
 	}
 }
 

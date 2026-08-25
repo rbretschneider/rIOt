@@ -29,10 +29,11 @@ type DNSCacheConfig struct {
 
 // CommandsConfig controls remote command execution.
 type CommandsConfig struct {
-	AllowReboot   bool `yaml:"allow_reboot"`   // opt-in for remote reboot
-	AllowShutdown bool `yaml:"allow_shutdown"` // opt-in for remote shutdown
-	AllowPatching bool `yaml:"allow_patching"` // opt-in for remote OS patching
-	AllowProbes   bool `yaml:"allow_probes"`   // opt-in for device probe execution
+	AllowReboot     bool `yaml:"allow_reboot"`      // opt-in for remote reboot
+	AllowShutdown   bool `yaml:"allow_shutdown"`    // opt-in for remote shutdown
+	AllowPatching   bool `yaml:"allow_patching"`    // opt-in for remote OS patching
+	AllowProbes     bool `yaml:"allow_probes"`      // opt-in for device probe execution
+	HoldRebootClass bool `yaml:"hold_reboot_class"` // opt-in: hold GPU-driver/kernel packages outside maintenance windows (PATCH-GATE)
 }
 
 // HostTerminalConfig controls host-level terminal access.
@@ -192,6 +193,7 @@ commands:
   allow_reboot: false      # Allow remote reboot commands
   allow_shutdown: false    # Allow remote shutdown commands
   allow_patching: false    # Allow remote OS patching commands
+  hold_reboot_class: false # Hold GPU driver + kernel packages at the OS level (release only during rIOt maintenance-window patch runs)
 
 host_terminal:
   enabled: false           # Allow remote shell access to this host
@@ -268,6 +270,26 @@ func BufferPath() string {
 		return os.Getenv("PROGRAMDATA") + "\\riot\\buffer.db"
 	}
 	return "/var/lib/riot/buffer.db"
+}
+
+// HoldStatePath returns the path for the reboot-class hold bookkeeping file
+// (PATCH-GATE AD-003). Linux-only feature; the Windows path exists for symmetry.
+func HoldStatePath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\holds.json"
+	}
+	return "/var/lib/riot/holds.json"
+}
+
+// DNFHoldsStagedPath returns the riot-owned staging path for the dnf
+// excludes fragment. This is the fixed SOURCE path in the sudoers `install`
+// rule written by scripts/install.sh — it must match byte-for-byte
+// (PATCH-GATE AD-015, Implementation Note #15).
+func DNFHoldsStagedPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\dnf-holds.staged"
+	}
+	return "/var/lib/riot/dnf-holds.staged"
 }
 
 // NginxAccessLogOffsetPath returns the path for the nginx access log byte offset file.

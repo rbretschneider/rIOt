@@ -125,6 +125,18 @@ func (r *Registry) SetNginxAccessLog(path string) {
 	}
 }
 
+// SetHoldManager wires the shared reboot-class HoldManager into the
+// UpdatesCollector so hold reconciliation rides the telemetry cycle and
+// held-package state is reported in telemetry (PATCH-GATE AD-003, AD-007).
+func (r *Registry) SetHoldManager(hm *HoldManager) {
+	for _, c := range r.ordered {
+		if uc, ok := c.(*UpdatesCollector); ok {
+			uc.holdMgr = hm
+			return
+		}
+	}
+}
+
 // SetDockerCachePath configures the on-disk freshness cache path on the
 // DockerCollector. An empty path disables cache persistence.
 func (r *Registry) SetDockerCachePath(path string) {
