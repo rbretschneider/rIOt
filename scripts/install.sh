@@ -443,12 +443,29 @@ if [ "$OS" = "linux" ]; then
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} update"
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
+            # Reboot-class package holds (PATCH-GATE AD-015): subcommand is
+            # locked so the rule cannot reach any other apt-mark operation;
+            # package-name arguments are charset-validated by the agent
+            # before they reach argv (leading-alphanumeric allowlist).
+            APTMARK_PATH="$(command -v apt-mark 2>/dev/null || echo /usr/bin/apt-mark)"
+            echo "riot ALL=(root) NOPASSWD: ${APTMARK_PATH} hold *"
+            echo "riot ALL=(root) NOPASSWD: ${APTMARK_PATH} unhold *"
         fi
         if command -v dnf >/dev/null 2>&1; then
             DNF_PATH="$(command -v dnf)"
             echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} makecache"
             echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y update"
             echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y --security update"
+            # Reboot-class dnf excludes fragment (PATCH-GATE AD-015): both
+            # paths are fixed — the riot user can place content into exactly
+            # one root-owned file, ever. These paths must match the Go
+            # constants byte-for-byte (internal/agent/config.go
+            # DNFHoldsStagedPath, internal/agent/collectors/holds.go
+            # DNFFragmentPath). No sh -c, no tee, no wildcard path components.
+            INSTALL_PATH="$(command -v install 2>/dev/null || echo /usr/bin/install)"
+            RM_PATH="$(command -v rm 2>/dev/null || echo /usr/bin/rm)"
+            echo "riot ALL=(root) NOPASSWD: ${INSTALL_PATH} -m 0644 -o root -g root /var/lib/riot/dnf-holds.staged /etc/dnf/libdnf5.conf.d/60-riot-holds.conf"
+            echo "riot ALL=(root) NOPASSWD: ${RM_PATH} -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf"
         fi
 
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"

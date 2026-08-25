@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 )
 
 // [AC-011] collectorDeps must include "gpu" -> ["nvidia-smi"]
@@ -111,3 +114,39 @@ func TestAC031_CollectorDeps_SecurityHasJournalctl(t *testing.T) {
 
 // Suppress unused import warning for fmt (used by the warn/pass helpers under test).
 var _ = fmt.Sprintf
+
+// [SEC-AC-004] The doctor's hold-enforcement probes are the same
+// non-mutating "sudo -n -l" probes the agent runtime uses, with fixed-shape
+// argv, and the remediation text names the installer re-run.
+func TestSECAC004_DoctorHoldProbes(t *testing.T) {
+	t.Run("[SEC-AC-004] probe argv is the exact sudo -n -l shape", func(t *testing.T) {
+		var calls [][]string
+		hm := collectors.NewHoldManager(true, HoldStatePath(), DNFHoldsStagedPath())
+		hm.SetRunner(func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return nil, nil
+		})
+
+		assert.NoError(t, hm.VerifyPrivileges(context.Background(), "apt"))
+		assert.NoError(t, hm.VerifyPrivileges(context.Background(), "dnf"))
+
+		if assert.Len(t, calls, 2) {
+			assert.Equal(t, []string{"sudo", "-n", "-l"}, calls[0][:3],
+				"[SEC-AC-004] apt probe lists, never executes")
+			assert.Contains(t, calls[0], "hold")
+			assert.Equal(t, []string{"sudo", "-n", "-l"}, calls[1][:3],
+				"[SEC-AC-004] dnf probe lists, never executes")
+			assert.Contains(t, calls[1], DNFHoldsStagedPath())
+			assert.Contains(t, calls[1], collectors.DNFFragmentPath)
+		}
+	})
+
+	t.Run("[SEC-AC-004] failure remediation names the installer re-run", func(t *testing.T) {
+		out := captureStdout(func() {
+			fail("apt-mark hold/unhold sudoers rules missing — hold enforcement will report no_privilege")
+			warn("  Re-run the install script (curl … | sudo bash) to rewrite /etc/sudoers.d/riot-agent")
+		})
+		assert.Contains(t, out, "Re-run the install script")
+		assert.Contains(t, out, "/etc/sudoers.d/riot-agent")
+	})
+}

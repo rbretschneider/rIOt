@@ -156,6 +156,14 @@ func (hm *HoldManager) VerifyPrivileges(ctx context.Context, pm string) error {
 	return nil
 }
 
+// DNF5Supported reports whether the host's dnf supports the libdnf5 conf.d
+// fragment mechanism. Exported for `riot-agent doctor` (SEC-PATCH-GATE-004).
+func (hm *HoldManager) DNF5Supported(ctx context.Context) bool {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	return hm.dnf5Supported(ctx)
+}
+
 // Reconcile converges OS-level holds against the installed package set
 // (FR-011, FR-012). Called once per telemetry cycle by the updates
 // collector, which passes the installed names it already parsed (NFR-004 —

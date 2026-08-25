@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 )
 
 // collectorDeps maps collector name → required external tools.
@@ -217,7 +220,15 @@ func Doctor(configPath string) {
 	fmt.Printf("  Shutdown:     %v\n", cfg.Commands.AllowShutdown)
 	fmt.Printf("  Patching:     %v\n", cfg.Commands.AllowPatching)
 	fmt.Printf("  Probes:       %v\n", cfg.Commands.AllowProbes)
+	fmt.Printf("  Hold pkgs:    %v\n", cfg.Commands.HoldRebootClass)
 	fmt.Printf("  Host shell:   %v\n", cfg.HostTerminal.Enabled)
+
+	// ── Hold Enforcement (PATCH-GATE, SEC-PATCH-GATE-004) ──
+	// Runs the same sudo -n -l probes the agent's runtime preflight uses so
+	// operators discover missing sudoers rules here instead of during an outage.
+	if runtime.GOOS == "linux" && cfg.Commands.HoldRebootClass {
+		checkHoldEnforcement()
+	}
 
 	// ── Files ──
 	fmt.Println()
@@ -244,6 +255,47 @@ func Doctor(configPath string) {
 	fmt.Println()
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("Doctor complete.")
+}
+
+// checkHoldEnforcement probes whether the reboot-class hold-enforcement
+// sudoers rules exist (PATCH-GATE AD-015 preflight, same probes as the
+// agent runtime) and whether the dnf fragment mechanism is supported.
+func checkHoldEnforcement() {
+	fmt.Println()
+	section("Hold Enforcement")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	hm := collectors.NewHoldManager(true, HoldStatePath(), DNFHoldsStagedPath())
+
+	switch {
+	case commandExists("apt-mark"):
+		if err := hm.VerifyPrivileges(ctx, "apt"); err != nil {
+			fail("apt-mark hold/unhold sudoers rules missing — hold enforcement will report no_privilege")
+			warn("  Re-run the install script (curl … | sudo bash) to rewrite /etc/sudoers.d/riot-agent")
+		} else {
+			pass("apt-mark hold/unhold sudo rules present")
+		}
+	case commandExists("dnf"):
+		if err := hm.VerifyPrivileges(ctx, "dnf"); err != nil {
+			fail("dnf fragment install/rm sudoers rules missing — hold enforcement will report no_privilege")
+			warn("  Re-run the install script (curl … | sudo bash) to rewrite /etc/sudoers.d/riot-agent")
+		} else {
+			pass("dnf fragment install/rm sudo rules present")
+		}
+		if hm.DNF5Supported(ctx) {
+			pass("dnf5 detected — excludepkgs drop-in fragment supported")
+		} else {
+			warn("dnf5 not detected — OS-level dnf holds require dnf5; enforcement will report unsupported")
+		}
+	default:
+		warn("no supported package manager (apt/dnf) found — hold enforcement inactive")
+	}
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // checkJournalAccess verifies the agent can read the system journal (AD-010, SEC-003).
