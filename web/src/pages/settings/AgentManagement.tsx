@@ -252,6 +252,7 @@ function AutomationIntervals() {
           description="Automatically apply OS security patches when updates are detected on devices with auto-patch enabled."
           window={current.os_patch}
           onChange={patch => updateWindow('os_patch', patch)}
+          showRebootClass
         />
         {dockerEnabled && (
           <WindowCard
@@ -294,12 +295,13 @@ function AutomationIntervals() {
   )
 }
 
-function WindowCard({ title, description, window: w, onChange, showStagger }: {
+function WindowCard({ title, description, window: w, onChange, showStagger, showRebootClass }: {
   title: string
   description: string
   window: MaintenanceWindow
   onChange: (patch: Partial<MaintenanceWindow>) => void
   showStagger?: boolean
+  showRebootClass?: boolean
 }) {
   // Presets are authored as local-time values and compared against the stored
   // UTC window by converting both sides to UTC.
@@ -456,6 +458,36 @@ function WindowCard({ title, description, window: w, onChange, showStagger }: {
             </div>
             <p className="text-xs text-gray-500 mt-1.5">
               Spreads pulls across time so fleets with many containers don't hit Docker Hub's 100-pull-per-6h limit. Set to 0 if you have a local registry pull-through cache.
+            </p>
+          </div>
+        )}
+
+        {/* Reboot-class policy — only shown for os_patch */}
+        {showRebootClass && (
+          <div>
+            <label className="text-xs text-gray-500 block mb-1.5">
+              Reboot-Class Packages
+              <span className="text-gray-600 ml-1">(GPU drivers &amp; kernel)</span>
+            </label>
+            <div className="flex gap-2">
+              {(['off', 'gated'] as const).map(rc => (
+                <button
+                  key={rc}
+                  onClick={() => onChange({ reboot_class: rc })}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    (w.reboot_class ?? 'off') === rc
+                      ? rc === 'gated'
+                        ? 'bg-violet-500/20 text-violet-300 border border-violet-600/50'
+                        : 'bg-gray-700 text-gray-300 border border-gray-600'
+                      : 'bg-gray-800 text-gray-400 hover:text-white border border-gray-700'
+                  }`}
+                >
+                  {rc === 'off' ? 'Patch normally' : 'Gate to window'}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-1.5">
+              When gated, GPU driver and kernel packages are held at the OS level and applied only during this window, then the host reboots automatically. Requires the agent's <code className="text-gray-400">commands.hold_reboot_class</code> flag on each device — without it the server policy has no effect — and the automatic reboot requires <code className="text-gray-400">commands.allow_reboot</code>.
             </p>
           </div>
         )}
