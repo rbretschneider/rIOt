@@ -11,6 +11,7 @@ import BatteryGauge from '../components/BatteryGauge'
 import MetricChart from '../components/MetricChart'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
+import RebootClassBadge from '../components/RebootClassBadge'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import ActivityLog from '../components/ActivityLog'
@@ -158,6 +159,9 @@ export default function DeviceDetail() {
   const { device, latest_telemetry, agent_connected } = data
   const tel = latest_telemetry?.data
   const canCommand = device.status === 'online' && agent_connected !== false
+  // PATCH-GATE: GPU driver update blast radius + hold-enforcement health.
+  const gpuContainerCount = tel?.docker?.containers?.filter(c => c.uses_gpu).length ?? 0
+  const holdEnforcementBroken = tel?.updates?.hold_enforcement === 'no_privilege' || tel?.updates?.hold_enforcement === 'unsupported'
 
   // Download Summary: fetch Markdown, create a Blob URL, trigger download.
   const handleDownloadSummary = async () => {
@@ -288,6 +292,16 @@ export default function DeviceDetail() {
             )}
           </div>
           <StatusBadge status={device.status} />
+          {tel?.updates?.reboot_required && (
+            <span
+              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-600/40"
+              title={tel.updates.reboot_required_reasons?.length
+                ? `Pending: ${tel.updates.reboot_required_reasons.join(', ')}`
+                : 'A reboot is required to activate installed updates'}
+            >
+              Reboot required
+            </span>
+          )}
           <p className="text-sm text-gray-500 font-mono mt-0.5">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (
@@ -304,12 +318,22 @@ export default function DeviceDetail() {
           </p>
           <div className="flex items-center gap-4 mt-2">
             {isEnabled('docker') && tel?.docker?.available && (
-              <Link
-                to={`/devices/${id}/containers`}
-                className="text-sm text-gray-400 hover:text-white transition-colors"
-              >
-                Docker
-              </Link>
+              <span className="flex items-center gap-2">
+                <Link
+                  to={`/devices/${id}/containers`}
+                  className="text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Docker
+                </Link>
+                {gpuContainerCount > 0 && (
+                  <span
+                    className="text-xs px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300"
+                    title="Containers requesting GPU access — affected by a GPU driver update"
+                  >
+                    {gpuContainerCount} GPU container{gpuContainerCount !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </span>
             )}
             <Link
               to={`/devices/${id}/probes`}
@@ -828,28 +852,58 @@ export default function DeviceDetail() {
       )}
 
       {/* Updates */}
-      {isEnabled('updates') && tel?.updates && tel.updates.pending_updates > 0 && (
+      {isEnabled('updates') && tel?.updates && (tel.updates.pending_updates > 0 || (tel.updates.held_packages?.length ?? 0) > 0 || holdEnforcementBroken) && (
         <Section title={`Pending Updates (${tel.updates.pending_updates})`}>
-          <div className="max-h-48 overflow-y-auto scrollbar-thin">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-gray-500 text-xs uppercase">
-                  <th className="text-left py-2 pr-3">Package</th>
-                  <th className="text-left py-2 pr-3">New Version</th>
-                  <th className="text-left py-2 pr-3">Security</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800/50">
-                {tel.updates.updates?.map((u) => (
-                  <tr key={u.name}>
-                    <td className="py-1.5 pr-3 font-mono">{u.name}</td>
-                    <td className="py-1.5 pr-3 text-gray-400">{u.new_ver}</td>
-                    <td className="py-1.5 pr-3">{u.is_security ? <span className="text-red-400">Yes</span> : '-'}</td>
+          {holdEnforcementBroken && (
+            <div className="mb-3 px-3 py-2 rounded-md bg-red-500/10 border border-red-600/40 text-sm text-red-400" role="alert">
+              <span className="font-semibold">Hold enforcement inactive</span>
+              {' — '}
+              {tel.updates.hold_enforcement === 'no_privilege'
+                ? 'the required sudo rules are missing on this device. Re-run the install script to update /etc/sudoers.d/riot-agent.'
+                : 'this host’s package manager does not support rIOt-managed holds (dnf5 required).'}
+              {' '}Reboot-class packages are not protected.
+            </div>
+          )}
+          {tel.updates.pending_updates > 0 && (
+            <div className="max-h-48 overflow-y-auto scrollbar-thin">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-500 text-xs uppercase">
+                    <th className="text-left py-2 pr-3">Package</th>
+                    <th className="text-left py-2 pr-3">New Version</th>
+                    <th className="text-left py-2 pr-3">Security</th>
                   </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800/50">
+                  {tel.updates.updates?.map((u) => (
+                    <tr key={u.name}>
+                      <td className="py-1.5 pr-3 font-mono">
+                        {u.name}
+                        <RebootClassBadge cls={u.class} />
+                      </td>
+                      <td className="py-1.5 pr-3 text-gray-400">{u.new_ver}</td>
+                      <td className="py-1.5 pr-3">{u.is_security ? <span className="text-red-400">Yes</span> : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {(tel.updates.held_packages?.length ?? 0) > 0 && (
+            <div className="mt-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1.5">
+                Held by rIOt ({tel.updates.held_packages!.length})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {tel.updates.held_packages!.map((p) => (
+                  <span key={p} className="px-1.5 py-0.5 rounded text-xs font-mono bg-gray-800 text-gray-300 border border-gray-700/60">
+                    {p}
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5">Held until the next maintenance-window patch run.</p>
+            </div>
+          )}
         </Section>
       )}
 

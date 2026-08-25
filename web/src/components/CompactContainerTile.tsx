@@ -35,6 +35,14 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
       <div className="flex items-center gap-1.5 min-w-0">
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotColor(c.state)}`} />
         <span className="text-sm font-medium text-white truncate max-w-[160px]" title={c.name}>{name}</span>
+        {c.uses_gpu && (
+          <span
+            className="px-1 py-px rounded text-[9px] font-semibold bg-violet-500/15 text-violet-300 flex-shrink-0"
+            title="Requests GPU access — affected by GPU driver updates"
+          >
+            GPU
+          </span>
+        )}
         {health && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${health.dotClass}`} title={`Health: ${health.label}`} />}
         {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
       </div>

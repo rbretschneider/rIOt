@@ -19,6 +19,8 @@ export interface DevicePatchInfo {
   hostname: string
   pending_updates: number
   security_count: number
+  reboot_class_count: number
+  reboot_required: boolean
   package_manager?: string
   updates?: PendingUpdate[]
 }

@@ -210,6 +210,11 @@ export interface UpdateInfo {
   pending_security_count: number
   pending_kernel_update: boolean
   pending_kernel_version?: string
+  pending_reboot_class_count?: number
+  held_packages?: string[]
+  hold_enforcement?: 'active' | 'no_privilege' | 'unsupported'
+  reboot_required?: boolean
+  reboot_required_reasons?: string[]
   updates?: PendingUpdate[]
   last_check_time?: string
   unattended_upgrades: boolean
@@ -220,6 +225,7 @@ export interface PendingUpdate {
   current_ver: string
   new_ver: string
   is_security: boolean
+  class?: 'gpu_driver' | 'kernel'
 }
 
 export interface ServiceInfo {
@@ -283,6 +289,7 @@ export interface ContainerInfo {
   riot?: RiotLabels
   update_available?: boolean | null
   network_mode?: string
+  uses_gpu?: boolean
 }
 
 export interface PortMapping {
@@ -726,6 +733,8 @@ export interface MaintenanceWindow {
   stagger_seconds: number
   frequency?: 'daily' | 'weekly' | 'monthly'
   days_of_week?: number[] // 0 = Sunday .. 6 = Saturday
+  // Reboot-class (GPU driver / kernel) policy — os_patch window only.
+  reboot_class?: 'off' | 'gated'
 }
 
 export interface AutomationConfig {

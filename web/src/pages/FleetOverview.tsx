@@ -7,6 +7,7 @@ import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
 
 import ConfirmModal from '../components/ConfirmModal'
+import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
@@ -88,7 +89,7 @@ export default function FleetOverview() {
     setPatchDetail(null)
   }
 
-  // Derive summary from live device data — no separate polling needed
+  // Derive summary from live device data â€” no separate polling needed
   const summary = useMemo(() => {
     if (!devices) return null
     return {
@@ -429,8 +430,21 @@ function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
                       {d.package_manager && <span className="text-xs text-gray-500">{d.package_manager}</span>}
                     </div>
                     <div className="flex items-center gap-3 text-sm">
+                      {d.reboot_required && (
+                        <span
+                          className="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400 border border-amber-600/40"
+                          title="A reboot is required to activate installed updates"
+                        >
+                          reboot required
+                        </span>
+                      )}
                       {d.security_count > 0 && (
                         <span className="text-red-400">{d.security_count} security</span>
+                      )}
+                      {d.reboot_class_count > 0 && (
+                        <span className="text-violet-300" title="GPU driver / kernel packages — applied only during the maintenance window when reboot-class gating is on">
+                          {d.reboot_class_count} reboot-class
+                        </span>
                       )}
                       <span className="text-cyan-400">{d.pending_updates} pkg{d.pending_updates !== 1 ? 's' : ''}</span>
                       <span className="text-gray-500">{expanded.has(d.device_id) ? '\u25B2' : '\u25BC'}</span>
@@ -450,7 +464,10 @@ function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
                         <tbody className="divide-y divide-gray-800/50">
                           {d.updates.map(u => (
                             <tr key={u.name}>
-                              <td className="px-4 py-1.5 font-mono text-xs text-gray-200">{u.name}</td>
+                              <td className="px-4 py-1.5 font-mono text-xs text-gray-200">
+                                {u.name}
+                                <RebootClassBadge cls={u.class} />
+                              </td>
                               <td className="px-4 py-1.5 font-mono text-xs text-gray-500">{u.current_ver || '-'}</td>
                               <td className="px-4 py-1.5 font-mono text-xs text-gray-400">{u.new_ver}</td>
                               <td className="px-4 py-1.5">{u.is_security ? <span className="text-red-400 text-xs">Yes</span> : ''}</td>

@@ -694,15 +694,18 @@ export function getPatchStatus(): DevicePatchInfo[] {
   return [
     {
       device_id: devices.find(d => d.hostname === 'pi-cameras')!.id,
-      hostname: 'pi-cameras', pending_updates: 12, security_count: 3, package_manager: 'apt',
+      hostname: 'pi-cameras', pending_updates: 12, security_count: 3,
+      reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
     },
     {
       device_id: devices.find(d => d.hostname === 'backup-server')!.id,
-      hostname: 'backup-server', pending_updates: 7, security_count: 2, package_manager: 'apt',
+      hostname: 'backup-server', pending_updates: 7, security_count: 2,
+      reboot_class_count: 1, reboot_required: true, package_manager: 'apt',
     },
     {
       device_id: devices.find(d => d.hostname === 'k3s-worker-01')!.id,
-      hostname: 'k3s-worker-01', pending_updates: 4, security_count: 0, package_manager: 'apt',
+      hostname: 'k3s-worker-01', pending_updates: 4, security_count: 0,
+      reboot_class_count: 2, reboot_required: false, package_manager: 'apt',
     },
   ]
 }
