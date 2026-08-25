@@ -894,3 +894,76 @@ describe('[AC-001] Download Summary creates a Blob and initiates download', () =
     vi.restoreAllMocks()
   })
 })
+
+function renderWithTelemetry(data: Record<string, unknown>) {
+  mockGetDevice.mockResolvedValue({
+    ...baseDevice,
+    latest_telemetry: {
+      id: 1,
+      device_id: 'dev-1',
+      timestamp: new Date().toISOString(),
+      data,
+    },
+  })
+  return renderWithProviders()
+}
+
+// [SEC-AC-001] The operator-visible half of the fail-closed hold-enforcement
+// mitigation: when the agent cannot enforce holds, the device view must warn.
+describe('[SEC-AC-001] Hold enforcement inactive warning (device view)', () => {
+  it('warns and points to the install script when sudo privilege is missing', async () => {
+    renderWithTelemetry({ updates: { pending_updates: 0, hold_enforcement: 'no_privilege' } })
+    expect(await screen.findByText('Hold enforcement inactive')).toBeInTheDocument()
+    expect(screen.getByRole('alert').textContent).toMatch(/install script/i)
+  })
+
+  it('warns that the package manager is unsupported', async () => {
+    renderWithTelemetry({ updates: { pending_updates: 0, hold_enforcement: 'unsupported' } })
+    expect(await screen.findByText('Hold enforcement inactive')).toBeInTheDocument()
+    expect(screen.getByRole('alert').textContent).toMatch(/dnf5/i)
+  })
+
+  it('shows no warning when hold enforcement is active', async () => {
+    renderWithTelemetry({ updates: { pending_updates: 3, hold_enforcement: 'active' } })
+    await screen.findByText('test-host')
+    expect(screen.queryByText('Hold enforcement inactive')).not.toBeInTheDocument()
+  })
+})
+
+// [AC-021] Device view surfaces which packages rIOt is holding and whether a
+// reboot is pending.
+describe('[AC-021] Held packages and reboot-required flag (device view)', () => {
+  it('lists rIOt-held packages and shows the reboot-required chip', async () => {
+    renderWithTelemetry({
+      updates: {
+        pending_updates: 2,
+        held_packages: ['nvidia-driver-550', 'linux-image-amd64'],
+        reboot_required: true,
+        reboot_required_reasons: ['kernel updated'],
+      },
+    })
+    expect(await screen.findByText('Held by rIOt (2)')).toBeInTheDocument()
+    expect(screen.getByText('nvidia-driver-550')).toBeInTheDocument()
+    expect(screen.getByText('linux-image-amd64')).toBeInTheDocument()
+    expect(screen.getByText('Reboot required')).toBeInTheDocument()
+  })
+})
+
+// [AC-022] Device view counts GPU-dependent containers so the operator can see
+// the blast radius of a GPU driver update.
+describe('[AC-022] GPU-dependent container count (device view)', () => {
+  it('shows the GPU container count when containers request the GPU', async () => {
+    renderWithTelemetry({
+      docker: { available: true, containers: [{ uses_gpu: true }, { uses_gpu: false }, { uses_gpu: true }] },
+    })
+    expect(await screen.findByText('2 GPU containers')).toBeInTheDocument()
+  })
+
+  it('shows no GPU container badge when none request the GPU', async () => {
+    renderWithTelemetry({
+      docker: { available: true, containers: [{ uses_gpu: false }] },
+    })
+    await screen.findByText('test-host')
+    expect(screen.queryByText(/GPU container/)).not.toBeInTheDocument()
+  })
+})
