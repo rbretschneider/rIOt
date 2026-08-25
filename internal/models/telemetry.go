@@ -261,9 +261,22 @@ type UpdateInfo struct {
 	PendingSecurityCount int             `json:"pending_security_count"`
 	PendingKernelUpdate  bool            `json:"pending_kernel_update"`
 	PendingKernelVersion string          `json:"pending_kernel_version,omitempty"`
-	Updates              []PendingUpdate `json:"updates,omitempty"`
-	LastCheckTime        *time.Time      `json:"last_check_time,omitempty"`
-	UnattendedUpgrades   bool            `json:"unattended_upgrades"`
+	// PendingRebootClassCount aggregates pending updates classified gpu_driver
+	// or kernel so truncated Updates lists still surface the signal (PATCH-GATE FR-009).
+	PendingRebootClassCount int `json:"pending_reboot_class_count,omitempty"`
+	// HeldPackages lists packages currently held by rIOt-managed OS-level
+	// holds, sorted (PATCH-GATE FR-016). Non-empty only when HoldEnforcement
+	// is "active" — an unenforced state never claims holds.
+	HeldPackages []string `json:"held_packages,omitempty"`
+	// HoldEnforcement reports hold-enforcement state: "active",
+	// "no_privilege" (sudoers rules missing), or "unsupported" (dnf4).
+	// Absent means the feature is disabled or the agent predates PATCH-GATE.
+	HoldEnforcement       string          `json:"hold_enforcement,omitempty"`
+	RebootRequired        bool            `json:"reboot_required,omitempty"`
+	RebootRequiredReasons []string        `json:"reboot_required_reasons,omitempty"`
+	Updates               []PendingUpdate `json:"updates,omitempty"`
+	LastCheckTime         *time.Time      `json:"last_check_time,omitempty"`
+	UnattendedUpgrades    bool            `json:"unattended_upgrades"`
 }
 
 type PendingUpdate struct {
@@ -271,6 +284,8 @@ type PendingUpdate struct {
 	CurrentVer string `json:"current_ver"`
 	NewVer     string `json:"new_ver"`
 	IsSecurity bool   `json:"is_security"`
+	// Class is "gpu_driver", "kernel", or "" (standard) — PATCH-GATE FR-001.
+	Class string `json:"class,omitempty"`
 }
 
 // ServiceInfo holds systemd service details.
@@ -338,6 +353,7 @@ type ContainerInfo struct {
 	Riot            *RiotLabels       `json:"riot,omitempty"`
 	UpdateAvailable *bool             `json:"update_available,omitempty"`
 	NetworkMode     string            `json:"network_mode,omitempty"`
+	UsesGPU         bool              `json:"uses_gpu,omitempty"` // HostConfig requests GPU devices (PATCH-GATE FR-028)
 }
 
 // PortMapping represents a container port binding.

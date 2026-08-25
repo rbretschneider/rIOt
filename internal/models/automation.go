@@ -18,6 +18,10 @@ type MaintenanceWindow struct {
 	// the last day of the month). Empty string is treated as "daily" for back-compat.
 	Frequency  string `json:"frequency,omitempty"`
 	DaysOfWeek []int  `json:"days_of_week,omitempty"` // 0=Sunday..6=Saturday; used when Frequency=="weekly"
+	// RebootClass controls whether automated OS-patch runs may include
+	// reboot-class (GPU driver / kernel) packages: "off" (default/empty) or
+	// "gated". Only meaningful on the OSPatch window; ignored for DockerUpdate.
+	RebootClass string `json:"reboot_class,omitempty"`
 }
 
 // Default stagger between per-target auto-update dispatches on the same device.
