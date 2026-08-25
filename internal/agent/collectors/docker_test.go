@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
@@ -836,5 +838,94 @@ func TestAC005_AC006_AC007_SemaphoreCapacityMatchesConstants(t *testing.T) {
 	}
 	if cap(networkSem) != 10 {
 		t.Errorf("[AC-007] network mode semaphore capacity must be 10, got %d", cap(networkSem))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PATCH-GATE [AC-022]: usesGPU truth table over HostConfig fixtures
+// ---------------------------------------------------------------------------
+
+// [AC-022] usesGPU flags GPU-dependent containers from HostConfig without
+// additional Docker API calls: nvidia DeviceRequests, generic "gpu"
+// capability requests, and /dev/dri, /dev/kfd, /dev/nvidia* device
+// mappings all count; plain containers do not.
+func TestUsesGPU_AC022_TruthTable(t *testing.T) {
+	tests := []struct {
+		name string
+		hc   *container.HostConfig
+		want bool
+	}{
+		{
+			name: "[AC-022] nvidia DeviceRequest driver",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					DeviceRequests: []container.DeviceRequest{{Driver: "nvidia", Count: -1}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "[AC-022] generic gpu capability request (--gpus all)",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					DeviceRequests: []container.DeviceRequest{{
+						Capabilities: [][]string{{"gpu"}},
+					}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "[AC-022] /dev/dri device mapping (AMD/Intel render node)",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					Devices: []container.DeviceMapping{{PathOnHost: "/dev/dri/renderD128"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "[AC-022] /dev/kfd device mapping (ROCm compute)",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					Devices: []container.DeviceMapping{{PathOnHost: "/dev/kfd"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "[AC-022] legacy /dev/nvidia0 device mapping",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					Devices: []container.DeviceMapping{{PathOnHost: "/dev/nvidia0"}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "[AC-022] plain container without GPU access",
+			hc: &container.HostConfig{
+				Resources: container.Resources{
+					Devices: []container.DeviceMapping{{PathOnHost: "/dev/ttyUSB0"}},
+					DeviceRequests: []container.DeviceRequest{{
+						Capabilities: [][]string{{"compute", "utility"}},
+					}},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "[AC-022] nil HostConfig",
+			hc:   nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usesGPU(tt.hc); got != tt.want {
+				t.Errorf("usesGPU() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

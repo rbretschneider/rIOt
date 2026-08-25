@@ -308,6 +308,7 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			}
 			if inspect.HostConfig != nil {
 				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
+				containers[idx].UsesGPU = usesGPU(inspect.HostConfig)
 			}
 			if inspect.State != nil && inspect.State.Health != nil {
 				containers[idx].HealthStatus = inspect.State.Health.Status
@@ -316,6 +317,38 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 	}
 
 	wg.Wait()
+}
+
+// usesGPU reports whether a container's HostConfig requests GPU access
+// (PATCH-GATE FR-028, AD-012): a DeviceRequest with the nvidia driver or a
+// "gpu" capability (covers --gpus all and compose device_requests), or a
+// host device mapping under /dev/nvidia*, /dev/dri, or /dev/kfd (AMD/ROCm
+// and legacy NVIDIA mappings). Pure — reads fields the collector already
+// fetches, zero extra Docker API calls.
+func usesGPU(hc *container.HostConfig) bool {
+	if hc == nil {
+		return false
+	}
+	for _, req := range hc.DeviceRequests {
+		if req.Driver == "nvidia" {
+			return true
+		}
+		for _, capSet := range req.Capabilities {
+			for _, capability := range capSet {
+				if capability == "gpu" {
+					return true
+				}
+			}
+		}
+	}
+	for _, dev := range hc.Devices {
+		if strings.HasPrefix(dev.PathOnHost, "/dev/nvidia") ||
+			strings.HasPrefix(dev.PathOnHost, "/dev/dri") ||
+			strings.HasPrefix(dev.PathOnHost, "/dev/kfd") {
+			return true
+		}
+	}
+	return false
 }
 
 func portStr(port uint16, proto string) string {
@@ -358,6 +391,7 @@ func (c *DockerCollector) collectNetworkModes(ctx context.Context, cli *client.C
 			}
 			if inspect.HostConfig != nil {
 				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
+				containers[idx].UsesGPU = usesGPU(inspect.HostConfig)
 				if inspect.HostConfig.RestartPolicy.Name != "" {
 					containers[idx].RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
 				}
