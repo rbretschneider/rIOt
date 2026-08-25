@@ -49,6 +49,7 @@
 - **Temperature monitoring** — color-coded CPU and disk drive temperatures in the dashboard (green/yellow/orange/red thresholds)
 - **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
+- **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Architecture
@@ -263,6 +264,7 @@ Then re-run `riot-agent doctor` to confirm the check passes.
      allow_reboot: false            # set to true to allow remote reboot
      allow_shutdown: false          # set to true to allow remote shutdown (device requires physical/OOB access to power back on)
      allow_patching: false          # set to true to allow remote OS updates and enable auto-updates
+     hold_reboot_class: false       # set to true to hold GPU driver + kernel packages at the OS level (see Reboot-Class Package Gating)
 
    host_terminal:
      enabled: false                 # set to true to allow host shell access
@@ -292,6 +294,10 @@ The installer creates `/etc/sudoers.d/riot-agent` with least-privilege rules tha
 | `/usr/bin/dnf makecache` | Remote patching | Refresh DNF package cache (Fedora/RHEL) |
 | `/usr/bin/dnf -y update` | Remote patching | Install available package updates |
 | `/usr/bin/dnf -y --security update` | Remote patching | Install security-only updates |
+| `/usr/bin/apt-mark hold *` | Reboot-class holds | Hold GPU driver / kernel packages (Debian/Ubuntu); subcommand locked, package name charset-validated agent-side |
+| `/usr/bin/apt-mark unhold *` | Reboot-class holds | Release rIOt-managed holds during an in-window patch run or on disable |
+| `install -m 0644 -o root -g root /var/lib/riot/dnf-holds.staged /etc/dnf/libdnf5.conf.d/60-riot-holds.conf` | Reboot-class holds | Place the rIOt-owned `excludepkgs` fragment (dnf5); both paths fixed, zero variable arguments |
+| `rm -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf` | Reboot-class holds | Remove the fragment on disable / empty set (dnf5); exact-path |
 | `/usr/bin/systemctl reboot` | Remote reboot | Reboot the device from the dashboard |
 | `sudo systemctl poweroff` | Remote shutdown | Shut down the device from the dashboard (Linux) |
 | `/bin/sh -c mv ... && cp ... && chmod ...` | Agent self-update | Atomically swap the agent binary on disk |
@@ -311,6 +317,8 @@ sudo visudo -cf /etc/sudoers.d/riot-agent
 ```
 
 New installs via `install.sh` include all rules automatically.
+
+**Reboot-class holds on existing agents**: the four `apt-mark` / dnf-fragment rules above are added by `install.sh`, but an in-place agent self-update (`agent_update`) only swaps the binary — it does **not** rewrite `/etc/sudoers.d/riot-agent`. To enable [Reboot-Class Package Gating](#reboot-class-package-gating) on an already-deployed host, **re-run the installer** (`curl … | sudo bash`, which `install.sh` supports idempotently) so the new rules are written. Until then the agent reports `hold_enforcement: no_privilege` and the device page shows a "Hold enforcement inactive" warning rather than silently failing to protect anything. `riot-agent doctor` runs the same privilege probes and flags the gap.
 
 ### Agent Config Reference
 
@@ -340,6 +348,7 @@ New installs via `install.sh` include all rules automatically.
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
+| `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
 | `host_terminal.shell` | auto-detect | Override default shell (e.g., `/bin/bash`) |
 | `dns_cache.refresh_interval_seconds` | `1800` | How often to refresh cached DNS entries (seconds) |
@@ -359,7 +368,7 @@ New installs via `install.sh` include all rules automatically.
 | `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth); pool and union filesystems are automatically identified and displayed in a separate "Storage Pools" card section on the device detail page — detected by filesystem type (ZFS, Btrfs, bcachefs, mergerfs, unionfs, Unraid `shfs`/`fuse.shfs`) or by device path (mdraid arrays `/dev/md*`, LVM and device-mapper volumes `/dev/mapper/*` and `/dev/dm-*`; Docker device-mapper and live-boot overlays are excluded) |
 | `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
 | `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
-| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status |
+| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status; classifies each pending update as `gpu_driver` / `kernel` / standard and detects reboot-required state (`/var/run/reboot-required` on apt, `dnf needs-restarting -r` on dnf) — see [Reboot-Class Package Gating](#reboot-class-package-gating) |
 | `services` | systemd services — name, state, enabled, PID, memory usage |
 | `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
@@ -888,7 +897,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
-| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview |
+| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager` |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
@@ -1107,6 +1116,90 @@ Certain failing checks can be fixed directly from the modal:
 | Pending package updates | **Update All** | `os_update` with `mode: full` | `commands.allow_patching: true` |
 
 Fix buttons only appear when the device is online and connected. Each button requires confirmation before executing.
+
+---
+
+## Reboot-Class Package Gating
+
+GPU driver and kernel packages are special: applying one out-of-band can break a running system until the host reboots. The motivating case is a GPU driver upgrade on a host running GPU-dependent Docker containers (NVIDIA container runtime) — the kernel-module/user-space-library version mismatch breaks every GPU container until the machine is rebooted, turning a routine `apt upgrade` into an unplanned outage.
+
+**Reboot-class** = NVIDIA/AMD GPU driver packages **plus** kernel/dkms packages. Reboot-class package gating holds these at the OS level so they can move only during a maintenance window, and a run that applies one always ends in a reboot. It is **off by default** and is a **two-sided opt-in** — nothing changes unless you enable it on both the server and the agent.
+
+### Platform support
+
+- **Supported:** Linux with **apt** (Debian/Ubuntu, via `apt-mark hold`) and **dnf5** (Fedora 41+, RHEL 10+, via a rIOt-owned `excludepkgs` drop-in fragment).
+- **Not supported for OS-level holds:** dnf4 (classification and reboot-required detection still work, but there is no drop-in directory to lock packages — the agent reports `hold_enforcement: unsupported`), pacman, apk, and Windows/macOS. GPU driver rollback, container restart orchestration, and Intel GPU classification are out of scope.
+
+### What "reboot-class" covers
+
+| Class | apt examples | dnf examples |
+|---|---|---|
+| `gpu_driver` | `nvidia-driver-*`, `nvidia-dkms-*`, `libnvidia-*`, `nvidia-utils-*`, `xserver-xorg-video-nvidia-*`, `amdgpu-*`, `rock-dkms`/`rocm-dkms` | `nvidia-driver*`, `akmod-nvidia*`, `kmod-nvidia*`, `xorg-x11-drv-nvidia*`, `amdgpu*`, ROCm kernel-module packages |
+| `kernel` | `linux-image-*`, `linux-headers-*`, `linux-modules-*`, `linux-generic*`, any `*-dkms` not already a GPU driver | `kernel`, `kernel-core`, `kernel-modules*`, `kernel-headers`, `kernel-devel`, any `*-dkms` not already a GPU driver |
+
+A package matching both (e.g. `nvidia-dkms-550`) is classified `gpu_driver` (GPU precedence). Deliberately **not** reboot-class (upgradeable any time): `linux-firmware`, the container toolkit (`libnvidia-container*`, `nvidia-container-toolkit`, `nvidia-docker2`), and ROCm user-space libraries — these are user-space plumbing, not part of the driver/kernel-module ABI pair.
+
+### Enabling it (both sides required)
+
+1. **Re-run `scripts/install.sh` on each agent host.** Hold enforcement needs new sudoers rules (`apt-mark hold/unhold`, or the fixed-path dnf fragment writer). An in-place `agent_update` does **not** install them — see [Sudoers Rules](#sudoers-rules). Until they are present the agent reports `hold_enforcement: no_privilege` and the device page shows a **"Hold enforcement inactive"** warning; enforcement fails **closed and visibly**, never as a silent no-op.
+
+2. **Agent side** — in each host's `/etc/riot/agent.yaml`:
+
+   ```yaml
+   commands:
+     hold_reboot_class: true    # hold GPU driver + kernel packages
+     allow_patching: true       # required for the automated in-window patch run
+     allow_reboot: true         # required for the automatic post-apply reboot
+   ```
+
+   Then `sudo systemctl restart riot-agent`. Without `allow_patching`, no automated patch run occurs. Without `allow_reboot`, the agent applies reboot-class packages but does **not** reboot — instead it raises a `reboot_required` event, leaving the reboot for you to schedule. The `allow_reboot` veto is absolute: no server setting or command parameter can override it.
+
+3. **Server side** — set the OS-patch maintenance window's reboot-class policy to `gated`. This policy lives on the `os_patch` maintenance window in the automation config (default `off`) and is applied via `PUT /api/v1/settings/automation`, alongside the window schedule managed in **Settings > Agents**:
+
+   ```jsonc
+   {
+     "os_patch": {
+       "mode": "window",
+       "start_time": "03:00",
+       "end_time": "05:00",
+       "reboot_class": "gated"   // "off" (default) or "gated"
+     }
+     // ... docker_update window ...
+   }
+   ```
+
+   Only when the policy is `gated` **and** the dispatch occurs inside the OS-patch window does the orchestrator include reboot-class packages in the run. Manually dispatched `os_update` commands never include them — the server strips the parameter, so the automated in-window run is the only release path.
+
+### What happens during an in-window run
+
+When both opt-ins are active and the OS-patch window opens with reboot-class updates pending:
+
+1. The agent releases **only its own** holds (operator-created `apt-mark hold`s are never touched), recording a crash-recovery marker first.
+2. The package manager applies updates.
+3. Holds are re-applied against the updated package set on **every** exit path — success, upgrade failure, or crash.
+4. If a reboot-class package's version actually changed **and** `allow_reboot` is true, the agent reports the result (stating which reboot-class packages were applied and that a reboot was initiated) and then reboots. If `allow_reboot` is false, it raises `reboot_required` instead. No reboot occurs if only standard packages were applied.
+
+Outside the window, holds keep GPU driver and kernel packages pinned, so a casual `apt upgrade` or `unattended-upgrades` skips them.
+
+### Reboot-required detection and alert
+
+Independently of holds, the agent reports whether the host needs a reboot to activate installed updates — `/var/run/reboot-required` (+ `/var/run/reboot-required.pkgs`) on apt, `dnf needs-restarting -r` on dnf. A once-per-transition **Reboot Required** event is emitted (warning severity, 24-hour cooldown), and a matching alert rule/template ships enabled so it can fan out to your notification channels. Detection failures degrade quietly to "not required". Populating this state also fixes the security score's kernel-update check, which previously always passed silently because the underlying field was never set.
+
+### GPU container blast radius
+
+The Docker collector flags containers that request GPU access (via `HostConfig.DeviceRequests`/`Devices` — `--gpus`, compose `device_requests`, or `/dev/nvidia*` / `/dev/dri` / `/dev/kfd` device mappings). The device detail page shows an "N GPU containers" count and a per-container GPU badge, so you can judge what a driver update would disrupt before scheduling the window.
+
+### Hold-enforcement status
+
+Every telemetry cycle the agent reports a `hold_enforcement` state:
+
+| State | Meaning |
+|---|---|
+| `active` | Holds are being enforced; `held_packages` lists what rIOt currently holds. |
+| `no_privilege` | The feature is enabled but the sudoers rules are missing — **re-run the installer**. Shown as a red warning on the device page. |
+| `unsupported` | dnf4 host — OS-level holds require dnf5. Classification and reboot-required detection still work. |
+
+`held_packages` is non-empty only when the state is `active`, so an unenforced host can never present holds as "protected".
 
 ---
 
