@@ -14,7 +14,7 @@
 The incident: a GPU driver was patched out-of-band while Docker containers depended on the NVIDIA runtime, breaking them until a reboot. PATCH-GATE closes that gap with a two-sided opt-in:
 
 1. **Classification** — the updates collector classifies each pending package as `gpu_driver`, `kernel`, or standard, via a single shared pattern table.
-2. **OS-level holds** — when hold enforcement is enabled (server policy `OSPatch.reboot_class = "gated"` **and** the agent's `commands.hold_enforcement` flag), the agent keeps installed reboot-class packages continuously held (`apt-mark hold` / a rIOt-owned dnf `excludepkgs` fragment) so a manual `apt upgrade` or unattended-upgrades cannot pull them outside a window.
+2. **OS-level holds** — when hold enforcement is enabled (server policy `OSPatch.reboot_class = "gated"` **and** the agent's `commands.hold_reboot_class` flag), the agent keeps installed reboot-class packages continuously held (`apt-mark hold` / a rIOt-owned dnf `excludepkgs` fragment) so a manual `apt upgrade` or unattended-upgrades cannot pull them outside a window.
 3. **In-window apply + auto-reboot** — the auto-patch orchestrator sets `include_reboot_class` on `os_update` only when the maintenance-window gate passes. The agent releases rIOt-managed holds, applies, re-applies holds on every exit path, and — if the run actually upgraded a reboot-class package — reboots automatically (absolutely gated on `commands.allow_reboot`; otherwise it raises a `reboot_required` event).
 4. **Reboot-required detection** — the agent reports `/var/run/reboot-required` (apt) / `dnf needs-restarting -r` (dnf); the server emits a once-per-transition `reboot_required` event and the scoring engine's kernel check now works (the previously dead `PendingKernelUpdate` field is populated).
 5. **Blast-radius visibility** — the Docker collector reads `HostConfig.DeviceRequests`/`Devices` to flag GPU-dependent containers, surfaced as a per-container GPU badge.
@@ -50,7 +50,7 @@ Defaults ship fully off; behavior is byte-compatible with the prior release when
 | `internal/agent/collectors/collector.go` | Wire HoldManager reconcile into the collection cycle |
 | `internal/agent/agent.go` | Startup hold reconciliation |
 | `internal/agent/commands.go` (+`_test.go`) | `include_reboot_class` handling, before/after version snapshot, post-run auto-reboot gated on `allow_reboot` |
-| `internal/agent/config.go` | `commands.hold_enforcement` flag (default off) |
+| `internal/agent/config.go` | `commands.hold_reboot_class` flag (default off) |
 | `internal/agent/doctor.go` (+`_test.go`) | Sudoers-rule preflight probes with re-run-installer remediation (SEC-AC-004) |
 | `internal/server/handlers/auto_update.go` (+`_test.go`) | Window gate sets `include_reboot_class` only in-window |
 | `internal/server/handlers/commands.go` (+`_test.go`) | Strip `include_reboot_class` from manual dispatches (BR-005) |
@@ -70,6 +70,7 @@ Defaults ship fully off; behavior is byte-compatible with the prior release when
 | `web/src/api/demo-data.ts` | Demo patch-status entries with reboot-class scenarios |
 | `web/src/pages/FleetOverview.tsx` (+`.test.tsx`) | Reboot-required badge, reboot-class count, `RebootClassBadge` in the patch modal (AC-021) |
 | `web/src/pages/DeviceDetail.tsx` | Held packages, reboot-required flag, hold-enforcement-inactive warning |
+| `web/src/pages/settings/AgentManagement.tsx` (+`.test.tsx`) | Reboot-class policy selector (Patch normally / Gate to window) on the OS-patch window with two-sided-opt-in helper copy (FR-022 / AC-013) |
 | `web/src/components/CompactContainerTile.tsx` | GPU badge when `uses_gpu` (AC-022) |
 
 ## AC-to-Test Mapping
@@ -113,7 +114,7 @@ New frontend tests added this pass: `RebootClassBadge.test.tsx` (4), `CompactCon
 
 ## Notable Design Decisions
 
-1. **Two-sided opt-in.** Holds require both the server policy (`OSPatch.reboot_class = "gated"`) and the agent flag (`commands.hold_enforcement`). A compromised server alone cannot force reboot-class changes, and the agent's `allow_patching`/`allow_reboot` remain the final veto.
+1. **Two-sided opt-in.** Holds require both the server policy (`OSPatch.reboot_class = "gated"`) and the agent flag (`commands.hold_reboot_class`). A compromised server alone cannot force reboot-class changes, and the agent's `allow_patching`/`allow_reboot` remain the final veto.
 2. **Fail-closed privilege preflight (SEC-AC-001).** Before mutating hold state the agent runs `sudo -n` probes; on failure it never attempts the mutation, logs an ERROR, and reports `hold_enforcement = "no_privilege"` (surfaced as a red UI warning) — the feature fails visibly, never silently. This also backstops upgraded fleets where `agent_update` did not re-run `install.sh` (SEC-AC-004).
 3. **Marker-first release + defer-scoped re-apply.** The release marker is persisted before any unhold, and re-apply is `defer`red across every exit path (including panic). A mid-run crash is reconciled on the next collection cycle and at startup.
 4. **No new collector.** Reboot-required detection and classification ride the existing `updates` collector, so no agent collector-whitelist change is required.
@@ -124,7 +125,7 @@ New frontend tests added this pass: `RebootClassBadge.test.tsx` (4), `CompactCon
 These are configuration/rollout steps, not code — they must be documented and performed per host:
 
 - **Re-run `scripts/install.sh`** on existing agents to install the new sudoers rules (an in-place `agent_update` does **not** do this). The doctor check and runtime preflight will flag hosts that are missing them.
-- **Agent config**: set `commands.hold_enforcement: true` and ensure `commands.allow_patching: true` / `commands.allow_reboot: true` on hosts where the rule should fully self-drive. Without `allow_reboot`, the agent raises a `reboot_required` event instead of rebooting.
+- **Agent config**: set `commands.hold_reboot_class: true` and ensure `commands.allow_patching: true` / `commands.allow_reboot: true` on hosts where the rule should fully self-drive. Without `allow_reboot`, the agent raises a `reboot_required` event instead of rebooting.
 - **Server policy**: set the OS-patch maintenance window's reboot-class policy to `gated` and configure the window (Settings → Agent Management).
 
 ## Remaining pipeline stages
