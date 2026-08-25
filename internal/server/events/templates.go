@@ -159,6 +159,19 @@ func AlertTemplates() []models.AlertTemplate {
 			NeedsTargetName: true,
 			Description:     "Fires when a container's CPU usage exceeds its compose CPU limit (requires cpus: in compose)",
 		},
+		{
+			ID:              "reboot_required",
+			Name:            "Reboot Required",
+			Category:        "system",
+			Metric:          "reboot_required",
+			Operator:        "==",
+			Threshold:       1,
+			TargetState:     "any",
+			Severity:        "warning",
+			CooldownSeconds: 86400,
+			NeedsTargetName: false,
+			Description:     "Fires when a device starts requiring a reboot to activate updates",
+		},
 		// UPS
 		{
 			ID:              "ups_on_battery",

@@ -47,6 +47,13 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = make(map[string]interface{})
 	}
+	// Manual dispatches never carry include_reboot_class (PATCH-GATE FR-023,
+	// BR-005): the only release path for reboot-class holds is the in-window
+	// automated run dispatched by checkAutoPatch. Enforced at the API
+	// boundary rather than trusting UI callers.
+	if req.Action == "os_update" {
+		delete(req.Params, "include_reboot_class")
+	}
 
 	// Create command record
 	cmd := &models.Command{

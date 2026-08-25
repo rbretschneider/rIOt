@@ -164,6 +164,56 @@ func TestScore_DockerSensitiveMounts(t *testing.T) {
 	assert.False(t, found.Passed)
 }
 
+// findFinding returns the finding with the given ID across all categories.
+func findFinding(result *models.SecurityScore, id string) *models.SecurityFinding {
+	for ci := range result.Categories {
+		for fi := range result.Categories[ci].Findings {
+			if result.Categories[ci].Findings[fi].ID == id {
+				return &result.Categories[ci].Findings[fi]
+			}
+		}
+	}
+	return nil
+}
+
+// [AC-007] The kernel check operates on the now-populated
+// PendingKernelUpdate/PendingKernelVersion fields (PATCH-GATE AD-013:
+// engine.go itself is unmodified — these regression tests lock the behavior
+// so the check can never silently pass again).
+func TestScore_AC007_KernelCheckPenalizesPendingKernelUpdate(t *testing.T) {
+	t.Run("[AC-007] pending kernel update fails the finding and penalizes the score", func(t *testing.T) {
+		withKernel := &models.FullTelemetryData{
+			Updates: &models.UpdateInfo{
+				PendingKernelUpdate:  true,
+				PendingKernelVersion: "6.8.0-45.45",
+			},
+		}
+		result := Score(withKernel)
+
+		finding := findFinding(result, "no-kernel-update")
+		require.NotNil(t, finding, "[AC-007] kernel finding must exist")
+		assert.False(t, finding.Passed, "[AC-007] pending kernel update must fail the check")
+		assert.Contains(t, finding.Description, "6.8.0-45.45",
+			"[AC-007] description surfaces the pending kernel version")
+
+		withoutKernel := &models.FullTelemetryData{
+			Updates: &models.UpdateInfo{},
+		}
+		cleanResult := Score(withoutKernel)
+		assert.Greater(t, cleanResult.OverallScore, result.OverallScore,
+			"[AC-007] the failed kernel check must reduce the score")
+	})
+
+	t.Run("[AC-007] no pending kernel update passes the finding", func(t *testing.T) {
+		result := Score(&models.FullTelemetryData{
+			Updates: &models.UpdateInfo{PendingKernelUpdate: false},
+		})
+		finding := findFinding(result, "no-kernel-update")
+		require.NotNil(t, finding)
+		assert.True(t, finding.Passed, "[AC-007] up-to-date kernel must pass")
+	})
+}
+
 func TestGrade(t *testing.T) {
 	tests := []struct {
 		score int

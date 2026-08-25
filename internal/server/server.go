@@ -660,6 +660,7 @@ func (s *Server) seedDefaultAlertRules(ctx context.Context) {
 		{Name: "Container Died", Enabled: true, Metric: "container_died", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 900, Notify: true, TemplateID: "container_died"},
 		{Name: "Container OOM Killed", Enabled: true, Metric: "container_oom", Operator: "==", Threshold: 1, Severity: "critical", CooldownSeconds: 900, Notify: true, TemplateID: "container_oom"},
 		{Name: "Device Offline", Enabled: true, Metric: "device_offline", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 300, Notify: true, TemplateID: "device_offline"},
+		{Name: "Reboot Required", Enabled: true, Metric: "reboot_required", Operator: "==", Threshold: 1, Severity: "warning", CooldownSeconds: 86400, Notify: true, TemplateID: "reboot_required"},
 	}
 	for _, rule := range defaults {
 		if err := s.AlertRuleRepo.Create(ctx, &rule); err != nil {

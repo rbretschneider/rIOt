@@ -132,6 +132,21 @@ func (h *Handlers) SetAutomationConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Reboot-class policy (PATCH-GATE AD-009): only meaningful on the
+	// OSPatch window; a non-empty value on DockerUpdate is rejected to keep
+	// the stored blob clean.
+	switch cfg.OSPatch.RebootClass {
+	case "", "off", "gated":
+		// ok
+	default:
+		http.Error(w, fmt.Sprintf(`{"error":"invalid reboot_class: %s"}`, cfg.OSPatch.RebootClass), http.StatusBadRequest)
+		return
+	}
+	if cfg.DockerUpdate.RebootClass != "" {
+		http.Error(w, `{"error":"reboot_class is only valid on os_patch"}`, http.StatusBadRequest)
+		return
+	}
+
 	data, _ := json.Marshal(cfg)
 	if err := h.adminRepo.SetConfig(r.Context(), "automation_config", string(data)); err != nil {
 		slog.Error("save automation config", "error", err.Error())
@@ -470,11 +485,20 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		}
 	}
 
+	// Reboot-class gate (PATCH-GATE AD-009): checkAutoPatch is the ONLY
+	// os_update creation site that may set include_reboot_class, and only
+	// under the "gated" policy. The early inMaintenanceWindow return above
+	// guarantees this dispatch is in-window (FR-021).
+	params := map[string]interface{}{"mode": "full"}
+	if cfg.OSPatch.RebootClass == "gated" {
+		params["include_reboot_class"] = true
+	}
+
 	cmd := &models.Command{
 		ID:       uuid.New().String(),
 		DeviceID: deviceID,
 		Action:   "os_update",
-		Params:   map[string]interface{}{"mode": "full"},
+		Params:   params,
 		Status:   "pending",
 	}
 	if err := h.commandRepo.Create(ctx, cmd); err != nil {

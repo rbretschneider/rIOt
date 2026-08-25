@@ -30,21 +30,25 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 	detail := r.URL.Query().Get("detail") == "true"
 
 	type devicePatchInfo struct {
-		DeviceID       string                `json:"device_id"`
-		Hostname       string                `json:"hostname"`
-		PendingUpdates int                   `json:"pending_updates"`
-		SecurityCount  int                   `json:"security_count"`
-		PackageManager string                `json:"package_manager,omitempty"`
-		Updates        []models.PendingUpdate `json:"updates,omitempty"`
+		DeviceID         string                 `json:"device_id"`
+		Hostname         string                 `json:"hostname"`
+		PendingUpdates   int                    `json:"pending_updates"`
+		SecurityCount    int                    `json:"security_count"`
+		RebootClassCount int                    `json:"reboot_class_count"`
+		RebootRequired   bool                   `json:"reboot_required"`
+		PackageManager   string                 `json:"package_manager,omitempty"`
+		Updates          []models.PendingUpdate `json:"updates,omitempty"`
 	}
 	result := make([]devicePatchInfo, 0, len(summaries))
 	for _, s := range summaries {
 		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
 			info := devicePatchInfo{
-				DeviceID:       s.DeviceID,
-				Hostname:       hostnames[s.DeviceID],
-				PendingUpdates: s.Updates.PendingUpdates,
-				SecurityCount:  s.Updates.PendingSecurityCount,
+				DeviceID:         s.DeviceID,
+				Hostname:         hostnames[s.DeviceID],
+				PendingUpdates:   s.Updates.PendingUpdates,
+				SecurityCount:    s.Updates.PendingSecurityCount,
+				RebootClassCount: s.Updates.PendingRebootClassCount,
+				RebootRequired:   s.Updates.RebootRequired,
 			}
 			if detail {
 				info.PackageManager = s.Updates.PackageManager

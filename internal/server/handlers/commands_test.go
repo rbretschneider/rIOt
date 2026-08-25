@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,4 +304,49 @@ func TestMockCommandRepo_ListByDeviceFiltered(t *testing.T) {
 	results, err = repo.ListByDeviceFiltered(nil, "dev-2", 50, 0, nil, "")
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
+}
+
+// [AC-013 server half / SEC-PATCH-GATE-009] Manual os_update dispatches
+// never carry include_reboot_class: SendCommand strips it at the API
+// boundary (FR-023, BR-005 — the in-window automated run is the only
+// release path).
+func TestSendCommand_AC013_StripsIncludeRebootClass(t *testing.T) {
+	h, cmdRepo, _ := newCommandTestHandlers(t)
+
+	r := chi.NewRouter()
+	r.Post("/api/v1/devices/{id}/commands", h.SendCommand)
+
+	body := `{"action":"os_update","params":{"mode":"full","include_reboot_class":true}}`
+	req := httptest.NewRequest("POST", "/api/v1/devices/dev-1/commands",
+		strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Len(t, cmdRepo.Commands, 1)
+	for _, cmd := range cmdRepo.Commands {
+		_, present := cmd.Params["include_reboot_class"]
+		assert.False(t, present, "[AC-013] stored manual os_update params must lack include_reboot_class")
+		assert.Equal(t, "full", cmd.Params["mode"], "other params pass through")
+	}
+}
+
+// The strip is scoped to os_update: other actions keep their params intact.
+func TestSendCommand_StripScopedToOSUpdate(t *testing.T) {
+	h, cmdRepo, _ := newCommandTestHandlers(t)
+
+	r := chi.NewRouter()
+	r.Post("/api/v1/devices/{id}/commands", h.SendCommand)
+
+	body := `{"action":"fetch_logs","params":{"include_reboot_class":true,"hours":4}}`
+	req := httptest.NewRequest("POST", "/api/v1/devices/dev-1/commands",
+		strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusCreated, rec.Code)
+	for _, cmd := range cmdRepo.Commands {
+		_, present := cmd.Params["include_reboot_class"]
+		assert.True(t, present, "non-os_update actions are not rewritten")
+	}
 }

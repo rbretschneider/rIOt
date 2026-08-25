@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/testutil"
 )
@@ -508,6 +510,147 @@ func TestSetAutomationConfig_RejectsWeeklyWithoutDays(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("expected 400 for weekly without days, got %d", w.Code)
 	}
+}
+
+// autoPatchTestHandler wires a Handlers for checkAutoPatch tests with a
+// device that has auto-patch enabled and the given OSPatch window config.
+func autoPatchTestHandler(t *testing.T, osPatch models.MaintenanceWindow) (*Handlers, *testutil.MockCommandRepo) {
+	t.Helper()
+	adminRepo := testutil.NewMockAdminRepo("hash")
+	cfg := models.AutomationConfig{
+		OSPatch: osPatch,
+		DockerUpdate: models.MaintenanceWindow{
+			Mode: "disabled", StartTime: "23:00", EndTime: "05:00", CooldownMinutes: 60,
+		},
+	}
+	cfgJSON, _ := json.Marshal(cfg)
+	_ = adminRepo.SetConfig(context.Background(), "automation_config", string(cfgJSON))
+
+	deviceRepo := testutil.NewMockDeviceRepo()
+	deviceRepo.Devices["dev-1"] = &models.Device{ID: "dev-1", Hostname: "gpu-host", AutoPatch: true}
+
+	cmdRepo := testutil.NewMockCommandRepo()
+	h := New(HandlerDeps{
+		Devices:     deviceRepo,
+		Telemetry:   &testutil.MockTelemetryRepo{},
+		Events:      &testutil.MockEventRepo{},
+		AdminRepo:   adminRepo,
+		CommandRepo: cmdRepo,
+	})
+	return h, cmdRepo
+}
+
+func pendingUpdatesTelemetry() *models.FullTelemetryData {
+	return &models.FullTelemetryData{
+		Updates: &models.UpdateInfo{PendingUpdates: 3},
+	}
+}
+
+func osUpdateCommands(cmdRepo *testutil.MockCommandRepo) []*models.Command {
+	var out []*models.Command
+	for _, c := range cmdRepo.Commands {
+		if c.Action == "os_update" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// [AC-013] Reboot-class dispatch gating: the param appears only for
+// in-window dispatches under the "gated" policy; out-of-window means no
+// dispatch at all.
+func TestCheckAutoPatch_AC013_RebootClassGating(t *testing.T) {
+	t.Run("[AC-013] gated + in-window dispatch carries include_reboot_class", func(t *testing.T) {
+		h, cmdRepo := autoPatchTestHandler(t, models.MaintenanceWindow{
+			Mode: "anytime", StartTime: "00:00", EndTime: "23:59",
+			CooldownMinutes: 60, RebootClass: "gated",
+		})
+		h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+
+		cmds := osUpdateCommands(cmdRepo)
+		if assert.Len(t, cmds, 1) {
+			assert.Equal(t, true, cmds[0].Params["include_reboot_class"],
+				"[AC-013] gated policy sets the param on in-window dispatch")
+		}
+	})
+
+	t.Run("[AC-013] gated + out-of-window dispatches nothing", func(t *testing.T) {
+		// Zero-width window (start == end) is never "in window".
+		h, cmdRepo := autoPatchTestHandler(t, models.MaintenanceWindow{
+			Mode: "window", StartTime: "00:00", EndTime: "00:00",
+			CooldownMinutes: 60, RebootClass: "gated",
+		})
+		h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+
+		assert.Empty(t, osUpdateCommands(cmdRepo),
+			"[AC-013] out-of-window means no dispatch at all, param or not")
+	})
+
+	t.Run("[AC-013] policy off + in-window dispatch omits the param", func(t *testing.T) {
+		h, cmdRepo := autoPatchTestHandler(t, models.MaintenanceWindow{
+			Mode: "anytime", StartTime: "00:00", EndTime: "23:59",
+			CooldownMinutes: 60, RebootClass: "off",
+		})
+		h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+
+		cmds := osUpdateCommands(cmdRepo)
+		if assert.Len(t, cmds, 1) {
+			_, present := cmds[0].Params["include_reboot_class"]
+			assert.False(t, present, "[AC-013] policy off never sets the param")
+		}
+	})
+}
+
+// [AC-023] Default configuration dispatch params are byte-for-byte
+// pre-PATCH-GATE: exactly {"mode":"full"}.
+func TestCheckAutoPatch_AC023_DefaultParamsUnchanged(t *testing.T) {
+	h, cmdRepo := autoPatchTestHandler(t, models.MaintenanceWindow{
+		Mode: "anytime", StartTime: "00:00", EndTime: "23:59",
+		CooldownMinutes: 60, // RebootClass empty ≡ off (default)
+	})
+	h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+
+	cmds := osUpdateCommands(cmdRepo)
+	if assert.Len(t, cmds, 1) {
+		assert.Equal(t, map[string]interface{}{"mode": "full"}, cmds[0].Params,
+			"[AC-023] default dispatch params deep-equal the pre-story shape")
+	}
+}
+
+// [AC-013 setup] reboot_class validation on PUT /settings/automation.
+func TestSetAutomationConfig_RebootClassValidation(t *testing.T) {
+	newHandler := func(t *testing.T) *Handlers {
+		t.Helper()
+		return New(HandlerDeps{
+			Devices: &testutil.MockDeviceRepo{}, Telemetry: &testutil.MockTelemetryRepo{},
+			Events: &testutil.MockEventRepo{}, AdminRepo: testutil.NewMockAdminRepo("hash"),
+		})
+	}
+	put := func(t *testing.T, h *Handlers, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest("PUT", "/api/v1/settings/automation", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		h.SetAutomationConfig(w, req)
+		return w
+	}
+	base := `"start_time":"00:00","end_time":"23:59","cooldown_minutes":60,"stagger_seconds":0`
+
+	t.Run("accepts gated on os_patch", func(t *testing.T) {
+		w := put(t, newHandler(t), `{"os_patch":{"mode":"anytime",`+base+`,"reboot_class":"gated"},"docker_update":{"mode":"anytime",`+base+`}}`)
+		assert.Equal(t, 200, w.Code)
+	})
+	t.Run("accepts off and empty", func(t *testing.T) {
+		w := put(t, newHandler(t), `{"os_patch":{"mode":"anytime",`+base+`,"reboot_class":"off"},"docker_update":{"mode":"anytime",`+base+`}}`)
+		assert.Equal(t, 200, w.Code)
+	})
+	t.Run("rejects unknown value with 400", func(t *testing.T) {
+		w := put(t, newHandler(t), `{"os_patch":{"mode":"anytime",`+base+`,"reboot_class":"always"},"docker_update":{"mode":"anytime",`+base+`}}`)
+		assert.Equal(t, 400, w.Code)
+	})
+	t.Run("rejects reboot_class on docker_update with 400", func(t *testing.T) {
+		w := put(t, newHandler(t), `{"os_patch":{"mode":"anytime",`+base+`},"docker_update":{"mode":"anytime",`+base+`,"reboot_class":"gated"}}`)
+		assert.Equal(t, 400, w.Code)
+	})
 }
 
 func TestSetAutomationConfig_RejectsOutOfRangeDayOfWeek(t *testing.T) {

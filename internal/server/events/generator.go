@@ -386,6 +386,9 @@ func (g *Generator) CheckTelemetryThresholds(ctx context.Context, deviceID, host
 	if data.GPUTelemetry != nil {
 		g.CheckGPUAlerts(ctx, deviceID, hostname, data.GPUTelemetry)
 	}
+	if data.Updates != nil {
+		g.CheckRebootRequired(ctx, deviceID, hostname, data.Updates)
+	}
 	// Per-interval auth-failure metric (LOG-001, AD-005).
 	// Gated on both Security != nil AND FailedLoginsInterval != nil so that
 	// non-Linux agents (which omit the field) never trigger this path (FR-011).
@@ -649,6 +652,59 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID, hostname strin
 		g.evaluateMetric(ctx, deviceID, "ups_battery_percent", *ups.BatteryCharge, hostname, models.EventUPSLowBattery,
 			func(val float64) string { return fmt.Sprintf("UPS %s battery at %.0f%%", ups.Name, val) })
 	}
+}
+
+// CheckRebootRequired emits exactly one reboot_required event per
+// false→true transition of a device's reboot-required state (PATCH-GATE
+// FR-019, AD-011). Mirrors the UPS on-battery transition pattern: a
+// per-device key in lastSent is refreshed on every true cycle (so
+// pruneStaleEntries never evicts it mid-condition) and deleted on clear, so
+// the next transition fires again. This method only emits — it never
+// dispatches commands (SEC-PATCH-GATE-007).
+func (g *Generator) CheckRebootRequired(ctx context.Context, deviceID, hostname string, upd *models.UpdateInfo) {
+	activeKey := deviceID + ":reboot_required_active"
+
+	if !upd.RebootRequired {
+		g.mu.Lock()
+		delete(g.lastSent, activeKey)
+		g.mu.Unlock()
+		return
+	}
+
+	g.mu.Lock()
+	_, alreadyActive := g.lastSent[activeKey]
+	g.lastSent[activeKey] = time.Now() // refresh every true cycle (SEC-PATCH-GATE-008)
+	g.mu.Unlock()
+	if alreadyActive {
+		return
+	}
+
+	msg := fmt.Sprintf("Reboot required on %s", hostname)
+	if len(upd.RebootRequiredReasons) > 0 {
+		msg += " (" + strings.Join(upd.RebootRequiredReasons, ", ") + ")"
+	}
+	e := &models.Event{
+		DeviceID:  deviceID,
+		Type:      models.EventRebootRequired,
+		Severity:  models.SeverityWarning,
+		Message:   msg,
+		CreatedAt: time.Now().UTC(),
+	}
+
+	rule := g.findMatchingRule(ctx, "reboot_required", deviceID, hostname, 1)
+	if rule == nil {
+		g.createEvent(ctx, e)
+		return
+	}
+	e.Severity = models.EventSeverity(rule.Severity)
+	// Every transition produces an event; the rule cooldown only rate-limits
+	// notification fan-out for flapping states.
+	ruleKey := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
+	if g.onCooldown(ruleKey, time.Duration(rule.CooldownSeconds)*time.Second) {
+		g.createEvent(ctx, e)
+		return
+	}
+	g.createEventAndNotify(ctx, e, rule, hostname, 1)
 }
 
 // CheckContainerThresholds checks per-container CPU and memory against alert rules.
