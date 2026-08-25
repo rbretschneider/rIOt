@@ -110,6 +110,13 @@ func lookPathOr(name, fallback string) string {
 	return fallback
 }
 
+// SetRunner overrides the command runner — test injection only (ADD Note #2).
+func (hm *HoldManager) SetRunner(run CommandRunner) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	hm.run = run
+}
+
 // Status returns the current hold-enforcement status for telemetry
 // (AD-015 table). Empty when the feature is disabled.
 func (hm *HoldManager) Status() string {
@@ -157,7 +164,7 @@ func (hm *HoldManager) VerifyPrivileges(ctx context.Context, pm string) error {
 func (hm *HoldManager) Reconcile(ctx context.Context, pm string, installed []string) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
-	hm.reconcileLocked(ctx, pm, installed)
+	hm.reconcileLocked(ctx, pm, installed, false)
 }
 
 // ReconcileStartup re-asserts holds once at agent startup (AD-007) so a
@@ -190,7 +197,7 @@ func (hm *HoldManager) ReconcileStartup(ctx context.Context) {
 			return
 		}
 	}
-	hm.reconcileLocked(ctx, pm, installed)
+	hm.reconcileLocked(ctx, pm, installed, false)
 }
 
 func lookPathExists(name string) bool {
@@ -283,15 +290,17 @@ func (hm *HoldManager) ReapplyAfterRun(commandID string) {
 		return
 	}
 
-	hm.reconcileLocked(ctx, pm, installed)
+	hm.reconcileLocked(ctx, pm, installed, true)
 	slog.Info("holds: re-applied holds after patch run", "command_id", commandID, "packages", hm.held)
 }
 
 // ---- internals (callers hold hm.mu) ----
 
 // reconcileLocked is the core convergence pass shared by Reconcile,
-// ReconcileStartup, and ReapplyAfterRun.
-func (hm *HoldManager) reconcileLocked(ctx context.Context, pm string, installed []string) {
+// ReconcileStartup, and ReapplyAfterRun. expectReleased is true only on the
+// post-run reapply path, where a set release marker is normal rather than
+// evidence of an interrupted run.
+func (hm *HoldManager) reconcileLocked(ctx context.Context, pm string, installed []string, expectReleased bool) {
 	st, err := hm.loadState()
 	if err != nil {
 		// Corrupt state fails closed: treat as empty (nothing is "ours" to
@@ -340,7 +349,7 @@ func (hm *HoldManager) reconcileLocked(ctx context.Context, pm string, installed
 		return
 	}
 
-	if st.ReleasedForCommand != "" {
+	if st.ReleasedForCommand != "" && !expectReleased {
 		slog.Warn("holds: re-asserting holds after interrupted run", "command_id", st.ReleasedForCommand)
 	}
 

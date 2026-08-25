@@ -30,6 +30,20 @@ type commandExecResult struct {
 	ExitCode   *int
 	DurationMs *int64
 	Output     string
+
+	// PATCH-GATE (AD-008): internal-only fields for the post-result reboot
+	// decision. The wire-format models.CommandResult is unchanged — the
+	// reboot-class outcome is carried in Message (FR-026).
+	RebootClassApplied []string
+	RebootPending      bool
+}
+
+// runCommand executes an external command, honoring the test runner when set.
+func (a *Agent) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if a.runner != nil {
+		return a.runner(ctx, name, args...)
+	}
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 // handleCommand dispatches a remote command from the server.
@@ -47,6 +61,7 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 	var status, message string
 	var execOutput string
 	var exitCode *int
+	var osUpdateResult *commandExecResult
 
 	switch payload.Action {
 	case "docker_stop":
@@ -70,6 +85,7 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 	case "os_update":
 		r := a.handleOSUpdateWithOutput(ctx, payload)
 		status, message, execOutput, exitCode = r.Status, r.Message, r.Output, r.ExitCode
+		osUpdateResult = &r
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(ctx)
 	case "agent_uninstall":
@@ -112,6 +128,41 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 			Data: resultJSON,
 		})
 	}
+
+	// Post-result reboot decision for in-window reboot-class runs (AD-008
+	// step 7, mirrors handleTriggerUpdate's report-then-act pattern).
+	if osUpdateResult != nil {
+		a.maybeRebootAfterPatch(*osUpdateResult)
+	}
+}
+
+// maybeRebootAfterPatch acts on an os_update result that applied
+// reboot-class packages (FR-024, FR-025): reboot when — and only when —
+// commands.allow_reboot permits it (NFR-002); otherwise trigger an
+// immediate telemetry push so the reboot-required state reaches the server
+// and fires the FR-019 event.
+func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
+	if len(r.RebootClassApplied) == 0 {
+		return
+	}
+	if a.config.Commands.AllowReboot {
+		slog.Info("os_update: reboot-class packages applied, rebooting host",
+			"packages", r.RebootClassApplied)
+		delay := a.rebootDelay
+		if delay == 0 {
+			delay = 2 * time.Second
+		}
+		go func() {
+			time.Sleep(delay)
+			if err := a.execReboot(); err != nil {
+				slog.Warn("os_update: post-patch reboot failed", "error", err)
+			}
+		}()
+		return
+	}
+	slog.Info("os_update: reboot-class packages applied but reboot not permitted; reporting reboot-required",
+		"packages", r.RebootClassApplied)
+	a.triggerTelemetry()
 }
 
 // dockerCommand runs a docker stop/start/restart on the specified container.
@@ -150,17 +201,27 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 		return "error", "reboot not allowed by agent config (set commands.allow_reboot: true)"
 	}
 
+	if err := a.execReboot(); err != nil {
+		return "error", fmt.Sprintf("reboot: %s", err)
+	}
+	return "success", "reboot initiated"
+}
+
+// execReboot starts the OS reboot command. Both call sites (handleReboot
+// and maybeRebootAfterPatch) gate on a.config.Commands.AllowReboot before
+// calling — no other path may reach this (NFR-002, ADD Note #6).
+func (a *Agent) execReboot() error {
+	if a.runner != nil {
+		_, err := a.runner(context.Background(), "sudo", "systemctl", "reboot")
+		return err
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("shutdown", "/r", "/t", "5")
 	} else {
 		cmd = exec.Command("sudo", "systemctl", "reboot")
 	}
-
-	if err := cmd.Start(); err != nil {
-		return "error", fmt.Sprintf("reboot: %s", err)
-	}
-	return "success", "reboot initiated"
+	return cmd.Start()
 }
 
 // handleShutdown triggers a system shutdown if allowed by config.
@@ -195,6 +256,9 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	if mode == "" {
 		mode = "full"
 	}
+	// Absent ⇒ false (FR-020 validation rule). Only in-window automated
+	// dispatches ever carry this param (server strips manual dispatches).
+	includeRC, _ := payload.Params["include_reboot_class"].(bool)
 
 	// Use a long timeout independent of the WS read loop
 	updateCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -204,34 +268,74 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	aptPath, aptErr := exec.LookPath("apt-get")
 	dnfPath, dnfErr := exec.LookPath("dnf")
 
-	var refreshArgs, upgradeArgs []string
+	var plan osUpdatePlan
+	plan.Mode = mode
+	plan.IncludeRebootClass = includeRC
 
 	switch {
 	case aptErr == nil:
-		refreshArgs = []string{"sudo", aptPath, "update"}
+		plan.PM = "apt"
+		plan.RefreshArgs = []string{"sudo", aptPath, "update"}
 		if mode == "security" {
-			upgradeArgs = []string{"sudo", aptPath, "-y", "upgrade",
+			plan.UpgradeArgs = []string{"sudo", aptPath, "-y", "upgrade",
 				"-o", "Dpkg::Options::=--force-confold",
 				"-o", "Dpkg::Options::=--force-confdef"}
 		} else {
-			upgradeArgs = []string{"sudo", aptPath, "-y", "dist-upgrade",
+			plan.UpgradeArgs = []string{"sudo", aptPath, "-y", "dist-upgrade",
 				"-o", "Dpkg::Options::=--force-confold",
 				"-o", "Dpkg::Options::=--force-confdef"}
 		}
 	case dnfErr == nil:
-		refreshArgs = []string{"sudo", dnfPath, "makecache"}
+		plan.PM = "dnf"
+		plan.RefreshArgs = []string{"sudo", dnfPath, "makecache"}
 		if mode == "security" {
-			upgradeArgs = []string{"sudo", dnfPath, "-y", "--security", "update"}
+			plan.UpgradeArgs = []string{"sudo", dnfPath, "-y", "--security", "update"}
 		} else {
-			upgradeArgs = []string{"sudo", dnfPath, "-y", "update"}
+			plan.UpgradeArgs = []string{"sudo", dnfPath, "-y", "update"}
 		}
 	default:
 		return commandExecResult{Status: "error", Message: "no supported package manager found (apt-get or dnf)"}
 	}
 
+	return a.runOSUpdate(updateCtx, payload.CommandID, plan)
+}
+
+// osUpdatePlan describes one os_update run: the resolved package-manager
+// commands plus the reboot-class gating input (AD-008).
+type osUpdatePlan struct {
+	Mode               string
+	IncludeRebootClass bool
+	PM                 string // "apt" | "dnf"
+	RefreshArgs        []string
+	UpgradeArgs        []string
+}
+
+// runOSUpdate executes the refresh + upgrade with hold release/re-apply
+// scoped to exactly this run. Split from handleOSUpdateWithOutput so the
+// hold and reboot-decision mechanics are testable on any platform.
+func (a *Agent) runOSUpdate(updateCtx context.Context, commandID string, plan osUpdatePlan) commandExecResult {
+	mode := plan.Mode
+	includeRC := plan.IncludeRebootClass
+	refreshArgs, upgradeArgs := plan.RefreshArgs, plan.UpgradeArgs
+
+	// Release rIOt-managed holds for exactly this run (FR-015, AD-008).
+	// The deferred re-apply covers success, refresh failure, upgrade
+	// failure, partial apply, and panic (NFR-001) and uses its own
+	// background context — updateCtx may be dead on those paths.
+	var released []string
+	var before map[string]string
+	if includeRC && a.holdMgr != nil && a.holdMgr.Enabled {
+		released = a.holdMgr.ReleaseForRun(updateCtx, commandID)
+		if len(released) > 0 {
+			defer a.holdMgr.ReapplyAfterRun(commandID)
+			before = a.installedVersions(updateCtx, plan.PM, released)
+		}
+	}
+	holdsSkipped := includeRC && a.holdMgr != nil && a.holdMgr.Enabled &&
+		len(released) == 0 && len(a.holdMgr.HeldPackages()) > 0
+
 	slog.Info("os_update: refreshing package index", "mode", mode)
-	refreshCmd := exec.CommandContext(updateCtx, refreshArgs[0], refreshArgs[1:]...)
-	refreshOut, err := refreshCmd.CombinedOutput()
+	refreshOut, err := a.runCommand(updateCtx, refreshArgs[0], refreshArgs[1:]...)
 	if err != nil {
 		ec := exitCodeFromError(err)
 		return commandExecResult{
@@ -243,8 +347,7 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	}
 
 	slog.Info("os_update: running upgrade", "mode", mode)
-	upgradeCmd := exec.CommandContext(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
-	upgradeOut, err := upgradeCmd.CombinedOutput()
+	upgradeOut, err := a.runCommand(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
 	combinedOut := string(refreshOut) + string(upgradeOut)
 	if err != nil {
 		ec := exitCodeFromError(err)
@@ -256,14 +359,81 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 		}
 	}
 
-	ec := 0
-	summary := parseOSUpdateSummary(string(upgradeOut), aptErr == nil)
-	return commandExecResult{
-		Status:   "success",
-		Message:  summary,
-		ExitCode: &ec,
-		Output:   combinedOut,
+	// "Actually upgraded" detection via before/after version snapshot
+	// (FR-024/FR-025). A failed snapshot yields an empty applied set ⇒ no
+	// reboot — the fail-safe direction (§7C).
+	var applied []string
+	if len(released) > 0 {
+		after := a.installedVersions(updateCtx, plan.PM, released)
+		applied = changedVersions(before, after, released)
 	}
+
+	ec := 0
+	summary := parseOSUpdateSummary(string(upgradeOut), plan.PM == "apt")
+	switch {
+	case len(applied) > 0 && a.config.Commands.AllowReboot:
+		summary += fmt.Sprintf(" (reboot-class applied: %s; reboot initiated)", strings.Join(applied, ", "))
+	case len(applied) > 0:
+		summary += fmt.Sprintf(" (reboot-class applied: %s; reboot required but not permitted (commands.allow_reboot: false))", strings.Join(applied, ", "))
+	case holdsSkipped:
+		summary += " (reboot-class packages skipped: holds not released)"
+	}
+	return commandExecResult{
+		Status:             "success",
+		Message:            summary,
+		ExitCode:           &ec,
+		Output:             combinedOut,
+		RebootClassApplied: applied,
+		RebootPending:      len(applied) > 0 && a.config.Commands.AllowReboot,
+	}
+}
+
+// installedVersions returns name → installed version for the given
+// packages via one batched query (AD-008 steps b/e). Returns nil on error
+// so applied-detection fails safe (no reboot).
+func (a *Agent) installedVersions(ctx context.Context, pm string, pkgs []string) map[string]string {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	var out []byte
+	var err error
+	if pm == "dnf" {
+		args := append([]string{"-q", "--qf", "%{NAME} %{VERSION}-%{RELEASE}\n"}, pkgs...)
+		out, err = a.runCommand(ctx, "rpm", args...)
+	} else {
+		args := append([]string{"-W", "-f=${Package} ${Version}\n"}, pkgs...)
+		out, err = a.runCommand(ctx, "dpkg-query", args...)
+	}
+	if err != nil {
+		slog.Warn("os_update: version snapshot failed; treating as no reboot-class change", "error", err)
+		return nil
+	}
+	versions := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			versions[fields[0]] = fields[1]
+		}
+	}
+	return versions
+}
+
+// changedVersions returns the released packages whose installed version
+// changed between the before and after snapshots. Either snapshot missing
+// (query failure) yields an empty result — fail-safe, no reboot (FR-025).
+func changedVersions(before, after map[string]string, released []string) []string {
+	if len(before) == 0 || len(after) == 0 {
+		return nil
+	}
+	var changed []string
+	for _, p := range released {
+		if bv, ok := before[p]; ok {
+			if av, ok := after[p]; ok && av != bv {
+				changed = append(changed, p)
+			}
+		}
+	}
+	return changed
 }
 
 // handleOSUpdate is kept for backward compatibility (wraps handleOSUpdateWithOutput).

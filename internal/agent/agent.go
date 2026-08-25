@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,16 @@ type Agent struct {
 	client     *HTTPClient
 	wsClient   *agentWSClient
 	logErrors  atomic.Int64
+
+	// holdMgr enforces OS-level reboot-class package holds (PATCH-GATE).
+	// Shared with the updates collector via Registry.SetHoldManager.
+	holdMgr *collectors.HoldManager
+
+	// runner overrides external command execution in tests; nil = real exec.
+	runner collectors.CommandRunner
+	// rebootDelay is the pause between sending an os_update result and the
+	// post-run auto-reboot; zero means the 2s default (test override).
+	rebootDelay time.Duration
 
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).
@@ -76,11 +87,18 @@ func New(configPath, version string) (*Agent, error) {
 		registry.SetSMARTInterval(time.Duration(cfg.Collector.SMARTInterval) * time.Second)
 	}
 
+	// Reboot-class hold enforcement (PATCH-GATE AD-003): one HoldManager
+	// shared by the updates collector (per-cycle reconcile + telemetry) and
+	// the os_update command path (release/re-apply around a run).
+	holdMgr := collectors.NewHoldManager(cfg.Commands.HoldRebootClass, HoldStatePath(), DNFHoldsStagedPath())
+	registry.SetHoldManager(holdMgr)
+
 	return &Agent{
 		config:       cfg,
 		configPath:   configPath,
 		version:      version,
 		registry:     registry,
+		holdMgr:      holdMgr,
 		telemetryNow: make(chan struct{}, 1),
 	}, nil
 }
@@ -159,6 +177,18 @@ func (a *Agent) Run() error {
 	// agent restart windows against the first-push-zero blind window (AD-001,
 	// FR-005). This line is informational only; it does not change behavior.
 	slog.Info("auth failure detector initialized", "note", "first interval reports zero regardless of journal backfill")
+
+	// Startup hold reconcile (PATCH-GATE AD-007): a host that crashed
+	// mid-patch-run is re-protected within seconds of the agent restarting,
+	// not up to one poll interval later. No-op when the feature is disabled
+	// and no hold state exists.
+	if runtime.GOOS == "linux" && a.holdMgr != nil {
+		go func() {
+			reconcileCtx, reconcileCancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer reconcileCancel()
+			a.holdMgr.ReconcileStartup(reconcileCtx)
+		}()
+	}
 
 	// Start loops
 	var wg sync.WaitGroup
