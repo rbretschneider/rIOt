@@ -17,6 +17,8 @@ Both suites were confirmed green before any code was touched:
 
 No blockers were raised. The ADD (Revision 2, FINAL) and the security review's Re-review of Revision 2 (verdict **APPROVED WITH CONDITIONS**) were both read in full before writing code, including §0's two recorded FRD amendments and conditions C1–C6.
 
+**Branch note.** The working tree's checked-out branch at task start (`AGENT-PRIV`) was itself several unrelated, unmerged commits ahead of `main` (a previous story's completed-but-unmerged branch). All OIDC-001 work was implemented and is committed on a new `OIDC-001` branch created from `main`, not from `AGENT-PRIV`, so this story's history does not entangle unrelated in-flight work. `AGENT-PRIV` was left exactly as found. Because of this, the baseline/final test counts below are `main`'s numbers (347 frontend tests baseline → 357 with this story's 10 new tests), not the `AGENT-PRIV`-branch numbers seen transiently during development (353 → 363) — both baselines were independently confirmed green before their respective code changes.
+
 ---
 
 ## Completed Components
@@ -154,35 +156,34 @@ No other deviations. Every file in ADD §4 was created or modified exactly as sp
 go build ./...           → clean
 go vet ./...              → clean (this repo's CI "lint" job)
 go test ./...
-ok  github.com/DesyncTheThird/rIOt/internal/agent               2.013s
-ok  github.com/DesyncTheThird/rIOt/internal/agent/collectors    2.353s
-ok  github.com/DesyncTheThird/rIOt/internal/models              0.365s
-ok  github.com/DesyncTheThird/rIOt/internal/privileges          1.204s
-ok  github.com/DesyncTheThird/rIOt/internal/resilient           1.084s
-ok  github.com/DesyncTheThird/rIOt/internal/server              1.296s
-ok  github.com/DesyncTheThird/rIOt/internal/server/auth         0.586s
-ok  github.com/DesyncTheThird/rIOt/internal/server/ca           0.756s
-ok  github.com/DesyncTheThird/rIOt/internal/server/events       1.084s
-ok  github.com/DesyncTheThird/rIOt/internal/server/handlers     3.446s
-ok  github.com/DesyncTheThird/rIOt/internal/server/middleware   1.076s
-ok  github.com/DesyncTheThird/rIOt/internal/server/notify       1.338s
-ok  github.com/DesyncTheThird/rIOt/internal/server/oidc         2.390s
-ok  github.com/DesyncTheThird/rIOt/internal/server/probes       1.592s
-ok  github.com/DesyncTheThird/rIOt/internal/server/scoring      0.624s
-ok  github.com/DesyncTheThird/rIOt/internal/server/summary      0.762s
-ok  github.com/DesyncTheThird/rIOt/internal/server/updates      0.890s
-ok  github.com/DesyncTheThird/rIOt/internal/server/websocket    1.052s
+ok  github.com/DesyncTheThird/rIOt/internal/agent               1.410s
+ok  github.com/DesyncTheThird/rIOt/internal/agent/collectors    1.593s
+ok  github.com/DesyncTheThird/rIOt/internal/models              0.392s
+ok  github.com/DesyncTheThird/rIOt/internal/resilient           (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server              (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/auth         (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/ca           (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/events       0.632s
+ok  github.com/DesyncTheThird/rIOt/internal/server/handlers     2.475s
+ok  github.com/DesyncTheThird/rIOt/internal/server/middleware   (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/notify       (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/oidc         (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/probes       (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/scoring      0.522s
+ok  github.com/DesyncTheThird/rIOt/internal/server/summary      0.631s
+ok  github.com/DesyncTheThird/rIOt/internal/server/updates      (cached)
+ok  github.com/DesyncTheThird/rIOt/internal/server/websocket    (cached)
 ```
-703 individual `--- PASS` results, 0 `--- FAIL` (verbose run). No `-race` on this Windows dev box per `CLAUDE.md`; CI runs `go test -race -count=1 ./...` on Linux against the same code.
+666 individual `--- PASS` results, 0 `--- FAIL` (verbose run, `OIDC-001` branch off `main`). No `-race` on this Windows dev box per `CLAUDE.md`; CI runs `go test -race -count=1 ./...` on Linux against the same code. (`internal/privileges` does not exist on `main`/`OIDC-001` — it belongs to the unrelated, unmerged `AGENT-PRIV` branch and is correctly absent here; see the Branch note above.)
 
 ### Frontend test run — full suite
 
 ```
 cd web && npm run test:run
  Test Files  26 passed (26)
-      Tests  363 passed (363)
+      Tests  357 passed (357)
 ```
-(353 pre-existing + 10 new in `Login.test.tsx`.) The `ECONNREFUSED :3000` stack traces interleaved in the output are pre-existing, expected console noise from an unrelated mocked-network test elsewhere in the suite (present in the baseline run too), not failures.
+(347 pre-existing on `main` + 10 new in `Login.test.tsx`.) The `ECONNREFUSED :3000` stack traces interleaved in the output are pre-existing, expected console noise from an unrelated mocked-network test elsewhere in the suite (present in the baseline run too), not failures.
 
 ### Typecheck / build
 
