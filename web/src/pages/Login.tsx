@@ -1,7 +1,21 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { savePassword, loadPassword, clearPassword, hasStoredPassword } from '../utils/credentialStore'
+import { api } from '../api/client'
 
 const isDemo = import.meta.env.VITE_DEMO === 'true'
+
+// OIDC-001 §7.4: the fixed, closed error-code vocabulary the callback can
+// carry in ?sso_error=. Any other value renders the generic fallback
+// message (FR-037) — the raw parameter value is never rendered.
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  sso_failed: 'Sign-in could not be completed. Details are in the server log.',
+  sso_expired: 'The sign-in attempt timed out. Try again.',
+  sso_denied: 'The identity provider refused the sign-in for this account.',
+  sso_unavailable: 'The identity provider could not be reached.',
+}
+const SSO_ERROR_FALLBACK = 'Sign-in could not be completed.'
 
 interface LoginProps {
   onLogin: (password: string) => Promise<boolean>
@@ -13,6 +27,35 @@ export default function Login({ onLogin }: LoginProps) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const autoLoginAttempted = useRef(false)
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const ssoErrorCode = searchParams.get('sso_error')
+  const [ssoErrorMessage] = useState(() =>
+    ssoErrorCode ? (SSO_ERROR_MESSAGES[ssoErrorCode] ?? SSO_ERROR_FALLBACK) : ''
+  )
+
+  // Strip sso_error from the visible URL immediately so a subsequent
+  // refresh does not re-display it (FR-037). Using setSearchParams (not
+  // window.history.replaceState) keeps react-router-dom's internal
+  // location in sync (AD-014, §12 note 16).
+  useEffect(() => {
+    if (!ssoErrorCode) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('sso_error')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // GET /api/v1/auth/oidc on mount — availability failing or timing out is
+  // not an error state, it is "no button" (FR-035): no retry storm, no
+  // console noise. Disabled entirely in demo builds.
+  const { data: sso } = useQuery({
+    queryKey: ['sso-availability'],
+    queryFn: api.getSSOAvailability,
+    retry: false,
+    staleTime: Infinity,
+    enabled: !isDemo,
+  })
 
   // Auto-login from saved credentials or demo mode
   useEffect(() => {
@@ -64,6 +107,11 @@ export default function Login({ onLogin }: LoginProps) {
             Demo mode — type anything and click Sign in
           </div>
         )}
+        {ssoErrorMessage && (
+          <p className="mb-4 px-3 py-2 bg-red-900/30 border border-red-800/50 rounded text-sm text-red-300 text-center">
+            {ssoErrorMessage}
+          </p>
+        )}
         <form onSubmit={handleSubmit} action="/api/v1/auth/login" method="POST" autoComplete="on">
           <label className="block text-sm text-gray-400 mb-2" htmlFor="username">
             Username
@@ -113,6 +161,24 @@ export default function Login({ onLogin }: LoginProps) {
             {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
+        {sso?.available === true && (
+          <>
+            <div className="flex items-center gap-3 mt-6 mb-4">
+              <div className="flex-1 h-px bg-gray-800" />
+              <span className="text-xs text-gray-500">or</span>
+              <div className="flex-1 h-px bg-gray-800" />
+            </div>
+            {/* Plain anchor performing a full-page navigation — never fetch/XHR
+                (FR-034, AC-007). Kept outside the <form> so it cannot be
+                confused with the password submit (§12 note 17). */}
+            <a
+              href="/api/v1/auth/oidc/start"
+              className="block w-full py-2 px-4 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-white text-center rounded-md font-medium transition-colors"
+            >
+              {sso.label}
+            </a>
+          </>
+        )}
       </div>
     </div>
   )

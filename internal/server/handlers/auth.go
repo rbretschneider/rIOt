@@ -5,9 +5,62 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// sessionCookieName is the name of rIOt's admin session cookie, shared by
+// password login (Login) and SSO login (OIDCCallback), minted only through
+// issueSessionCookie so the two are identical by construction (OIDC-001 AD-008).
+const sessionCookieName = "riot_session"
+
+// issueSessionCookie mints the standard 24h admin JWT and sets it as the
+// riot_session cookie. Login and OIDCCallback both call this — no handler
+// constructs a riot_session cookie of its own. SameSite=Lax (rather than
+// Strict) is required so the cookie survives the cross-site top-level
+// navigation that lands the browser back from the IdP after a successful SSO
+// callback (FR-036/AC-009). Secure is derived from the resolved request
+// scheme (middleware.RequestScheme) so plain-HTTP LAN deployments
+// (NFR-010) are unaffected, while an https deployment gets the compensating
+// control that pairs with SameSite=Lax (AD-008, SEC-001).
+func (h *Handlers) issueSessionCookie(w http.ResponseWriter, r *http.Request, now time.Time) error {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "admin",
+		"exp": now.Add(24 * time.Hour).Unix(),
+		"iat": now.Unix(),
+	})
+	tokenStr, err := token.SignedString(h.jwtSecret)
+	if err != nil {
+		return err
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    tokenStr,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   middleware.RequestScheme(r) == "https",
+		MaxAge:   86400, // 24 hours
+	})
+	return nil
+}
+
+// clearSessionCookie clears the riot_session cookie with the same
+// name/path/attributes as issueSessionCookie, so Logout and any OIDC failure
+// path clear exactly what was set.
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   middleware.RequestScheme(r) == "https",
+		MaxAge:   -1,
+	})
+}
 
 // Login handles POST /api/v1/auth/login.
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
@@ -31,39 +84,19 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Issue JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "admin",
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-		"iat": time.Now().Unix(),
-	})
-	tokenStr, err := token.SignedString(h.jwtSecret)
-	if err != nil {
+	if err := h.issueSessionCookie(w, r, time.Now()); err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "riot_session",
-		Value:    tokenStr,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   86400, // 24 hours
-	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// Logout handles POST /api/v1/auth/logout.
+// Logout handles POST /api/v1/auth/logout. Clears a session established by
+// SSO exactly as it clears one established by password (OIDC-001 FR-032) —
+// both were minted by the same issueSessionCookie helper, so the same
+// clearSessionCookie call matches either.
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     "riot_session",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		MaxAge:   -1,
-	})
+	clearSessionCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

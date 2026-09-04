@@ -29,6 +29,7 @@
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
 - **Open registration** — devices register automatically; optionally require a registration key via Settings
 - **Admin authentication** — password-protected dashboard with JWT session cookies and in-app password changes
+- **Optional SSO login** — sign in through an external OIDC identity provider (e.g. authentik) alongside the built-in password login; identity federation only — no separate user tier, and password login always remains available (see [Single Sign-On](#single-sign-on-oidc))
 - **UPS monitoring** — auto-detects NUT `upsc`, displays battery charge, load, voltage, runtime, and status; alerts on battery switchover and low battery; fleet status dot turns yellow when a device is on battery power
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; near-real-time SSH/sudo/console/su authentication failure alerting (Linux; ≤60s latency, journald origin-filtered); include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
@@ -142,6 +143,11 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_TLS_CERT_FILE` | — | Manual TLS certificate file path |
 | `RIOT_TLS_KEY_FILE` | — | Manual TLS key file path |
 | `RIOT_MTLS_ENABLED` | `false` | Enable mTLS device authentication (see [mTLS](#mtls-device-authentication)) |
+| `RIOT_OIDC_ISSUER_URL` | — | Optional SSO: IdP issuer URL. Dormant unless this, `RIOT_OIDC_CLIENT_ID`, and `RIOT_OIDC_CLIENT_SECRET` are all set (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_OIDC_CLIENT_ID` | — | Optional SSO: OAuth client ID (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_OIDC_CLIENT_SECRET` | — | Optional SSO: OAuth client secret — treat as a secret (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_OIDC_BUTTON_LABEL` | `Sign in with SSO` | Optional SSO: text shown on the login screen's SSO button (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_TRUSTED_PROXIES` | — (trust nobody) | Comma-separated CIDRs trusted to supply forwarding headers; set only when rIOt sits behind a reverse proxy (see [Single Sign-On](#single-sign-on-oidc)) |
 | `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
 
 ---
@@ -781,6 +787,69 @@ From **Settings > Certificates**:
 
 ---
 
+## Single Sign-On (OIDC)
+
+rIOt's admin dashboard can optionally accept sign-in through an external OpenID Connect identity provider (for example authentik), alongside the built-in password login. SSO federates **identity only** — a successful login mints the exact same `riot_session` cookie that a password login does. rIOt never stores an IdP token, never adds a second class of user, and never disables password login. If you never set the environment variables below, this feature does not exist as far as your deployment is concerned: no button, no new endpoints reachable, no outbound calls to any identity provider.
+
+### How access control works — read this before enabling
+
+- The identity provider answers exactly one question: **"who is this?"** It does not tell rIOt what that person should be allowed to do inside rIOt.
+- **Any identity your IdP authenticates and authorizes for the rIOt application is granted full rIOt admin** — the same access a correct password grants. There is no secondary approval step, no invitation, and no allowlist inside rIOt itself.
+- **The IdP's application-to-group binding *is* your access control.** Restricting who can sign in is entirely your responsibility, enforced at the identity provider — not inside rIOt. An authentik application with no group binding is open to *every* authenticated user of that authentik instance. Create the binding **before** you write any `RIOT_OIDC_*` variable into `.env`.
+- The first successful login from a previously unseen identity is recorded as a **`WARN`-level log entry** ("new SSO identity granted admin", with issuer and subject) that is persisted and visible in **Settings > Logs**. Check there right after you enable SSO, and again any time you see an admin session you don't recognize. A repeat login from an already-seen identity logs at `INFO` only and does not repeat the warning — this is the loudest signal rIOt can give you for a decision it does not make itself.
+
+### Enabling SSO
+
+SSO stays completely dormant until all three of `RIOT_OIDC_ISSUER_URL`, `RIOT_OIDC_CLIENT_ID`, and `RIOT_OIDC_CLIENT_SECRET` are set. Follow these steps **in order**:
+
+1. **Create the group binding first.** In your identity provider, create (or choose) a group for rIOt admins and bind the rIOt application to it before doing anything else here.
+2. **Register the application.** If you use authentik with the Hawaii house tooling, run:
+
+   ```bash
+   python register_oidc_app.py riot \
+     --redirect-uri https://<your-riot-host>:7331/api/v1/auth/oidc/callback \
+     --launch-url  https://<your-riot-host>:7331/ \
+     --group       "riot admins"
+   ```
+
+   Substitute the scheme, host, and port rIOt is actually reached at. `--group` is **required** for rIOt — the script prints a loud warning if you omit it, and that warning is not a substitute for creating the binding by hand. The script emits house-idiom `OIDC_*` keys; re-prefix them to `RIOT_OIDC_*` when you copy them into `.env`.
+3. **Use strict, exact-match redirect URIs — never regex or wildcard.** Register exactly one redirect URI per scheme + host + port that rIOt is actually reached by; rIOt derives its own redirect URI from the incoming request, so an entry that doesn't match byte-for-byte fails at the IdP. If your first attempt fails with a redirect mismatch, **fix the registered URI** rather than switching the IdP to regex/wildcard matching — that would remove the one control keeping a poisoned `Host` header from being useful to an attacker. Re-running the registration script with a corrected `--redirect-uri` *appends* to the existing list rather than replacing it, so also delete the stale, wrong entry by hand in the IdP.
+4. **Verify the binding before enabling for real.** Sign in with a test account that is deliberately *not* in the bound group and confirm the IdP refuses it — the rIOt login screen should show "The identity provider refused the sign-in for this account." Do this before writing the real variables into a production `.env`.
+5. **Set the environment variables and restart the server.** Changing any of them requires a restart — there is no hot reload.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RIOT_OIDC_ISSUER_URL` | to enable SSO | — | The IdP's per-application issuer URL, e.g. `https://auth.example.com/application/o/riot/` |
+| `RIOT_OIDC_CLIENT_ID` | to enable SSO | — | OAuth client ID issued by the IdP |
+| `RIOT_OIDC_CLIENT_SECRET` | to enable SSO | — | OAuth client secret issued by the IdP — a secret; never commit it, `.env.example` carries a placeholder only |
+| `RIOT_OIDC_BUTTON_LABEL` | no | `Sign in with SSO` | Text shown on the login screen's SSO button |
+
+If any one of the first three is missing or empty after trimming whitespace, SSO stays dormant: the login screen shows no SSO button, `GET /api/v1/auth/oidc` answers `{"available": false, "label": ""}`, and `/api/v1/auth/oidc/start` / `/api/v1/auth/oidc/callback` both respond `404`.
+
+### Behind a reverse proxy: `RIOT_TRUSTED_PROXIES`
+
+If rIOt sits behind a TLS-terminating reverse proxy (nginx, Caddy, Traefik, etc.), set `RIOT_TRUSTED_PROXIES` to the proxy's CIDR (or its exact IP as a `/32`).
+
+**This is what turns on the `Secure` attribute on the session cookie.** Leave it unset behind a proxy, and rIOt ignores `X-Forwarded-Proto`, sees what looks like a plain-HTTP request from the proxy, and issues `riot_session` *without* `Secure` — even though your browser is talking `https` to the proxy the entire time. That is a real exposure: a `Secure`-less admin session cookie can be sent over a stray cleartext `http://` request to the same host. Setting `RIOT_TRUSTED_PROXIES` fixes it.
+
+Secondarily — and only relevant once the above is handled — leaving it unset behind a proxy also collapses every client's rate-limit bucket and every audit-logged IP address onto the proxy's own address instead of the real client's.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RIOT_TRUSTED_PROXIES` | no | empty (trust nobody) | Comma-separated CIDR blocks (bare IPs are treated as `/32`/`/128`) trusted to supply `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, and `X-Forwarded-Proto`. Set only when rIOt sits behind a reverse proxy |
+
+Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment on `:7331` (where rIOt terminates its own TLS) — it already gets `Secure` correctly in that shape and needs no configuration. Never set it to `0.0.0.0/0`; that hands your rate-limit key and audit IP back to whoever can write the header.
+
+### What SSO does not do
+
+- It does not replace first-run setup — the setup wizard always runs first on a fresh install, and the SSO button never appears (and the endpoints 404) until setup is complete, regardless of whether the `RIOT_OIDC_*` variables are set.
+- It does not remove or weaken password login. The password form and "remember me" work exactly as before, at all times, even if the identity provider is unreachable.
+- It does not add users, roles, or permission tiers. rIOt remains single-admin: every successful SSO login receives the identical `sub: "admin"` session a password login would.
+- It does not persist any token from the identity provider. Only an audit record (issuer, subject, email, first-login and last-login timestamps) is kept for visibility — nothing in the login path reads it to make an access decision.
+- Signing out of rIOt does not sign you out of the identity provider, and signing out of the identity provider does not sign you out of rIOt — there is no single sign-out.
+
+---
+
 ## DNS Resilience
 
 The agent includes a resilient DNS resolver that caches DNS lookups to disk. If DNS becomes unavailable, the agent falls back to cached IPs to maintain connectivity with the server.
@@ -841,6 +910,9 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `POST` | `/api/v1/auth/change-password` | Change admin password |
 | `GET` | `/api/v1/auth/check` | Check authentication status |
+| `GET` | `/api/v1/auth/oidc` | SSO availability probe — `{"available": bool, "label": string}`. Never `404`; answers `{"available": false}` when SSO is dormant or setup is incomplete |
+| `GET` | `/api/v1/auth/oidc/start` | Begin an SSO login — redirects to the identity provider. `404` when SSO is dormant or setup is incomplete |
+| `GET` | `/api/v1/auth/oidc/callback` | SSO callback from the identity provider — redirects to the dashboard on success, or to the login screen with `?sso_error=<code>` on failure. `404` when SSO is dormant or setup is incomplete |
 | `GET` | `/api/v1/server-cert` | Server TLS certificate + fingerprint (for agent TOFU) |
 | `GET` | `/api/v1/setup/status` | Setup wizard status |
 | `POST` | `/api/v1/setup/complete` | Complete setup wizard |

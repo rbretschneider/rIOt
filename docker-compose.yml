@@ -16,6 +16,15 @@ services:
       - RIOT_JWT_SECRET=
       # - RIOT_ALLOWED_ORIGINS=https://my-riot.example.com
       # - GOMEMLIMIT=2GiB              # Go runtime memory limit (default: 2 GiB)
+      # Optional "Sign in with SSO" (OIDC-001) — dormant unless all three are
+      # set. Bind the rIOt application to a group in your IdP FIRST.
+      # - RIOT_OIDC_ISSUER_URL=https://auth.example.com/application/o/riot/
+      # - RIOT_OIDC_CLIENT_ID=changeme
+      # - RIOT_OIDC_CLIENT_SECRET=changeme
+      # - RIOT_OIDC_BUTTON_LABEL=Sign in with authentik
+      # Optional trusted reverse-proxy CIDRs — set only if rIOt sits behind
+      # a reverse proxy (default empty trusts nobody, see .env.example).
+      # - RIOT_TRUSTED_PROXIES=10.0.0.5/32
     depends_on:
       riot-db:
         condition: service_healthy

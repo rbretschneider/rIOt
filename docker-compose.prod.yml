@@ -9,6 +9,15 @@ services:
       - RIOT_PORT=7331
       - RIOT_RETENTION_DAYS=${RIOT_RETENTION_DAYS:-30}
       - GOMEMLIMIT=${GOMEMLIMIT:-2GiB}
+      # Optional "Sign in with SSO" (OIDC-001) — dormant unless all three are
+      # set. Bind the rIOt application to a group in your IdP FIRST.
+      # - RIOT_OIDC_ISSUER_URL=${RIOT_OIDC_ISSUER_URL}
+      # - RIOT_OIDC_CLIENT_ID=${RIOT_OIDC_CLIENT_ID}
+      # - RIOT_OIDC_CLIENT_SECRET=${RIOT_OIDC_CLIENT_SECRET}
+      # - RIOT_OIDC_BUTTON_LABEL=${RIOT_OIDC_BUTTON_LABEL}
+      # Optional trusted reverse-proxy CIDRs — set only if rIOt sits behind
+      # a reverse proxy (default empty trusts nobody, see .env.example).
+      # - RIOT_TRUSTED_PROXIES=${RIOT_TRUSTED_PROXIES}
     depends_on:
       riot-db:
         condition: service_healthy

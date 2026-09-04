@@ -233,6 +233,16 @@ type DeviceProbeRepository interface {
 	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// ExternalIdentityRepository defines the interface for OIDC identity audit
+// operations. RecordLogin's firstSeen return value drives the OIDC-001 AD-021
+// admission warning and is only meaningful when err == nil.
+type ExternalIdentityRepository interface {
+	// RecordLogin upserts the identity and reports whether this (issuer, subject)
+	// had never been seen before. firstSeen drives the AD-021 admission warning and
+	// is only meaningful when err == nil.
+	RecordLogin(ctx context.Context, ident models.ExternalIdentity) (firstSeen bool, err error)
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository    = (*DeviceRepo)(nil)
@@ -251,4 +261,5 @@ var (
 	_ ContainerLogRepository    = (*ContainerLogRepo)(nil)
 	_ ContainerMetricRepository = (*ContainerMetricRepo)(nil)
 	_ DeviceProbeRepository     = (*DeviceProbeRepo)(nil)
+	_ ExternalIdentityRepository = (*ExternalIdentityRepo)(nil)
 )

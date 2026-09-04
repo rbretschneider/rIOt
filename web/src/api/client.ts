@@ -25,8 +25,19 @@ export interface DevicePatchInfo {
   updates?: PendingUpdate[]
 }
 
+// SSOAvailability is the response shape of GET /api/v1/auth/oidc
+// (OIDC-001). `available` is false whenever SSO is not configured, setup is
+// incomplete, or the check itself fails; the login screen renders no SSO
+// button in that case.
+export interface SSOAvailability {
+  available: boolean
+  label: string
+}
+
 export const api = {
   getDevices: () => fetchJSON<Device[]>(`${BASE}/devices`),
+
+  getSSOAvailability: () => fetchJSON<SSOAvailability>(`${BASE}/auth/oidc`),
 
   getDevice: (id: string) => fetchJSON<DeviceDetailResponse>(`${BASE}/devices/${id}`),
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
+	"github.com/DesyncTheThird/rIOt/internal/server/oidc"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
@@ -26,8 +27,15 @@ func pprofHandler() http.Handler {
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Global middleware
-	r.Use(chimw.RealIP)
+	// Global middleware.
+	// OIDC-001 AD-020: chimw.RealIP is replaced with a trusted-proxy-gated
+	// client-identity resolver. RIOT_TRUSTED_PROXIES defaults to empty
+	// (trust nobody), so forwarding headers are ignored unless the
+	// immediate peer is explicitly trusted — this closes the pre-existing
+	// bypass where an unconditional chimw.RealIP made loginLimiter and
+	// registerLimiter keyable on an attacker-supplied header.
+	trustedProxies := middleware.ParseTrustedProxies(s.Config.TrustedProxies)
+	r.Use(middleware.RealIP(trustedProxies))
 	r.Use(middleware.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.CORS(s.Config.AllowedOrigins))
@@ -40,6 +48,18 @@ func (s *Server) setupRouter() *chi.Mux {
 	if s.Config.MTLSEnabled && s.CA != nil {
 		enrollH = handlers.NewEnrollHandler(s.CA, s.CARepo, s.DeviceRepo)
 	}
+
+	// OIDC-001: constructed once and lives for the process lifetime, which is
+	// what makes the discovery cache useful (AD-004). New performs no
+	// network I/O — dormant/malformed-issuer configurations never contact
+	// the IdP (FR-006).
+	oidcSvc := oidc.New(oidc.Options{
+		IssuerURL:    s.Config.OIDCIssuerURL,
+		ClientID:     s.Config.OIDCClientID,
+		ClientSecret: s.Config.OIDCClientSecret,
+		ButtonLabel:  s.Config.OIDCButtonLabel,
+		JWTSecret:    s.JWTSecret,
+	})
 
 	h := handlers.New(handlers.HandlerDeps{
 		Devices:           s.DeviceRepo,
@@ -64,6 +84,9 @@ func (s *Server) setupRouter() *chi.Mux {
 		DeviceProbeRepo:      s.DeviceProbeRepo,
 		JWTSecret:         s.JWTSecret,
 		AdminPasswordHash: s.Config.AdminPasswordHash,
+		OIDC:                 oidcSvc,
+		ExternalIdentityRepo: s.ExternalIdentityRepo,
+		SetupComplete:        &s.SetupComplete,
 	})
 
 	// Setup wizard handler
@@ -72,6 +95,10 @@ func (s *Server) setupRouter() *chi.Mux {
 	// Rate limiters
 	loginLimiter := middleware.NewRateLimiter(5, 5)     // 5/min
 	registerLimiter := middleware.NewRateLimiter(10, 10) // 10/min
+	// OIDC-001 AD-013: a separate bucket from loginLimiter (same policy) so a
+	// burst of failed SSO attempts cannot consume the operator's
+	// password-login allowance and defeat the D-9 password fallback.
+	oidcLimiter := middleware.NewRateLimiter(5, 5) // 5/min, same policy as loginLimiter
 
 	// === PUBLIC routes (no auth) ===
 	r.Get("/health", h.Health(s.DB))
@@ -86,6 +113,15 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(loginLimiter.Middleware()).Post("/login", h.Login)
 		r.Post("/logout", h.Logout)
 		r.Get("/check", h.AuthCheck)
+
+		// OIDC-001: routes are always registered; dormancy is a
+		// handler-level 404 (AD-011) — the frontend catch-all at the bottom
+		// of this file serves index.html with HTTP 200 for any path chi
+		// does not match, so conditional registration would make AC-002/
+		// AC-020 fail with a 200 HTML page instead of a 404.
+		r.Get("/oidc", h.OIDCAvailability)
+		r.With(oidcLimiter.MiddlewareRedirect("/?sso_error=sso_failed")).Get("/oidc/start", h.OIDCStart)
+		r.With(oidcLimiter.MiddlewareRedirect("/?sso_error=sso_failed")).Get("/oidc/callback", h.OIDCCallback)
 	})
 
 	// === PUBLIC routes (agent TOFU) ===

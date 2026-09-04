@@ -28,6 +28,19 @@ type Config struct {
 	TLSKeyFile        string // manual TLS key file
 	MTLSEnabled       bool   // enable mTLS device authentication
 	SetupComplete     bool   // whether initial setup wizard has been completed
+
+	// OIDC-001: optional "Sign in with SSO" support. Dormant unless
+	// OIDCIssuerURL, OIDCClientID, and OIDCClientSecret are all non-empty
+	// after trimming (policy applied in the oidc package, not here — AD-003).
+	OIDCIssuerURL    string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCButtonLabel  string
+
+	// TrustedProxies is a comma-separated list of CIDR blocks trusted to
+	// supply forwarding headers (X-Forwarded-For, X-Real-IP, True-Client-IP,
+	// X-Forwarded-Proto). Empty (the default) trusts nobody (AD-020).
+	TrustedProxies string
 }
 
 func LoadConfig() *Config {
@@ -110,6 +123,14 @@ func LoadConfig() *Config {
 			}
 		}
 	}
+
+	// OIDC-001: read verbatim (trimmed), no validation here — policy is
+	// applied by the oidc package (AD-003). No new required variable (FR-008).
+	cfg.OIDCIssuerURL = strings.TrimSpace(os.Getenv("RIOT_OIDC_ISSUER_URL"))
+	cfg.OIDCClientID = strings.TrimSpace(os.Getenv("RIOT_OIDC_CLIENT_ID"))
+	cfg.OIDCClientSecret = strings.TrimSpace(os.Getenv("RIOT_OIDC_CLIENT_SECRET"))
+	cfg.OIDCButtonLabel = strings.TrimSpace(os.Getenv("RIOT_OIDC_BUTTON_LABEL"))
+	cfg.TrustedProxies = strings.TrimSpace(os.Getenv("RIOT_TRUSTED_PROXIES"))
 
 	return cfg
 }

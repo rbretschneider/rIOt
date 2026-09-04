@@ -11,6 +11,11 @@ export { type DevicePatchInfo }
 
 export const api = {
   getDevices: () => Promise.resolve(demo.getDevices()),
+
+  // OIDC-001: SSO is never available in demo builds — the availability
+  // query itself is disabled in demo mode (Login.tsx), but this keeps the
+  // demo build typechecking against the same `api` shape as client.ts.
+  getSSOAvailability: () => Promise.resolve({ available: false, label: '' }),
   getDevice: (id: string) => Promise.resolve(demo.getDeviceDetail(id)!),
   getDeviceHistory: (id: string) => Promise.resolve(demo.getDeviceHistory(id)),
   deleteDevice: async () => { await delay(); },

@@ -51,6 +51,7 @@ type Server struct {
 	ContainerLogRepo    *db.ContainerLogRepo
 	ContainerMetricRepo *db.ContainerMetricRepo
 	DeviceProbeRepo     *db.DeviceProbeRepo
+	ExternalIdentityRepo *db.ExternalIdentityRepo
 	LogHandler     *logstore.DBHandler
 	CA             *ca.CA
 	ProbeRunner    *probes.Runner
@@ -108,6 +109,7 @@ func (s *Server) Start() error {
 	s.ContainerLogRepo = db.NewContainerLogRepo(s.DB)
 	s.ContainerMetricRepo = db.NewContainerMetricRepo(s.DB)
 	s.DeviceProbeRepo = db.NewDeviceProbeRepo(s.DB)
+	s.ExternalIdentityRepo = db.NewExternalIdentityRepo(s.DB)
 
 	// Set up database log handler (stores WARN+ logs to DB alongside stdout)
 	logStoreLevel := slog.LevelWarn

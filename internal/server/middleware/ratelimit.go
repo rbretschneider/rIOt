@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -72,15 +71,33 @@ func (rl *RateLimiter) cleanup() {
 }
 
 // Middleware returns an HTTP middleware that rate limits by client IP.
+// Keyed on middleware.ClientIP(r) (AD-020) — the resolved TCP peer address
+// unless rewritten by a configured trusted proxy — so the key cannot be
+// forged by an arbitrary request header (SEC-002).
 func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-			if ip == "" {
-				ip = r.RemoteAddr
-			}
+			ip := ClientIP(r)
 			if !rl.allow(ip) {
 				http.Error(w, `{"error":"too many requests"}`, http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// MiddlewareRedirect returns an HTTP middleware that rate limits by client IP
+// identically to Middleware, but on rejection responds with a 302 redirect
+// to the given location instead of a 429 JSON body. Used by the OIDC-001
+// browser-facing endpoints (AD-013) so a throttled navigation never dead-ends
+// on a raw JSON response (AD-010).
+func (rl *RateLimiter) MiddlewareRedirect(location string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := ClientIP(r)
+			if !rl.allow(ip) {
+				http.Redirect(w, r, location, http.StatusFound)
 				return
 			}
 			next.ServeHTTP(w, r)
