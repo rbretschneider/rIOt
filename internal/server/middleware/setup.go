@@ -36,6 +36,17 @@ func SetupGuard(setupComplete *atomic.Bool) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Allow the three OIDC endpoints through by exact path match (not
+			// prefix — OIDC-001 AD-019, SEC-011). The handlers themselves gate
+			// on isSetupComplete() and refuse to mint a session while setup is
+			// incomplete (AC-020); this entry exists only so the availability
+			// endpoint can answer {"available": false} and /start, /callback
+			// can answer 404 instead of the 503 setup_required body below.
+			if path == "/api/v1/auth/oidc" || path == "/api/v1/auth/oidc/start" || path == "/api/v1/auth/oidc/callback" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Block all other API routes
 			if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/ws") {
 				w.Header().Set("Content-Type", "application/json")
