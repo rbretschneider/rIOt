@@ -21,6 +21,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
+	"github.com/DesyncTheThird/rIOt/internal/server/oidc"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
 	devicesummary "github.com/DesyncTheThird/rIOt/internal/server/summary"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
@@ -53,6 +54,11 @@ type HandlerDeps struct {
 	DeviceProbeRepo      db.DeviceProbeRepository
 	JWTSecret            []byte
 	AdminPasswordHash string
+
+	// OIDC-001
+	OIDC                 *oidc.Service
+	ExternalIdentityRepo db.ExternalIdentityRepository
+	SetupComplete        *atomic.Bool
 }
 
 type Handlers struct {
@@ -78,6 +84,16 @@ type Handlers struct {
 	deviceProbeRepo      db.DeviceProbeRepository
 	jwtSecret            []byte
 	adminPasswordHash  string
+
+	// OIDC-001
+	oidc                 *oidc.Service
+	externalIdentityRepo db.ExternalIdentityRepository
+	setupComplete        *atomic.Bool
+	// oidcClock is the time source for external-identity audit timestamps.
+	// nil (the production default) means time.Now; tests inject a fixed or
+	// stepped clock so AC-010/AC-011 can assert exact first/last-login
+	// timestamps deterministically rather than relying on real-clock timing.
+	oidcClock func() time.Time
 
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
@@ -108,7 +124,17 @@ func New(deps HandlerDeps) *Handlers {
 		deviceProbeRepo:      deps.DeviceProbeRepo,
 		jwtSecret:            deps.JWTSecret,
 		adminPasswordHash: deps.AdminPasswordHash,
+		oidc:                 deps.OIDC,
+		externalIdentityRepo: deps.ExternalIdentityRepo,
+		setupComplete:        deps.SetupComplete,
 	}
+}
+
+// isSetupComplete reports the live setup-complete state via the shared
+// atomic flag (OIDC-001 AD-012). Nil-safe: a mis-wired dependency yields
+// "not complete", never "complete and ungated".
+func (h *Handlers) isSetupComplete() bool {
+	return h.setupComplete != nil && h.setupComplete.Load()
 }
 
 func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
