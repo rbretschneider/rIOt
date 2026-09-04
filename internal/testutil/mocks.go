@@ -1713,6 +1713,78 @@ func (m *MockDeviceProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int6
 	return 0, m.Err
 }
 
+// --- MockExternalIdentityRepo ---
+
+// MockExternalIdentityRecord mirrors the external_identities table row shape
+// so tests can assert on both first_login_at and last_login_at independently
+// (AC-010, AC-011).
+type MockExternalIdentityRecord struct {
+	Issuer        string
+	Subject       string
+	Email         *string
+	EmailVerified *bool
+	FirstLoginAt  time.Time
+	LastLoginAt   time.Time
+}
+
+// MockExternalIdentityRepo reproduces the upsert semantics of AD-016 in memory:
+// first_login_at is preserved across repeat logins, last_login_at/email/
+// email_verified are overwritten, and RecordLogin reports firstSeen correctly.
+type MockExternalIdentityRepo struct {
+	mu      sync.Mutex
+	Records map[string]*MockExternalIdentityRecord // key: issuer + "|" + subject
+	Err     error
+}
+
+func NewMockExternalIdentityRepo() *MockExternalIdentityRepo {
+	return &MockExternalIdentityRepo{Records: make(map[string]*MockExternalIdentityRecord)}
+}
+
+func (m *MockExternalIdentityRepo) RecordLogin(_ context.Context, ident models.ExternalIdentity) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := ident.Issuer + "|" + ident.Subject
+	existing, ok := m.Records[key]
+	if !ok {
+		m.Records[key] = &MockExternalIdentityRecord{
+			Issuer:        ident.Issuer,
+			Subject:       ident.Subject,
+			Email:         ident.Email,
+			EmailVerified: ident.EmailVerified,
+			FirstLoginAt:  ident.LoginAt,
+			LastLoginAt:   ident.LoginAt,
+		}
+		return true, nil
+	}
+	existing.Email = ident.Email
+	existing.EmailVerified = ident.EmailVerified
+	existing.LastLoginAt = ident.LoginAt
+	return false, nil
+}
+
+// Count returns the number of distinct (issuer, subject) records — a test
+// convenience for asserting "exactly one record" (AC-010, AC-011).
+func (m *MockExternalIdentityRepo) Count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.Records)
+}
+
+// Get returns the record for (issuer, subject), or nil if none exists.
+func (m *MockExternalIdentityRepo) Get(issuer, subject string) *MockExternalIdentityRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.Records[issuer+"|"+subject]
+	if !ok {
+		return nil
+	}
+	copy := *r
+	return &copy
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
@@ -1730,4 +1802,5 @@ var (
 	_ db.ContainerLogRepository    = (*MockContainerLogRepo)(nil)
 	_ db.ContainerMetricRepository = (*MockContainerMetricRepo)(nil)
 	_ db.DeviceProbeRepository     = (*MockDeviceProbeRepo)(nil)
+	_ db.ExternalIdentityRepository = (*MockExternalIdentityRepo)(nil)
 )
