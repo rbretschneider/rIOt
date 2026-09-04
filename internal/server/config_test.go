@@ -94,3 +94,57 @@ func TestLoadConfig_GitHubRepo(t *testing.T) {
 	cfg := LoadConfig()
 	assert.Equal(t, "myorg/myrepo", cfg.GitHubRepo)
 }
+
+// [AC-030] Upgrade requires no configuration change: with none of the
+// RIOT_OIDC_* or RIOT_TRUSTED_PROXIES variables set, every new field is
+// empty and LoadConfig does not error.
+func TestAC030_LoadConfig_NoOIDCVars_AllFieldsEmpty(t *testing.T) {
+	cfg := LoadConfig()
+	assert.Empty(t, cfg.OIDCIssuerURL)
+	assert.Empty(t, cfg.OIDCClientID)
+	assert.Empty(t, cfg.OIDCClientSecret)
+	assert.Empty(t, cfg.OIDCButtonLabel)
+	assert.Empty(t, cfg.TrustedProxies)
+}
+
+// [AC-003] Partial configuration: config.go reads each of the three required
+// OIDC vars independently and verbatim (trimmed) — dormancy policy itself is
+// applied by the oidc package, not here.
+func TestAC003_LoadConfig_PartialOIDCConfig_FieldsPopulatedIndependently(t *testing.T) {
+	t.Setenv("RIOT_OIDC_ISSUER_URL", "https://auth.example/application/o/riot/")
+	t.Setenv("RIOT_OIDC_CLIENT_ID", "riot-client")
+	// RIOT_OIDC_CLIENT_SECRET intentionally left unset.
+	cfg := LoadConfig()
+	assert.Equal(t, "https://auth.example/application/o/riot/", cfg.OIDCIssuerURL)
+	assert.Equal(t, "riot-client", cfg.OIDCClientID)
+	assert.Empty(t, cfg.OIDCClientSecret, "unset secret must remain empty, not defaulted")
+}
+
+func TestLoadConfig_OIDCVars_TrimmedWhitespace(t *testing.T) {
+	t.Setenv("RIOT_OIDC_ISSUER_URL", "  https://auth.example/application/o/riot/  ")
+	t.Setenv("RIOT_OIDC_CLIENT_ID", "  riot-client  ")
+	t.Setenv("RIOT_OIDC_CLIENT_SECRET", "  s3cr3t  ")
+	t.Setenv("RIOT_OIDC_BUTTON_LABEL", "  Sign in with authentik  ")
+	cfg := LoadConfig()
+	assert.Equal(t, "https://auth.example/application/o/riot/", cfg.OIDCIssuerURL)
+	assert.Equal(t, "riot-client", cfg.OIDCClientID)
+	assert.Equal(t, "s3cr3t", cfg.OIDCClientSecret)
+	assert.Equal(t, "Sign in with authentik", cfg.OIDCButtonLabel)
+}
+
+func TestLoadConfig_OIDCVars_WhitespaceOnlyTrimsToEmpty(t *testing.T) {
+	t.Setenv("RIOT_OIDC_CLIENT_SECRET", "   ")
+	cfg := LoadConfig()
+	assert.Empty(t, cfg.OIDCClientSecret)
+}
+
+func TestLoadConfig_TrustedProxies_AbsentIsEmpty(t *testing.T) {
+	cfg := LoadConfig()
+	assert.Empty(t, cfg.TrustedProxies)
+}
+
+func TestLoadConfig_TrustedProxies_ReadVerbatim(t *testing.T) {
+	t.Setenv("RIOT_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.1.1")
+	cfg := LoadConfig()
+	assert.Equal(t, "10.0.0.0/8, 192.168.1.1", cfg.TrustedProxies)
+}
