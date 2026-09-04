@@ -187,7 +187,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// so a fast client disconnect doesn't lose the row, bounded so a slow
 	// database can't hang the login, and never blocking session issuance
 	// (FR-028, OQ-2).
-	firstSeen := h.recordExternalIdentity(claims, ip)
+	firstSeen := h.recordExternalIdentity(r.Context(), claims, ip)
 
 	if err := h.issueSessionCookie(w, r, time.Now()); err != nil {
 		slog.Error("issue session cookie after sso login", "error", err.Error())
@@ -208,11 +208,16 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 // write failure is logged at error level and does not prevent the session
 // from being issued (FR-028, AD-015); in that case first-seen status is
 // genuinely unknown, which the log entry states explicitly.
-func (h *Handlers) recordExternalIdentity(claims oidc.Claims, ip string) bool {
+//
+// The write's context is derived from the request context via
+// context.WithoutCancel (AD-015, literally) rather than context.Background,
+// so it carries the request's values (trace/log context) while still
+// surviving the browser's redirect-triggered disconnect.
+func (h *Handlers) recordExternalIdentity(reqCtx context.Context, claims oidc.Claims, ip string) bool {
 	if h.externalIdentityRepo == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), 5*time.Second)
 	defer cancel()
 
 	now := time.Now
