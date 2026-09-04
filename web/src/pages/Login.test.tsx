@@ -95,6 +95,36 @@ describe('[AC-007] SSO button is a full-page navigation', () => {
 })
 
 // ===================================================================
+// [AC-017] IdP down: start degrades to the login screen
+// ===================================================================
+// Added by QA Engineer. The ADD's own §8 AC-017 mapping names
+// Login.test.tsx for "message + working password form" but no test
+// previously exercised the sso_unavailable code specifically — every
+// existing Login.test.tsx case used sso_denied or an unrecognised code, so a
+// broken/renamed sso_unavailable entry in Login.tsx's SSO_ERROR_MESSAGES
+// table would not have been caught.
+describe('[AC-017] IdP down: start degrades to the login screen', () => {
+  it('displays the mapped message for sso_unavailable', async () => {
+    vi.mocked(api.getSSOAvailability).mockResolvedValue({ available: true, label: 'Sign in with SSO' })
+    renderLogin(vi.fn(), '/?sso_error=sso_unavailable')
+
+    expect(await screen.findByText('The identity provider could not be reached.')).toBeInTheDocument()
+  })
+
+  it('the password form still accepts a valid password when the IdP is down', async () => {
+    vi.mocked(api.getSSOAvailability).mockResolvedValue({ available: true, label: 'Sign in with SSO' })
+    const onLogin = vi.fn().mockResolvedValue(true)
+    renderLogin(onLogin, '/?sso_error=sso_unavailable')
+
+    await screen.findByText('The identity provider could not be reached.')
+    fireEvent.change(screen.getByPlaceholderText('Enter password'), { target: { value: 'hunter2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(onLogin).toHaveBeenCalledWith('hunter2'))
+  })
+})
+
+// ===================================================================
 // [AC-018] IdP error response lands back on the login screen
 // ===================================================================
 describe('[AC-018] IdP error response lands back on the login screen', () => {
