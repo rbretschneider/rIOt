@@ -23,6 +23,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/logstore"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
+	"github.com/DesyncTheThird/rIOt/internal/server/partition"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
@@ -59,6 +60,11 @@ type Server struct {
 	EventGen       *events.Generator
 	Dispatcher     *notify.Dispatcher
 	UpdateChecker  *updates.Checker
+	// PartitionManager pre-creates upcoming daily partitions and drops
+	// aged-out ones (including the legacy partition) for the six high-churn
+	// tables (PART-001, AD-005). EnsureAll runs synchronously before the
+	// server serves traffic; Run(ctx) then loops hourly.
+	PartitionManager *partition.Manager
 	JWTSecret      []byte
 	SetupComplete  atomic.Bool
 	httpServer     *http.Server
@@ -128,6 +134,19 @@ func (s *Server) Start() error {
 	multiHandler := logstore.NewMultiHandler(jsonHandler, s.LogHandler)
 	slog.SetDefault(slog.New(multiHandler))
 
+	// Build the partition manager and ensure forward partition coverage for
+	// the six high-churn tables BEFORE the router accepts any insert
+	// (PART-001, AD-005/§7-B). This is an optimization, not a correctness
+	// gate: the forward DEFAULT catch partition created by the conversion
+	// migration already guarantees every insertable row has a home
+	// (AD-008), so a failure here is logged (through the DB log handler
+	// just configured above, so a persistent stall is visible to the
+	// operator) and does not abort boot.
+	s.PartitionManager = partition.NewManager(s.DB.Pool, partition.BuildSpecs(s.Config.RetentionDays), slog.Default())
+	if err := s.PartitionManager.EnsureAll(ctx); err != nil {
+		slog.Error("partition manager: initial EnsureAll failed", "error", err.Error())
+	}
+
 	// Load config from DB, with env vars taking precedence
 	s.loadDBConfig(ctx)
 
@@ -180,6 +199,11 @@ func (s *Server) Start() error {
 
 	// Start retention worker
 	go s.retentionWorker(ctx)
+
+	// Start partition manager loop (hourly create-ahead + drop-aged, incl.
+	// the legacy partition). EnsureAll already ran synchronously above;
+	// this is the steady-state schedule (PART-001, AD-005).
+	go s.PartitionManager.Run(ctx)
 
 	// Start offline detection worker
 	go s.offlineDetectionWorker(ctx)
@@ -442,80 +466,64 @@ func (s *Server) retentionWorker(ctx context.Context) {
 	}
 }
 
+// runRetention purges the five out-of-scope tables only (events,
+// notification log, server logs, device probe results, stale bootstrap
+// keys). The six high-churn tables (heartbeats, telemetry_snapshots,
+// device_logs, container_metrics, container_logs, probe_results) are no
+// longer purged here — PART-001 replaced their row-level DELETE retention
+// with drop-partition retention, handled entirely by PartitionManager
+// (AD-006). Removing those six calls (and their now-orphaned repo methods)
+// is deliberate: leaving them in would reintroduce the exact dead-tuple
+// churn this story eliminates (NFR-004), and would double-retain against
+// the partition manager's drop-based retention (AC-014).
 func (s *Server) runRetention(ctx context.Context) {
+	runRetention(ctx, s.Config, s.EventRepo, s.NotifyRepo, s.LogRepo, s.DeviceProbeRepo, s.CARepo)
+}
+
+// runRetention is the package-level, interface-driven implementation so it
+// can be unit-tested with mock repos and no live database (AC-014, AC-015).
+// The concrete repo types on Server already satisfy these interfaces
+// (compile-time-checked in internal/server/db/interfaces.go).
+func runRetention(
+	ctx context.Context,
+	cfg *Config,
+	eventRepo db.EventRepository,
+	notifyRepo db.NotifyRepository,
+	logRepo db.LogRepository,
+	deviceProbeRepo db.DeviceProbeRepository,
+	caRepo db.CARepository,
+) {
 	now := time.Now().UTC()
 
-	hbDeleted, err := s.TelemetryRepo.PurgeHeartbeats(ctx, now.AddDate(0, 0, -7))
-	if err != nil {
-		slog.Error("purge heartbeats failed", "error", err.Error())
-	} else if hbDeleted > 0 {
-		slog.Info("purged old heartbeats", "count", hbDeleted)
-	}
-
-	snapDeleted, err := s.TelemetryRepo.PurgeSnapshots(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
-	if err != nil {
-		slog.Error("purge snapshots failed", "error", err.Error())
-	} else if snapDeleted > 0 {
-		slog.Info("purged old snapshots", "count", snapDeleted)
-	}
-
-	evtDeleted, err := s.EventRepo.Purge(ctx, now.AddDate(0, 0, -90))
+	evtDeleted, err := eventRepo.Purge(ctx, now.AddDate(0, 0, -90))
 	if err != nil {
 		slog.Error("purge events failed", "error", err.Error())
 	} else if evtDeleted > 0 {
 		slog.Info("purged old events", "count", evtDeleted)
 	}
 
-	prDeleted, err := s.ProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
-	if err != nil {
-		slog.Error("purge probe results failed", "error", err.Error())
-	} else if prDeleted > 0 {
-		slog.Info("purged old probe results", "count", prDeleted)
-	}
-
-	nlDeleted, err := s.NotifyRepo.PurgeNotificationLog(ctx, now.AddDate(0, 0, -90))
+	nlDeleted, err := notifyRepo.PurgeNotificationLog(ctx, now.AddDate(0, 0, -90))
 	if err != nil {
 		slog.Error("purge notification log failed", "error", err.Error())
 	} else if nlDeleted > 0 {
 		slog.Info("purged old notification log entries", "count", nlDeleted)
 	}
 
-	logDeleted, err := s.LogRepo.Purge(ctx, now.AddDate(0, 0, -7))
+	logDeleted, err := logRepo.Purge(ctx, now.AddDate(0, 0, -7))
 	if err != nil {
 		slog.Error("purge server logs failed", "error", err.Error())
 	} else if logDeleted > 0 {
 		slog.Info("purged old server logs", "count", logDeleted)
 	}
 
-	clDeleted, err := s.ContainerLogRepo.Purge(ctx, now.AddDate(0, 0, -7))
-	if err != nil {
-		slog.Error("purge container logs failed", "error", err.Error())
-	} else if clDeleted > 0 {
-		slog.Info("purged old container logs", "count", clDeleted)
-	}
-
-	cmDeleted, err := s.ContainerMetricRepo.Purge(ctx, now.AddDate(0, 0, -7))
-	if err != nil {
-		slog.Error("purge container metrics failed", "error", err.Error())
-	} else if cmDeleted > 0 {
-		slog.Info("purged old container metrics", "count", cmDeleted)
-	}
-
-	dpDeleted, err := s.DeviceProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
+	dpDeleted, err := deviceProbeRepo.PurgeResults(ctx, now.AddDate(0, 0, -cfg.RetentionDays))
 	if err != nil {
 		slog.Error("purge device probe results failed", "error", err.Error())
 	} else if dpDeleted > 0 {
 		slog.Info("purged old device probe results", "count", dpDeleted)
 	}
 
-	dlDeleted, err := s.DeviceLogRepo.Purge(ctx, now.AddDate(0, 0, -s.Config.RetentionDays))
-	if err != nil {
-		slog.Error("purge device logs failed", "error", err.Error())
-	} else if dlDeleted > 0 {
-		slog.Info("purged old device logs", "count", dlDeleted)
-	}
-
-	bkDeleted, err := s.CARepo.PurgeStaleBootstrapKeys(ctx)
+	bkDeleted, err := caRepo.PurgeStaleBootstrapKeys(ctx)
 	if err != nil {
 		slog.Error("purge stale bootstrap keys failed", "error", err.Error())
 	} else if bkDeleted > 0 {
