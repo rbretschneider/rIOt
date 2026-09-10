@@ -15,10 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// stallThreshold is the number of consecutive failed manager operations
-// (EnsureAll or DropAged) after which the manager escalates a single ERROR
-// log ("partition manager stalled") rather than only logging per-cycle
-// (AD-005, SEC-PART-001-005).
+// stallThreshold is the number of consecutive failed calls to a single
+// manager operation (EnsureAll or DropAged, tracked independently — see
+// opFailureTracker) after which the manager escalates a single ERROR log
+// ("partition manager stalled") rather than only logging per-cycle
+// (AD-005: "EnsureAll/DropAged has failed for N consecutive cycles",
+// SEC-PART-001-005).
 const stallThreshold = 3
 
 // coverageWarnMargin is how close the furthest pre-created future partition
@@ -107,6 +109,19 @@ func (e *pgxExecutor) listPartitionNames(ctx context.Context, table string) ([]s
 	return names, rows.Err()
 }
 
+// opFailureTracker holds the consecutive-failure count and stall-escalation
+// latch for a single manager operation (EnsureAll's create-ahead work, or
+// DropAged's aged-partition drops). Each operation gets its own tracker so
+// that a persistent failure in one operation reaches stallThreshold and
+// escalates regardless of how many times the other operation succeeds in
+// between — a shared counter would let an interleaved success from the
+// healthy operation silently reset progress toward the other operation's
+// stall escalation (AD-005; see manager_test.go AC-020 QA finding).
+type opFailureTracker struct {
+	consecutiveFailures int
+	stalled             bool
+}
+
 // Manager pre-creates daily partitions ahead of need and drops partitions
 // (including the legacy partition) once their entire range is older than
 // the owning table's retention window. It never drops the DEFAULT catch
@@ -119,10 +134,10 @@ type Manager struct {
 	ahead  int
 	behind int
 
-	mu                  sync.Mutex
-	health              Health
-	consecutiveFailures int
-	stalled             bool
+	mu             sync.Mutex
+	health         Health
+	ensureFailures opFailureTracker // EnsureAll's own consecutive-failure count (AD-005)
+	dropFailures   opFailureTracker // DropAged's own consecutive-failure count (AD-005)
 }
 
 // NewManager constructs a Manager for the given table specs, backed by a
@@ -162,7 +177,7 @@ func (m *Manager) EnsureAll(ctx context.Context) error {
 			errs = errors.Join(errs, fmt.Errorf("%s: %w", spec.Name, err))
 		}
 	}
-	m.recordRun(errs)
+	m.recordRun("EnsureAll", &m.ensureFailures, errs)
 	return errs
 }
 
@@ -177,7 +192,7 @@ func (m *Manager) DropAged(ctx context.Context) error {
 			errs = errors.Join(errs, fmt.Errorf("%s: %w", spec.Name, err))
 		}
 	}
-	m.recordRun(errs)
+	m.recordRun("DropAged", &m.dropFailures, errs)
 	return errs
 }
 
@@ -374,7 +389,15 @@ func (m *Manager) updateTableHealth(table string, furthest time.Time, defaultCou
 	m.health.Tables[table] = TableHealth{FurthestFuturePartition: furthest, DefaultRowCount: defaultCount}
 }
 
-func (m *Manager) recordRun(err error) {
+// recordRun updates the shared Health snapshot (LastRunAt always;
+// LastSuccessAt/LastError on outcome) and advances the given operation's OWN
+// failure tracker. tracker must be &m.ensureFailures or &m.dropFailures —
+// keeping EnsureAll's and DropAged's consecutive-failure counts independent
+// is what guarantees a persistent stall in one operation escalates even
+// while the other operation keeps succeeding every cycle (AD-005; fixes the
+// QA-found masking gap where a shared counter let either operation's
+// success reset progress toward the other's stall escalation).
+func (m *Manager) recordRun(op string, tracker *opFailureTracker, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -384,19 +407,19 @@ func (m *Manager) recordRun(err error) {
 	if err == nil {
 		m.health.LastSuccessAt = now
 		m.health.LastError = ""
-		m.consecutiveFailures = 0
-		m.stalled = false
+		tracker.consecutiveFailures = 0
+		tracker.stalled = false
 		return
 	}
 
 	m.health.LastError = err.Error()
-	m.consecutiveFailures++
-	if m.consecutiveFailures >= stallThreshold && !m.stalled {
-		m.stalled = true
+	tracker.consecutiveFailures++
+	if tracker.consecutiveFailures >= stallThreshold && !tracker.stalled {
+		tracker.stalled = true
 		// Escalated once per stall episode via the default slog handler,
 		// which server.go wires through the DB log handler — visible to the
 		// operator without tailing stdout (AD-005, SEC-PART-001-005).
-		m.log.Error("partition manager stalled", "consecutive_failures", m.consecutiveFailures, "error", err.Error())
+		m.log.Error("partition manager stalled", "operation", op, "consecutive_failures", tracker.consecutiveFailures, "error", err.Error())
 	}
 }
 

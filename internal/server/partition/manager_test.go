@@ -330,6 +330,117 @@ func Test_AC020_stall_escalation_resets_after_a_success(t *testing.T) {
 	}
 }
 
+// Originally added by QA Engineer as an intentionally-RED test proving a
+// real gap: recordRun's consecutiveFailures counter was shared across
+// EnsureAll and DropAged, and a SUCCESS from EITHER operation reset it to
+// zero. If EnsureAll failed every cycle (e.g. disk full blocking CREATE)
+// while DropAged kept succeeding (e.g. nothing to drop yet), the alternating
+// fail/succeed/fail/succeed sequence across the shared counter never reached
+// three CONSECUTIVE failures, so the escalated "partition manager stalled"
+// ERROR never fired even though EnsureAll failed on every single cycle. This
+// silently defeated the persistent-stall escalation SEC-PART-001-005 was
+// written to guarantee for exactly this failure mode (forward partition
+// coverage collapsing toward NFR-002 exposure).
+//
+// Fixed (PART-001 AC-020 follow-up): EnsureAll and DropAged now each track
+// their own consecutive-failure count (Manager.ensureFailures /
+// Manager.dropFailures), so a persistent failure in one operation escalates
+// regardless of how many times the other operation succeeds in between. This
+// test is renamed to drop the "_QA" marker per the QA report's own
+// recommendation and now asserts the corrected (green) behavior.
+func Test_AC020_stall_escalation_is_not_masked_by_an_interleaved_operation_succeeding(t *testing.T) {
+	fx := newFakeExecutor()
+	fx.cutoff["container_logs"] = farPast
+	// EnsureAll fails on every cycle (e.g. CREATE blocked by a permissions/
+	// disk-full condition).
+	fx.createErr["container_logs"] = errors.New("boom - create blocked every cycle")
+	// DropAged has nothing to drop, so it succeeds every cycle (no partitions
+	// exist yet in the fake executor's childNames map).
+	h := &captureHandler{}
+	mgr := newManager(fx, []TableSpec{{Name: "container_logs", KeyColumn: "timestamp", Retention: 7 * 24 * time.Hour}}, slog.New(h))
+
+	// Simulate 10 Run() cycles: each cycle calls EnsureAll then DropAged, as
+	// runCycleSafely does.
+	for i := 0; i < 10; i++ {
+		mgr.EnsureAll(context.Background())
+		mgr.DropAged(context.Background())
+	}
+
+	if got := h.count(slog.LevelError, "partition manager stalled"); got == 0 {
+		t.Fatalf("EnsureAll failed on all 10 simulated cycles, but the escalated "+
+			"'partition manager stalled' ERROR never fired (count=%d) — a persistent "+
+			"single-operation failure must escalate even while the other operation's "+
+			"interleaved per-cycle success keeps succeeding (AD-005)", got)
+	}
+}
+
+// [AC-020] Mirror case of the test above: DropAged persistently failing
+// while EnsureAll keeps succeeding must ALSO escalate independently. Per the
+// QA report's Finding 1, this direction has no other backstop (the
+// low-coverage WARN only fires for a stuck EnsureAll), so it is the more
+// safety-critical of the two directions to prove.
+func Test_AC020_DropAged_persistent_failure_escalates_independently_of_EnsureAll_succeeding(t *testing.T) {
+	fx := newFakeExecutor()
+	fx.cutoff["container_logs"] = farPast
+	// DropAged fails on every cycle: give it one partition to try to drop and
+	// make every drop attempt error.
+	fx.childNames["container_logs"] = []string{"container_logs_p20200101"}
+	fx.dropErr["container_logs_p20200101"] = errors.New("boom - drop blocked every cycle")
+	// EnsureAll succeeds every cycle (nothing exotic to create-ahead).
+	h := &captureHandler{}
+	mgr := newManager(fx, []TableSpec{{Name: "container_logs", KeyColumn: "timestamp", Retention: 7 * 24 * time.Hour}}, slog.New(h))
+
+	for i := 0; i < 10; i++ {
+		if err := mgr.EnsureAll(context.Background()); err != nil {
+			t.Fatalf("EnsureAll() error = %v, want nil (EnsureAll must keep succeeding every cycle in this scenario)", err)
+		}
+		mgr.DropAged(context.Background())
+	}
+
+	if got := h.count(slog.LevelError, "partition manager stalled"); got != 1 {
+		t.Fatalf("DropAged failed on all 10 simulated cycles while EnsureAll kept succeeding, "+
+			"expected exactly one escalated 'partition manager stalled' ERROR, got %d", got)
+	}
+}
+
+// [AC-020] Each operation's failure tracker must reset independently on its
+// own success — a success on one operation must not suppress or delay the
+// other operation's own escalation once IT reaches stallThreshold.
+func Test_AC020_EnsureAll_and_DropAged_failure_trackers_are_independent(t *testing.T) {
+	fx := newFakeExecutor()
+	fx.cutoff["container_logs"] = farPast
+	fx.createErr["container_logs"] = errors.New("create boom")
+	h := &captureHandler{}
+	mgr := newManager(fx, []TableSpec{{Name: "container_logs", KeyColumn: "timestamp", Retention: 7 * 24 * time.Hour}}, slog.New(h))
+
+	// EnsureAll fails 3 times (escalates once); DropAged succeeds every time
+	// in between (nothing to drop) and must not consume or reset EnsureAll's
+	// progress toward its own escalation.
+	for i := 0; i < 3; i++ {
+		mgr.EnsureAll(context.Background())
+		mgr.DropAged(context.Background())
+	}
+	if got := h.count(slog.LevelError, "partition manager stalled"); got != 1 {
+		t.Fatalf("expected exactly one stalled ERROR for EnsureAll after 3 failures interleaved with DropAged successes, got %d", got)
+	}
+
+	// EnsureAll recovers; its own tracker resets.
+	delete(fx.createErr, "container_logs")
+	if err := mgr.EnsureAll(context.Background()); err != nil {
+		t.Fatalf("recovery EnsureAll() error = %v, want nil", err)
+	}
+
+	// EnsureAll fails 3 more times: a second, independent escalation for
+	// EnsureAll's own tracker.
+	for i := 0; i < 3; i++ {
+		fx.createErr["container_logs"] = errors.New("create boom again")
+		mgr.EnsureAll(context.Background())
+	}
+	if got := h.count(slog.LevelError, "partition manager stalled"); got != 2 {
+		t.Fatalf("expected a second stalled ERROR after EnsureAll recovered and failed 3 more times, got %d", got)
+	}
+}
+
 func Test_AC020_nonzero_DefaultRowCount_is_surfaced_via_health_and_WARN(t *testing.T) {
 	fx := newFakeExecutor()
 	fx.cutoff["container_logs"] = farPast
