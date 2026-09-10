@@ -1036,7 +1036,7 @@ make test-web
 make coverage
 ```
 
-CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`). One job, `test-go-integration`, spins up a disposable PostgreSQL 16 service and runs the partitioning integration suite (`go test -tags=integration ./internal/server/partition/...`) against it — this is the only CI job that requires Postgres; `test-go` and `test-web` do not. Running that suite locally requires your own PostgreSQL 16 instance (set `RIOT_TEST_DB_URL`); without it, the integration tests skip cleanly rather than fail.
 
 ---
 
@@ -1076,7 +1076,18 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 | Device logs | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Device registry | Forever (until manually deleted) |
 
-A background worker purges expired data hourly.
+A background worker purges expired data hourly for `events`, `notification_log`, server logs, device probe results, and stale bootstrap keys.
+
+### Partitioned tables and drop-based retention
+
+The six rows above other than **Events**, **Notification log**, and **Device registry** — `heartbeats`, `telemetry_snapshots`, `probe_results`, `container_metrics`, `container_logs`, and `device_logs` — are range-partitioned by day on the server's PostgreSQL database and retained by **dropping** the partition once its whole day is older than the retention window, rather than by row-level `DELETE`. This is invisible in normal operation — the retention durations in the table above are unchanged, and there is no new environment variable to configure — but it changes two operational realities:
+
+- **On first boot after upgrading to the version that ships this**, the server converts each of the six tables to a partitioned table automatically, before it starts serving requests. The conversion is a metadata operation (rename + attach), not a data copy, so it does not scale with table size and does not rewrite existing rows — but it does briefly hold an exclusive lock on each table while the swap happens, so expect a short pause in server availability during that one boot, proportional to the number of tables rather than their size. Subsequent boots are a no-op.
+- **The conversion is effectively one-way.** The migration's down-direction can restore the original plain tables, but only recovers pre-conversion data — anything written after the conversion is discarded by the downgrade. Treat downgrading past this version as a dev/test operation only, not a production rollback.
+
+Because a day-partition is only dropped once it is *entirely* past the retention window, actual retention on these six tables is "at least the configured window" — up to one extra day of data may be retained beyond it. This does not affect the numbers in the table above; it is a rounding-up, not a change to the configured duration.
+
+This does **not** reclaim disk space already lost to bloat from before the conversion — see [`docs/ops/postgres-bloat.md`](docs/ops/postgres-bloat.md) for the one-time `VACUUM FULL` / `pg_repack` reclaim that partitioning does not perform on its own.
 
 ---
 
