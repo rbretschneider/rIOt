@@ -41,8 +41,6 @@ type TelemetryRepository interface {
 	GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error)
 	GetHistory(ctx context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error)
 	GetHeartbeatHistory(ctx context.Context, deviceID string, since time.Time) ([]models.Heartbeat, error)
-	PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error)
-	PurgeSnapshots(ctx context.Context, olderThan time.Time) (int64, error)
 	// GetFleetHeartbeats returns heartbeats for all devices since the given time,
 	// grouped by device ID. Used by the fleet dashboard endpoint.
 	GetFleetHeartbeats(ctx context.Context, since time.Time) (map[string][]models.Heartbeat, error)
@@ -140,7 +138,6 @@ type ProbeRepository interface {
 	ListResults(ctx context.Context, probeID int64, limit int) ([]models.ProbeResult, error)
 	LatestResult(ctx context.Context, probeID int64) (*models.ProbeResult, error)
 	SuccessRate(ctx context.Context, probeID int64) (float64, int, error)
-	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // LogRepository defines the interface for server log database operations.
@@ -192,21 +189,18 @@ type CARepository interface {
 type DeviceLogRepository interface {
 	InsertBatch(ctx context.Context, deviceID string, entries []models.LogEntry) error
 	List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // ContainerLogRepository defines the interface for container log operations.
 type ContainerLogRepository interface {
 	InsertBatch(ctx context.Context, deviceID string, entries []models.ContainerLogEntry) error
 	List(ctx context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // ContainerMetricRepository defines the interface for container metric operations.
 type ContainerMetricRepository interface {
 	StoreBatch(ctx context.Context, deviceID string, metrics []models.ContainerMetric) error
 	GetHistory(ctx context.Context, deviceID, containerName string, since time.Time) ([]models.ContainerMetric, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // AutoUpdateRepository defines the interface for auto-update policy operations.

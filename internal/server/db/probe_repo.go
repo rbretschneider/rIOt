@@ -159,15 +159,6 @@ func (r *ProbeRepo) SuccessRate(ctx context.Context, probeID int64) (float64, in
 	return float64(successes) / float64(total), total, nil
 }
 
-// PurgeResults deletes probe results older than the given time.
-func (r *ProbeRepo) PurgeResults(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM probe_results WHERE created_at < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
 func scanProbes(rows interface {
 	Next() bool
 	Scan(dest ...interface{}) error

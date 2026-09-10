@@ -180,24 +180,6 @@ func (r *TelemetryRepo) GetHeartbeatHistory(ctx context.Context, deviceID string
 	return heartbeats, nil
 }
 
-// PurgeHeartbeats deletes heartbeats older than the given duration.
-func (r *TelemetryRepo) PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM heartbeats WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
-// PurgeSnapshots deletes telemetry snapshots older than the given time.
-func (r *TelemetryRepo) PurgeSnapshots(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM telemetry_snapshots WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
 // GetFleetHeartbeats returns heartbeats for all devices since the given time,
 // grouped by device ID. A single query is used so the dashboard can fetch 60
 // minutes of fleet-wide data in one round trip (AD-001).
