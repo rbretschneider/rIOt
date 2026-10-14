@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -44,6 +45,27 @@ func (a *Agent) runCommand(ctx context.Context, name string, args ...string) ([]
 		return a.runner(ctx, name, args...)
 	}
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+// upgradeCancelGrace is how long a package-manager command is given to wind
+// down after the context deadline fires before it is force-killed.
+const upgradeCancelGrace = 90 * time.Second
+
+// runUpgradeCommand runs a long-running package-manager command with graceful
+// cancellation. Go's default for a context-bound command is an immediate
+// SIGKILL on deadline, which — mid-`dpkg` configure — abandons the package
+// database half-written and leaves apt refusing every future run. Instead we
+// send SIGTERM (sudo forwards it to apt/dpkg, which then finishes or rolls
+// back the in-flight transaction) and only escalate to SIGKILL after a grace
+// period. Honors the injected test runner exactly like runCommand.
+func (a *Agent) runUpgradeCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if a.runner != nil {
+		return a.runner(ctx, name, args...)
+	}
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = upgradeCancelGrace
+	return cmd.CombinedOutput()
 }
 
 // handleCommand dispatches a remote command from the server.
@@ -276,6 +298,15 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	case aptErr == nil:
 		plan.PM = "apt"
 		plan.RefreshArgs = []string{"sudo", aptPath, "update"}
+		// Self-heal step: finish any dpkg transaction a previous run (or a
+		// reboot/power-loss) left half-configured. Without this, apt refuses
+		// every subsequent upgrade with exit 100 "dpkg was interrupted" until
+		// a human intervenes. Path resolved separately from apt-get.
+		dpkgPath, dpkgErr := exec.LookPath("dpkg")
+		if dpkgErr != nil {
+			dpkgPath = "/usr/bin/dpkg"
+		}
+		plan.RepairArgs = []string{"sudo", dpkgPath, "--configure", "-a"}
 		if mode == "security" {
 			plan.UpgradeArgs = []string{"sudo", aptPath, "-y", "upgrade",
 				"-o", "Dpkg::Options::=--force-confold",
@@ -308,6 +339,11 @@ type osUpdatePlan struct {
 	PM                 string // "apt" | "dnf"
 	RefreshArgs        []string
 	UpgradeArgs        []string
+	// RepairArgs, when non-empty, is run between refresh and upgrade to
+	// clear a dpkg transaction left half-finished by an earlier interruption
+	// (`dpkg --configure -a`). Empty for package managers that have no such
+	// state (dnf). A healthy system makes it a fast no-op.
+	RepairArgs []string
 }
 
 // runOSUpdate executes the refresh + upgrade with hold release/re-apply
@@ -335,7 +371,7 @@ func (a *Agent) runOSUpdate(updateCtx context.Context, commandID string, plan os
 		len(released) == 0 && len(a.holdMgr.HeldPackages()) > 0
 
 	slog.Info("os_update: refreshing package index", "mode", mode)
-	refreshOut, err := a.runCommand(updateCtx, refreshArgs[0], refreshArgs[1:]...)
+	refreshOut, err := a.runUpgradeCommand(updateCtx, refreshArgs[0], refreshArgs[1:]...)
 	if err != nil {
 		ec := exitCodeFromError(err)
 		return commandExecResult{
@@ -346,9 +382,24 @@ func (a *Agent) runOSUpdate(updateCtx context.Context, commandID string, plan os
 		}
 	}
 
+	// Repair an interrupted dpkg state before upgrading (no-op when clean).
+	// A failure here is logged but not fatal: the upgrade below will surface
+	// the authoritative error, and we never want a repair hiccup to mask an
+	// otherwise-working upgrade.
+	var repairOut []byte
+	if len(plan.RepairArgs) > 0 {
+		slog.Info("os_update: repairing any interrupted dpkg state", "mode", mode)
+		var rerr error
+		repairOut, rerr = a.runUpgradeCommand(updateCtx, plan.RepairArgs[0], plan.RepairArgs[1:]...)
+		if rerr != nil {
+			slog.Warn("os_update: dpkg repair returned an error; continuing to upgrade",
+				"error", rerr, "output", lastMeaningfulLines(string(repairOut), 5))
+		}
+	}
+
 	slog.Info("os_update: running upgrade", "mode", mode)
-	upgradeOut, err := a.runCommand(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
-	combinedOut := string(refreshOut) + string(upgradeOut)
+	upgradeOut, err := a.runUpgradeCommand(updateCtx, upgradeArgs[0], upgradeArgs[1:]...)
+	combinedOut := string(refreshOut) + string(repairOut) + string(upgradeOut)
 	if err != nil {
 		ec := exitCodeFromError(err)
 		return commandExecResult{

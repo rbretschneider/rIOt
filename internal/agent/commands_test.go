@@ -29,6 +29,7 @@ type fakeAgentRunner struct {
 	versionIdx  int
 	upgradeErr  error // error for the upgrade command
 	upgradeOut  string
+	repairErr   error // error for `dpkg --configure -a` (self-heal step)
 }
 
 func (f *fakeAgentRunner) runner() collectors.CommandRunner {
@@ -52,6 +53,11 @@ func (f *fakeAgentRunner) runner() collectors.CommandRunner {
 				return []byte(out), nil
 			}
 			return nil, errors.New("no scripted dpkg-query output")
+		case strings.Contains(joined, "dpkg --configure -a"):
+			if f.repairErr != nil {
+				return []byte("dpkg: error processing"), f.repairErr
+			}
+			return []byte("Setting up ...\n"), nil
 		case strings.Contains(joined, "dist-upgrade") || strings.Contains(joined, "-y upgrade"):
 			if f.upgradeErr != nil {
 				return []byte("upgrade blew up"), f.upgradeErr
@@ -136,6 +142,7 @@ func aptTestPlan(includeRC bool) osUpdatePlan {
 		PM:                 "apt",
 		RefreshArgs:        []string{"sudo", "/usr/bin/apt-get", "update"},
 		UpgradeArgs:        []string{"sudo", "/usr/bin/apt-get", "-y", "dist-upgrade"},
+		RepairArgs:         []string{"sudo", "/usr/bin/dpkg", "--configure", "-a"},
 	}
 }
 
@@ -273,6 +280,46 @@ func TestRunOSUpdate_AC023_NoParamPathUnchanged(t *testing.T) {
 	a.maybeRebootAfterPatch(r)
 	time.Sleep(20 * time.Millisecond)
 	assert.Equal(t, 0, fake.countCalls("systemctl reboot"))
+}
+
+// [self-heal] `dpkg --configure -a` runs after the refresh and before the
+// upgrade, so an interrupted dpkg state is cleared before apt would refuse.
+func TestRunOSUpdate_SelfHeal_RepairsBeforeUpgrade(t *testing.T) {
+	a, fake := newOSUpdateTestAgent(t, false)
+
+	r := a.runOSUpdate(context.Background(), "cmd-heal", aptTestPlan(false))
+	require.Equal(t, "success", r.Status)
+
+	refreshIdx := fake.callIndex("apt-get update")
+	repairIdx := fake.callIndex("dpkg --configure -a")
+	upgradeIdx := fake.callIndex("dist-upgrade")
+	require.GreaterOrEqual(t, repairIdx, 0, "self-heal must invoke dpkg --configure -a")
+	assert.Less(t, refreshIdx, repairIdx, "repair runs after the refresh")
+	assert.Less(t, repairIdx, upgradeIdx, "repair runs before the upgrade")
+}
+
+// [self-heal] A repair error is non-fatal: the upgrade still runs and an
+// otherwise-good upgrade still reports success (the repair step must never
+// mask a working upgrade).
+func TestRunOSUpdate_SelfHeal_RepairErrorIsNonFatal(t *testing.T) {
+	a, fake := newOSUpdateTestAgent(t, false)
+	fake.repairErr = errors.New("dpkg frontend locked")
+
+	r := a.runOSUpdate(context.Background(), "cmd-heal2", aptTestPlan(false))
+	require.Equal(t, "success", r.Status, "repair failure must not fail a good upgrade")
+	assert.GreaterOrEqual(t, fake.callIndex("dist-upgrade"), 0, "upgrade still attempted after a repair error")
+}
+
+// [self-heal] When dpkg stays broken and the upgrade then fails, the upgrade's
+// error is the one surfaced to the operator — not the repair step's.
+func TestRunOSUpdate_SelfHeal_UpgradeErrorSurfaces(t *testing.T) {
+	a, fake := newOSUpdateTestAgent(t, false)
+	fake.repairErr = errors.New("dpkg frontend locked")
+	fake.upgradeErr = errors.New("exit status 100")
+
+	r := a.runOSUpdate(context.Background(), "cmd-heal3", aptTestPlan(false))
+	require.Equal(t, "error", r.Status)
+	assert.Contains(t, r.Message, "upgrade failed", "the authoritative upgrade error is reported")
 }
 
 func TestTruncateOutputSmart_Short(t *testing.T) {

@@ -230,6 +230,14 @@ func Doctor(configPath string) {
 		checkHoldEnforcement()
 	}
 
+	// ── OS Update Self-Heal (interrupted-dpkg recovery) ──
+	// Probes the sudoers rule the agent uses to run `dpkg --configure -a`
+	// before an apt upgrade. Without it the self-heal is silently skipped and
+	// an interrupted dpkg state keeps failing every os_update.
+	if runtime.GOOS == "linux" && cfg.Commands.AllowPatching && commandExists("apt-get") {
+		checkDpkgRepair()
+	}
+
 	// ── Files ──
 	fmt.Println()
 	section("Files")
@@ -296,6 +304,26 @@ func checkHoldEnforcement() {
 func commandExists(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
+}
+
+// checkDpkgRepair probes whether the sudoers rule for the interrupted-dpkg
+// self-heal (`dpkg --configure -a`) exists, using the same `sudo -n -l` probe
+// style as hold enforcement so operators find a missing rule here rather than
+// during a stuck nightly upgrade.
+func checkDpkgRepair() {
+	fmt.Println()
+	section("OS Update Self-Heal")
+
+	dpkgPath, err := exec.LookPath("dpkg")
+	if err != nil {
+		dpkgPath = "/usr/bin/dpkg"
+	}
+	if _, err := exec.Command("sudo", "-n", "-l", dpkgPath, "--configure", "-a").CombinedOutput(); err != nil {
+		fail("dpkg --configure -a sudoers rule missing — interrupted-dpkg self-heal will not run")
+		warn("  Re-run the install script (curl … | sudo bash) to rewrite /etc/sudoers.d/riot-agent")
+	} else {
+		pass("dpkg --configure -a sudo rule present (interrupted-dpkg self-heal armed)")
+	}
 }
 
 // checkJournalAccess verifies the agent can read the system journal (AD-010, SEC-003).

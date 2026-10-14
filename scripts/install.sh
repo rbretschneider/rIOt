@@ -443,6 +443,13 @@ if [ "$OS" = "linux" ]; then
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} update"
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
             echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
+            # Interrupted-dpkg self-heal: the agent runs this between refresh
+            # and upgrade so a transaction left half-configured by an earlier
+            # kill/power-loss can't make every future os_update fail with
+            # exit 100 "dpkg was interrupted". Subcommand is locked to
+            # --configure -a; no other dpkg operation is reachable.
+            DPKG_PATH="$(command -v dpkg 2>/dev/null || echo /usr/bin/dpkg)"
+            echo "riot ALL=(root) NOPASSWD: ${DPKG_PATH} --configure -a"
             # Reboot-class package holds (PATCH-GATE AD-015): subcommand is
             # locked so the rule cannot reach any other apt-mark operation;
             # package-name arguments are charset-validated by the agent
