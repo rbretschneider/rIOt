@@ -62,6 +62,10 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.Network = v
 		case *models.UpdateInfo:
 			data.Updates = v
+			if v != nil {
+				allow := a.config.Commands.AllowReboot
+				v.AllowReboot = &allow
+			}
 		case []models.ServiceInfo:
 			data.Services = v
 		case *models.ProcessInfo:

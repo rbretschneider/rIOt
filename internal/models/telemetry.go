@@ -277,6 +277,10 @@ type UpdateInfo struct {
 	Updates               []PendingUpdate `json:"updates,omitempty"`
 	LastCheckTime         *time.Time      `json:"last_check_time,omitempty"`
 	UnattendedUpgrades    bool            `json:"unattended_upgrades"`
+	// AllowReboot is the device agent's commands.allow_reboot (REBOOT-ETA-001).
+	// Display-only: it drives the reboot-ETA tooltip, never a server control
+	// decision. nil means the agent version does not report it.
+	AllowReboot *bool `json:"allow_reboot,omitempty"`
 }
 
 type PendingUpdate struct {
