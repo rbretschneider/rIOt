@@ -300,3 +300,46 @@ describe('[AC-022] existing badge non-regression', () => {
     expect(screen.getByText('2 reboot-class')).toBeInTheDocument()
   })
 })
+
+// Added by QA Engineer (REBOOT-ETA-001).
+describe('[AC-012] agent that never reported allow_reboot degrades to conditional wording', () => {
+  // Covers AC-012, AC-004: unknown (absent) allow_reboot must NOT read as a false "manual"
+  // and must NOT be an unconditional guarantee; both placements stay identical.
+  it('shows conditional (not manual, not guaranteed) text identically in both placements', async () => {
+    const { allow_reboot: _omit, ...unknown } = ETA_ROW
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([unknown])
+    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([unknown])
+    renderWithProviders()
+
+    const gridTitle = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')!
+    fireEvent.click(await screen.findByText(/Review Patches/))
+    const panelTitle = (await screen.findByText('reboot required')).getAttribute('title')
+
+    expect(gridTitle).toContain('Est. reboot: 2026-10-19 02:00 UTC')
+    expect(gridTitle).toContain('if this device permits automatic reboot')
+    expect(gridTitle).not.toContain('Manual reboot required')
+    expect(panelTitle).toBe(gridTitle)
+  })
+})
+
+describe('[AC-007] anytime mode renders cooldown wording in the grid indicator', () => {
+  // Covers AC-007, AC-008: mode wiring from the row to the rendered title
+  it('renders anytime wording with no clock time', async () => {
+    const row = { ...ETA_ROW, os_patch_mode: 'anytime' as const, next_window_start: undefined }
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
+    renderWithProviders()
+
+    const title = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')!
+    expect(title).toContain('next automatic patch run (within the ~360 min cooldown)')
+    expect(title).not.toContain('Est. reboot:')
+  })
+
+  it('[AC-008] disabled mode renders reboot-required with no time', async () => {
+    const row = { ...ETA_ROW, os_patch_mode: 'disabled' as const, next_window_start: undefined }
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
+    renderWithProviders()
+
+    const title = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')
+    expect(title).toBe('A reboot is required to activate the installed updates.')
+  })
+})

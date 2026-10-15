@@ -270,3 +270,121 @@ func TestNextMaintenanceWindowStart_AC015_WeeklySundayOnlyWithinHorizon(t *testi
 	assert.True(t, ok)
 	assert.Equal(t, utc(2026, time.October, 18, 2, 0), got, "[AC-015] next Sunday is 2026-10-18")
 }
+
+// Added by QA Engineer (REBOOT-ETA-001).
+
+// Covers AC-015: now exactly equal to an eligible weekly start is inclusive.
+func TestNextMaintenanceWindowStart_AC015_WeeklyExactStartOnEligibleDayReturnsNow(t *testing.T) {
+	w := windowCfg("02:00", "04:00", "weekly", int(time.Thursday))
+	now := utc(2026, time.October, 15, 2, 0) // Thursday, exactly at start
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, now, got, "[AC-015] exact start on an eligible weekday must return now")
+}
+
+// Covers AC-015: one valid and one out-of-range day; the invalid one is ignored, the valid one still found.
+func TestNextMaintenanceWindowStart_AC015_WeeklyMixedValidAndInvalidDays(t *testing.T) {
+	w := windowCfg("02:00", "04:00", "weekly", 9, int(time.Saturday), -3)
+	now := utc(2026, time.October, 15, 10, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2026, time.October, 17, 2, 0), got, "[AC-015] Saturday 2026-10-17 is the only valid eligible day")
+}
+
+// Covers AC-015 / AC-014: overnight weekly uses the START day. A Monday
+// 23:00-05:00 window evaluated at Tuesday 02:00 (inside Monday's window) must
+// roll to NEXT Monday, not Tuesday.
+func TestNextMaintenanceWindowStart_AC014_OvernightWeeklyUsesStartDayConvention(t *testing.T) {
+	w := windowCfg("23:00", "05:00", "weekly", int(time.Monday))
+	now := utc(2026, time.October, 20, 2, 0) // Tuesday 02:00
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2026, time.October, 26, 23, 0), got, "[AC-014] start-day convention: next Monday 23:00, not Tuesday")
+	assert.Equal(t, time.Monday, got.Weekday())
+}
+
+// Covers AC-016: exact start instant on the last day of the month is inclusive.
+func TestNextMaintenanceWindowStart_AC016_MonthlyExactStartOnLastDayReturnsNow(t *testing.T) {
+	w := windowCfg("03:00", "05:00", "monthly")
+	now := utc(2026, time.October, 31, 3, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, now, got, "[AC-016] exact start on last day must return now")
+}
+
+// Covers AC-016: non-leap February resolves to the 28th, century non-leap year included.
+func TestNextMaintenanceWindowStart_AC016_MonthlyNonLeapFebruary(t *testing.T) {
+	w := windowCfg("03:00", "05:00", "monthly")
+
+	got, ok := nextMaintenanceWindowStart(w, utc(2027, time.February, 10, 0, 0))
+	assert.True(t, ok)
+	assert.Equal(t, utc(2027, time.February, 28, 3, 0), got, "[AC-016] 2027 is not a leap year")
+
+	got, ok = nextMaintenanceWindowStart(w, utc(2100, time.February, 10, 0, 0))
+	assert.True(t, ok)
+	assert.Equal(t, utc(2100, time.February, 28, 3, 0), got, "[AC-016] 2100 is not a leap year (century rule)")
+}
+
+// Covers AC-016: December rolls across the year boundary.
+func TestNextMaintenanceWindowStart_AC016_MonthlyRollsAcrossYearBoundary(t *testing.T) {
+	w := windowCfg("03:00", "05:00", "monthly")
+	now := utc(2026, time.December, 31, 23, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2027, time.January, 31, 3, 0), got, "[AC-016] after Dec 31 start the next last-day is Jan 31 of the next year")
+}
+
+// Covers AC-017: daily rollover across a month/year boundary.
+func TestNextMaintenanceWindowStart_AC017_DailyRollsAcrossYearBoundary(t *testing.T) {
+	w := windowCfg("02:00", "04:00", "daily")
+	now := utc(2026, time.December, 31, 10, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2027, time.January, 1, 2, 0), got)
+}
+
+// Covers AC-019 / SEC-004: unknown frequency string follows the existing helper
+// (treated as daily) and still yields a bounded, found result - never a hang.
+func TestNextMaintenanceWindowStart_AC019_UnknownFrequencyTreatedAsDaily(t *testing.T) {
+	w := windowCfg("02:00", "04:00", "fortnightly")
+	now := utc(2026, time.October, 15, 10, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2026, time.October, 16, 2, 0), got)
+}
+
+// Covers AC-018: midnight start boundary (00:00) with now exactly at midnight.
+func TestNextMaintenanceWindowStart_AC018_MidnightStartExactReturnsNow(t *testing.T) {
+	w := windowCfg("00:00", "02:00", "daily")
+	now := utc(2026, time.October, 15, 0, 0)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, now, got, "[AC-018] now == 00:00 start returns now")
+}
+
+// Covers AC-018: nanosecond past the start is already past (strict sub-second boundary).
+func TestNextMaintenanceWindowStart_AC018_OneNanosecondAfterStartIsPast(t *testing.T) {
+	w := windowCfg("09:00", "17:00", "daily")
+	now := time.Date(2026, time.October, 15, 9, 0, 0, 1, time.UTC)
+
+	got, ok := nextMaintenanceWindowStart(w, now)
+
+	assert.True(t, ok)
+	assert.Equal(t, utc(2026, time.October, 16, 9, 0), got, "[AC-018] 1ns after start must roll to the next occurrence")
+}
