@@ -200,16 +200,16 @@ func TestNextMaintenanceWindowStart_AC018_SecondsAfterStartIsPast(t *testing.T) 
 func TestNextMaintenanceWindowStart_AC019_NotFoundCases(t *testing.T) {
 	now := utc(2026, time.October, 15, 10, 0)
 	cases := map[string]models.MaintenanceWindow{
-		"invalid start (not HH:MM)":      windowCfg("garbage", "05:00", "daily"),
-		"invalid start (hour 24)":        windowCfg("24:00", "05:00", "daily"),
-		"invalid start (minute 60)":      windowCfg("12:60", "05:00", "daily"),
-		"empty start":                    windowCfg("", "05:00", "daily"),
-		"weekly with empty days":         windowCfg("02:00", "04:00", "weekly"),
-		"weekly with out-of-range days":  windowCfg("02:00", "04:00", "weekly", 9, -1),
-		"mode anytime":                   {Mode: "anytime", StartTime: "02:00", EndTime: "04:00"},
-		"mode disabled":                  {Mode: "disabled", StartTime: "02:00", EndTime: "04:00"},
-		"mode empty":                     {StartTime: "02:00", EndTime: "04:00"},
-		"mode unknown":                   {Mode: "bogus", StartTime: "02:00", EndTime: "04:00"},
+		"invalid start (not HH:MM)":     windowCfg("garbage", "05:00", "daily"),
+		"invalid start (hour 24)":       windowCfg("24:00", "05:00", "daily"),
+		"invalid start (minute 60)":     windowCfg("12:60", "05:00", "daily"),
+		"empty start":                   windowCfg("", "05:00", "daily"),
+		"weekly with empty days":        windowCfg("02:00", "04:00", "weekly"),
+		"weekly with out-of-range days": windowCfg("02:00", "04:00", "weekly", 9, -1),
+		"mode anytime":                  {Mode: "anytime", StartTime: "02:00", EndTime: "04:00"},
+		"mode disabled":                 {Mode: "disabled", StartTime: "02:00", EndTime: "04:00"},
+		"mode empty":                    {StartTime: "02:00", EndTime: "04:00"},
+		"mode unknown":                  {Mode: "bogus", StartTime: "02:00", EndTime: "04:00"},
 	}
 	for name, w := range cases {
 		t.Run(name, func(t *testing.T) {
