@@ -801,6 +801,11 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 		return "success", fmt.Sprintf("agent is already up to date (%s)", a.version)
 	}
 
+	// AD-010 best-effort downgrade guard (see runUpdateCheck for its limits).
+	if !isNewerVersion(resp.LatestVersion, a.version) {
+		return "error", fmt.Sprintf("refusing update: advertised version %s is not newer than %s", resp.LatestVersion, a.version)
+	}
+
 	suffix := platformSuffix(goarm)
 	downloadURL, ok := resp.Assets[suffix]
 	if !ok {
@@ -810,7 +815,7 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
 		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
 
-	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, suffix); err != nil {
+	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
 		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
 			fmt.Sprintf("Agent update failed: %v", err))
 		return "error", fmt.Sprintf("update failed: %v", err)

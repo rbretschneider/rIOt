@@ -75,6 +75,63 @@ func TestAgentUpdateInfo_WithRelease(t *testing.T) {
 	assert.Equal(t, "https://example.com/checksums.txt", info.ChecksumURL)
 }
 
+func TestAC002_AgentUpdateInfo_AdvertisesSignatureURL(t *testing.T) {
+	c := NewChecker("test/repo", "1.0.0")
+	c.latest = &GitHubRelease{
+		TagName: "v1.1.0",
+		Assets: []GitHubAsset{
+			{Name: "riot-agent-linux-amd64", BrowserDownloadURL: "https://example.com/linux-amd64"},
+			{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
+			{Name: "checksums.txt.sig", BrowserDownloadURL: "https://example.com/checksums.txt.sig"},
+		},
+	}
+
+	info := c.AgentUpdateInfo("1.0.0", "linux", "amd64", "")
+
+	assert.Equal(t, "https://example.com/checksums.txt.sig", info.SignatureURL, "the .sig asset must be advertised as signature_url")
+	assert.Equal(t, "https://example.com/checksums.txt", info.ChecksumURL, "the .sig asset must not displace checksum_url")
+	assert.Equal(t, "https://example.com/linux-amd64", info.Assets["linux-amd64"], "the .sig asset must not be served as a binary")
+}
+
+func TestAC002_AgentUpdateInfo_UnsignedReleaseHasNoSignatureURL(t *testing.T) {
+	c := NewChecker("test/repo", "1.0.0")
+	c.latest = &GitHubRelease{
+		TagName: "v1.1.0",
+		Assets: []GitHubAsset{
+			{Name: "riot-agent-linux-amd64", BrowserDownloadURL: "https://example.com/linux-amd64"},
+			{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
+		},
+	}
+
+	info := c.AgentUpdateInfo("1.0.0", "linux", "amd64", "")
+
+	assert.Empty(t, info.SignatureURL, "a pre-signing release must advertise no signature_url so the agent refuses it")
+}
+
+func TestAC005_AgentUpdateInfo_VerifierAssetIsNeverServedAsTheAgentBinary(t *testing.T) {
+	// The verifier asset contains the same platform suffix; whichever order
+	// GitHub lists assets in, the agent binary must win.
+	orders := [][]GitHubAsset{
+		{
+			{Name: "riot-agent-apply-linux-amd64", BrowserDownloadURL: "https://example.com/apply-linux-amd64"},
+			{Name: "riot-agent-linux-amd64", BrowserDownloadURL: "https://example.com/agent-linux-amd64"},
+		},
+		{
+			{Name: "riot-agent-linux-amd64", BrowserDownloadURL: "https://example.com/agent-linux-amd64"},
+			{Name: "riot-agent-apply-linux-amd64", BrowserDownloadURL: "https://example.com/apply-linux-amd64"},
+		},
+	}
+	for _, assets := range orders {
+		c := NewChecker("test/repo", "1.0.0")
+		c.latest = &GitHubRelease{TagName: "v1.1.0", Assets: assets}
+
+		info := c.AgentUpdateInfo("1.0.0", "linux", "amd64", "")
+
+		assert.Equal(t, "https://example.com/agent-linux-amd64", info.Assets["linux-amd64"],
+			"asset order %v must not let the verifier replace the agent binary", assets)
+	}
+}
+
 func TestAgentUpdateInfo_DevVersion(t *testing.T) {
 	c := NewChecker("test/repo", "1.0.0")
 	c.latest = &GitHubRelease{TagName: "v1.1.0"}

@@ -37,6 +37,7 @@ type UpdateInfo struct {
 	PublishedAt    *time.Time        `json:"published_at,omitempty"`
 	Assets         map[string]string `json:"assets,omitempty"`   // "linux-amd64" -> download URL
 	ChecksumURL    string            `json:"checksum_url,omitempty"`
+	SignatureURL   string            `json:"signature_url,omitempty"` // locator for checksums.txt.sig; never a trust anchor
 }
 
 // defaultStartupBackoff governs how aggressively Start() retries the first
@@ -190,11 +191,14 @@ func (c *Checker) AgentUpdateInfo(agentVersion, goos, goarch, goarm string) *Upd
 		suffix := assetSuffix(goos, goarch, goarm)
 		info.Assets = make(map[string]string)
 		for _, asset := range release.Assets {
-			if strings.Contains(asset.Name, suffix) && !strings.HasSuffix(asset.Name, ".txt") {
+			if isAgentBinaryAsset(asset.Name, suffix) {
 				info.Assets[suffix] = asset.BrowserDownloadURL
 			}
 			if asset.Name == "checksums.txt" {
 				info.ChecksumURL = asset.BrowserDownloadURL
+			}
+			if asset.Name == "checksums.txt.sig" {
+				info.SignatureURL = asset.BrowserDownloadURL
 			}
 		}
 	}
@@ -268,4 +272,17 @@ func assetSuffix(goos, goarch, goarm string) string {
 // CurrentArch returns the server's OS-arch for reference.
 func CurrentArch() string {
 	return runtime.GOOS + "-" + runtime.GOARCH
+}
+
+// verifierAssetPrefix names the privileged update verifier release assets
+// (riot-agent-apply-<suffix>). They contain the platform suffix too, so they
+// must never be mistaken for the agent binary an agent downloads.
+const verifierAssetPrefix = "riot-agent-apply-"
+
+// isAgentBinaryAsset reports whether a release asset is the agent binary for
+// the given platform suffix.
+func isAgentBinaryAsset(name, suffix string) bool {
+	return strings.Contains(name, suffix) &&
+		!strings.HasSuffix(name, ".txt") &&
+		!strings.HasPrefix(name, verifierAssetPrefix)
 }

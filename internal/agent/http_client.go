@@ -199,6 +199,9 @@ type UpdateCheckResponse struct {
 	ReleaseURL     string            `json:"release_url,omitempty"`
 	Assets         map[string]string `json:"assets,omitempty"`
 	ChecksumURL    string            `json:"checksum_url,omitempty"`
+	// SignatureURL locates checksums.txt.sig. It is a locator only: authenticity
+	// is decided solely by the compiled-in release public key.
+	SignatureURL string `json:"signature_url,omitempty"`
 }
 
 func (c *HTTPClient) CheckForUpdate(ctx context.Context, version, goos, goarch, goarm string) (*UpdateCheckResponse, error) {
