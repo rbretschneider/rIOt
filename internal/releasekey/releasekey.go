@@ -28,7 +28,7 @@ import (
 // valid key: until the maintainer runs `riot-signer genkey` and commits the
 // real public key, every verification refuses (fail closed) and the release
 // workflow's `riot-signer verify` gate fails the build.
-var PublicKeyBase64 = "REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY"
+var PublicKeyBase64 = "31W+lKF8LVms4ar/Qb9DI0//nj8CUT3zEx2aRhVbBjY="
 
 const (
 	// checksumFieldCount is the number of whitespace-separated fields on a
