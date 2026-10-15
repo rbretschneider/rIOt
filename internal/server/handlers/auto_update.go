@@ -238,6 +238,42 @@ func frequencyAllowsDay(w models.MaintenanceWindow, now time.Time) bool {
 	}
 }
 
+// nextWindowSearchDays bounds the nextMaintenanceWindowStart search. Daily,
+// weekly and monthly recurrence all resolve within 31 days; a full leap year
+// of slack guarantees termination for any stored config.
+const nextWindowSearchDays = 366
+
+// nextMaintenanceWindowStart returns the earliest UTC instant at which the
+// window's start-of-day occurs at or after `now`, honoring the frequency rule.
+// ok is false when mode != "window", the start time is invalid, or no eligible
+// day is found within the search horizon. `now` is injected for testability
+// (no time.Now() here).
+//
+// A `now` strictly inside an active window resolves to the NEXT eligible
+// occurrence (today's start is already in the past); `now` exactly equal to a
+// start returns that start. Frequency is evaluated on the start day, matching
+// the overnight convention in inMaintenanceWindow.
+func nextMaintenanceWindowStart(w models.MaintenanceWindow, now time.Time) (time.Time, bool) {
+	if w.Mode != "window" || !validTimeStr(w.StartTime) {
+		return time.Time{}, false
+	}
+	ref := now.UTC()
+	startMin := parseTimeStr(w.StartTime)
+	today := time.Date(ref.Year(), ref.Month(), ref.Day(), 0, 0, 0, 0, time.UTC)
+
+	for d := 0; d <= nextWindowSearchDays; d++ {
+		day := today.AddDate(0, 0, d)
+		if !frequencyAllowsDay(w, day) {
+			continue
+		}
+		candidate := time.Date(day.Year(), day.Month(), day.Day(), startMin/60, startMin%60, 0, 0, time.UTC)
+		if !candidate.Before(ref) {
+			return candidate, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // parseTimeStr parses "HH:MM" to minutes from midnight.
 func parseTimeStr(s string) int {
 	parts := strings.SplitN(s, ":", 2)
