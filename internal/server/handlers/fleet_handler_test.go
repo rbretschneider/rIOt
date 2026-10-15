@@ -77,7 +77,7 @@ func TestPatchStatus_AC021_RebootClassFields(t *testing.T) {
 		},
 	}}
 
-	h := &Handlers{telemetry: telRepo, devices: deviceRepo}
+	h := &Handlers{telemetry: telRepo, devices: deviceRepo, adminRepo: testutil.NewMockAdminRepo("hash")}
 	req := httptest.NewRequest("GET", "/api/v1/fleet/patch-status", nil)
 	rec := httptest.NewRecorder()
 	h.PatchStatus(rec, req)

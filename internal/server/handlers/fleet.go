@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/google/uuid"
@@ -38,7 +39,23 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		RebootRequired   bool                   `json:"reboot_required"`
 		PackageManager   string                 `json:"package_manager,omitempty"`
 		Updates          []models.PendingUpdate `json:"updates,omitempty"`
+		// REBOOT-ETA-001 additive fields. The first three are server-wide
+		// (identical on every row); AllowReboot is the device's self-reported
+		// flag and is display-only (never read by any dispatch/gating path).
+		OSPatchMode     string     `json:"os_patch_mode,omitempty"`
+		NextWindowStart *time.Time `json:"next_window_start,omitempty"`
+		CooldownMinutes int        `json:"os_patch_cooldown_minutes,omitempty"`
+		AllowReboot     *bool      `json:"allow_reboot,omitempty"`
 	}
+
+	// Computed once per request, not per device. time.Now() lives here at the
+	// composition root; the window computation itself takes an injected clock.
+	cfg := h.loadAutomationConfig(r.Context())
+	var nextStart *time.Time
+	if t, ok := nextMaintenanceWindowStart(cfg.OSPatch, time.Now().UTC()); ok {
+		nextStart = &t
+	}
+
 	result := make([]devicePatchInfo, 0, len(summaries))
 	for _, s := range summaries {
 		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
@@ -49,6 +66,10 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 				SecurityCount:    s.Updates.PendingSecurityCount,
 				RebootClassCount: s.Updates.PendingRebootClassCount,
 				RebootRequired:   s.Updates.RebootRequired,
+				OSPatchMode:      cfg.OSPatch.Mode,
+				NextWindowStart:  nextStart,
+				CooldownMinutes:  cfg.OSPatch.CooldownMinutes,
+				AllowReboot:      s.Updates.AllowReboot,
 			}
 			if detail {
 				info.PackageManager = s.Updates.PackageManager

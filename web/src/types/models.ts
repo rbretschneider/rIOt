@@ -218,6 +218,7 @@ export interface UpdateInfo {
   updates?: PendingUpdate[]
   last_check_time?: string
   unattended_upgrades: boolean
+  allow_reboot?: boolean
 }
 
 export interface PendingUpdate {

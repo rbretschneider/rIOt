@@ -5,6 +5,7 @@ import { api, type DevicePatchInfo } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
+import { rebootEtaTooltip } from '../utils/rebootEta'
 
 import ConfirmModal from '../components/ConfirmModal'
 import RebootClassBadge from '../components/RebootClassBadge'
@@ -29,8 +30,8 @@ export default function FleetOverview() {
 
   const latestVersion = serverUpdate?.latest_version
   const patchMap = useMemo(() => {
-    const m = new Map<string, number>()
-    patchStatus?.forEach(p => m.set(p.device_id, p.pending_updates))
+    const m = new Map<string, DevicePatchInfo>()
+    patchStatus?.forEach(p => m.set(p.device_id, p))
     return m
   }, [patchStatus])
   const queryClient = useQueryClient()
@@ -285,9 +286,23 @@ export default function FleetOverview() {
                   <td className="px-4 py-3 text-sm">
                     <div className="flex items-center gap-2">
                       {(() => {
-                        const count = patchMap.get(d.id)
+                        const count = patchMap.get(d.id)?.pending_updates
                         if (!count) return <span className="text-gray-600">-</span>
                         return <span className="text-cyan-400">{count}</span>
+                      })()}
+                      {(() => {
+                        const info = patchMap.get(d.id)
+                        if (!info?.reboot_required) return null
+                        return (
+                          <span
+                            role="img"
+                            aria-label="Reboot required"
+                            className="text-amber-400 text-xs leading-none cursor-help"
+                            title={rebootEtaTooltip(info)}
+                          >
+                            {'↻'}
+                          </span>
+                        )
                       })()}
                       {d.auto_patch && (
                         <span className="px-1.5 py-0.5 rounded bg-emerald-900/40 text-[10px] font-medium text-emerald-400 border border-emerald-800/50" title="OS auto-patch enabled">Auto</span>
@@ -433,7 +448,7 @@ function PatchReviewModal({ loading, patches, onConfirm, onClose }: {
                       {d.reboot_required && (
                         <span
                           className="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400 border border-amber-600/40"
-                          title="A reboot is required to activate installed updates"
+                          title={rebootEtaTooltip(d)}
                         >
                           reboot required
                         </span>

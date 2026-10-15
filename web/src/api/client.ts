@@ -23,6 +23,12 @@ export interface DevicePatchInfo {
   reboot_required: boolean
   package_manager?: string
   updates?: PendingUpdate[]
+  // REBOOT-ETA-001 additive fields. The first three are server-wide; allow_reboot
+  // is the device agent's self-reported flag (absent = agent does not report it).
+  os_patch_mode?: 'window' | 'anytime' | 'disabled'
+  next_window_start?: string
+  os_patch_cooldown_minutes?: number
+  allow_reboot?: boolean
 }
 
 // SSOAvailability is the response shape of GET /api/v1/auth/oidc
