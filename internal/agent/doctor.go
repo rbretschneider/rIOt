@@ -230,6 +230,13 @@ func Doctor(configPath string) {
 		checkHoldEnforcement()
 	}
 
+	// ── Agent Update (AGENT-HARDEN-001, AD-007) ──
+	// Probes the fixed `systemd-run <verifier>` sudoers rule and the root-owned
+	// verifier binary that installs verified updates.
+	if runtime.GOOS == "linux" && (cfg.Agent.AutoUpdate == nil || *cfg.Agent.AutoUpdate) {
+		checkUpdatePrivilege()
+	}
+
 	// ── OS Update Self-Heal (interrupted-dpkg recovery) ──
 	// Probes the sudoers rule the agent uses to run `dpkg --configure -a`
 	// before an apt upgrade. Without it the self-heal is silently skipped and
@@ -298,6 +305,55 @@ func checkHoldEnforcement() {
 		}
 	default:
 		warn("no supported package manager (apt/dnf) found — hold enforcement inactive")
+	}
+}
+
+// updatePrivilegeProbeTimeout bounds the non-interactive sudo probe.
+const updatePrivilegeProbeTimeout = 15 * time.Second
+
+// updatePrivilegeProbeArgs is the `sudo` argv that asks whether the fixed
+// update rule is authorized, without running anything. It is built from the
+// same constants the agent invokes, so the probe cannot drift from the real
+// invocation (V-005).
+func updatePrivilegeProbeArgs(systemdRunPath string) []string {
+	return []string{"-n", "-l", systemdRunPath, "--unit=" + updateUnit, applyBinPath}
+}
+
+// checkUpdatePrivilege probes the update-apply sudoers rule and the root-owned
+// verifier binary, telling the operator to re-run the installer if either is
+// missing (same pattern as checkHoldEnforcement).
+func checkUpdatePrivilege() {
+	systemdRunPath, _ := exec.LookPath("systemd-run")
+	if systemdRunPath == "" {
+		systemdRunPath = "/usr/bin/systemd-run"
+	}
+	reportUpdatePrivilege(execRunner, os.Stat, systemdRunPath)
+}
+
+// reportUpdatePrivilege is checkUpdatePrivilege with the sudo runner and file
+// stat injected for tests.
+func reportUpdatePrivilege(run collectors.CommandRunner, stat func(string) (os.FileInfo, error), systemdRunPath string) {
+	fmt.Println()
+	section("Agent Update")
+
+	ctx, cancel := context.WithTimeout(context.Background(), updatePrivilegeProbeTimeout)
+	defer cancel()
+
+	if _, err := run(ctx, "sudo", updatePrivilegeProbeArgs(systemdRunPath)...); err != nil {
+		fail("update-apply sudo rule missing — auto-update cannot swap the binary")
+		warn("  Re-run the install script (curl … | sudo bash) to rewrite /etc/sudoers.d/riot-agent and install the apply helper")
+	} else {
+		pass("update-apply sudo rule present (%s --unit=%s %s)", systemdRunPath, updateUnit, applyBinPath)
+	}
+
+	info, err := stat(applyBinPath)
+	switch {
+	case err != nil:
+		fail("apply helper missing at %s — re-run the install script", applyBinPath)
+	case info.Mode().Perm() != 0o755:
+		warn("apply helper at %s is not mode 0755", applyBinPath)
+	default:
+		pass("apply helper present (%s)", applyBinPath)
 	}
 }
 

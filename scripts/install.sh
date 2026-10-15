@@ -158,6 +158,10 @@ else
     DOWNLOAD_URL="https://github.com/${RIOT_REPO}/releases/download/v${RIOT_VERSION}/${BINARY_NAME}"
 fi
 
+# The privileged update verifier is published next to the agent binary.
+APPLY_ASSET_NAME="riot-agent-apply-${SUFFIX}"
+APPLY_DOWNLOAD_URL="${DOWNLOAD_URL%/*}/${APPLY_ASSET_NAME}"
+
 echo "==> Downloading from: ${DOWNLOAD_URL}"
 
 # ── Create system user (Linux only) ──────────────────────────────────
@@ -220,20 +224,52 @@ fi
 
 # ── Download binary ──────────────────────────────────────────────────
 echo "==> Downloading agent binary"
-if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "$RIOT_BIN" "$DOWNLOAD_URL"
-elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$RIOT_BIN" "$DOWNLOAD_URL"
-else
-    echo "ERROR: curl or wget is required"
-    exit 1
-fi
+# download_file URL DEST — non-zero exit if the download fails.
+download_file() {
+    local url="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "$dest" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$dest" "$url"
+    else
+        echo "ERROR: curl or wget is required"
+        return 1
+    fi
+}
+download_file "$DOWNLOAD_URL" "$RIOT_BIN"
 chmod +x "$RIOT_BIN"
 if [ "$OS" = "linux" ]; then
-    chown "$RIOT_USER:$RIOT_USER" "$RIOT_BIN"
+    # root:root, NOT riot: the riot user must have no direct path to overwrite
+    # the installed agent. Every update goes through the root-owned verifier
+    # (AGENT-HARDEN-001 AD-005). The service still runs as User=riot; a
+    # root-owned 0755 binary is executable by it.
+    chown root:root "$RIOT_BIN"
 fi
 
 echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
+
+# ── Install the privileged update verifier (Linux only) ──────────────
+# A root-owned, signature-verifying binary that installs staged agent updates.
+# Not auto-updated: re-run this installer to refresh it (or to rotate the
+# release key). Releases that predate signing do not publish it; in that case
+# the agent still installs, but automatic updates stay unavailable.
+RIOT_APPLY_DIR="/usr/local/lib/riot"
+RIOT_APPLY_BIN="${RIOT_APPLY_DIR}/riot-agent-apply"
+if [ "$OS" = "linux" ]; then
+    echo "==> Installing update verifier: ${RIOT_APPLY_BIN}"
+    mkdir -p "$RIOT_APPLY_DIR"
+    chown root:root "$RIOT_APPLY_DIR"
+    chmod 0755 "$RIOT_APPLY_DIR"
+    APPLY_TMP="${RIOT_APPLY_BIN}.new"
+    if download_file "$APPLY_DOWNLOAD_URL" "$APPLY_TMP"; then
+        chown root:root "$APPLY_TMP"
+        chmod 0755 "$APPLY_TMP"
+        mv -f "$APPLY_TMP" "$RIOT_APPLY_BIN"
+    else
+        rm -f "$APPLY_TMP"
+        echo "    WARN: ${APPLY_ASSET_NAME} is not published for this release — automatic updates will stay unavailable until a signed release is installed"
+    fi
+fi
 
 # ── Helper: ask yes/no question ──────────────────────────────────────
 # Reads from /dev/tty so it works even when piped (curl | bash).
@@ -432,7 +468,6 @@ if [ "$OS" = "linux" ]; then
     SYSTEMD_RUN_PATH="$(command -v systemd-run 2>/dev/null || echo /usr/bin/systemd-run)"
     SMARTCTL_PATH="$(command -v smartctl 2>/dev/null || echo /usr/sbin/smartctl)"
     NGINX_PATH="$(command -v nginx 2>/dev/null || echo /usr/sbin/nginx)"
-    SH_PATH="$(command -v sh 2>/dev/null || echo /bin/sh)"
 
     {
         echo "# rIOt Agent — least-privilege escalation for fleet management"
@@ -476,8 +511,11 @@ if [ "$OS" = "linux" ]; then
         fi
 
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"
-        echo "riot ALL=(root) NOPASSWD: ${SH_PATH} -c mv -f ${RIOT_BIN} ${RIOT_BIN}.old && cp ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_BIN}.old"
-        echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update sh -c *"
+        # Agent self-update (AGENT-HARDEN-001): the ONLY update rule runs the
+        # root-owned signature-verifying binary with no arguments, byte-for-byte
+        # as internal/agent/updater.go (applyBinPath, updateUnit) invokes it and
+        # as `riot-agent doctor` probes it. No shell, no wildcard.
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update ${RIOT_APPLY_BIN}"
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reset-failed riot-agent-update"
 
         # Web server config inspection (read-only)
@@ -502,6 +540,11 @@ fi
 # ── Install systemd service (Linux only) ──────────────────────────────
 if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
     echo "==> Installing systemd service"
+    # ExecStartPre=-+ combines two systemd prefixes. "+" runs the command as root
+    # even though User=riot, so the verifier can write /usr/local/bin. "-" ignores
+    # a non-zero exit or a missing file, so a host without the verifier (or one
+    # that refuses a bad staged update) still starts the current agent.
+    # The comment is outside the heredoc so it is not written into the unit file.
     cat > /etc/systemd/system/riot-agent.service <<EOF
 [Unit]
 Description=rIOt Agent - Infrastructure Monitoring
@@ -510,7 +553,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=+/bin/sh -c 'test -f ${RIOT_DATA_DIR}/riot-agent.update && cp -f ${RIOT_DATA_DIR}/riot-agent.update ${RIOT_BIN} && chmod 755 ${RIOT_BIN} && rm -f ${RIOT_DATA_DIR}/riot-agent.update || true'
+ExecStartPre=-+${RIOT_APPLY_BIN} --boot
 ExecStart=${RIOT_BIN} -config ${RIOT_CONFIG_DIR}/agent.yaml
 Restart=always
 RestartSec=5

@@ -111,6 +111,22 @@ jobs:
             env GOOS="$os" GOARCH="$arch" ${arm:+GOARM="$arm"} \
               go build -ldflags "$LDFLAGS" \
               -o "dist/riot-agent-${suffix}${ext}" ./cmd/riot-agent
+
+            # Linux only: the root-owned, signature-verifying update helper.
+            # It bakes the exact asset name whose checksums.txt entry
+            # authenticates the agent it installs. The release public key
+            # comes from the committed internal/releasekey default, exactly
+            # like the agent (no -X override at release time).
+            if [ "$os" = "linux" ]; then
+              echo "Building riot-agent-apply-${suffix}"
+              env GOOS="$os" GOARCH="$arch" ${arm:+GOARM="$arm"} \
+                go build -ldflags "-s -w -X main.targetAssetName=riot-agent-${suffix}" \
+                -o "dist/riot-agent-apply-${suffix}" ./cmd/riot-agent-apply
+              if ! grep -aq "riot-agent-${suffix}" "dist/riot-agent-apply-${suffix}"; then
+                echo "::error::riot-agent-apply-${suffix} was not built with its targetAssetName"
+                exit 1
+              fi
+            fi
           }
 
           build linux  amd64
@@ -129,6 +145,20 @@ jobs:
         working-directory: dist
         run: sha256sum * > checksums.txt
 
+      # The signing key is read only from this step's environment by
+      # cmd/riot-signer, which prints nothing derived from it.
+      - name: Sign checksums
+        env:
+          AGENT_SIGNING_PRIVATE_KEY: ${{ secrets.AGENT_SIGNING_PRIVATE_KEY }}
+        run: go run ./cmd/riot-signer sign dist/checksums.txt dist/checksums.txt.sig
+
+      # Fails the release if the signature does not verify against the public
+      # key committed in internal/releasekey (the key the shipped agents embed),
+      # or if that constant is not a valid 32-byte ed25519 key.
+      - name: Verify signature against embedded key
+        run: go run ./cmd/riot-signer verify dist/checksums.txt dist/checksums.txt.sig
+
+      # dist/riot-agent-* already matches the riot-agent-apply-* helper binaries.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -137,3 +167,4 @@ jobs:
             dist/riot-agent-*
             dist/install.sh
             dist/checksums.txt
+            dist/checksums.txt.sig

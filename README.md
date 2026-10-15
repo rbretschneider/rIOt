@@ -36,6 +36,7 @@
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
 - **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support, delivery logging, and automatic retry queue
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
+- **Signed, fail-closed agent auto-update** — agents install new versions automatically, but only after verifying an ed25519 signature on the release checksums against a public key compiled into the agent; anything unsigned or unverifiable is refused and the running version keeps working. The `riot` user holds no arbitrary-root sudo rule (see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing))
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot, system shutdown (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
@@ -162,10 +163,13 @@ curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/ins
 
 This will:
 1. Detect your architecture
-2. Download the correct agent binary from GitHub Releases
-3. Write a default config to `/etc/riot/agent.yaml`
-4. On first connect, automatically pin the server's TLS certificate (TOFU)
-5. Install and start a systemd service (Linux) or print manual run instructions (macOS)
+2. Download the correct agent binary from GitHub Releases (Linux: installed `root:root`)
+3. Linux only: download the matching `riot-agent-apply-<platform>` update verifier to `/usr/local/lib/riot/riot-agent-apply` (`root:root`, mode `0755`). If the release does not publish it, the installer prints a warning and continues, and automatic updates stay unavailable.
+4. Write a default config to `/etc/riot/agent.yaml`
+5. On first connect, automatically pin the server's TLS certificate (TOFU)
+6. Install and start a systemd service (Linux) or print manual run instructions (macOS)
+
+Re-running the installer on an existing host is safe. It is also how an existing agent receives the update verifier and the tightened sudoers rule (see [Upgrading existing agents](#upgrading-existing-agents)).
 
 **Optional flags:**
 
@@ -207,6 +211,8 @@ sudo usermod -a -G systemd-journal riot && sudo systemctl restart riot-agent
 ```
 
 Then re-run `riot-agent doctor` to confirm the check passes.
+
+On Linux, when auto-update is enabled (the default), `doctor` also prints an **Agent Update** section. It runs `sudo -n -l systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` to check that the update sudoers rule exists, and checks that `/usr/local/lib/riot/riot-agent-apply` exists with mode `0755`. If either check fails, re-run the installer to rewrite `/etc/sudoers.d/riot-agent` and install the verifier. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing).
 
 ### Manual Install
 
@@ -284,6 +290,8 @@ Then re-run `riot-agent doctor` to confirm the check passes.
    riot-agent -config /etc/riot/agent.yaml
    ```
 
+   A manual install does not create the update verifier, the update sudoers rule, or the systemd unit, so it cannot complete automatic updates. Use the installer for managed hosts, or set `agent.auto_update: false` and update the binary yourself.
+
 ### Windows
 
 Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbretschneider/rIOt/releases) and create a config file at `%PROGRAMDATA%\riot\agent.yaml` with the same format as above. Run from a terminal or set up as a Windows service using [NSSM](https://nssm.cc/) or `sc.exe`.
@@ -306,8 +314,7 @@ The installer creates `/etc/sudoers.d/riot-agent` with least-privilege rules tha
 | `rm -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf` | Reboot-class holds | Remove the fragment on disable / empty set (dnf5); exact-path |
 | `/usr/bin/systemctl reboot` | Remote reboot | Reboot the device from the dashboard |
 | `sudo systemctl poweroff` | Remote shutdown | Shut down the device from the dashboard (Linux) |
-| `/bin/sh -c mv ... && cp ... && chmod ...` | Agent self-update | Atomically swap the agent binary on disk |
-| `/usr/bin/systemd-run --unit=riot-agent-update sh -c *` | Agent self-update | Run the update in a transient systemd unit |
+| `/usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` | Agent self-update | Run the root-owned update verifier in a transient systemd unit. The verifier re-checks the release signature and hash, then installs the agent binary. Fixed path, no arguments, no shell, no wildcard |
 | `/usr/bin/systemctl reset-failed riot-agent-update` | Agent self-update | Clear failed state from a previous update unit |
 | `/usr/sbin/nginx -t` | Web server collector | Test nginx config validity and extract config path |
 | `/usr/sbin/nginx -T` | Web server collector | Dump full resolved nginx config (needed to read SSL cert references) |
@@ -342,7 +349,7 @@ New installs via `install.sh` include all rules automatically.
 | `agent.tags` | `[]` | Tags for grouping/filtering |
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
-| `agent.auto_update` | `true` | Automatically install agent updates when available |
+| `agent.auto_update` | `true` | Automatically install agent updates when available. Updates are installed only if the release signature verifies (fail-closed). Set to `false` to disable. Dev builds never auto-update. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing) |
 | `collectors.enabled` | all | List of collectors to run |
 | `collectors.smart_interval` | `4h` | Interval between SMART disk health scans (e.g. `1h`, `4h`, `12h`) |
 | `collectors.webservers.nginx.access_log` | — | Absolute path to the nginx access log file. When set, the `webservers` collector parses the log each interval and includes HTTP status code counts in telemetry. Omit to disable access log monitoring (no default path is assumed). |
@@ -787,6 +794,132 @@ From **Settings > Certificates**:
 
 ---
 
+## Agent Auto-Update and Release Signing
+
+Agents check for a new release 30 seconds after start and every 6 hours after that. Auto-update is on by default. An agent installs a new version only if it can prove the release came from the rIOt maintainer. If it cannot, it refuses and keeps running the current version.
+
+> **Behavior change (AGENT-HARDEN-001).** Agents used to install an update even when the checksum could not be fetched or was not published, and the installer gave the `riot` user a sudo rule that could run any command as root. Both are gone. Read [Upgrading existing agents](#upgrading-existing-agents) before relying on the new behavior: the sudoers and service-unit changes reach a host only when the installer is re-run on it.
+
+### How an update is verified
+
+1. The agent asks the server whether a newer version exists. The server only tells the agent where the files are. The agent never trusts the server to say the files are genuine.
+2. The agent downloads the binary, `checksums.txt`, and `checksums.txt.sig` from the GitHub release. The two small files are capped at 1 MiB and 30 seconds each.
+3. The agent verifies the ed25519 signature in `checksums.txt.sig` over the exact bytes of `checksums.txt`. The public key is compiled into the agent binary. No config file, environment variable, or server response can replace it.
+4. The agent checks that the SHA-256 of the downloaded binary equals the `riot-agent-<platform>` line in the now-trusted `checksums.txt`.
+5. The agent starts the root-owned verifier `/usr/local/lib/riot/riot-agent-apply` through one fixed sudo rule. The verifier repeats steps 3 and 4 on the exact bytes it installs, writes them to `/usr/local/bin/riot-agent`, and restarts the `riot-agent` service. The agent is not the security boundary because it runs as the unprivileged `riot` user.
+
+If any step fails, the agent refuses the update. A refusal:
+
+- removes the staged files and leaves the current binary running
+- logs an error and raises an `agent_update_failed` event whose message names the cause
+- never stops telemetry, heartbeats, or collectors
+
+Refusal causes you may see in the event message:
+
+| Message contains | Cause |
+|---|---|
+| `release is unsigned (no checksums.txt.sig)` | The release has no signature asset. This includes every release published before this change. |
+| `release has no checksums.txt` | The release has no checksum file. |
+| `signature fetch failed` / `checksum fetch failed` | A download returned a non-200 status, timed out, or exceeded 1 MiB. |
+| `signature invalid` | The signature does not verify against the agent's compiled-in key. The release was signed with a different key, or `checksums.txt` was altered. |
+| `checksum unavailable` | `checksums.txt` has no entry (or more than one) for this platform. |
+| `checksum mismatch` | The downloaded binary does not match the signed checksum. |
+
+Dashboard-triggered agent updates use the same pipeline and the same refusals. Dev builds (`version` is `dev`) never auto-update.
+
+### What the `riot` user can do as root
+
+The installer no longer writes any sudoers rule that runs a shell or accepts wildcard arguments for updates. The update rules are exactly these two lines in `/etc/sudoers.d/riot-agent`:
+
+```
+riot ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply
+riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
+```
+
+The paths in your file come from `command -v` on the host. They can differ from the example.
+
+Two properties keep this rule from being a root shortcut:
+
+- `/usr/local/bin/riot-agent` and `/usr/local/lib/riot/riot-agent-apply` are owned by `root:root`. The `riot` user cannot overwrite either file.
+- The verifier installs only bytes covered by a valid signature. A compromised `riot` account that stages its own file and runs the rule gets a refusal. The verifier also rejects symlinked, non-regular, or oversized staged files, and its install target is fixed at build time.
+
+The package-manager, reboot, `smartctl`, and `nginx` rules are unchanged. The `apt-mark hold *` and `apt-mark unhold *` rules still contain a wildcard by design (see [Sudoers Rules](#sudoers-rules)).
+
+### Disabling auto-update
+
+Set the flag in `/etc/riot/agent.yaml` and restart the agent:
+
+```yaml
+agent:
+  auto_update: false
+```
+
+```bash
+sudo systemctl restart riot-agent
+```
+
+With the flag set to `false`, the agent makes no update check and the dashboard "update agent" command returns an error. Omitting the flag keeps auto-update enabled.
+
+### Upgrading existing agents
+
+Installing a new agent version does not rewrite `/etc/sudoers.d/riot-agent` or the systemd unit. **Re-run the installer on every Linux host** to get the hardened setup:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331
+```
+
+Use the same flags you used for the original install. The re-run:
+
+1. Installs the verifier at `/usr/local/lib/riot/riot-agent-apply` (`root:root`, `0755`).
+2. Changes `/usr/local/bin/riot-agent` from `riot:riot` to `root:root`.
+3. Replaces the two shell-based update sudoers rules with the single fixed rule above.
+4. Rewrites the service unit so `ExecStartPre=-+/usr/local/lib/riot/riot-agent-apply --boot` applies a verified staged update on restart. This replaces the old unverified `cp`.
+
+Until a host is re-run:
+
+- The host keeps its previous sudoers rules and service unit, so the privilege hardening is **not in effect** on it.
+- `riot-agent doctor` reports the update sudo rule or the verifier as missing.
+- A new agent on such a host cannot start the verifier. It logs `could not start the privileged update verifier; update staged for next restart` and relies on the unit's restart-time apply.
+
+Run `riot-agent doctor` after the re-run. The **Agent Update** section must show both `update-apply sudo rule present` and `apply helper present`.
+
+The verifier is **not** auto-updated. Only the agent binary is replaced during an update. Re-run the installer to refresh the verifier. A stale verifier keeps working as long as the release signing key does not change.
+
+If you install an old version with `--version`, the release may not publish a verifier. The installer prints a warning and continues. Automatic updates stay unavailable until you install a release that publishes one.
+
+### Known limitations
+
+- **Signed rollback.** The version number is not part of the signed data. The agent refuses an update when the server advertises a version that is not newer. A compromised server can advertise a high version and serve an older, genuinely signed binary, and the agent cannot detect it. A signed version signal is a recorded follow-up.
+- **Linux only.** Installing a verified update works on Linux hosts running systemd. macOS and Windows agents do not complete automatic updates.
+- **Key rotation is manual.** See [Rotating the signing key](#rotating-the-signing-key).
+
+### For maintainers: release signing
+
+Every release is signed in GitHub Actions. The private key is the Actions secret `AGENT_SIGNING_PRIVATE_KEY`. The matching public key is committed as `PublicKeyBase64` in `internal/releasekey/releasekey.go` and compiled into both `riot-agent` and `riot-agent-apply`. The release workflow:
+
+1. Builds `riot-agent-<platform>` for 8 targets and `riot-agent-apply-<platform>` for the 5 Linux targets.
+2. Writes `checksums.txt` (SHA-256 of every `dist/` file, including the verifiers).
+3. Signs it with `go run ./cmd/riot-signer sign`, producing `checksums.txt.sig` (base64 of the 64-byte signature, one line).
+4. Runs `go run ./cmd/riot-signer verify` against the **committed** public key and fails the release if the signature does not verify or the committed key is not a valid 32-byte ed25519 key.
+5. Attaches `checksums.txt` and `checksums.txt.sig` to the GitHub Release. The `dist/riot-agent-*` glob also attaches the verifier binaries.
+
+**The repository ships with a placeholder public key. Complete the one-time setup in [Releasing](#releasing) before you push the next release tag, or the release workflow fails.**
+
+#### Rotating the signing key
+
+Rotation is deliberately manual. Both the agent and the verifier embed the key, and the verifier updates only when the installer is re-run. The release workflow checks every signature against the key committed in the same commit, so the new public key and the new private key must change together.
+
+1. Run `go run ./cmd/riot-signer genkey` and keep the new private key offline.
+2. Commit the new public key to `internal/releasekey/releasekey.go` and set `AGENT_SIGNING_PRIVATE_KEY` to the new private key.
+3. Tag a release. The release workflow signs it with the new key and verifies it against the new committed key.
+4. Re-run the installer on every Linux host. The installer downloads an agent and a verifier that embed the new key.
+
+Until a host is re-run, it still embeds the old key. It refuses the new release with `signature invalid` and stays on its current version. This is a visible stop, not a bypass.
+
+If the private key is compromised, an attacker can sign malicious updates that every agent embedding the matching public key accepts. Rotate immediately with the steps above. A host stays exposed to the old key until the installer is re-run on it. Disable auto-update (`agent.auto_update: false`) on hosts you cannot re-run promptly.
+
+---
+
 ## Single Sign-On (OIDC)
 
 rIOt's admin dashboard can optionally accept sign-in through an external OpenID Connect identity provider (for example authentik), alongside the built-in password login. SSO federates **identity only** — a successful login mints the exact same `riot_session` cookie that a password login does. rIOt never stores an IdP token, never adds a second class of user, and never disables password login. If you never set the environment variables below, this feature does not exist as far as your deployment is concerned: no button, no new endpoints reachable, no outbound calls to any identity provider.
@@ -925,7 +1058,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
-| `GET` | `/api/v1/update/check` | Agent update check |
+| `GET` | `/api/v1/update/check` | Agent update check. Returns the release asset locations, including `checksum_url` and `signature_url` (a locator only; the agent trusts its compiled-in key, not this response) |
 
 ### Enrollment (mTLS)
 
@@ -1011,6 +1144,11 @@ make build-agent
 # Cross-compile agent for all 8 targets
 make build-agent-all
 
+# Build the Linux update verifier (not part of make build-agent-all).
+# Replace <suffix> with the platform, e.g. linux-amd64. Without -X the verifier
+# refuses every update. Linux targets only (set GOOS=linux when cross-building).
+go build -ldflags "-X main.targetAssetName=riot-agent-<suffix>" -o riot-agent-apply ./cmd/riot-agent-apply
+
 # Build Docker image locally
 make docker
 
@@ -1057,8 +1195,57 @@ git push origin main --tags
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 - Builds and pushes the server Docker image to `ghcr.io/rbretschneider/riot-server` (tagged `1.2.0`, `1.2`, `latest`)
-- Cross-compiles 8 agent binaries with SHA-256 checksums
-- Creates a GitHub Release with auto-generated release notes
+- Cross-compiles 8 agent binaries and 5 Linux `riot-agent-apply-*` update verifiers, with SHA-256 checksums
+- Signs `checksums.txt` with the ed25519 release key and verifies the signature against the committed public key (the release fails if either step fails)
+- Creates a GitHub Release with auto-generated release notes, `checksums.txt`, and `checksums.txt.sig`
+
+### One-time setup: release signing (required before the next tag)
+
+> **Do this before you push the next `v*` tag.** `internal/releasekey/releasekey.go` currently holds the placeholder `REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY`. With the placeholder, the `Sign checksums` step fails (no secret) and the `Verify signature against embedded key` step fails (invalid key), so no GitHub Release is created. The server Docker image job is independent and still publishes. Agents keep running their current version, but no signed release exists for them to update to until you finish these steps.
+
+1. **Generate the keypair.** Run from the repository root:
+
+   ```bash
+   go run ./cmd/riot-signer genkey
+   ```
+
+   The tool prints two lines. Copy both values:
+
+   ```
+   PUBLIC_KEY=<44-character base64 string>
+   PRIVATE_KEY=<88-character base64 string>
+   ```
+
+2. **Commit the public key.** In `internal/releasekey/releasekey.go`, replace `REPLACE_WITH_BASE64_ED25519_PUBLIC_KEY` with the `PUBLIC_KEY` value, keeping the quotes:
+
+   ```go
+   var PublicKeyBase64 = "<PUBLIC_KEY value>"
+   ```
+
+   Commit the change. The public key is not secret.
+
+3. **Set the private key as a repository secret.** In GitHub, open **Settings > Secrets and variables > Actions > New repository secret**. Name it `AGENT_SIGNING_PRIVATE_KEY` and paste the `PRIVATE_KEY` value. You can also run `gh secret set AGENT_SIGNING_PRIVATE_KEY` and paste the value at the prompt. Do not pass the key as a command-line argument, because it would land in your shell history.
+
+4. **Store the private key offline.** Keep a copy in a password manager or other offline store, then clear it from your terminal scrollback. Do not commit it, and do not put it in an issue or chat.
+   - If you lose it, you cannot sign future releases. Recovery is a key rotation.
+   - If it leaks, anyone holding it can sign malicious updates that agents accept. Rotate immediately (see [Rotating the signing key](#rotating-the-signing-key)).
+
+5. **Tag a release and confirm the signing steps pass.** Follow the tag commands above. In the GitHub Actions run for the tag, open the `agent-binaries` job and confirm:
+   - `Sign checksums` and `Verify signature against embedded key` both show a green check. The verify step logs `OK: dist/checksums.txt.sig verifies against the committed release public key`.
+   - The GitHub Release lists `checksums.txt`, `checksums.txt.sig`, and five `riot-agent-apply-*` assets (`linux-amd64`, `linux-386`, `linux-arm64`, `linux-armv7`, `linux-armv6`).
+   - No log line contains the private key.
+
+Optional local check before tagging. This runs the same sign-and-verify the workflow runs, with a throwaway file:
+
+```bash
+echo test > /tmp/checksums.txt
+AGENT_SIGNING_PRIVATE_KEY=<PRIVATE_KEY value> go run ./cmd/riot-signer sign /tmp/checksums.txt /tmp/checksums.txt.sig
+go run ./cmd/riot-signer verify /tmp/checksums.txt /tmp/checksums.txt.sig
+```
+
+`verify` prints `OK: ...` and exits 0 when the committed public key matches the private key. It exits 1 with `committed release public key is unusable` while the placeholder is still in place. Run it in a shell where the private key will not be saved to history (for example, prefix the line with a space if your shell ignores space-prefixed commands).
+
+After the first signed release, run `riot-agent doctor` on a re-installed host and confirm the **Agent Update** section passes. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing) for what operators must do to receive the hardened update path.
 
 ---
 

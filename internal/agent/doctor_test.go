@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -149,4 +150,93 @@ func TestSECAC004_DoctorHoldProbes(t *testing.T) {
 		assert.Contains(t, out, "Re-run the install script")
 		assert.Contains(t, out, "/etc/sudoers.d/riot-agent")
 	})
+}
+
+// fakeFileInfo is a minimal os.FileInfo for the apply-helper presence probe.
+type fakeFileInfo struct{ mode os.FileMode }
+
+func (f fakeFileInfo) Name() string       { return "riot-agent-apply" }
+func (f fakeFileInfo) Size() int64        { return 0 }
+func (f fakeFileInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeFileInfo) IsDir() bool        { return false }
+func (f fakeFileInfo) Sys() any           { return nil }
+
+func statReturning(mode os.FileMode, err error) func(string) (os.FileInfo, error) {
+	return func(string) (os.FileInfo, error) {
+		if err != nil {
+			return nil, err
+		}
+		return fakeFileInfo{mode: mode}, nil
+	}
+}
+
+// [AC-012] The doctor probe targets the exact fixed systemd-run verifier rule
+// (never the removed `sh -c *` wildcard) via `sudo -n -l`.
+func TestAC012_UpdatePrivilegeProbe_TargetsTheFixedVerifierRule(t *testing.T) {
+	got := updatePrivilegeProbeArgs("/usr/bin/systemd-run")
+
+	assert.Equal(t, []string{
+		"-n", "-l", "/usr/bin/systemd-run", "--unit=riot-agent-update", "/usr/local/lib/riot/riot-agent-apply",
+	}, got, "[AC-012] probe must be the exact sudoers rule the installer writes")
+	for _, arg := range got {
+		assert.NotEqual(t, "sh", arg, "[AC-012] probe must not reference the removed shell rule")
+		assert.NotEqual(t, "-c", arg, "[AC-012] probe must not reference the removed sh -c rule")
+		assert.NotContains(t, arg, "*", "[AC-012] probe must not reference a wildcard rule")
+	}
+}
+
+// [AC-012] Rule authorized and helper present with mode 0755 -> two passes.
+func TestAC012_ReportUpdatePrivilege_PresentReportsPass(t *testing.T) {
+	var gotName string
+	var gotArgs []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		gotName, gotArgs = name, args
+		return nil, nil
+	}
+
+	out := captureStdout(func() { reportUpdatePrivilege(run, statReturning(0o755, nil), "/usr/bin/systemd-run") })
+
+	assert.Equal(t, "sudo", gotName)
+	assert.Equal(t, updatePrivilegeProbeArgs("/usr/bin/systemd-run"), gotArgs, "[AC-012] the runner must receive the exact probe argv")
+	assert.Contains(t, out, "Agent Update")
+	assert.Contains(t, out, "update-apply sudo rule present")
+	assert.Contains(t, out, "apply helper present")
+	assert.NotContains(t, out, "missing")
+}
+
+// [AC-013] Rule absent -> failure line plus re-run-installer guidance.
+func TestAC013_ReportUpdatePrivilege_MissingRuleFailsWithReinstallGuidance(t *testing.T) {
+	run := func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("sudo: a password is required"), fmt.Errorf("exit status 1")
+	}
+
+	out := captureStdout(func() { reportUpdatePrivilege(run, statReturning(0o755, nil), "/usr/bin/systemd-run") })
+
+	assert.Contains(t, out, "update-apply sudo rule missing", "[AC-013] must fail loudly when the rule is absent")
+	assert.Contains(t, out, "Re-run the install script", "[AC-013] must tell the operator how to fix it")
+	assert.Contains(t, out, "/etc/sudoers.d/riot-agent")
+	assert.NotContains(t, out, "update-apply sudo rule present")
+}
+
+// [AC-013] Helper binary absent -> failure with re-run guidance, independent of the rule.
+func TestAC013_ReportUpdatePrivilege_MissingHelperFails(t *testing.T) {
+	run := func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
+
+	out := captureStdout(func() {
+		reportUpdatePrivilege(run, statReturning(0, os.ErrNotExist), "/usr/bin/systemd-run")
+	})
+
+	assert.Contains(t, out, "apply helper missing at /usr/local/lib/riot/riot-agent-apply")
+	assert.Contains(t, out, "re-run the install script")
+}
+
+// [AC-013] Helper present but with the wrong mode -> warning, not a pass.
+func TestAC013_ReportUpdatePrivilege_WrongHelperModeWarns(t *testing.T) {
+	run := func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
+
+	out := captureStdout(func() { reportUpdatePrivilege(run, statReturning(0o777, nil), "/usr/bin/systemd-run") })
+
+	assert.Contains(t, out, "is not mode 0755")
+	assert.NotContains(t, out, "apply helper present")
 }
