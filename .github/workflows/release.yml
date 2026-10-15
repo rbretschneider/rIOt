@@ -143,7 +143,17 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum * > checksums.txt
+        # List the real agent binaries (and install.sh) BEFORE the
+        # riot-agent-apply-* helpers. Legacy agents (<= v2.63) resolve their
+        # platform asset by the FIRST checksums.txt line whose filename
+        # contains the platform suffix; the apply helper contains that suffix
+        # too and sorts first alphabetically, so a plain `sha256sum *` made
+        # them read the helper's checksum and reject their own binary. v2.64+
+        # agents match the exact basename and verify the signature over the
+        # whole file, so line order is irrelevant to them.
+        run: |
+          non_apply=$(ls -1 | grep -vE '^riot-agent-apply-')
+          sha256sum $non_apply riot-agent-apply-* > checksums.txt
 
       # The signing key is read only from this step's environment by
       # cmd/riot-signer, which prints nothing derived from it.
