@@ -12,6 +12,7 @@ import MetricChart from '../components/MetricChart'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
+import { rebootEtaTooltip } from '../utils/rebootEta'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import ActivityLog from '../components/ActivityLog'
@@ -42,6 +43,14 @@ export default function DeviceDetail() {
     queryKey: ['server-update'],
     queryFn: api.getServerUpdate,
     staleTime: 60 * 60 * 1000,
+  })
+  // Patch status carries the reboot-ETA fields (window, allow_reboot,
+  // reboot-class count) so the reboot-required badge can show the same tooltip
+  // as the Fleet Overview instead of just the pending package list.
+  const { data: patchStatus } = useQuery({
+    queryKey: ['patch-status'],
+    queryFn: api.getPatchStatus,
+    refetchInterval: wsConnected ? 120_000 : 60_000,
   })
 
   const { data: alertRules } = useQuery({
@@ -158,6 +167,7 @@ export default function DeviceDetail() {
 
   const { device, latest_telemetry, agent_connected } = data
   const tel = latest_telemetry?.data
+  const patchInfo = patchStatus?.find(p => p.device_id === id)
   const canCommand = device.status === 'online' && agent_connected !== false
   // PATCH-GATE: GPU driver update blast radius + hold-enforcement health.
   const gpuContainerCount = tel?.docker?.containers?.filter(c => c.uses_gpu).length ?? 0
@@ -295,9 +305,11 @@ export default function DeviceDetail() {
           {tel?.updates?.reboot_required && (
             <span
               className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-600/40"
-              title={tel.updates.reboot_required_reasons?.length
-                ? `Pending: ${tel.updates.reboot_required_reasons.join(', ')}`
-                : 'A reboot is required to activate installed updates'}
+              title={patchInfo
+                ? rebootEtaTooltip(patchInfo)
+                : tel.updates.reboot_required_reasons?.length
+                  ? `Pending: ${tel.updates.reboot_required_reasons.join(', ')}`
+                  : 'A reboot is required to activate installed updates'}
             >
               Reboot required
             </span>

@@ -84,6 +84,34 @@ func TestPatchStatus_AC006_WindowModeCarriesNextWindowStart(t *testing.T) {
 	assert.False(t, ns.Before(before), "[AC-006] next start must not be in the past")
 }
 
+// A fully-patched device awaiting only a reboot (PendingUpdates == 0,
+// RebootRequired) must still be returned, or the fleet reboot indicator and its
+// ETA tooltip never render. Regression for the previous PendingUpdates > 0
+// filter that dropped it (REBOOT-ETA-001 follow-up).
+func TestPatchStatus_RebootOnlyDeviceIsIncluded(t *testing.T) {
+	adminRepo := testutil.NewMockAdminRepo("hash")
+	raw, err := json.Marshal(models.AutomationConfig{OSPatch: models.MaintenanceWindow{
+		Mode: "window", StartTime: "02:00", EndTime: "03:30", CooldownMinutes: 360, Frequency: "daily",
+	}})
+	require.NoError(t, err)
+	require.NoError(t, adminRepo.SetConfig(nil, "automation_config", string(raw)))
+
+	telRepo := testutil.NewMockTelemetryRepo()
+	deviceRepo := testutil.NewMockDeviceRepo()
+	deviceRepo.Devices["dev-1"] = &models.Device{ID: "dev-1", Hostname: "host-1"}
+	telRepo.Snapshots["dev-1"] = []models.TelemetrySnapshot{{
+		DeviceID: "dev-1",
+		Data: models.FullTelemetryData{
+			Updates: &models.UpdateInfo{PendingUpdates: 0, RebootRequired: true, AllowReboot: boolPtr(true)},
+		},
+	}}
+	h := &Handlers{telemetry: telRepo, devices: deviceRepo, adminRepo: adminRepo}
+
+	rows, _ := getPatchStatusRows(t, h, "")
+	require.Len(t, rows, 1, "a reboot-only device must still be returned")
+	assert.True(t, rows[0].RebootRequired, "the row must carry reboot_required so the indicator renders")
+}
+
 // [AC-007] Anytime mode: mode + cooldown surfaced, no clock time.
 func TestPatchStatus_AC007_AnytimeModeCarriesCooldownNoStart(t *testing.T) {
 	h := patchStatusHandler(t, models.MaintenanceWindow{

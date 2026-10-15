@@ -20,12 +20,12 @@ describe('formatUtc', () => {
 
 describe('[AC-006] window mode shows Est. reboot as an absolute UTC time', () => {
   it('contains "Est. reboot:" followed by the UTC time when the agent permits reboot', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true, reboot_class_count: 1 })
     expect(t).toContain('Est. reboot: 2026-10-19 02:00 UTC')
   })
 
   it('contains "Est. reboot:" followed by the UTC time when allow_reboot is unknown', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, reboot_class_count: 1 })
     expect(t).toContain('Est. reboot: 2026-10-19 02:00 UTC')
   })
 
@@ -34,18 +34,19 @@ describe('[AC-006] window mode shows Est. reboot as an absolute UTC time', () =>
       os_patch_mode: 'window',
       next_window_start: '2026-10-19T23:30:00-05:00',
       allow_reboot: true,
+      reboot_class_count: 1,
     })
     expect(t).toContain('Est. reboot: 2026-10-20 04:30 UTC')
   })
 
   it('words an unknown allow_reboot conditionally, never as a guarantee', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, reboot_class_count: 1 })
     expect(t).toContain('if this device permits automatic reboot')
   })
 })
 
 describe('[AC-007] anytime mode shows cooldown wording and no clock time', () => {
-  const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 360, allow_reboot: true })
+  const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 360, allow_reboot: true, reboot_class_count: 1 })
 
   it('states the reboot occurs on the next automatic patch run within the cooldown', () => {
     expect(t).toContain('next automatic patch run (within the ~360 min cooldown)')
@@ -62,12 +63,13 @@ describe('[AC-007] anytime mode shows cooldown wording and no clock time', () =>
       os_patch_mode: 'anytime',
       os_patch_cooldown_minutes: 60,
       next_window_start: START,
+      reboot_class_count: 1,
     })
     expect(withStart).not.toContain('2026-10-19')
   })
 
   it('still reads sensibly when the cooldown is absent', () => {
-    const noCooldown = rebootEtaTooltip({ os_patch_mode: 'anytime' })
+    const noCooldown = rebootEtaTooltip({ os_patch_mode: 'anytime', reboot_class_count: 1 })
     expect(noCooldown).toContain('next automatic patch run.')
     expect(noCooldown).not.toContain('undefined')
   })
@@ -99,24 +101,24 @@ describe('[AC-009] no window configured states reboot required with no time', ()
 
 describe('[AC-010] estimate-not-guarantee labelling', () => {
   it('labels the window estimate (allow_reboot true) as an estimate, not a guarantee', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true, reboot_class_count: 1 })
     expect(t).toContain('estimate, not a guarantee')
   })
 
   it('labels the window estimate (allow_reboot unknown) as an estimate, not a guarantee', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, reboot_class_count: 1 })
     expect(t).toContain('estimate, not a guarantee')
   })
 
   it('labels the anytime wording as an estimate, not a guarantee', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60 })
+    const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60, reboot_class_count: 1 })
     expect(t).toContain('Estimate, not a guarantee')
   })
 })
 
 describe('[AC-011] caveat discloses what the estimate depends on', () => {
   it('names gating, cooldown, allow_reboot and hold_reboot_class on a window estimate', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true })
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true, reboot_class_count: 1 })
     expect(t).toContain('reboot-class gating')
     expect(t).toContain('the cooldown')
     expect(t).toContain('allow_reboot')
@@ -124,7 +126,7 @@ describe('[AC-011] caveat discloses what the estimate depends on', () => {
   })
 
   it('names the same dependencies on the anytime wording', () => {
-    const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60 })
+    const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60, reboot_class_count: 1 })
     expect(t).toContain('reboot-class gating')
     expect(t).toContain('allow_reboot')
     expect(t).toContain('hold_reboot_class')
@@ -170,12 +172,33 @@ describe('[AC-019] window mode with no computed start falls back honestly', () =
   })
 })
 
+describe('no pending reboot-class update ⇒ standing manual reboot (not a window time)', () => {
+  it('window mode with a start but no reboot-class pending shows a manual/standing reboot', () => {
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true, reboot_class_count: 0 })
+    expect(t).toContain('reboot manually')
+    expect(t).toContain('No reboot-class update is pending')
+    expect(t).not.toContain('Est. reboot:')
+    expect(t).not.toContain('2026-10-19')
+  })
+
+  it('anytime mode with no reboot-class pending shows a manual/standing reboot', () => {
+    const t = rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60, reboot_class_count: 0 })
+    expect(t).toContain('reboot manually')
+    expect(t).not.toContain('next automatic patch run')
+  })
+
+  it('allow_reboot=false still takes precedence over the standing-reboot message', () => {
+    const t = rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: false, reboot_class_count: 0 })
+    expect(t).toContain('Manual reboot required')
+  })
+})
+
 describe('[AC-005] tooltip is plain text for a native title attribute', () => {
   it('never contains markup for any resolved variant', () => {
     const variants = [
-      rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true }),
-      rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START }),
-      rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60 }),
+      rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, allow_reboot: true, reboot_class_count: 1 }),
+      rebootEtaTooltip({ os_patch_mode: 'window', next_window_start: START, reboot_class_count: 1 }),
+      rebootEtaTooltip({ os_patch_mode: 'anytime', os_patch_cooldown_minutes: 60, reboot_class_count: 1 }),
       rebootEtaTooltip({ os_patch_mode: 'disabled' }),
       rebootEtaTooltip({ allow_reboot: false }),
     ]

@@ -58,7 +58,12 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]devicePatchInfo, 0, len(summaries))
 	for _, s := range summaries {
-		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
+		// Include a device when it has pending packages OR a standing reboot
+		// requirement. A fully-patched device awaiting only a reboot has
+		// PendingUpdates == 0 but RebootRequired == true; without this it was
+		// dropped entirely, so the fleet reboot indicator and its ETA tooltip
+		// never rendered (REBOOT-ETA-001 follow-up).
+		if s.Updates != nil && (s.Updates.PendingUpdates > 0 || s.Updates.RebootRequired) {
 			info := devicePatchInfo{
 				DeviceID:         s.DeviceID,
 				Hostname:         hostnames[s.DeviceID],
