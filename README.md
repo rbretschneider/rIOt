@@ -52,6 +52,7 @@
 - **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
+- **Reboot ETA tooltip** — hover a reboot-required device on the Fleet Overview page to see an estimate of when it will reboot (the next OS-patch maintenance-window start, in UTC), or an honest "no time" / "manual reboot required" message when the server cannot stand behind a time ([details](#reboot-eta-tooltip))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Architecture
@@ -358,7 +359,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
-| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard |
+| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard. The agent also reports this value to the server (display-only) so the Fleet Overview reboot-ETA tooltip can say "Manual reboot required" — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
@@ -1102,7 +1103,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
-| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager` |
+| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. Lists only devices with at least one pending update. Each row also carries the reboot-ETA fields (all optional): `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot` — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
@@ -1459,6 +1460,99 @@ Every telemetry cycle the agent reports a `hold_enforcement` state:
 | `unsupported` | dnf4 host — OS-level holds require dnf5. Classification and reboot-required detection still work. |
 
 `held_packages` is non-empty only when the state is `active`, so an unenforced host can never present holds as "protected".
+
+---
+
+## Reboot ETA tooltip
+
+When a device needs a reboot to activate installed updates, the Fleet Overview page (`/`) shows an estimate of when that reboot will happen. Hover the indicator to read it. The estimate is the next start of the OS-patch maintenance window, shown as an absolute UTC time. It is advisory only: the tooltip always says it is an estimate, not a guarantee.
+
+No setup is required beyond the maintenance window you already manage in **Settings > Agents**. The feature adds no environment variable, no agent collector, and no database migration.
+
+### Where it appears
+
+Both places show the same text for the same device:
+
+- **Main device grid** — a small amber reboot glyph (`↻`) beside the pending-update count in the **Updates** column.
+- **Pending OS Patches panel** — the existing **reboot required** badge. Open the panel with **Review Patches**.
+
+The indicator appears only for a device whose patch-status row has `reboot_required: true`. The page uses the data it already loads, so the feature adds no network request.
+
+### What the tooltip says
+
+The server decides which text applies. The first matching row wins:
+
+| Situation | Tooltip text (abridged) |
+|---|---|
+| The device's agent reports `allow_reboot: false` (any window mode) | `Manual reboot required — this device does not permit automatic reboot.` No time. |
+| OS-patch mode is `anytime` | `Reboot required. Will occur on the next automatic patch run (within the ~N min cooldown).` No clock time. The cooldown part is omitted when no cooldown is set. |
+| Mode is `window`, a next start exists, and the agent reports `allow_reboot: true` | `Est. reboot: 2026-10-19 02:00 UTC — estimate, not a guarantee.` |
+| Mode is `window`, a next start exists, and the agent does not report `allow_reboot` | `Est. reboot: 2026-10-19 02:00 UTC — if this device permits automatic reboot; estimate, not a guarantee.` |
+| Mode is `window` but no start can be computed (for example an invalid `start_time`, or `weekly` with no days selected) | `A reboot is required to activate the installed updates.` No time. |
+| Mode is `disabled`, or no window is configured (the default) | `A reboot is required to activate the installed updates.` No time. |
+
+Every estimate and `anytime` tooltip ends with the caveat that the estimate depends on reboot-class gating, the cooldown, and the device's `allow_reboot` / `hold_reboot_class` settings. All times are UTC. The page never converts them to your local time zone.
+
+### How the estimate is computed
+
+The estimate is the earliest window start that is at or after the current moment, following the window's **Frequency** setting:
+
+- **Daily** (or unset): every day is eligible.
+- **Weekly**: only the selected days of the week.
+- **Monthly**: only the last calendar day of the month.
+
+An overnight window (start time later than end time) belongs to the day it starts on. If the current moment is already inside a window, the estimate is the next eligible start, not the start of the window in progress. If the current moment is exactly a start time, that start is returned. The search looks ahead at most 367 days.
+
+### What the estimate depends on
+
+An automatic reboot after a patch run happens only when all of these hold:
+
+1. The OS-patch window is enabled and auto-patch is on for the device, so a patch run is dispatched inside the window.
+2. The server's reboot-class policy is `gated`, so the run includes reboot-class packages (see [Reboot-Class Package Gating](#reboot-class-package-gating)). `commands.hold_reboot_class` on the agent controls whether those packages are held between windows.
+3. The device agent has `commands.allow_reboot: true` in `/etc/riot/agent.yaml`.
+
+The tooltip knows the window mode, the next start, the cooldown, and the device's `allow_reboot`. It does not know the device's auto-patch setting or whether the reboot-class policy is `gated`. A device reporting `allow_reboot: true` can therefore show an `Est. reboot:` time even though it would not reboot automatically. Treat the time as the earliest point at which a reboot could occur.
+
+### Agent upgrade required for the manual-reboot message
+
+The agent reports its `commands.allow_reboot` setting with its update telemetry. This is display-only: no patching or reboot decision on the server reads it. Agents built before this feature do not send it. Until a device's agent is upgraded, that device shows the conditional wording (`if this device permits automatic reboot`) instead of `Manual reboot required`. No `collectors.enabled` change is needed, because the value rides the existing `updates` collector.
+
+### Limitations
+
+- Only devices that appear in `GET /api/v1/fleet/patch-status` get an indicator, and that endpoint lists devices with at least one pending update. A device that needs a reboot but has no pending updates shows no indicator. The **Reboot Required** event and alert still fire for it.
+- The estimate uses the server-wide OS-patch window. There is no per-device schedule.
+
+### API fields
+
+`GET /api/v1/fleet/patch-status` still returns a JSON array. Each element gains four optional fields. Existing fields are unchanged.
+
+| Field | Type | Present when | Meaning |
+|---|---|---|---|
+| `os_patch_mode` | string: `window`, `anytime`, `disabled` | The mode is set | Server-wide OS-patch window mode. Identical on every row. |
+| `next_window_start` | string, RFC 3339 UTC | Mode is `window` and a start can be computed | Next window start. Identical on every row. |
+| `os_patch_cooldown_minutes` | number | The cooldown is non-zero | OS-patch window cooldown, used for the `anytime` wording. Identical on every row. |
+| `allow_reboot` | boolean | The device's agent reports it | The device's `commands.allow_reboot`. Absent for agents that predate this feature. |
+
+Example (window mode, one device, agent reports `allow_reboot`):
+
+```json
+[
+  {
+    "device_id": "3f6c1c2e-0000-0000-0000-000000000000",
+    "hostname": "vermont",
+    "pending_updates": 4,
+    "security_count": 1,
+    "reboot_class_count": 1,
+    "reboot_required": true,
+    "os_patch_mode": "window",
+    "next_window_start": "2026-10-19T02:00:00Z",
+    "os_patch_cooldown_minutes": 60,
+    "allow_reboot": true
+  }
+]
+```
+
+The error response is unchanged: `500 {"error":"failed to get telemetry"}`.
 
 ---
 
