@@ -109,15 +109,16 @@ func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSu
 		if err := rows.Scan(&s.DeviceID, &updatesJSON, &securityJSON, &serversJSON); err != nil {
 			return nil, err
 		}
-		if len(updatesJSON) > 0 && string(updatesJSON) != "null" {
+		// Handle null JSON responses by checking the JSON string itself
+		if len(updatesJSON) > 0 && string(updatesJSON) != "null" && string(updatesJSON) != "" {
 			s.Updates = &models.UpdateInfo{}
 			json.Unmarshal(updatesJSON, s.Updates)
 		}
-		if len(securityJSON) > 0 && string(securityJSON) != "null" {
+		if len(securityJSON) > 0 && string(securityJSON) != "null" && string(securityJSON) != "" {
 			s.Security = &models.SecurityInfo{}
 			json.Unmarshal(securityJSON, s.Security)
 		}
-		if len(serversJSON) > 0 && string(serversJSON) != "null" {
+		if len(serversJSON) > 0 && string(serversJSON) != "null" && string(serversJSON) != "" {
 			var servers []models.ProxyServer
 			json.Unmarshal(serversJSON, &servers)
 			for _, srv := range servers {
