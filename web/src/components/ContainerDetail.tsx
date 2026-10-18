@@ -140,45 +140,6 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
   )
 }
 
-interface Props {
-  container: ContainerInfo
-  onClose: () => void
-  terminalEnabled?: boolean
-  deviceId?: string
-}
-
-/** Slide-out panel wrapper — kept for backwards compatibility but no longer used by DeviceContainers. */
-export default function ContainerDetail({ container: c, onClose, terminalEnabled, deviceId }: Props) {
-  const name = displayName(c.riot, c.name)
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50" />
-      <div
-        className="relative w-full max-w-2xl bg-gray-900 border-l border-gray-800 overflow-y-auto scrollbar-thin"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="sticky top-0 bg-gray-900 border-b border-gray-800 p-5 z-10">
-          <div className="flex items-start justify-between">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                {c.riot?.icon && <span className="text-xl">{c.riot.icon}</span>}
-                <h2 className="text-lg font-bold text-white truncate">{name}</h2>
-              </div>
-              <p className="text-xs text-gray-600 font-mono">{c.short_id}</p>
-            </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-xl ml-1">&times;</button>
-          </div>
-        </div>
-
-        <div className="p-5">
-          <ContainerDetailContent container={c} deviceId={deviceId} terminalEnabled={terminalEnabled} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; deviceId?: string }) {
   const { now } = useTimePreference()
   const [metricHours, setMetricHours] = useState(() => {
