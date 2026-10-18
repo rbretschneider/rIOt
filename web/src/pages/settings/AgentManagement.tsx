@@ -5,6 +5,7 @@ import { settingsApi } from '../../api/settings'
 import { useFeatures } from '../../hooks/useFeatures'
 import { isVersionOlder } from '../../utils/version'
 import type { AutomationConfig, MaintenanceWindow } from '../../types/models'
+import { ConfirmDialog } from '../../components/ui'
 
 export default function AgentManagement() {
   const qc = useQueryClient()
@@ -19,15 +20,11 @@ export default function AgentManagement() {
     staleTime: 60 * 60 * 1000,
   })
 
-  const [updateResult, setUpdateResult] = useState<{ sent: number; skipped: number } | null>(null)
+  const [updateTarget, setUpdateTarget] = useState<{ version: string; count: number } | null>(null)
 
   const bulkMutation = useMutation({
     mutationFn: api.bulkUpdateAgents,
-    onSuccess: (data) => {
-      setUpdateResult(data)
-      qc.invalidateQueries({ queryKey: ['agent-versions'] })
-      setTimeout(() => setUpdateResult(null), 8000)
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-versions'] }),
   })
 
   const latestVersion = serverUpdate?.latest_version
@@ -70,14 +67,10 @@ export default function AgentManagement() {
                       </span>
                       {isOutdated && (
                         <button
-                          onClick={() => {
-                            if (confirm(`Send update command to all ${v.count} device(s) running ${v.version}?`))
-                              bulkMutation.mutate(v.version)
-                          }}
-                          disabled={bulkMutation.isPending}
+                          onClick={() => setUpdateTarget({ version: v.version, count: v.count })}
                           className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 rounded transition-colors disabled:opacity-50"
                         >
-                          {bulkMutation.isPending ? 'Updating...' : 'Update All'}
+                          Update All
                         </button>
                       )}
                     </div>
@@ -97,17 +90,20 @@ export default function AgentManagement() {
         </div>
       </div>
 
-      {/* Bulk Update Result */}
-      {updateResult && (
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <p className="text-sm text-gray-300">
-            Update command sent to <span className="text-white font-medium">{updateResult.sent}</span> device{updateResult.sent !== 1 ? 's' : ''}.
-            {updateResult.skipped > 0 && (
-              <span className="text-gray-500"> ({updateResult.skipped} skipped — offline or disconnected)</span>
-            )}
-          </p>
-        </div>
-      )}
+      <ConfirmDialog
+        open={updateTarget !== null}
+        variant="primary"
+        title="Update agents"
+        message={`Send an update command to all ${updateTarget?.count ?? 0} device${updateTarget?.count === 1 ? '' : 's'} running ${updateTarget?.version ?? ''}?`}
+        confirmLabel="Update all"
+        pendingLabel="Updating…"
+        onConfirm={() => bulkMutation.mutateAsync(updateTarget!.version)}
+        successToast={result => ({
+          title: 'Agent update dispatched',
+          message: `${result.sent} sent${result.skipped > 0 ? `, ${result.skipped} skipped (offline)` : ''}`,
+        })}
+        onClose={() => setUpdateTarget(null)}
+      />
 
       {/* Info */}
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">

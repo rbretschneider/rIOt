@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import Probes from './Probes'
 import * as clientModule from '../api/client'
+import { ToastProvider } from '../components/ui'
 
 // --- API mock ---
 // vi.mock is hoisted, so data must be inline (no top-level variable references).
@@ -92,7 +93,7 @@ function renderProbes() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <Probes />
+        <ToastProvider><Probes /></ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -284,17 +285,16 @@ describe('[AC-005] Device probe actions call correct device-scoped API endpoints
   })
 
   it('Delete button calls api.deleteDeviceProbe with correct device_id and probe_id', async () => {
-    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
     renderProbes()
     await screen.findByText('Check nginx')
 
     const deleteButtons = screen.getAllByRole('button', { name: 'Delete' })
     fireEvent.click(deleteButtons[deleteButtons.length - 1])
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
 
     await waitFor(() => {
       expect(clientModule.api.deleteDeviceProbe).toHaveBeenCalledWith('dev-abc', 10)
     })
-    vi.unstubAllGlobals()
   })
 
   // Added by QA Engineer
@@ -398,5 +398,86 @@ describe('[AC-009] Per-device probes page is not modified', () => {
     const module = await import('./DeviceProbes')
     expect(module.default).toBeDefined()
     expect(typeof module.default).toBe('function')
+  })
+})
+
+// ===================================================================
+// UI-FOUNDATION-001: native confirm() replaced by ConfirmDialog
+// ===================================================================
+describe('[UIF AC-066] delete server probe confirms and toasts', () => {
+  beforeEach(() => {
+    vi.mocked(clientModule.api.deleteProbe).mockClear().mockResolvedValue(undefined)
+  })
+
+  it('opens a danger dialog naming the probe, then deletes once and raises a success toast on confirm', async () => {
+    renderProbes()
+    await screen.findByText('Google HTTP')
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    const dialog = screen.getByRole('dialog', { name: 'Delete probe' })
+    expect(dialog).toHaveTextContent('"Google HTTP"')
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(clientModule.api.deleteProbe).toHaveBeenCalledTimes(1))
+    expect(clientModule.api.deleteProbe).toHaveBeenCalledWith(1)
+    const region = screen.getByRole('region', { name: 'Notifications' })
+    expect(await within(region).findByText('Probe deleted')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('does not call the API when the dialog is cancelled', async () => {
+    renderProbes()
+    await screen.findByText('Google HTTP')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(clientModule.api.deleteProbe).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('shows the failure inline and raises no success toast when the delete fails', async () => {
+    vi.mocked(clientModule.api.deleteProbe).mockRejectedValue(new Error('HTTP 500'))
+    renderProbes()
+    await screen.findByText('Google HTTP')
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('HTTP 500')
+    expect(screen.queryByText('Probe deleted')).toBeNull()
+  })
+})
+
+describe('[UIF AC-067] delete device probe confirm; cancel skips API', () => {
+  beforeEach(() => {
+    vi.mocked(clientModule.api.deleteDeviceProbe).mockClear().mockResolvedValue(undefined)
+  })
+
+  it('opens a danger ConfirmDialog naming the device probe', async () => {
+    renderProbes()
+    await screen.findByText('Check nginx')
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' })
+    fireEvent.click(deleteButtons[deleteButtons.length - 1])
+    const dialog = screen.getByRole('dialog', { name: 'Delete device probe' })
+    expect(dialog).toHaveTextContent('"Check nginx"')
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
+  })
+
+  it('does not call deleteDeviceProbe when cancelled', async () => {
+    renderProbes()
+    await screen.findByText('Check nginx')
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' })
+    fireEvent.click(deleteButtons[deleteButtons.length - 1])
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(clientModule.api.deleteDeviceProbe).not.toHaveBeenCalled()
+  })
+
+  it('raises a success toast after a confirmed delete', async () => {
+    renderProbes()
+    await screen.findByText('Check nginx')
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' })
+    fireEvent.click(deleteButtons[deleteButtons.length - 1])
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+    const region = screen.getByRole('region', { name: 'Notifications' })
+    expect(await within(region).findByText('Probe deleted')).toBeInTheDocument()
   })
 })

@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { DeviceProbeWithResultEnriched, ProbeWithResult } from '../types/models'
 import ProbeModal, { emptyProbe, probeToForm, getTarget, type ProbeForm } from '../components/ProbeModal'
 import DeviceProbeModal, { type DeviceProbeForm } from '../components/DeviceProbeModal'
+import { ConfirmDialog } from '../components/ui'
 
 export default function Probes() {
   const qc = useQueryClient()
@@ -38,6 +39,8 @@ export default function Probes() {
   // does not carry device_id (that field lives on the DeviceProbe model, not the form).
   const editingDeviceId = useRef<string>('')
   const [showDevicePicker, setShowDevicePicker] = useState(false)
+  const [deleteServerTarget, setDeleteServerTarget] = useState<{ id: number; name: string } | null>(null)
+  const [deleteDeviceTarget, setDeleteDeviceTarget] = useState<{ deviceId: string; probeId: number; name: string } | null>(null)
   const devicePickerRef = useRef<HTMLDivElement>(null)
 
   // Close device picker on outside click
@@ -214,7 +217,7 @@ export default function Probes() {
                           Edit
                         </button>
                         <button
-                          onClick={() => { if (confirm('Delete this probe?')) serverDeleteMutation.mutate(probe.id) }}
+                          onClick={() => setDeleteServerTarget({ id: probe.id, name: probe.name })}
                           className="px-2 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
                         >
                           Delete
@@ -374,11 +377,7 @@ export default function Probes() {
                           Edit
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm('Delete this device probe?')) {
-                              deviceDeleteMutation.mutate({ deviceId: probe.device_id, probeId: probe.id })
-                            }
-                          }}
+                          onClick={() => setDeleteDeviceTarget({ deviceId: probe.device_id, probeId: probe.id, name: probe.name })}
                           className="px-2 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
                         >
                           Delete
@@ -399,6 +398,30 @@ export default function Probes() {
           </table>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={deleteServerTarget !== null}
+        variant="danger"
+        title="Delete probe"
+        message={`Delete probe "${deleteServerTarget?.name ?? ''}"? Its check history is removed with it.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Probe deleted"
+        onConfirm={() => serverDeleteMutation.mutateAsync(deleteServerTarget!.id)}
+        onClose={() => setDeleteServerTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={deleteDeviceTarget !== null}
+        variant="danger"
+        title="Delete device probe"
+        message={`Delete device probe "${deleteDeviceTarget?.name ?? ''}"? Its check history is removed with it.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Probe deleted"
+        onConfirm={() => deviceDeleteMutation.mutateAsync({ deviceId: deleteDeviceTarget!.deviceId, probeId: deleteDeviceTarget!.probeId })}
+        onClose={() => setDeleteDeviceTarget(null)}
+      />
 
       {/* Server probe modal */}
       {editingServer && (

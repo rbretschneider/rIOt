@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { DeviceProbeWithResult, DeviceProbeResult } from '../types/models'
 import DeviceProbeModal, { emptyDeviceProbe, type DeviceProbeForm } from '../components/DeviceProbeModal'
+import { ConfirmDialog } from '../components/ui'
 
 export default function DeviceProbes() {
   const { id } = useParams<{ id: string }>()
@@ -25,6 +26,7 @@ export default function DeviceProbes() {
   const [editing, setEditing] = useState<DeviceProbeForm | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [viewingResults, setViewingResults] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null)
 
   const { data: probeResults = [] } = useQuery({
     queryKey: ['device-probe-results', id, viewingResults],
@@ -165,7 +167,7 @@ export default function DeviceProbes() {
                     Edit
                   </button>
                   <button
-                    onClick={() => { if (confirm(`Delete probe "${probe.name}"?`)) deleteMutation.mutate(probe.id) }}
+                    onClick={() => setDeleteTarget({ id: probe.id, name: probe.name })}
                     className="px-2 py-1 text-xs text-gray-500 hover:text-red-400 border border-gray-700 hover:border-red-800 rounded transition-colors"
                   >
                     Delete
@@ -225,6 +227,18 @@ export default function DeviceProbes() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        variant="danger"
+        title="Delete probe"
+        message={`Delete probe "${deleteTarget?.name ?? ''}"? Its check history is removed with it.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Probe deleted"
+        onConfirm={() => deleteMutation.mutateAsync(deleteTarget!.id)}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       {/* Edit/Create Modal */}
       {editing && (
