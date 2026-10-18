@@ -9,6 +9,21 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ## [Unreleased]
 
+### Security
+
+- [HARDEN-002] The Go profiler is no longer served on the main listener: `/debug/pprof` and `/debug/pprof/*` now return `404`. Profiling is opt-in through the new `RIOT_PPROF_ADDR` environment variable, which starts a separate listener on a literal loopback IP and port (hostnames and non-loopback addresses are rejected and logged, and never stop the server starting). In Docker, reach it with `docker exec`. See [Profiling (pprof)](README.md#profiling-pprof). Anyone who had `/debug/pprof` bookmarked on port 7331 must switch to `RIOT_PPROF_ADDR`.
+- [HARDEN-002] Every response now carries security headers: a `Content-Security-Policy` (including `form-action 'self'` and `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`, plus `Strict-Transport-Security: max-age=31536000` on HTTPS requests (decided by the same rule as the session cookie's `Secure` flag). **The dashboard can no longer be embedded in an iframe.** Embedded static assets now carry an explicit `Content-Type`.
+- [HARDEN-002] Notification-channel secrets are write-only. List, create and update responses return `[rIOt-redacted]` in place of every secret value (SMTP password, bot tokens, webhook and webhook-header values, ntfy token and topic, Pushover keys, Gotify token) and of credentials embedded in any channel URL. Editing a channel without retyping a secret keeps it; the editor shows "Configured (unchanged)" and offers **Clear** for the ntfy token and SMTP password. `PUT` to a channel that does not exist now returns `404` instead of silently succeeding. Secrets are also scrubbed from test-send errors, `notification_log.error_msg` and server logs. This does not protect against someone who can edit channels, or secrets at rest. Rows written before this change may still contain leaked text until retention removes them.
+- [HARDEN-002] The device registration key is now compared in constant time. Behaviour and the `401` response are unchanged.
+
+### Changed
+
+- [HARDEN-002] `GET /health` now returns `503` (same body shape, `"status":"degraded"`) when the database is unreachable, instead of `200`. A new `GET /readyz` returns `200` only when the database is reachable and migrations have completed, otherwise `503`. Both answer within about 3 seconds even if the database hangs, and neither is blocked by the setup guard.
+
+### Removed
+
+- [HARDEN-002] The unused notification retry queue (`internal/resilient/retry_queue.go`) and the README claims of automatic notification retry. Failed notifications were never retried; they are logged as `failed`.
+
 ### Added
 
 - [REBOOT-ETA-001] Estimated-reboot-time hover tooltip on the Fleet Overview page. A device that is pending a reboot now shows, on hover, when that reboot is estimated to happen: the next start of the OS-patch maintenance window, as an absolute UTC time (for example `Est. reboot: 2026-10-19 02:00 UTC`). The tooltip appears in two places with byte-identical text: the existing **reboot required** badge in the Pending OS Patches panel, and a new small amber reboot glyph (`↻`) beside the pending-update count in the main device grid. Nothing already in the grid row was removed or changed. The text is always labelled an estimate, not a guarantee, and names what it depends on: reboot-class gating, the cooldown, and the device's `allow_reboot` / `hold_reboot_class` settings. It degrades honestly rather than inventing a time: window mode with no computable start, `disabled` mode, and no configured window show no time; `anytime` mode shows next-patch-run wording with no clock time; a device whose agent reports `allow_reboot: false` shows "Manual reboot required" with no time; a device whose agent does not report `allow_reboot` shows the time with the qualifier "if this device permits automatic reboot". See [Reboot ETA tooltip](README.md#reboot-eta-tooltip) in the README for the full matrix. No new dependency, no database migration, and no extra network request: both placements read the existing patch-status query.

@@ -24,6 +24,36 @@ func readRepoFile(t *testing.T, path string) string {
 	return string(raw)
 }
 
+// [HARDEN-002][AC-064] The README documents each behaviour change and the
+// CHANGELOG records it. This is the automated half of the AC; the prose is
+// also reviewed by hand.
+func TestHARDEN002_AC064_DocsUpdated(t *testing.T) {
+	readme := readRepoFile(t, readmePath)
+	for _, term := range []string{
+		"RIOT_PPROF_ADDR",
+		"docker exec",
+		"/readyz",
+		"503",
+		"write-only",
+		"frame-ancestors",
+		"form-action",
+		"Strict-Transport-Security",
+		"every port",
+		"edit channels",
+	} {
+		assert.Contains(t, readme, term, "the README must document %q", term)
+	}
+
+	changelog := readRepoFile(t, changelogPath)
+	assert.Contains(t, changelog, "[HARDEN-002]", "the CHANGELOG must record the story")
+	for _, behaviour := range []string{"pprof", "security headers", "write-only", "constant time", "/readyz", "retry queue"} {
+		assert.Contains(t, strings.ToLower(changelog), strings.ToLower(behaviour), "the CHANGELOG must cover %q", behaviour)
+	}
+
+	env := readRepoFile(t, "../../.env.example")
+	assert.Contains(t, env, "RIOT_PPROF_ADDR", ".env.example must document the new variable")
+}
+
 // [HARDEN-002][AC-054] I-2: the README must not describe notification retry
 // behaviour the code does not perform. Option B removed the claim.
 func TestHARDEN002_AC054_ReadmeHasNoRetryClaim(t *testing.T) {

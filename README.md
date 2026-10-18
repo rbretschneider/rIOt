@@ -150,7 +150,22 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_OIDC_CLIENT_SECRET` | — | Optional SSO: OAuth client secret — treat as a secret (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_OIDC_BUTTON_LABEL` | `Sign in with SSO` | Optional SSO: text shown on the login screen's SSO button (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_TRUSTED_PROXIES` | — (trust nobody) | Comma-separated CIDRs trusted to supply forwarding headers; set only when rIOt sits behind a reverse proxy (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_PPROF_ADDR` | — (disabled) | Loopback-only pprof listener, for example `127.0.0.1:6060`. Hostnames, non-loopback addresses and non-canonical ports are rejected (see [Profiling (pprof)](#profiling-pprof)) |
 | `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
+
+### Profiling (pprof)
+
+Profiling is off by default. `/debug/pprof` on the main listener (`:7331`) always returns `404`.
+
+Set `RIOT_PPROF_ADDR` to a literal loopback `ip:port` (for example `127.0.0.1:6060`) to start a separate pprof listener. Hostnames (including `localhost`), non-loopback addresses and non-canonical ports are rejected: the server logs an error and keeps running with pprof off.
+
+In Docker the container's loopback is not reachable through a port mapping, so reach it from inside the container:
+
+```bash
+docker exec riot-server wget -qO- http://127.0.0.1:6060/debug/pprof/heap > heap.pb.gz
+```
+
+Under `network_mode: host` the listener binds the host's loopback instead, so any local user can reach it.
 
 ---
 
@@ -974,6 +989,12 @@ Secondarily — and only relevant once the above is handled — leaving it unset
 
 Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment on `:7331` (where rIOt terminates its own TLS) — it already gets `Secure` correctly in that shape and needs no configuration. Never set it to `0.0.0.0/0`; that hands your rate-limit key and audit IP back to whoever can write the header.
 
+#### Security headers
+
+Every response carries a `Content-Security-Policy` (`script-src 'self'`, `form-action 'self'`, `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. Because of `frame-ancestors 'none'` and `X-Frame-Options: DENY`, the dashboard cannot be embedded in an iframe.
+
+`Strict-Transport-Security: max-age=31536000` is sent on direct TLS, and behind a trusted proxy that sends `X-Forwarded-Proto: https`. It is decided by the same rule as the `Secure` cookie attribute. Browsers ignore it for IP-address hosts. Once a browser has pinned a hostname, HSTS applies to every port on that hostname, and certificate errors become non-bypassable for a year.
+
 ### What SSO does not do
 
 - It does not replace first-run setup — the setup wizard always runs first on a fresh install, and the SSO button never appears (and the endpoints 404) until setup is complete, regardless of whether the `RIOT_OIDC_*` variables are set.
@@ -1025,6 +1046,8 @@ Alert delivery is supported via:
 
 Configure channels in **Settings > Notifications**. Each channel can be tested with a one-click test notification. All delivery attempts are logged in **Settings > Notifications > Delivery Log**.
 
+**Secrets are write-only.** The API never returns a stored secret: the SMTP `password`, ntfy `token` and `topic`, Telegram `bot_token`, Discord/Slack `webhook_url`, Pushover `api_token` and `user_key`, Gotify `app_token`, the webhook `url` and every webhook header value, plus credentials embedded in any URL (such as `https://user:pass@host`), come back as `[rIOt-redacted]`. A channel of an unrecognised type has every value redacted. The editor shows "Configured (unchanged)"; leave a field blank to keep the stored value, type a new value to replace it, or use **Clear** (ntfy token, SMTP password) to remove it. Test-send uses the stored value, and secrets are scrubbed from error text, logs and the delivery log. This protects against disclosure through responses, logs and caches. It does **not** protect against anyone who can edit channels, who could re-point a channel's destination and send the stored secret there, and it does not protect secrets at rest in the database or in backups.
+
 ---
 
 ## API
@@ -1035,7 +1058,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Server health check |
+| `GET` | `/health` | Server health check: `200` when the database is reachable, `503` when degraded |
+| `GET` | `/readyz` | Readiness: `200` when the database is reachable and migrations have completed, otherwise `503` |
 | `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `POST` | `/api/v1/auth/change-password` | Change admin password |
