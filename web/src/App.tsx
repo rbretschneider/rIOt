@@ -27,6 +27,8 @@ import Probes from './pages/Probes'
 import ProbeDetail from './pages/ProbeDetail'
 import LearnMore from './pages/LearnMore'
 import DeviceProbes from './pages/DeviceProbes'
+import HeaderClock from './components/HeaderClock'
+import { Button, Modal } from './components/ui'
 
 function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
   const location = useLocation()
@@ -41,16 +43,6 @@ function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
       {children}
     </Link>
   )
-}
-
-function UtcClock() {
-  const [time, setTime] = useState(() => new Date())
-  useEffect(() => {
-    const id = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const label = time.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'UTC' })
-  return <span className="text-xs text-gray-500 font-mono tabular-nums whitespace-nowrap">{label} UTC</span>
 }
 
 function AlertsBell() {
@@ -196,54 +188,43 @@ function UpdateBanner() {
           </div>
         </div>
       </div>
-      {showModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowModal(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-white">Server Update Available</h3>
-              <button onClick={() => setShowModal(false)} className="text-gray-500 hover:text-white transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-3">
-              <p className="text-sm text-gray-300">
-                <span className="text-gray-500">Current:</span> v{update.current_version}
-                <span className="text-gray-500 mx-2">&rarr;</span>
-                <span className="text-gray-500">Latest:</span> v{update.latest_version}
-              </p>
-              <div className="bg-gray-800 rounded p-3">
-                <p className="text-xs text-gray-400 mb-1">To update the server:</p>
-                <code className="text-sm text-emerald-400 select-all">
-                  docker compose pull && docker compose up -d
-                </code>
-                <p className="text-xs text-gray-500 mt-2">
-                  If the server runs on a managed device, you can also update it from the Containers view on that device's page.
-                </p>
-              </div>
-              {update.release_url && (
-                <a
-                  href={update.release_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm text-blue-400 hover:text-blue-300 inline-block"
-                >
-                  View release notes &rarr;
-                </a>
-              )}
-            </div>
-            <div className="flex justify-end mt-6">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white"
-              >
-                Close
-              </button>
-            </div>
+      <Modal
+        open={showModal}
+        onClose={() => setShowModal(false)}
+        title="Server Update Available"
+        footer={
+          <Button variant="secondary" onClick={() => setShowModal(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-text">
+            <span className="text-text-muted">Current:</span> v{update.current_version}
+            <span className="mx-2 text-text-muted">&rarr;</span>
+            <span className="text-text-muted">Latest:</span> v{update.latest_version}
+          </p>
+          <div className="rounded bg-raised-2 p-3">
+            <p className="mb-1 text-xs text-text-muted">To update the server:</p>
+            <code className="select-all text-sm text-success-fg">
+              docker compose pull && docker compose up -d
+            </code>
+            <p className="mt-2 text-xs text-text-muted">
+              If the server runs on a managed device, you can also update it from the Containers view on that device's page.
+            </p>
           </div>
+          {update.release_url && (
+            <a
+              href={update.release_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-sm text-link hover:text-info-fg"
+            >
+              View release notes &rarr;
+            </a>
+          )}
         </div>
-      )}
+      </Modal>
     </>
   )
 }
@@ -337,7 +318,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <UtcClock />
+              <HeaderClock />
               <AlertsBell />
               <div className="hidden sm:block">
                 <UserMenu logout={logout} />
