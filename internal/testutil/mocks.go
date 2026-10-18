@@ -3,6 +3,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -766,99 +767,286 @@ func (m *MockNotifyRepo) PurgeNotificationLog(_ context.Context, _ time.Time) (i
 
 // --- MockCommandRepo ---
 
+// MockCommandRepo is a faithful in-memory db.CommandRepository: it enforces the
+// same guards as the SQL (alias-aware status lists, device scope, claim and
+// conflict semantics) under one mutex, so concurrency tests are meaningful, and
+// it records every call so tests can assert "repository never called".
 type MockCommandRepo struct {
+	mu       sync.Mutex
 	Commands map[string]*models.Command
 	Outputs  map[string][]models.CommandOutput
-	Err      error
+	// Err, when set, is returned by every method.
+	Err    error
+	failOn map[string]error
+	calls  []string
 }
 
 func NewMockCommandRepo() *MockCommandRepo {
 	return &MockCommandRepo{Commands: make(map[string]*models.Command)}
 }
 
-func (m *MockCommandRepo) Create(_ context.Context, cmd *models.Command) error {
-	if m.Err != nil {
-		return m.Err
+// FailOn makes the named repository method return err (nil clears it).
+func (m *MockCommandRepo) FailOn(method string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failOn == nil {
+		m.failOn = map[string]error{}
 	}
-	copy := *cmd
-	m.Commands[cmd.ID] = &copy
-	return nil
+	if err == nil {
+		delete(m.failOn, method)
+		return
+	}
+	m.failOn[method] = err
 }
 
-func (m *MockCommandRepo) UpdateStatus(_ context.Context, id, status, resultMsg string) error {
-	if m.Err != nil {
-		return m.Err
-	}
-	if cmd, ok := m.Commands[id]; ok {
-		cmd.Status = status
-		cmd.ResultMsg = resultMsg
-	}
-	return nil
+// Calls returns the names of the repository methods called so far, in order.
+func (m *MockCommandRepo) Calls() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, len(m.calls))
+	copy(out, m.calls)
+	return out
 }
 
-func (m *MockCommandRepo) UpdateCommandResult(_ context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error {
-	if m.Err != nil {
-		return m.Err
-	}
-	if cmd, ok := m.Commands[id]; ok {
-		cmd.Status = status
-		cmd.ResultMsg = resultMsg
-		cmd.DurationMs = durationMs
-		cmd.ExitCode = exitCode
-	}
-	return nil
-}
-
-func (m *MockCommandRepo) ListPending(_ context.Context, deviceID string) ([]models.Command, error) {
-	if m.Err != nil {
-		return nil, m.Err
-	}
-	var result []models.Command
-	for _, cmd := range m.Commands {
-		if cmd.DeviceID == deviceID && (cmd.Status == "pending" || cmd.Status == "queued") {
-			result = append(result, *cmd)
+// CallCount returns how many times the named method was called.
+func (m *MockCommandRepo) CallCount(method string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, c := range m.calls {
+		if c == method {
+			n++
 		}
 	}
-	return result, nil
+	return n
+}
+
+// Get returns a normalized copy of a stored command (test helper; not recorded).
+func (m *MockCommandRepo) Get(id string) (models.Command, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.Commands[id]
+	if !ok {
+		return models.Command{}, false
+	}
+	return copyCommand(c), true
+}
+
+// begin records the call and returns the injected failure, if any. The caller
+// holds m.mu.
+func (m *MockCommandRepo) begin(method string) error {
+	m.calls = append(m.calls, method)
+	if m.Err != nil {
+		return m.Err
+	}
+	return m.failOn[method]
+}
+
+func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func copyTime(p *time.Time) *time.Time {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func copyInt64(p *int64) *int64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// copyCommand returns a normalized deep-enough copy (pointers and slices are
+// duplicated so callers cannot mutate the stored row).
+func copyCommand(c *models.Command) models.Command {
+	cp := *c
+	cp.Progress = copyInt(c.Progress)
+	cp.PolicyID = copyInt(c.PolicyID)
+	cp.ExitCode = copyInt(c.ExitCode)
+	cp.DurationMs = copyInt64(c.DurationMs)
+	cp.DeadlineAt = copyTime(c.DeadlineAt)
+	cp.DispatchedAt = copyTime(c.DispatchedAt)
+	cp.AcknowledgedAt = copyTime(c.AcknowledgedAt)
+	cp.StartedAt = copyTime(c.StartedAt)
+	cp.VerifyingAt = copyTime(c.VerifyingAt)
+	cp.FinishedAt = copyTime(c.FinishedAt)
+	if c.TargetKeys != nil {
+		cp.TargetKeys = append([]string(nil), c.TargetKeys...)
+	}
+	cp.Normalize()
+	return cp
+}
+
+func rawStatusIn(raw string, states []models.CommandState) bool {
+	for _, s := range states {
+		if string(s) == raw {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	mockActiveStates   = models.ExpandAliases(models.ActiveStates()...)
+	mockQueuedStates   = []models.CommandState{models.CommandQueued, models.LegacyPending}
+	mockInflightStates = []models.CommandState{
+		models.CommandDispatched, models.LegacySent, models.CommandAcknowledged,
+		models.CommandRunning, models.CommandVerifying,
+	}
+)
+
+func keysOverlap(a, b []string) bool {
+	for _, x := range a {
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sortCommands(cmds []models.Command, less func(a, b models.Command) bool) {
+	sort.SliceStable(cmds, func(i, j int) bool {
+		if less(cmds[i], cmds[j]) {
+			return true
+		}
+		if less(cmds[j], cmds[i]) {
+			return false
+		}
+		return cmds[i].ID < cmds[j].ID
+	})
+}
+
+func (m *MockCommandRepo) CreateIfNoConflict(_ context.Context, cmd *models.Command) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("CreateIfNoConflict"); err != nil {
+		return nil, err
+	}
+	keys := models.NormalizeTargetKeys(cmd.TargetKeys...)
+	if len(keys) > 0 {
+		var holder *models.Command
+		for _, c := range m.Commands {
+			if c.DeviceID != cmd.DeviceID || !rawStatusIn(c.Status, mockActiveStates) || !keysOverlap(c.TargetKeys, keys) {
+				continue
+			}
+			if holder == nil || c.CreatedAt.Before(holder.CreatedAt) || (c.CreatedAt.Equal(holder.CreatedAt) && c.ID < holder.ID) {
+				holder = c
+			}
+		}
+		if holder != nil {
+			existing := copyCommand(holder)
+			return &existing, nil
+		}
+	}
+	stored := *cmd
+	if stored.Status == "" {
+		stored.Status = string(models.CommandQueued)
+	}
+	if stored.Origin == "" {
+		stored.Origin = models.OriginUser
+	}
+	if stored.CreatedAt.IsZero() {
+		stored.CreatedAt = time.Now().UTC()
+	}
+	if stored.UpdatedAt.IsZero() {
+		stored.UpdatedAt = stored.CreatedAt
+	}
+	stored.TargetKeys = keys
+	m.Commands[stored.ID] = &stored
+	cmd.Status = stored.Status
+	cmd.Origin = stored.Origin
+	cmd.CreatedAt = stored.CreatedAt
+	cmd.UpdatedAt = stored.UpdatedAt
+	cmd.TargetKeys = keys
+	return nil, nil
+}
+
+func (m *MockCommandRepo) GetByID(_ context.Context, id string) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("GetByID"); err != nil {
+		return nil, err
+	}
+	c, ok := m.Commands[id]
+	if !ok {
+		return nil, db.ErrCommandNotFound
+	}
+	cp := copyCommand(c)
+	return &cp, nil
+}
+
+func (m *MockCommandRepo) GetForDevice(_ context.Context, id, deviceID string) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("GetForDevice"); err != nil {
+		return nil, err
+	}
+	c, ok := m.Commands[id]
+	if !ok || c.DeviceID != deviceID {
+		return nil, db.ErrCommandNotFound
+	}
+	cp := copyCommand(c)
+	return &cp, nil
 }
 
 func (m *MockCommandRepo) ListByDevice(_ context.Context, deviceID string, limit int) ([]models.Command, error) {
-	if m.Err != nil {
-		return nil, m.Err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListByDevice"); err != nil {
+		return nil, err
 	}
 	var result []models.Command
-	for _, cmd := range m.Commands {
-		if cmd.DeviceID == deviceID {
-			result = append(result, *cmd)
+	for _, c := range m.Commands {
+		if c.DeviceID == deviceID {
+			result = append(result, copyCommand(c))
 		}
 	}
+	sortCommands(result, func(a, b models.Command) bool { return a.CreatedAt.After(b.CreatedAt) })
 	if limit > 0 && len(result) > limit {
 		result = result[:limit]
 	}
 	return result, nil
 }
 
-func (m *MockCommandRepo) ListByDeviceFiltered(_ context.Context, deviceID string, limit, offset int, statuses []string, action string) ([]models.Command, error) {
-	if m.Err != nil {
-		return nil, m.Err
+func (m *MockCommandRepo) ListByDeviceFiltered(_ context.Context, deviceID string, limit, offset int, statuses []string, action, targetKey string) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListByDeviceFiltered"); err != nil {
+		return nil, err
 	}
 	statusSet := make(map[string]bool)
 	for _, s := range statuses {
 		statusSet[s] = true
 	}
 	var result []models.Command
-	for _, cmd := range m.Commands {
-		if cmd.DeviceID != deviceID {
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID {
 			continue
 		}
-		if len(statusSet) > 0 && !statusSet[cmd.Status] {
+		if len(statusSet) > 0 && !statusSet[c.Status] {
 			continue
 		}
-		if action != "" && cmd.Action != action {
+		if action != "" && c.Action != action {
 			continue
 		}
-		result = append(result, *cmd)
+		if targetKey != "" && !keysOverlap(c.TargetKeys, []string{targetKey}) {
+			continue
+		}
+		result = append(result, copyCommand(c))
 	}
+	sortCommands(result, func(a, b models.Command) bool { return a.CreatedAt.After(b.CreatedAt) })
 	if offset > 0 {
 		if offset >= len(result) {
 			return []models.Command{}, nil
@@ -871,9 +1059,203 @@ func (m *MockCommandRepo) ListByDeviceFiltered(_ context.Context, deviceID strin
 	return result, nil
 }
 
+func (m *MockCommandRepo) ListActive(_ context.Context, deviceID, targetKey string) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListActive"); err != nil {
+		return nil, err
+	}
+	result := []models.Command{}
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID || !rawStatusIn(c.Status, mockActiveStates) {
+			continue
+		}
+		if targetKey != "" && !keysOverlap(c.TargetKeys, []string{targetKey}) {
+			continue
+		}
+		result = append(result, copyCommand(c))
+	}
+	sortCommands(result, func(a, b models.Command) bool { return a.CreatedAt.Before(b.CreatedAt) })
+	return result, nil
+}
+
+// claimLocked moves a queued, unexpired row to dispatched. The caller holds m.mu.
+func (m *MockCommandRepo) claimLocked(c *models.Command, now time.Time) bool {
+	if !rawStatusIn(c.Status, mockQueuedStates) || !c.ExpiresAt.After(now) {
+		return false
+	}
+	deadline := now.Add(time.Duration(c.ExecDeadlineS) * time.Second)
+	c.Status = string(models.CommandDispatched)
+	c.DispatchedAt = &now
+	c.DeadlineAt = &deadline
+	c.UpdatedAt = now
+	return true
+}
+
+func (m *MockCommandRepo) ClaimQueued(_ context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ClaimQueued"); err != nil {
+		return nil, err
+	}
+	var candidates []*models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID == deviceID && rawStatusIn(c.Status, mockQueuedStates) && c.ExpiresAt.After(now) {
+			candidates = append(candidates, c)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].CreatedAt.Equal(candidates[j].CreatedAt) {
+			return candidates[i].ID < candidates[j].ID
+		}
+		return candidates[i].CreatedAt.Before(candidates[j].CreatedAt)
+	})
+	claimed := []models.Command{}
+	for _, c := range candidates {
+		if len(claimed) >= limit {
+			break
+		}
+		if m.claimLocked(c, now) {
+			claimed = append(claimed, copyCommand(c))
+		}
+	}
+	return claimed, nil
+}
+
+func (m *MockCommandRepo) ClaimByID(_ context.Context, id string, now time.Time) (*models.Command, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ClaimByID"); err != nil {
+		return nil, false, err
+	}
+	c, ok := m.Commands[id]
+	if !ok || !m.claimLocked(c, now) {
+		return nil, false, nil
+	}
+	cp := copyCommand(c)
+	return &cp, true, nil
+}
+
+func (m *MockCommandRepo) Transition(_ context.Context, t models.CommandTransition) (*models.Command, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("Transition"); err != nil {
+		return nil, false, err
+	}
+	guard := t.GuardStates()
+	if len(guard) == 0 || t.Now.IsZero() {
+		return nil, false, nil
+	}
+	c, ok := m.Commands[t.ID]
+	if !ok || (t.DeviceID != "" && c.DeviceID != t.DeviceID) || !rawStatusIn(c.Status, guard) {
+		return nil, false, nil
+	}
+	to := t.To.Canonical()
+	now := t.Now
+	c.Status = string(to)
+	c.UpdatedAt = now
+	if t.Step != nil {
+		c.Step = *t.Step
+	}
+	if t.ProgressSet {
+		c.Progress = copyInt(t.Progress)
+	}
+	if t.ResultMsg != nil {
+		c.ResultMsg = *t.ResultMsg
+	}
+	if t.FailureStep != nil {
+		c.FailureStep = *t.FailureStep
+	}
+	if t.StderrTail != nil {
+		c.StderrTail = *t.StderrTail
+	}
+	if t.ExitCode != nil {
+		c.ExitCode = copyInt(t.ExitCode)
+	}
+	if t.DurationMs != nil {
+		c.DurationMs = copyInt64(t.DurationMs)
+	}
+	switch to {
+	case models.CommandAcknowledged:
+		c.AcknowledgedAt = &now
+	case models.CommandRunning:
+		if c.StartedAt == nil {
+			c.StartedAt = &now
+		}
+	case models.CommandVerifying:
+		if c.StartedAt == nil {
+			c.StartedAt = &now
+		}
+		c.VerifyingAt = &now
+	case models.CommandSucceeded, models.CommandFailed, models.CommandTimedOut,
+		models.CommandCancelled, models.CommandExpired:
+		c.FinishedAt = &now
+	case models.CommandQueued:
+		c.DispatchedAt = nil
+		c.DeadlineAt = nil
+		c.SendAmbiguous = true
+	case models.CommandDispatched:
+		deadline := now.Add(time.Duration(c.ExecDeadlineS) * time.Second)
+		c.DispatchedAt = &now
+		c.DeadlineAt = &deadline
+	}
+	if t.Actor == models.ActorAgent {
+		if c.DispatchedAt == nil {
+			c.DispatchedAt = &now
+		}
+		if c.DeadlineAt == nil {
+			deadline := now.Add(time.Duration(c.ExecDeadlineS) * time.Second)
+			c.DeadlineAt = &deadline
+		}
+	}
+	cp := copyCommand(c)
+	return &cp, true, nil
+}
+
+func (m *MockCommandRepo) ListExpiredQueued(_ context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListExpiredQueued"); err != nil {
+		return nil, err
+	}
+	result := []models.Command{}
+	for _, c := range m.Commands {
+		if (deviceID == "" || c.DeviceID == deviceID) && rawStatusIn(c.Status, mockQueuedStates) && !c.ExpiresAt.After(now) {
+			result = append(result, copyCommand(c))
+		}
+	}
+	sortCommands(result, func(a, b models.Command) bool { return a.ExpiresAt.Before(b.ExpiresAt) })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (m *MockCommandRepo) ListOverdue(_ context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListOverdue"); err != nil {
+		return nil, err
+	}
+	result := []models.Command{}
+	for _, c := range m.Commands {
+		if (deviceID == "" || c.DeviceID == deviceID) && rawStatusIn(c.Status, mockInflightStates) &&
+			c.DeadlineAt != nil && !c.DeadlineAt.After(now) {
+			result = append(result, copyCommand(c))
+		}
+	}
+	sortCommands(result, func(a, b models.Command) bool { return a.DeadlineAt.Before(*b.DeadlineAt) })
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
 func (m *MockCommandRepo) SaveCommandOutput(_ context.Context, output *models.CommandOutput) error {
-	if m.Err != nil {
-		return m.Err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("SaveCommandOutput"); err != nil {
+		return err
 	}
 	if m.Outputs == nil {
 		m.Outputs = make(map[string][]models.CommandOutput)
@@ -885,8 +1267,10 @@ func (m *MockCommandRepo) SaveCommandOutput(_ context.Context, output *models.Co
 }
 
 func (m *MockCommandRepo) GetCommandOutput(_ context.Context, commandID string) ([]models.CommandOutput, error) {
-	if m.Err != nil {
-		return nil, m.Err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("GetCommandOutput"); err != nil {
+		return nil, err
 	}
 	if m.Outputs == nil {
 		return nil, nil
@@ -894,16 +1278,60 @@ func (m *MockCommandRepo) GetCommandOutput(_ context.Context, commandID string) 
 	return m.Outputs[commandID], nil
 }
 
-func (m *MockCommandRepo) GetByID(_ context.Context, id string) (*models.Command, error) {
-	if m.Err != nil {
-		return nil, m.Err
+// Transitional methods (removed with the unguarded dispatch paths).
+
+func (m *MockCommandRepo) Create(_ context.Context, cmd *models.Command) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("Create"); err != nil {
+		return err
 	}
-	cmd, ok := m.Commands[id]
-	if !ok {
-		return nil, fmt.Errorf("not found")
+	stored := *cmd
+	m.Commands[cmd.ID] = &stored
+	return nil
+}
+
+func (m *MockCommandRepo) UpdateStatus(_ context.Context, id, status, resultMsg string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("UpdateStatus"); err != nil {
+		return err
 	}
-	copy := *cmd
-	return &copy, nil
+	if cmd, ok := m.Commands[id]; ok {
+		cmd.Status = status
+		cmd.ResultMsg = resultMsg
+	}
+	return nil
+}
+
+func (m *MockCommandRepo) UpdateCommandResult(_ context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("UpdateCommandResult"); err != nil {
+		return err
+	}
+	if cmd, ok := m.Commands[id]; ok {
+		cmd.Status = status
+		cmd.ResultMsg = resultMsg
+		cmd.DurationMs = durationMs
+		cmd.ExitCode = exitCode
+	}
+	return nil
+}
+
+func (m *MockCommandRepo) ListPending(_ context.Context, deviceID string) ([]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("ListPending"); err != nil {
+		return nil, err
+	}
+	var result []models.Command
+	for _, cmd := range m.Commands {
+		if cmd.DeviceID == deviceID && (cmd.Status == "pending" || cmd.Status == "queued") {
+			result = append(result, *cmd)
+		}
+	}
+	return result, nil
 }
 
 // --- MockProbeRepo ---
@@ -1463,6 +1891,47 @@ func (m *MockAutoUpdateRepo) Delete(_ context.Context, deviceID, target string) 
 	return nil
 }
 
+// policyByID returns a pointer into the stored policy slice, or nil.
+func (m *MockAutoUpdateRepo) policyByID(id int) *models.AutoUpdatePolicy {
+	for deviceID := range m.Policies {
+		for i := range m.Policies[deviceID] {
+			if m.Policies[deviceID][i].ID == id {
+				return &m.Policies[deviceID][i]
+			}
+		}
+	}
+	return nil
+}
+
+// RecordSuccess mirrors AutoUpdateRepo.RecordSuccess: the cooldown starts at
+// `at` and the failure backoff resets.
+func (m *MockAutoUpdateRepo) RecordSuccess(_ context.Context, id int, at time.Time) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	if p := m.policyByID(id); p != nil {
+		t := at
+		p.LastTriggeredAt = &t
+		p.ConsecutiveFailures = 0
+		p.LastFailureAt = nil
+	}
+	return nil
+}
+
+// RecordFailure mirrors AutoUpdateRepo.RecordFailure: the failure count grows,
+// last_triggered_at is untouched.
+func (m *MockAutoUpdateRepo) RecordFailure(_ context.Context, id int, at time.Time) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	if p := m.policyByID(id); p != nil {
+		t := at
+		p.ConsecutiveFailures++
+		p.LastFailureAt = &t
+	}
+	return nil
+}
+
 func (m *MockAutoUpdateRepo) SetLastTriggered(_ context.Context, id int) error {
 	return m.Err
 }
@@ -1783,6 +2252,106 @@ func (m *MockExternalIdentityRepo) Get(issuer, subject string) *MockExternalIden
 	}
 	copy := *r
 	return &copy
+}
+
+// --- Fakes for the commands.Service collaborators ---
+
+// FakeSentCommand is one payload FakeAgents delivered.
+type FakeSentCommand struct {
+	DeviceID string
+	Payload  models.CommandPayload
+}
+
+// FakeAgents is a commands.AgentSender. Devices are disconnected unless listed
+// in Connected; SendErr makes every delivery to a connected device fail.
+type FakeAgents struct {
+	mu        sync.Mutex
+	Connected map[string]bool
+	SendErr   error
+	sent      []FakeSentCommand
+}
+
+func NewFakeAgents(connected ...string) *FakeAgents {
+	f := &FakeAgents{Connected: map[string]bool{}}
+	for _, id := range connected {
+		f.Connected[id] = true
+	}
+	return f
+}
+
+func (f *FakeAgents) IsConnected(deviceID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Connected[deviceID]
+}
+
+func (f *FakeAgents) SendCommand(deviceID string, payload models.CommandPayload) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.Connected[deviceID] {
+		return false, nil
+	}
+	if f.SendErr != nil {
+		return false, f.SendErr
+	}
+	f.sent = append(f.sent, FakeSentCommand{DeviceID: deviceID, Payload: payload})
+	return true, nil
+}
+
+// Sent returns the payloads delivered so far.
+func (f *FakeAgents) Sent() []FakeSentCommand {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]FakeSentCommand, len(f.sent))
+	copy(out, f.sent)
+	return out
+}
+
+// FakeBroadcaster is a commands.Broadcaster that records every update.
+type FakeBroadcaster struct {
+	mu      sync.Mutex
+	updates []models.CommandUpdate
+}
+
+func (f *FakeBroadcaster) BroadcastCommandUpdate(u models.CommandUpdate) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, u)
+}
+
+// Updates returns the recorded broadcasts in order.
+func (f *FakeBroadcaster) Updates() []models.CommandUpdate {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]models.CommandUpdate, len(f.updates))
+	copy(out, f.updates)
+	return out
+}
+
+// FakeCompletion is one recorded CommandCompleted call.
+type FakeCompletion struct {
+	DeviceID, Action, Status, Message string
+}
+
+// FakeCompletionEvents is a commands.CompletionEvents that records its calls.
+type FakeCompletionEvents struct {
+	mu    sync.Mutex
+	calls []FakeCompletion
+}
+
+func (f *FakeCompletionEvents) CommandCompleted(_ context.Context, deviceID, action, status, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, FakeCompletion{DeviceID: deviceID, Action: action, Status: status, Message: message})
+}
+
+// Calls returns the recorded completions in order.
+func (f *FakeCompletionEvents) Calls() []FakeCompletion {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]FakeCompletion, len(f.calls))
+	copy(out, f.calls)
+	return out
 }
 
 // Compile-time interface conformance checks.

@@ -116,16 +116,47 @@ type NotifyRepository interface {
 }
 
 // CommandRepository defines the interface for command database operations.
+//
+// Every status change is a guarded transition (models.CommandTransition): the
+// database enforces the lifecycle state machine with
+// UPDATE ... WHERE status IN (allowed sources). Methods that report "not
+// applied" return a nil command and applied=false rather than an error.
 type CommandRepository interface {
+	// CreateIfNoConflict inserts cmd unless a non-terminal command on the same
+	// device already holds one of its target keys; a non-nil result is the
+	// existing holder and no row is created.
+	CreateIfNoConflict(ctx context.Context, cmd *models.Command) (conflict *models.Command, err error)
+	// GetByID returns ErrCommandNotFound when there is no such command.
+	GetByID(ctx context.Context, id string) (*models.Command, error)
+	// GetForDevice is GetByID scoped to a device in SQL: a foreign command reads
+	// like a missing one (ErrCommandNotFound).
+	GetForDevice(ctx context.Context, id, deviceID string) (*models.Command, error)
+	ListByDevice(ctx context.Context, deviceID string, limit int) ([]models.Command, error)
+	// ListByDeviceFiltered filters by status (already alias-expanded, bound as an
+	// array), action and target key (bound).
+	ListByDeviceFiltered(ctx context.Context, deviceID string, limit, offset int, statuses []string, action, targetKey string) ([]models.Command, error)
+	// ListActive returns the device's non-terminal commands, optionally only
+	// those holding targetKey.
+	ListActive(ctx context.Context, deviceID, targetKey string) ([]models.Command, error)
+	// ClaimQueued atomically moves up to limit queued, unexpired commands of the
+	// device to dispatched (heartbeat delivery), ordered by created_at.
+	ClaimQueued(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)
+	// ClaimByID atomically moves one queued, unexpired command to dispatched.
+	ClaimByID(ctx context.Context, id string, now time.Time) (cmd *models.Command, claimed bool, err error)
+	// Transition applies one guarded state change.
+	Transition(ctx context.Context, t models.CommandTransition) (cmd *models.Command, applied bool, err error)
+	// ListExpiredQueued returns queued commands past expires_at; deviceID "" means all.
+	ListExpiredQueued(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)
+	// ListOverdue returns in-flight commands past deadline_at; deviceID "" means all.
+	ListOverdue(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)
+	SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error
+	GetCommandOutput(ctx context.Context, commandID string) ([]models.CommandOutput, error)
+
+	// Transitional: removed once every caller goes through commands.Service.
 	Create(ctx context.Context, cmd *models.Command) error
 	UpdateStatus(ctx context.Context, id, status, resultMsg string) error
 	UpdateCommandResult(ctx context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error
-	ListByDevice(ctx context.Context, deviceID string, limit int) ([]models.Command, error)
-	ListByDeviceFiltered(ctx context.Context, deviceID string, limit, offset int, statuses []string, action string) ([]models.Command, error)
 	ListPending(ctx context.Context, deviceID string) ([]models.Command, error)
-	GetByID(ctx context.Context, id string) (*models.Command, error)
-	SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error
-	GetCommandOutput(ctx context.Context, commandID string) ([]models.CommandOutput, error)
 }
 
 // ProbeRepository defines the interface for probe database operations.
@@ -214,6 +245,13 @@ type AutoUpdateRepository interface {
 	ListByDevice(ctx context.Context, deviceID string) ([]models.AutoUpdatePolicy, error)
 	Upsert(ctx context.Context, p *models.AutoUpdatePolicy) error
 	Delete(ctx context.Context, deviceID, target string) error
+	// RecordSuccess starts the cooldown at `at` and resets the failure backoff
+	// (AD-007). RecordFailure increments the consecutive-failure count and
+	// stamps last_failure_at.
+	RecordSuccess(ctx context.Context, id int, at time.Time) error
+	RecordFailure(ctx context.Context, id int, at time.Time) error
+
+	// Transitional: removed with the unguarded dispatch paths.
 	SetLastTriggered(ctx context.Context, id int) error
 }
 

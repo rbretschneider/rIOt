@@ -104,7 +104,7 @@ func TestListDeviceCommands_WithStatusFilter(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&commands))
 	assert.Len(t, commands, 2)
 	for _, c := range commands {
-		assert.Contains(t, []string{"success", "error"}, c.Status)
+		assert.Contains(t, []string{"succeeded", "failed"}, c.Status)
 	}
 }
 
@@ -285,23 +285,23 @@ func TestMockCommandRepo_ListByDeviceFiltered(t *testing.T) {
 	repo.Commands["cmd-4"] = &models.Command{ID: "cmd-4", DeviceID: "dev-2", Action: "os_update", Status: "success"}
 
 	// Filter by status
-	results, err := repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, []string{"success"}, "")
+	results, err := repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, []string{"success"}, "", "")
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
-	assert.Equal(t, "success", results[0].Status)
+	assert.Equal(t, "succeeded", results[0].Status)
 
 	// Filter by action
-	results, err = repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, nil, "os_update")
+	results, err = repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, nil, "os_update", "")
 	require.NoError(t, err)
 	assert.Len(t, results, 2)
 
 	// Filter by both
-	results, err = repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, []string{"success"}, "os_update")
+	results, err = repo.ListByDeviceFiltered(nil, "dev-1", 50, 0, []string{"success"}, "os_update", "")
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 
 	// Different device
-	results, err = repo.ListByDeviceFiltered(nil, "dev-2", 50, 0, nil, "")
+	results, err = repo.ListByDeviceFiltered(nil, "dev-2", 50, 0, nil, "", "")
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 }

@@ -188,7 +188,7 @@ func (h *Handlers) ListDeviceCommands(w http.ResponseWriter, r *http.Request) {
 	var commands []models.Command
 	var err error
 	if len(statuses) > 0 || action != "" || offset > 0 {
-		commands, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action)
+		commands, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action, "")
 	} else {
 		commands, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
 	}
