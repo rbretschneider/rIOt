@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -43,6 +45,44 @@ func TestDoctor_AllCollectors_IncludesGPU(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "[AC-011] allCollectors must contain 'gpu'")
+}
+
+// [HARDEN-002][AC-053] The doctor server check treats /health 503 (degraded
+// database) as a warning that names the status code, and 200 as a pass. It
+// reads only the status code, never the body.
+func TestHARDEN002_AC053_DoctorServerCheckHandles503(t *testing.T) {
+	serve := func(status int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/health" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			w.Write([]byte(`{"status":"degraded","database":false}`))
+		}))
+	}
+	run := func(srv *httptest.Server) string {
+		cfg := &Config{Server: ServerConfig{URL: srv.URL}}
+		return captureStdout(func() { checkServer(cfg) })
+	}
+
+	t.Run("503 warns with the status code and does not pass", func(t *testing.T) {
+		srv := serve(http.StatusServiceUnavailable)
+		defer srv.Close()
+		var out string
+		assert.NotPanics(t, func() { out = run(srv) }, "doctor must not panic on a 503")
+		assert.Contains(t, out, "Health endpoint returned 503", "a warning naming the status code is expected, got %q", out)
+		assert.NotContains(t, out, "Health endpoint returned 200", "503 must not be reported as a pass")
+		assert.NotContains(t, out, "\033[32m✓\033[0m Health endpoint", "503 must not use the pass marker")
+	})
+
+	t.Run("200 reports pass", func(t *testing.T) {
+		srv := serve(http.StatusOK)
+		defer srv.Close()
+		out := run(srv)
+		assert.Contains(t, out, "\033[32m✓\033[0m Health endpoint returned 200", "200 must be reported as a pass, got %q", out)
+	})
 }
 
 // captureStdout captures everything written to os.Stdout during fn().
