@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -301,6 +302,56 @@ func (c *HTTPClient) SendDeviceLogs(ctx context.Context, deviceID string, entrie
 		return fmt.Errorf("device logs push failed: %s", string(b))
 	}
 	return nil
+}
+
+// maxReportReplyBytes caps how much of a report response the agent reads.
+const maxReportReplyBytes = 1 << 20
+
+// ReportReply is the server's answer to a command report. Response is the
+// decoded JSON body when there was one; it is zero for a legacy server's
+// plain-text 404.
+type ReportReply struct {
+	StatusCode int
+	Response   models.ReportResponse
+}
+
+// PostCommandReport sends an ack, progress or final-result report for one
+// command over HTTP (AD-010, §6.3). Both IDs are path-escaped so a hostile
+// command ID cannot re-target the request (SEC C-7). The returned error covers
+// transport failures only; HTTP statuses are reported in the reply so the
+// caller can apply the outbox delivery table.
+func (c *HTTPClient) PostCommandReport(ctx context.Context, deviceID, commandID string, rep models.CommandReport) (*ReportReply, error) {
+	body, err := json.Marshal(rep)
+	if err != nil {
+		return nil, fmt.Errorf("encode command report: %w", err)
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/devices/%s/commands/%s/report",
+		c.baseURL, url.PathEscape(deviceID), url.PathEscape(commandID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-rIOt-Key", c.apiKey)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	reply := &ReportReply{StatusCode: resp.StatusCode}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxReportReplyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read command report reply: %w", err)
+	}
+	// A body that is not the expected JSON (a legacy server's 404 page, a
+	// captive portal) leaves Response zero: the outbox treats a 2xx that does
+	// not echo the command ID as undelivered.
+	if err := json.Unmarshal(raw, &reply.Response); err != nil {
+		reply.Response = models.ReportResponse{}
+	}
+	return reply, nil
 }
 
 func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *models.TelemetrySnapshot) error {
