@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { retryUnlessNotFound } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
+import DeviceQueryFallback from '../components/DeviceQueryFallback'
 import ComposeStackSection from '../components/ComposeStackSection'
 import CompactContainerTile from '../components/CompactContainerTile'
 import type { ContainerInfo } from '../types/models'
@@ -12,11 +14,12 @@ export default function DeviceContainers() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { wsConnected } = useDevices()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
     refetchInterval: wsConnected ? false : 15_000,
     enabled: !!id,
+    retry: retryUnlessNotFound,
   })
 
   const [containerSearch, setContainerSearch] = useState('')
@@ -26,8 +29,7 @@ export default function DeviceContainers() {
     onSuccess: () => { setTimeout(() => checkUpdatesMutation.reset(), 5000) },
   })
 
-  if (isLoading) return <div className="text-gray-500">Loading...</div>
-  if (!data) return <div className="text-gray-500">Device not found</div>
+  if (!data) return <DeviceQueryFallback isLoading={isLoading} error={error} onRetry={() => { void refetch() }} />
 
   const { device, latest_telemetry } = data
   const tel = latest_telemetry?.data

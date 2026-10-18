@@ -27,7 +27,8 @@ export interface RenderOptions {
 
 export function makeTestQueryClient(): QueryClient {
   return new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    // retryDelay 0: queries that set their own retry policy (device pages) still settle at once in tests.
+    defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: 0 }, mutations: { retry: false } },
   })
 }
 

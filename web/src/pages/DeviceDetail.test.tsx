@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import DeviceDetail from './DeviceDetail'
+import { ToastProvider } from '../components/ui'
 
 const mockGetDevice = vi.fn()
 const mockGetDeviceSummary = vi.fn()
@@ -30,9 +31,11 @@ function renderWithProviders() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/devices/dev-1']}>
+        <ToastProvider>
         <Routes>
           <Route path="/devices/:id" element={<DeviceDetail />} />
         </Routes>
+      </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -678,9 +681,11 @@ function renderExportDevice() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/devices/dev-1']}>
+        <ToastProvider>
         <Routes>
           <Route path="/devices/:id" element={<DeviceDetail />} />
         </Routes>
+      </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )

@@ -1,4 +1,5 @@
 import type { SecurityScoreResult } from '../types/models'
+import { focusRing } from './ui/focusRing'
 
 interface Props {
   score: SecurityScoreResult
@@ -24,9 +25,11 @@ export default function SecurityScoreGauge({ score, onClick, size = 64 }: Props)
   const { stroke, text } = scoreColor(score.grade)
 
   return (
+    <div className="flex flex-shrink-0 flex-col items-center gap-1">
     <button
       onClick={onClick}
-      className="relative flex-shrink-0 group cursor-pointer"
+      className={`relative flex-shrink-0 group cursor-pointer rounded-full ${focusRing}`}
+      aria-label={`Security score ${score.overall_score}, grade ${score.grade}. Open details`}
       title={`Security Score: ${score.overall_score}/100 (${score.grade})\nClick for details`}
       style={{ width: size, height: size }}
     >
@@ -61,5 +64,7 @@ export default function SecurityScoreGauge({ score, onClick, size = 64 }: Props)
       {/* Hover ring */}
       <div className="absolute inset-0 rounded-full border border-transparent group-hover:border-gray-600 transition-colors" />
     </button>
+    <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">Security score</span>
+    </div>
   )
 }

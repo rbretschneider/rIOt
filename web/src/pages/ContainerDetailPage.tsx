@@ -2,10 +2,13 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api } from '../api/client'
+import { retryUnlessNotFound } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { displayName } from '../utils/docker'
 import { ContainerDetailContent } from '../components/ContainerDetail'
+import DeviceQueryFallback from '../components/DeviceQueryFallback'
+import { EmptyState } from '../components/ui'
 import type { ContainerInfo } from '../types/models'
 
 export default function ContainerDetailPage() {
@@ -13,11 +16,12 @@ export default function ContainerDetailPage() {
   const navigate = useNavigate()
   const { wsConnected } = useDevices()
   const { isEnabled } = useFeatures()
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
     refetchInterval: wsConnected ? false : 15_000,
     enabled: !!id,
+    retry: retryUnlessNotFound,
   })
 
   // Keep a ref to the last successfully found container so that transient
@@ -41,20 +45,21 @@ export default function ContainerDetailPage() {
     }
   }, [containers, found, cid, id, navigate])
 
-  if (isLoading) return <div className="text-gray-500">Loading...</div>
-  if (!data) return <div className="text-gray-500">Device not found</div>
+  if (!data) return <DeviceQueryFallback isLoading={isLoading} error={error} onRetry={() => { void refetch() }} />
 
   const { device } = data
   const container = found ?? lastContainer.current
 
   if (!container) {
     return (
-      <div className="space-y-4">
-        <Link to={`/devices/${id}/containers`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to Containers
+      <EmptyState
+        title="Container not found"
+        description="This container no longer exists on the device, or the link is wrong."
+      >
+        <Link to={`/devices/${id}/containers`} className="mt-3 text-sm font-medium text-link hover:text-info-fg">
+          Back to Containers
         </Link>
-        <p className="text-gray-500">Container not found.</p>
-      </div>
+      </EmptyState>
     )
   }
 
