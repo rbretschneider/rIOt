@@ -77,3 +77,19 @@ describe('loading', () => {
     expect(screen.queryByText('Loading...')).toBeNull()
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased (both places)', () => {
+  it('renders the back link hostname in its reported case when Docker is unavailable', async () => {
+    vi.mocked(api.getDevice).mockResolvedValue(deviceResponse(false) as never)
+    renderPage()
+    const host = await screen.findByText('Web-01.lan')
+    expect(host.className).not.toContain('uppercase')
+  })
+
+  it('renders the header back link hostname in its reported case when Docker is available', async () => {
+    vi.mocked(api.getDevice).mockResolvedValue(deviceResponse(true) as never)
+    renderPage()
+    const host = await screen.findByText('Web-01.lan')
+    expect(host.className).not.toContain('uppercase')
+  })
+})

@@ -90,3 +90,12 @@ describe('[UIF AC-065] delete probe confirm names probe; cancel skips API', () =
     expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('HTTP 500')
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the back link hostname in its reported case', async () => {
+    renderPage()
+    const host = await screen.findByText('Web-01.lan')
+    expect(host.className).not.toContain('uppercase')
+    expect(host.textContent).toBe('Web-01.lan')
+  })
+})

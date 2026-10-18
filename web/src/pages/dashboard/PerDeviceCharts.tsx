@@ -117,7 +117,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
       data-testid={`device-chart-${series.deviceId}`}
     >
       <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white truncate uppercase tracking-wide">{series.hostname}</h3>
+        <h3 className="text-sm font-semibold text-white truncate tracking-wide">{series.hostname}</h3>
         {last && (
           <div className="flex items-center gap-3 text-[11px] tabular-nums">
             {METRICS.map(m => {

@@ -43,7 +43,7 @@ export default function Security() {
 
       {/* Overview Cards */}
       {overview && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-none xl:grid-flow-col xl:auto-cols-fr gap-4">
           <StatCard
             label="Failed Logins (24h)"
             value={overview.total_failed_logins}
@@ -245,7 +245,7 @@ function SortableSecurityTable({ devices, sortKey, sortDir, toggleSort, onShowMo
           {sorted.map(d => (
             <tr key={d.device_id} className="text-gray-300">
               <td className="px-4 py-3">
-                <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium uppercase">
+                <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium">
                   {d.hostname}
                 </Link>
               </td>

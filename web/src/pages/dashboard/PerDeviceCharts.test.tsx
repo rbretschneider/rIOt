@@ -143,3 +143,16 @@ describe('[AC-016] all-old-agent fleet renders zero net chart not error', () => 
     expect(screen.getByTestId('device-net-chart-dev-1')).toBeInTheDocument()
   })
 })
+
+// ---------------------------------------------------------------------------
+// UI-FOUNDATION-001
+// ---------------------------------------------------------------------------
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the card heading in the reported case with no uppercase class', () => {
+    render(<PerDeviceCharts series={[makeSeries({ hostname: 'Web-01.lan' })]} />)
+    const heading = screen.getByRole('heading', { name: 'Web-01.lan' })
+    expect(heading.textContent).toBe('Web-01.lan')
+    expect(heading.className).not.toContain('uppercase')
+  })
+})

@@ -469,3 +469,13 @@ describe('[UIF AC-137] Delete is a separated danger button', () => {
     expect(await screen.findByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
   })
 })
+
+describe('[UIF AC-122] hostname case preserved in h1', () => {
+  it('renders "Web-01.lan" exactly, with no uppercase class', async () => {
+    vi.mocked(api.getDevice).mockResolvedValue(deviceResponse({ hostname: 'Web-01.lan' }) as never)
+    renderPage()
+    const h1 = await screen.findByRole('heading', { level: 1 })
+    expect(h1.textContent).toBe('Web-01.lan')
+    expect(h1.className).not.toContain('uppercase')
+  })
+})

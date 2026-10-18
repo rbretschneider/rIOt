@@ -89,3 +89,12 @@ describe('[UIF AC-109] timestamps carry UTC label', () => {
     expect(stamp.tagName).toBe('TIME')
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the device hostname link in its reported case with no uppercase class', async () => {
+    renderWithProviders(<Alerts />)
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.textContent).toBe('Web-01.lan')
+    expect(link.className).not.toContain('uppercase')
+  })
+})

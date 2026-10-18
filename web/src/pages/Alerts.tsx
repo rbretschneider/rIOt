@@ -126,7 +126,7 @@ export default function Alerts() {
                     <td className="px-4 py-3"><SeverityBadge severity={e.severity} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {device ? (
-                        <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm uppercase">
+                        <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm">
                           {device.hostname}
                         </Link>
                       ) : (

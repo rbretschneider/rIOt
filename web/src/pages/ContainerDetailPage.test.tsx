@@ -380,3 +380,15 @@ describe('[UIF AC-121] container details still render', () => {
     expect(await screen.findByTestId('container-content')).toHaveTextContent('my-app')
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the breadcrumb hostname in its reported case with no uppercase class', async () => {
+    mockGetDevice.mockResolvedValue({
+      ...makeDeviceResponse([baseContainer]),
+      device: { ...baseDevice, hostname: 'Web-01.lan' },
+    })
+    renderAtPath('/devices/dev-1/containers/abc123')
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.className).not.toContain('uppercase')
+  })
+})

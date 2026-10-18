@@ -81,7 +81,7 @@ export default function DeviceProbes() {
       {/* Header */}
       <div>
         <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to <span className="uppercase">{device?.hostname ?? id}</span>
+          &larr; Back to <span>{device?.hostname ?? id}</span>
         </Link>
         <div className="flex items-center justify-between mt-2">
           <h1 className="text-2xl font-bold text-white">Device Probes</h1>

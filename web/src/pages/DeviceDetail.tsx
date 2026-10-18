@@ -244,7 +244,7 @@ export default function DeviceDetail() {
         {/* Left: name, status, summary menu, subtitle, navigation links */}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-white truncate uppercase">{device.hostname}</h1>
+            <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
             {/* Summary export dropdown */}
             <div className="relative" ref={summaryMenuRef}>
               <button

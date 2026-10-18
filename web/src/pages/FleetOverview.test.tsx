@@ -633,3 +633,29 @@ describe('[UIF AC-111] Last Seen is a RelativeTime with the absolute time on hov
     expect(time.textContent).toMatch(/^(just now|\d+m ago)$/)
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the hostname link in its reported case with no uppercase class', async () => {
+    vi.mocked(useDevices).mockReturnValueOnce({
+      data: [
+        {
+          id: 'dev-9',
+          hostname: 'Web-01.lan',
+          short_id: 'zzz999',
+          arch: 'amd64',
+          status: 'online',
+          agent_version: '2.0.5',
+          primary_ip: '10.0.0.9',
+          tags: [],
+          last_heartbeat: new Date().toISOString(),
+        },
+      ],
+      isLoading: false,
+      wsConnected: false,
+    } as never)
+    renderWithProviders()
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.textContent).toBe('Web-01.lan')
+    expect(link.className).not.toContain('uppercase')
+  })
+})
