@@ -1,4 +1,7 @@
 import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import { ApiError } from './errors'
+
+export { ApiError }
 
 const BASE = '/api/v1'
 
@@ -9,7 +12,7 @@ async function fetchJSON<T>(url: string): Promise<T> {
     throw new Error('Unauthorized')
   }
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    throw new ApiError(res.status, `HTTP ${res.status}: ${res.statusText}`)
   }
   return res.json()
 }
@@ -57,7 +60,7 @@ export const api = {
       window.location.reload()
       throw new Error('Unauthorized')
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
   },
 
   getSummary: () => fetchJSON<FleetSummary>(`${BASE}/summary`),
@@ -71,14 +74,14 @@ export const api = {
   acknowledgeEvent: async (id: number) => {
     const res = await fetch(`${BASE}/events/${id}/acknowledge`, { method: 'POST', credentials: 'same-origin' })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
   acknowledgeAllEvents: async () => {
     const res = await fetch(`${BASE}/events/acknowledge-all`, { method: 'POST', credentials: 'same-origin' })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -117,7 +120,7 @@ export const api = {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-      throw new Error(err.error || `HTTP ${res.status}`)
+      throw new ApiError(res.status, err.error || `HTTP ${res.status}`)
     }
     return res.json()
   },
@@ -145,7 +148,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(probe),
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -156,18 +159,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(probe),
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
   deleteProbe: async (id: number) => {
     const res = await fetch(`${BASE}/probes/${id}`, { method: 'DELETE', credentials: 'same-origin' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
   },
 
   runProbe: async (id: number): Promise<ProbeResult> => {
     const res = await fetch(`${BASE}/probes/${id}/run`, { method: 'POST', credentials: 'same-origin' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -225,7 +228,7 @@ export const api = {
       window.location.reload()
       throw new Error('Unauthorized')
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -246,7 +249,7 @@ export const api = {
       body: JSON.stringify({ location }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -258,7 +261,7 @@ export const api = {
       body: JSON.stringify({ tags }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -270,7 +273,7 @@ export const api = {
       body: JSON.stringify({ enabled }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -285,7 +288,7 @@ export const api = {
       body: JSON.stringify({ target, is_stack: isStack, compose_work_dir: composeWorkDir, enabled }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -295,7 +298,7 @@ export const api = {
       credentials: 'same-origin',
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -311,7 +314,7 @@ export const api = {
       body: JSON.stringify({ container_ids: containerIds }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -329,7 +332,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(probe),
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -340,7 +343,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(probe),
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -349,7 +352,7 @@ export const api = {
       method: 'DELETE',
       credentials: 'same-origin',
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
   },
 
   runDeviceProbe: async (deviceId: string, probeId: number) => {
@@ -357,7 +360,7 @@ export const api = {
       method: 'POST',
       credentials: 'same-origin',
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -372,7 +375,7 @@ export const api = {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-      throw new Error(err.error || `HTTP ${res.status}`)
+      throw new ApiError(res.status, err.error || `HTTP ${res.status}`)
     }
     return res.text()
   },
@@ -388,7 +391,7 @@ export const api = {
       window.location.reload()
       throw new Error('Unauthorized')
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
     return res.json()
   },
 
@@ -428,3 +431,6 @@ export const authApi = {
     }
   },
 }
+
+export type ApiClient = typeof api
+export type AuthClient = typeof authApi
