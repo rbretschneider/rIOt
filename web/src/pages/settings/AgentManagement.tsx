@@ -4,6 +4,7 @@ import { api } from '../../api/client'
 import { settingsApi } from '../../api/settings'
 import { useFeatures } from '../../hooks/useFeatures'
 import { isVersionOlder } from '../../utils/version'
+import { formatDuration } from '../../utils/format'
 import type { AutomationConfig, MaintenanceWindow } from '../../types/models'
 import { ConfirmDialog } from '../../components/ui'
 
@@ -188,16 +189,6 @@ function localTimeToUTC(hhmm: string): string {
   const d = new Date()
   d.setHours(h, m, 0, 0)
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  const mins = Math.round(seconds / 60)
-  if (mins < 60) return `${mins} min`
-  const hrs = mins / 60
-  if (hrs < 24) return `${hrs.toFixed(hrs % 1 === 0 ? 0 : 1)} hr`
-  const days = hrs / 24
-  return `${days.toFixed(days % 1 === 0 ? 0 : 1)} days`
 }
 
 function AutomationIntervals() {

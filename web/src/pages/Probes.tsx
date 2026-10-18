@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import type { DeviceProbeWithResultEnriched, ProbeWithResult } from '../types/models'
 import ProbeModal, { emptyProbe, probeToForm, getTarget, type ProbeForm } from '../components/ProbeModal'
 import DeviceProbeModal, { type DeviceProbeForm } from '../components/DeviceProbeModal'
-import { ConfirmDialog } from '../components/ui'
+import { ConfirmDialog, RelativeTime } from '../components/ui'
 
 export default function Probes() {
   const qc = useQueryClient()
@@ -199,7 +199,7 @@ export default function Probes() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs">
-                      {lr ? new Date(lr.created_at).toLocaleTimeString() : '—'}
+                      {lr ? <RelativeTime value={lr.created_at} /> : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">

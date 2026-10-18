@@ -377,3 +377,32 @@ describe('[UIF AC-030] alert rule edit modal and template picker are named dialo
     expect(screen.getByRole('dialog', { name: 'Create from Template' })).toBeInTheDocument()
   })
 })
+
+describe('[UIF AC-014] rule severity and cooldown use the shared label and duration formatters', () => {
+  beforeEach(() => {
+    vi.mocked(settingsApi.getAlertRules).mockResolvedValue([globalRule] as never)
+  })
+
+  it('renders the severity as a mapped "Warning" badge, not the raw token', async () => {
+    renderWithProviders()
+    const row = (await screen.findByText('High memory')).closest('tr') as HTMLElement
+    const badge = within(row).getByText('Warning')
+    expect(badge).toHaveAttribute('data-tone', 'warn')
+    expect(within(row).queryByText('warning')).toBeNull()
+  })
+
+  it('renders a one hour cooldown through formatDuration', async () => {
+    renderWithProviders()
+    const row = (await screen.findByText('High memory')).closest('tr') as HTMLElement
+    expect(within(row).getByText('1h 0m')).toBeInTheDocument()
+  })
+
+  it('labels the severity options in the editor with mapped text and keeps the raw values', async () => {
+    renderWithProviders()
+    fireEvent.click((await screen.findAllByRole('button', { name: /add rule/i }))[0])
+    const dialog = screen.getByRole('dialog', { name: 'Create Alert Rule' })
+    const select = within(dialog).getByDisplayValue('Warning') as HTMLSelectElement
+    const options = Array.from(select.options).map(o => [o.value, o.textContent])
+    expect(options).toEqual([['info', 'Info'], ['warning', 'Warning'], ['critical', 'Critical']])
+  })
+})

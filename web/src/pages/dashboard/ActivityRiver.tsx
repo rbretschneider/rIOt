@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { eventCategory, type EventCategory } from '../../utils/eventCategory'
 import type { Event } from '../../types/models'
+import { Timestamp, enumLabel } from '../../components/ui'
 
 interface Props {
   events: Event[]
@@ -13,10 +14,10 @@ type ChipKey = Exclude<EventCategory, 'other'>
  * per SEC-005 defense-in-depth note — prevents CSS class injection from agent-controlled
  * event.severity values.
  */
-const SEVERITY_CLASSES: Record<string, { bg: string; text: string; label: string }> = {
-  info:     { bg: 'bg-gray-700',   text: 'text-gray-300',   label: 'Info' },
-  warning:  { bg: 'bg-amber-900/60',  text: 'text-amber-300',  label: 'Warning' },
-  critical: { bg: 'bg-red-900/60',    text: 'text-red-300',    label: 'Critical' },
+const SEVERITY_CLASSES: Record<string, { bg: string; text: string }> = {
+  info:     { bg: 'bg-gray-700',   text: 'text-gray-300' },
+  warning:  { bg: 'bg-amber-900/60',  text: 'text-amber-300' },
+  critical: { bg: 'bg-red-900/60',    text: 'text-red-300' },
 }
 
 const DEFAULT_SEVERITY = SEVERITY_CLASSES.info
@@ -100,25 +101,25 @@ export default function ActivityRiver({ events }: Props) {
         {visibleEvents.map((e, i) => {
           const style = SEVERITY_CLASSES[e.severity] ?? DEFAULT_SEVERITY
           const isNew = i === 0
+          const severityLabel = enumLabel('severity', e.severity)
           return (
             <div
               key={e.id}
               className={`flex items-start gap-2 rounded px-2 py-1 text-xs ${style.bg} ${style.text} ${isNew ? 'animate-river-enter' : ''}`}
               role="listitem"
               data-testid={`river-event-${e.id}`}
-              aria-label={`${style.label}: ${e.message}`}
+              aria-label={`${severityLabel}: ${e.message}`}
             >
               {/* Severity badge — non-color signal per AC-034 / SEC-005 */}
               <span className="shrink-0 font-semibold uppercase tracking-wide text-[9px] mt-0.5 min-w-[36px]">
-                {style.label}
+                {severityLabel}
               </span>
               <span className="truncate flex-1">{e.message}</span>
-              <time
-                dateTime={e.created_at}
+              <Timestamp
+                value={e.created_at}
+                precision="time"
                 className="shrink-0 text-gray-500 tabular-nums"
-              >
-                {new Date(e.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-              </time>
+              />
             </div>
           )
         })}

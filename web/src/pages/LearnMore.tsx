@@ -1,5 +1,6 @@
 import { useParams, Link } from 'react-router-dom'
 import { useState } from 'react'
+import { enumLabel } from '../components/ui'
 
 // ── Copy button for code blocks ──────────────────────────────────────────────
 
@@ -1194,7 +1195,7 @@ export default function LearnMore() {
         </div>
         <h1 className="text-2xl font-bold text-white mt-3 mb-2">{finding.title}</h1>
         <span className={`inline-block px-2 py-0.5 text-xs font-medium uppercase rounded border ${severityStyle(finding.severity)}`}>
-          {finding.severity}
+          {enumLabel('severity', finding.severity)}
         </span>
       </div>
 

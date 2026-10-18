@@ -5,7 +5,8 @@ import { settingsApi } from '../../api/settings'
 import { api } from '../../api/client'
 import { useFeatures } from '../../hooks/useFeatures'
 import type { AlertRule, AlertTemplate } from '../../types/models'
-import { Button, ConfirmDialog, Modal } from '../../components/ui'
+import { Badge, Button, ConfirmDialog, Modal, enumLabel } from '../../components/ui'
+import { formatDuration } from '../../utils/format'
 
 const METRICS = [
   { value: 'mem_percent', label: 'Memory %' },
@@ -386,7 +387,7 @@ export default function AlertRuleSettings() {
                     onChange={e => setEditing({ ...editing, severity: e.target.value })}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                   >
-                    {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {SEVERITIES.map(s => <option key={s} value={s}>{enumLabel('severity', s)}</option>)}
                   </select>
                 </Field>
                 <Field label="Cooldown (seconds)">
@@ -553,15 +554,9 @@ function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle
                   : `${rule.operator} ${rule.threshold}`}
               </td>
               <td className="px-4 py-3">
-                <span className={`px-2 py-0.5 rounded text-xs ${
-                  rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
-                  rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
-                  'bg-blue-900/50 text-blue-400'
-                }`}>
-                  {rule.severity}
-                </span>
+                <Badge category="severity" value={rule.severity} />
               </td>
-              <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
+              <td className="px-4 py-3 text-gray-400">{formatDuration(rule.cooldown_seconds)}</td>
               <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
               {showDevices && (
                 <td className="px-4 py-3 text-xs">
@@ -746,9 +741,3 @@ function DeviceSelector({ label, value, onChange, placeholder }: {
   )
 }
 
-function formatCooldown(seconds: number): string {
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)}d`
-  if (seconds >= 3600) return `${Math.round(seconds / 3600)}h`
-  if (seconds >= 60) return `${Math.round(seconds / 60)}m`
-  return `${seconds}s`
-}

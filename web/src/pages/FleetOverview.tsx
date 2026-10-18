@@ -10,7 +10,7 @@ import { rebootEtaTooltip } from '../utils/rebootEta'
 
 import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
-import { Button, Card, ConfirmDialog, Modal, QueryState, Skeleton, useToast } from '../components/ui'
+import { Button, Card, ConfirmDialog, Modal, QueryState, RelativeTime, Skeleton, useToast } from '../components/ui'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
 type SortDir = 'asc' | 'desc'
@@ -143,15 +143,6 @@ export default function FleetOverview() {
       {children} {sortKey === k ? (sortDir === 'asc' ? '\u2191' : '\u2193') : ''}
     </th>
   )
-
-  function formatAgo(ts?: string) {
-    if (!ts) return 'Never'
-    const diff = Date.now() - new Date(ts).getTime()
-    if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
-    if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`
-    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`
-    return `${Math.floor(diff / 86400_000)}d ago`
-  }
 
   function isAgentOutdated(version?: string) {
     if (!version || !latestVersion || version === 'dev') return false
@@ -291,7 +282,7 @@ export default function FleetOverview() {
                       <span className="text-gray-600">-</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400">{formatAgo(d.last_heartbeat)}</td>
+                  <td className="px-4 py-3 text-sm text-gray-400"><RelativeTime value={d.last_heartbeat} fallback="Never" /></td>
                   <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3 text-sm">
                     <div className="flex items-center gap-2">

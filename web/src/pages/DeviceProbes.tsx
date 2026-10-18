@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { DeviceProbeWithResult, DeviceProbeResult } from '../types/models'
 import DeviceProbeModal, { emptyDeviceProbe, type DeviceProbeForm } from '../components/DeviceProbeModal'
-import { ConfirmDialog } from '../components/ui'
+import { ConfirmDialog, Timestamp } from '../components/ui'
 
 export default function DeviceProbes() {
   const { id } = useParams<{ id: string }>()
@@ -213,7 +213,7 @@ export default function DeviceProbes() {
                                 <span className={`inline-block w-2 h-2 rounded-full ${r.success ? 'bg-emerald-400' : 'bg-red-400'}`} />
                               </td>
                               <td className="py-1.5 pr-3 font-mono text-gray-400">{r.latency_ms.toFixed(0)}ms</td>
-                              <td className="py-1.5 pr-3 text-gray-400">{new Date(r.created_at).toLocaleString()}</td>
+                              <td className="py-1.5 pr-3 text-gray-400"><Timestamp value={r.created_at} /></td>
                               <td className="py-1.5 text-red-400 truncate max-w-xs">{r.error_msg || '-'}</td>
                             </tr>
                           ))}

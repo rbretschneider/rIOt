@@ -621,3 +621,15 @@ describe('[UIF AC-080] patch-all failure toast, modal stays open', () => {
     expect(within(dialog).getByRole('button', { name: 'Update All Devices' })).toBeEnabled()
   })
 })
+
+describe('[UIF AC-111] Last Seen is a RelativeTime with the absolute time on hover', () => {
+  it('renders a <time> whose title is the zone-labelled absolute time', async () => {
+    renderWithProviders()
+    await screen.findByText('node-1')
+    const row = screen.getByText('node-1').closest('tr') as HTMLElement
+    const time = row.querySelector('time') as HTMLElement
+    expect(time).not.toBeNull()
+    expect(time.getAttribute('title')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/)
+    expect(time.textContent).toMatch(/^(just now|\d+m ago)$/)
+  })
+})

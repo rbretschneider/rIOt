@@ -4,13 +4,17 @@ import { api } from '../api/client'
 import { settingsApi } from '../api/settings'
 import { Link } from 'react-router-dom'
 import type { ContainerInfo, AlertRule, ContainerLogEntry } from '../types/models'
-import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, matchesContainerScope, statusColor } from '../utils/docker'
+import { displayName, formatBytes, isSensitiveKey, maskValue, matchesContainerScope, statusColor } from '../utils/docker'
 import ContainerStatusBadge from './ContainerStatusBadge'
 import ContainerMetricChart from './ContainerMetricChart'
 import GaugeBar from './GaugeBar'
 import ConfirmModal from './ConfirmModal'
 import Terminal from './Terminal'
 import { Section, InfoItem } from './Section'
+import { Badge, Timestamp, enumLabel } from './ui'
+import { useTimePreference } from '../contexts/TimePreferenceProvider'
+import { chartColors } from '../theme/chartColors'
+import { formatDuration } from '../utils/format'
 
 const EVENTS_PER_PAGE = 15
 
@@ -89,7 +93,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
       {/* Command feedback */}
       {commandMutation.isSuccess && (
         <div className="mb-4 px-3 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
-          Command sent ({commandMutation.data?.status})
+          Command sent ({enumLabel('commandStatus', commandMutation.data?.status)})
         </div>
       )}
       {commandMutation.isError && (
@@ -176,6 +180,7 @@ export default function ContainerDetail({ container: c, onClose, terminalEnabled
 }
 
 function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; deviceId?: string }) {
+  const { now } = useTimePreference()
   const [metricHours, setMetricHours] = useState(() => {
     const saved = localStorage.getItem('container-metric-hours')
     return saved ? Number(saved) : 24
@@ -246,7 +251,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <InfoItem label="State" value={c.state} valueClassName={statusColor(c.state)} />
           <InfoItem label="Status" value={c.status} />
-          {c.state === 'running' && <InfoItem label="Up" value={formatContainerUptime(c.created)} />}
+          {c.state === 'running' && <InfoItem label="Up" value={formatDuration(now() / 1000 - c.created)} />}
           {c.restart_policy && <InfoItem label="Restart Policy" value={c.restart_policy} />}
           {(c.restart_count ?? 0) > 0 && <InfoItem label="Restart Count" value={String(c.restart_count)} />}
           {c.health_status && <InfoItem label="Health" value={c.health_status} />}
@@ -299,9 +304,9 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
               </button>
             ))}
           </div>
-          <ContainerMetricChart metrics={metrics} mode="cpu" label="CPU Usage" color="#3b82f6" />
+          <ContainerMetricChart metrics={metrics} mode="cpu" label="CPU Usage" color={chartColors.series.cpu} />
           <div className="mt-3" />
-          <ContainerMetricChart metrics={metrics} mode="memory" label="Memory Usage" color="#8b5cf6" />
+          <ContainerMetricChart metrics={metrics} mode="memory" label="Memory Usage" color={chartColors.series.mem} />
         </Section>
       )}
 
@@ -336,13 +341,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
                         <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">{rule.metric}</td>
                         <td className="py-1.5 pr-3 text-gray-400 font-mono text-xs whitespace-nowrap">{ruleConditionLabel(rule)}</td>
                         <td className="py-1.5 pr-3">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                            rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
-                              : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
-                              : 'bg-amber-500/20 text-amber-400'
-                          }`}>
-                            {rule.severity}
-                          </span>
+                          <Badge category="severity" value={rule.severity} className="px-1.5 text-[10px]" />
                         </td>
                         <td className="py-1.5 pr-3 text-[10px]">
                           {isGlobal ? (
@@ -386,7 +385,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                   evt.severity === 'critical' ? 'bg-red-400' : evt.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
                 }`} />
-                <span className="text-gray-400 font-mono text-xs">{new Date(evt.created_at).toLocaleString()}</span>
+                <Timestamp value={evt.created_at} className="text-gray-400 font-mono text-xs" />
                 <span className="text-gray-200">{evt.message}</span>
               </div>
             ))}
@@ -620,7 +619,7 @@ function ContainerLogsTab({ containerID, containerName, deviceId }: { containerI
           {logs.map((entry: ContainerLogEntry, i: number) => (
             <div key={entry.id ?? i} className="flex gap-2 hover:bg-gray-900/50 py-px">
               <span className="text-gray-600 flex-shrink-0 select-none">
-                {new Date(entry.timestamp).toLocaleTimeString()}
+                <Timestamp value={entry.timestamp} precision="time" />
               </span>
               <span className={`flex-shrink-0 w-10 ${entry.stream === 'stderr' ? 'text-red-400' : 'text-blue-400'}`}>
                 {entry.stream === 'stderr' ? 'ERR' : 'OUT'}

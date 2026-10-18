@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { enumLabel } from './ui'
 import type { SecurityScoreResult, SecurityCategoryScore, SecurityFinding } from '../types/models'
 
 // Map finding IDs to the command action that can fix them
@@ -39,7 +40,7 @@ function severityBadge(severity: SecurityFinding['severity']) {
   }
   return (
     <span className={`px-1.5 py-0.5 text-[10px] font-medium uppercase rounded border ${styles[severity] || styles.info}`}>
-      {severity}
+      {enumLabel('severity', severity)}
     </span>
   )
 }

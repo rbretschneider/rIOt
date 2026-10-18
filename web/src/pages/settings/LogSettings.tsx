@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, type ServerErrorAlertConfig } from '../../api/settings'
-import { ConfirmDialog } from '../../components/ui'
+import { ConfirmDialog, Timestamp } from '../../components/ui'
 
 export default function LogSettings() {
   const qc = useQueryClient()
@@ -102,7 +102,7 @@ export default function LogSettings() {
               {logs.map(log => (
                 <tr key={log.id} className="border-b border-gray-800/50 text-gray-300">
                   <td className="px-4 py-2 text-xs text-gray-500 font-mono whitespace-nowrap">
-                    {new Date(log.timestamp).toLocaleString()}
+                    <Timestamp value={log.timestamp} />
                   </td>
                   <td className="px-4 py-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${levelColors[log.level] || 'bg-gray-800 text-gray-400'}`}>

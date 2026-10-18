@@ -1,0 +1,91 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { screen, within } from '@testing-library/react'
+import Alerts from './Alerts'
+import { api } from '../api/client'
+import { renderWithProviders } from '../test/renderWithProviders'
+
+vi.mock('../api/client', () => ({
+  api: {
+    getEvents: vi.fn(),
+    acknowledgeEvent: vi.fn(),
+    acknowledgeAllEvents: vi.fn(),
+  },
+}))
+
+vi.mock('../hooks/useDevices', () => ({
+  useDevices: () => ({
+    data: [{ id: 'dev-1', hostname: 'Web-01.lan' }],
+    wsConnected: true,
+  }),
+}))
+
+vi.mock('../hooks/useFeatures', () => ({
+  useFeatures: () => ({ isEnabled: () => true }),
+}))
+
+const event = (over: Record<string, unknown> = {}) => ({
+  id: 1,
+  device_id: 'dev-1',
+  type: 'disk_high',
+  severity: 'warning',
+  message: 'Disk / is 91% full',
+  created_at: '2026-10-17T14:03:22Z',
+  ...over,
+})
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(api.getEvents).mockResolvedValue([event()] as never)
+})
+
+describe('[UIF AC-021] alerts show mapped labels', () => {
+  it('shows "Warning" and "Disk usage high" and neither raw value', async () => {
+    renderWithProviders(<Alerts />)
+    const row = (await screen.findByText('Disk / is 91% full')).closest('tr') as HTMLElement
+
+    expect(within(row).getByText('Warning')).toHaveAttribute('data-tone', 'warn')
+    expect(within(row).getByText('Disk usage high')).toBeInTheDocument()
+    expect(within(row).queryByText('warning')).toBeNull()
+    expect(within(row).queryByText('disk_high')).toBeNull()
+    expect(within(row).queryByText('disk high')).toBeNull()
+  })
+
+  it('maps critical to a danger-tone "Critical" badge', async () => {
+    vi.mocked(api.getEvents).mockResolvedValue([event({ severity: 'critical', type: 'container_oom_killed' })] as never)
+    renderWithProviders(<Alerts />)
+    const row = (await screen.findByText('Disk / is 91% full')).closest('tr') as HTMLElement
+    expect(within(row).getByText('Critical')).toHaveAttribute('data-tone', 'danger')
+    expect(within(row).getByText('Container OOM-killed')).toBeInTheDocument()
+  })
+
+  it('humanizes an event type the label map does not know', async () => {
+    vi.mocked(api.getEvents).mockResolvedValue([event({ type: 'cpu_high' })] as never)
+    renderWithProviders(<Alerts />)
+    const row = (await screen.findByText('Disk / is 91% full')).closest('tr') as HTMLElement
+    expect(within(row).getByText('Cpu high')).toBeInTheDocument()
+  })
+
+  it('marks unacknowledged warning and critical rows with token border classes instead of inline hex', async () => {
+    vi.mocked(api.getEvents).mockResolvedValue([
+      event({ id: 1, severity: 'critical', message: 'crit msg' }),
+      event({ id: 2, severity: 'warning', message: 'warn msg' }),
+      event({ id: 3, severity: 'info', message: 'info msg' }),
+    ] as never)
+    renderWithProviders(<Alerts />)
+    const critical = (await screen.findByText('crit msg')).closest('tr') as HTMLElement
+    const warning = screen.getByText('warn msg').closest('tr') as HTMLElement
+    const info = screen.getByText('info msg').closest('tr') as HTMLElement
+    expect(critical.className).toContain('border-l-danger-fg')
+    expect(warning.className).toContain('border-l-warn-fg')
+    expect(info.className).not.toContain('border-l-')
+    expect(critical.getAttribute('style') ?? '').toBe('')
+  })
+})
+
+describe('[UIF AC-109] timestamps carry UTC label', () => {
+  it('renders the event time as YYYY-MM-DD HH:mm:ss UTC under the default preference', async () => {
+    renderWithProviders(<Alerts />)
+    const stamp = await screen.findByText('2026-10-17 14:03:22 UTC')
+    expect(stamp.tagName).toBe('TIME')
+  })
+})
