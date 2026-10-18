@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -26,6 +28,17 @@ func mustJSON(t *testing.T, v interface{}) string {
 }
 
 // --- registry / sentinel ---
+
+// The frontend keeps a UX-only copy of the sentinel; if the two drift, the
+// editor would send a value the server does not recognise as "keep stored".
+func TestHARDEN002_Pure_SentinelParityWithFrontend(t *testing.T) {
+	raw, err := os.ReadFile("../../../web/src/utils/secrets.ts")
+	require.NoError(t, err, "the frontend secrets module must exist")
+
+	m := regexp.MustCompile(`export const REDACTED_SECRET = '([^']*)'`).FindStringSubmatch(string(raw))
+	require.Len(t, m, 2, "REDACTED_SECRET must be declared in web/src/utils/secrets.ts")
+	assert.Equal(t, RedactedSecret, m[1], "web REDACTED_SECRET must equal notify.RedactedSecret")
+}
 
 func TestHARDEN002_Pure_SentinelIsNotAPlausibleCredentialOrURL(t *testing.T) {
 	assert.Equal(t, "[rIOt-redacted]", RedactedSecret, "the sentinel literal is part of the API contract")
