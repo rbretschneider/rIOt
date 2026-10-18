@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
@@ -57,6 +58,88 @@ func assertBaselineHeaders(t *testing.T, rec *httptest.ResponseRecorder, what st
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"), "%s: X-Frame-Options", what)
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"), "%s: X-Content-Type-Options", what)
 	assert.Equal(t, "strict-origin-when-cross-origin", rec.Header().Get("Referrer-Policy"), "%s: Referrer-Policy", what)
+}
+
+// pprofMarkers are strings that only real pprof output contains.
+var pprofMarkers = []string{"goroutine profile", "heap profile", "Types of profiles available"}
+
+func assertNoPprofContent(t *testing.T, rec *httptest.ResponseRecorder, what string) {
+	t.Helper()
+	body := rec.Body.String()
+	for _, m := range pprofMarkers {
+		assert.NotContains(t, body, m, "%s: response must contain no pprof output", what)
+	}
+}
+
+func TestHARDEN002_AC001_PprofNotServedOnMainRouter(t *testing.T) {
+	_, h := newRouterHarness(t, nil)
+
+	for _, path := range []string{
+		"/debug/pprof/",
+		"/debug/pprof/heap",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/goroutine?debug=2",
+		"/debug/pprof",
+	} {
+		rec := doRequest(h, "GET", path, nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "GET %s must be an explicit 404, not the SPA's 200", path)
+		assertNoPprofContent(t, rec, path)
+		assert.NotContains(t, rec.Body.String(), spaMarker, "GET %s must not return the SPA index", path)
+		assertBaselineHeaders(t, rec, path)
+	}
+
+	for _, method := range []string{"POST", "PUT", "DELETE"} {
+		rec := doRequest(h, method, "/debug/pprof/heap", nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "%s /debug/pprof/heap must be 404", method)
+	}
+}
+
+func TestHARDEN002_AC001_C5_PprofPathVariantsServeNoProfile(t *testing.T) {
+	_, h := newRouterHarness(t, nil)
+
+	cases := []struct {
+		name   string
+		target string
+		raw    string
+	}{
+		{"upper-case", "/DEBUG/PPROF/", ""},
+		{"doubled leading slash", "//debug/pprof/", ""},
+		{"doubled inner slash", "/debug//pprof/heap", ""},
+		{"dot segments", "/debug/pprof/../debug/pprof/heap", ""},
+		{"encoded separator", "/debug%2Fpprof/heap", "/debug%2Fpprof/heap"},
+		{"encoded slash after pprof", "/debug/pprof%2Fheap", "/debug/pprof%2Fheap"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doRequest(h, "GET", tc.target, func(r *http.Request) {
+				if tc.raw != "" {
+					r.URL.RawPath = tc.raw
+				}
+			})
+			assertNoPprofContent(t, rec, tc.target)
+		})
+	}
+}
+
+func TestHARDEN002_AC006_LoopbackEnabledMainRouterStill404(t *testing.T) {
+	log, _ := newCapturedLogger()
+	p, err := listenPprof("127.0.0.1:0", log)
+	require.NoError(t, err)
+	defer p.Shutdown(context.Background())
+
+	// Sanity: the loopback listener really is serving profiles.
+	resp, err := http.Get("http://" + p.Addr() + "/debug/pprof/")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "loopback listener must be serving pprof for this test to mean anything")
+
+	_, h := newRouterHarness(t, func(c *Config) { c.PprofAddr = p.Addr() })
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/heap", "/debug/pprof/goroutine?debug=2"} {
+		rec := doRequest(h, "GET", path, nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "main router GET %s must stay 404 while the loopback listener is up", path)
+		assertNoPprofContent(t, rec, path)
+	}
 }
 
 func TestHARDEN002_AC009_BaselineHeadersOnSPA(t *testing.T) {

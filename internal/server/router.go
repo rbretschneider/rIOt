@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"net/http/pprof"
 	"path"
 
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
@@ -11,19 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
-
-func pprofHandler() http.Handler {
-	mux := chi.NewMux()
-	mux.HandleFunc("/", pprof.Index)
-	mux.HandleFunc("/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/profile", pprof.Profile)
-	mux.HandleFunc("/symbol", pprof.Symbol)
-	mux.HandleFunc("/trace", pprof.Trace)
-	mux.Handle("/heap", pprof.Handler("heap"))
-	mux.Handle("/goroutine", pprof.Handler("goroutine"))
-	mux.Handle("/allocs", pprof.Handler("allocs"))
-	return mux
-}
 
 // globalMiddleware returns the middleware chain applied to every request, in
 // order. It is a single function so router tests exercise exactly the chain
@@ -216,9 +202,12 @@ func (s *Server) setupRouter() *chi.Mux {
 	// === ADMIN routes (JWT cookie auth) ===
 	adminAuth := middleware.AdminAuth(s.JWTSecret)
 
-	// Debug profiling — no auth so operators can curl from the host.
-	// Bound to the server's listen address (not exposed beyond the host/network).
-	r.Mount("/debug/pprof", pprofHandler())
+	// HARDEN-002 AD-001: profiling is never served on this listener. The
+	// explicit 404 keeps the SPA catch-all from answering these paths with
+	// index.html and 200. Profiles are available only on the opt-in loopback
+	// listener (RIOT_PPROF_ADDR, see pprof.go).
+	r.Handle("/debug/pprof", pprofNotFound)
+	r.Handle("/debug/pprof/*", pprofNotFound)
 
 	r.Group(func(r chi.Router) {
 		r.Use(adminAuth)

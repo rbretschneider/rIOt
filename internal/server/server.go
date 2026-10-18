@@ -62,6 +62,7 @@ type Server struct {
 	JWTSecret      []byte
 	SetupComplete  atomic.Bool
 	httpServer     *http.Server
+	pprof          *pprofServer
 	listener       net.Listener
 	router         http.Handler
 	done           chan os.Signal
@@ -212,6 +213,10 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// HARDEN-002 AD-002: opt-in loopback-only pprof listener. Returns nil
+	// (and logs) when disabled, rejected or the bind fails; never aborts startup.
+	s.pprof = startPprof(s.Config.PprofAddr, slog.Default())
+
 	// Graceful shutdown
 	s.done = make(chan os.Signal, 1)
 	signal.Notify(s.done, os.Interrupt, syscall.SIGTERM)
@@ -252,6 +257,9 @@ func (s *Server) Start() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	if err := s.pprof.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("pprof shutdown", "error", err.Error())
+	}
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
