@@ -144,11 +144,11 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		Output:     TruncateOutputSmart(execOutput, maxOutputBytes),
 	}
 	resultJSON, _ := json.Marshal(result)
-	if a.wsClient != nil {
-		a.wsClient.send(AgentWSMessage{
-			Type: "command_result",
-			Data: resultJSON,
-		})
+	if err := a.sendWS(AgentWSMessage{
+		Type: "command_result",
+		Data: resultJSON,
+	}); err != nil {
+		slog.Warn("command: result not delivered over websocket", "id", payload.CommandID, "error", err)
 	}
 
 	// Post-result reboot decision for in-window reboot-class runs (AD-008

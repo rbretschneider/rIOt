@@ -190,6 +190,10 @@ func (a *Agent) Run() error {
 		}()
 	}
 
+	// Construct every component before any loop starts so no loop reads a
+	// field that Run is still assigning (a.wsClient raced heartbeatLoop).
+	a.wsClient = newAgentWSClient(a)
+
 	// Start loops
 	var wg sync.WaitGroup
 
@@ -228,7 +232,6 @@ func (a *Agent) Run() error {
 	}
 
 	// Always start agent WebSocket client (for commands + terminal relay)
-	a.wsClient = newAgentWSClient(a)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

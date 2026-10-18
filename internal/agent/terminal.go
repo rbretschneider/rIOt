@@ -9,7 +9,6 @@ import (
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
-	"github.com/gorilla/websocket"
 )
 
 // terminalSession holds a single exec attach session.
@@ -31,7 +30,7 @@ type terminalResizeMsg struct {
 	Rows uint `json:"rows"`
 }
 
-func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn, msg AgentWSMessage) {
+func (a *Agent) handleTerminalStart(ctx context.Context, msg AgentWSMessage) {
 	sessionID := msg.SessionID
 	containerID := msg.ContainerID
 	if sessionID == "" || containerID == "" {
@@ -40,7 +39,7 @@ func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn,
 
 	// Host terminal: delegate to PTY-based handler
 	if containerID == "_host" {
-		a.handleHostTerminalStart(ctx, wsConn, msg)
+		a.handleHostTerminalStart(ctx, msg)
 		return
 	}
 
@@ -102,11 +101,11 @@ func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn,
 			cli.Close()
 
 			// Notify server session ended
-			if a.wsClient != nil {
-				a.wsClient.send(AgentWSMessage{
-					Type:      "terminal_close",
-					SessionID: sessionID,
-				})
+			if err := a.sendWS(AgentWSMessage{
+				Type:      "terminal_close",
+				SessionID: sessionID,
+			}); err != nil {
+				slog.Debug("terminal: close notification not sent", "session", sessionID, "error", err)
 			}
 		}()
 
@@ -118,13 +117,15 @@ func (a *Agent) handleTerminalStart(ctx context.Context, wsConn *websocket.Conn,
 			default:
 			}
 			n, err := attachResp.Reader.Read(buf)
-			if n > 0 && a.wsClient != nil {
+			if n > 0 {
 				data, _ := json.Marshal(string(buf[:n]))
-				a.wsClient.send(AgentWSMessage{
+				if err := a.sendWS(AgentWSMessage{
 					Type:      "terminal_output",
 					SessionID: sessionID,
 					Data:      data,
-				})
+				}); err != nil {
+					slog.Debug("terminal: output not sent", "session", sessionID, "error", err)
+				}
 			}
 			if err != nil {
 				return
