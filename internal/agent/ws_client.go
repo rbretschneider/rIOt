@@ -168,6 +168,9 @@ func (c *agentWSClient) connect(ctx context.Context) (connected bool, err error)
 	// (e.g. after a server restart, the DB has stale telemetry and the
 	// dashboard would show outdated container status/uptime).
 	c.agent.triggerTelemetry()
+	if c.agent.out != nil {
+		c.agent.out.OnWSConnected()
+	}
 
 	for {
 		_, msgBytes, err := conn.ReadMessage()
@@ -191,7 +194,9 @@ func (c *agentWSClient) connect(ctx context.Context) (connected bool, err error)
 		case "terminal_close":
 			c.agent.handleTerminalClose(msg)
 		case "command":
-			go c.agent.handleCommand(ctx, msg)
+			c.agent.handleCommandMessage(msg, "ws")
+		case "command_receipt":
+			c.agent.handleReceipt(msg)
 		default:
 			slog.Debug("agent ws: unknown message type", "type", msg.Type)
 		}

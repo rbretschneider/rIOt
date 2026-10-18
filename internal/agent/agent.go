@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 type Agent struct {
@@ -46,6 +47,26 @@ type Agent struct {
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).
 	telemetryNow chan struct{}
+
+	// CMD-LIFECYCLE-001 command system (command_lifecycle.go). Built by
+	// setupCommandSystem before any loop starts.
+	clk      clock
+	tr       cmdTransport
+	out      *outbox
+	seen     *seenStore
+	inflight *inflightStore
+	locks    *targetLocks
+	notify   *notifier
+	// cmdCtx is the context commands run under; it outlives the loops' context
+	// so commands can finish inside the shutdown grace period.
+	cmdCtx    context.Context
+	cmdCancel context.CancelFunc
+	// cmdWG counts executing commands; shuttingDown is set on SIGTERM and makes
+	// submitCommand refuse new work (SEC C-4d).
+	cmdWG        sync.WaitGroup
+	shuttingDown atomic.Bool
+	// executor overrides executeAction in tests; nil = real execution.
+	executor func(cr *cmdRun) commandExecResult
 
 	// Disk I/O tracking for delta computation between heartbeats.
 	// owned by heartbeatLoop only — no concurrent access
@@ -193,9 +214,22 @@ func (a *Agent) Run() error {
 	// Construct every component before any loop starts so no loop reads a
 	// field that Run is still assigning (a.wsClient raced heartbeatLoop).
 	a.wsClient = newAgentWSClient(a)
+	a.cmdCtx, a.cmdCancel = context.WithCancel(context.Background())
+	defer a.cmdCancel()
+	a.setupCommandSystem(a.cmdCtx, a.defaultCommandDeps())
+
+	// Report commands that were executing when the agent last stopped, before
+	// any loop can accept new work (FR-019, SEC C-4).
+	a.recoverInterruptedCommands(ctx)
 
 	// Start loops
 	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		a.out.Run(ctx)
+	}()
 
 	wg.Add(1)
 	go func() {
@@ -255,7 +289,9 @@ func (a *Agent) Run() error {
 
 	<-done
 	slog.Info("shutting down agent")
+	a.shuttingDown.Store(true)
 	cancel()
+	a.waitForCommands(models.AgentShutdownGrace)
 	wg.Wait()
 	slog.Info("agent stopped")
 	return nil

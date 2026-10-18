@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"strings"
 	"time"
@@ -182,11 +181,7 @@ func (a *Agent) sendHeartbeat(ctx context.Context) {
 
 	// Process any pending commands delivered via heartbeat
 	for _, payload := range resp.PendingCommands {
-		slog.Info("heartbeat: received command", "id", payload.CommandID, "action", payload.Action)
-		payloadJSON, _ := json.Marshal(payload)
-		go a.handleCommand(ctx, AgentWSMessage{
-			Type: "command",
-			Data: payloadJSON,
-		})
+		slog.Info("heartbeat: received command", "action", payload.Action)
+		a.submitCommand(payload, "heartbeat")
 	}
 }
