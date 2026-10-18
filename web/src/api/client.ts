@@ -1,5 +1,7 @@
 import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 
+import type { BulkConflict, BulkDockerUpdateResult, CommandConflictBody } from '../types/models'
+
 const BASE = '/api/v1'
 
 async function fetchJSON<T>(url: string): Promise<T> {
@@ -38,6 +40,34 @@ export interface DevicePatchInfo {
 export interface SSOAvailability {
   available: boolean
   label: string
+}
+
+// CMD-LIFECYCLE-001: a create that hit the target conflict check (HTTP 409,
+// code "conflict"). Carries the in-flight command so the UI can attach to it
+// (FR-093) instead of showing an error.
+export class CommandConflictError extends Error {
+  readonly existingCommandId: string
+  readonly existingStatus?: string
+  readonly targetKey?: string
+  readonly conflicts: BulkConflict[]
+
+  constructor(body: CommandConflictBody) {
+    super(body.error || 'a command is already in progress for this target')
+    this.name = 'CommandConflictError'
+    this.existingCommandId = body.existing_command_id
+    this.existingStatus = body.existing_status
+    this.targetKey = body.target_key
+    this.conflicts = body.conflicts ?? []
+  }
+}
+
+// Throws CommandConflictError when an error body is a 409 conflict, otherwise
+// returns so the caller falls through to its normal error handling.
+function throwIfCommandConflict(status: number, body: Partial<CommandConflictBody> | null): void {
+  if (status !== 409 || !body) return
+  if (body.code === 'conflict' && typeof body.existing_command_id === 'string' && body.existing_command_id !== '') {
+    throw new CommandConflictError(body as CommandConflictBody)
+  }
 }
 
 export const api = {
@@ -117,6 +147,7 @@ export const api = {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throwIfCommandConflict(res.status, err)
       throw new Error(err.error || `HTTP ${res.status}`)
     }
     return res.json()
@@ -134,6 +165,34 @@ export const api = {
 
   getCommandOutput: (deviceId: string, commandId: string) =>
     fetchJSON<CommandOutput[]>(`${BASE}/devices/${deviceId}/commands/${commandId}/output`),
+
+  // CMD-LIFECYCLE-001: command by ID (tracking and the 5s re-fetch fallback).
+  getCommand: (deviceId: string, commandId: string) =>
+    fetchJSON<Command>(`${BASE}/devices/${deviceId}/commands/${encodeURIComponent(commandId)}`),
+
+  // Non-terminal commands for a device, optionally narrowed to one target key.
+  getActiveCommands: (deviceId: string, targetKey?: string) => {
+    const sp = new URLSearchParams({ active: 'true' })
+    if (targetKey) sp.set('target_key', targetKey)
+    return fetchJSON<Command[]>(`${BASE}/devices/${deviceId}/commands?${sp}`)
+  },
+
+  // Cancel a queued command (FR-086). A 409 means it was already dispatched.
+  cancelCommand: async (deviceId: string, commandId: string): Promise<Command> => {
+    const res = await fetch(`${BASE}/devices/${deviceId}/commands/${encodeURIComponent(commandId)}/cancel`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+    if (res.status === 401) {
+      window.location.reload()
+      throw new Error('Unauthorized')
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+      throw new Error(err.error || `HTTP ${res.status}`)
+    }
+    return res.json()
+  },
 
   // Probes
   getProbes: () => fetchJSON<ProbeWithResult[]>(`${BASE}/probes`),
@@ -214,7 +273,7 @@ export const api = {
       certs_expiring_soon: number
     }[]>(`${BASE}/security/devices`),
 
-  bulkUpdateAgents: async (version: string): Promise<{ sent: number; skipped: number; total: number }> => {
+  bulkUpdateAgents: async (version: string): Promise<{ sent: number; skipped: number; total: number; conflicts?: number }> => {
     const res = await fetch(`${BASE}/fleet/bulk-update`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -303,7 +362,7 @@ export const api = {
     fetchJSON<SecurityScoreResult>(`${BASE}/devices/${id}/security-score`),
 
   // Bulk docker update
-  bulkDockerUpdate: async (deviceId: string, containerIds: string[]): Promise<Command> => {
+  bulkDockerUpdate: async (deviceId: string, containerIds: string[]): Promise<BulkDockerUpdateResult> => {
     const res = await fetch(`${BASE}/devices/${deviceId}/docker/bulk-update`, {
       method: 'POST',
       credentials: 'same-origin',
@@ -311,7 +370,10 @@ export const api = {
       body: JSON.stringify({ container_ids: containerIds }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.ok) {
+      if (res.status === 409) throwIfCommandConflict(res.status, await res.json().catch(() => null))
+      throw new Error(`HTTP ${res.status}`)
+    }
     return res.json()
   },
 
@@ -377,7 +439,7 @@ export const api = {
     return res.text()
   },
 
-  bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number }> => {
+  bulkPatchDevices: async (mode: string = 'full'): Promise<{ sent: number; queued: number; skipped: number; total: number; conflicts?: number }> => {
     const res = await fetch(`${BASE}/fleet/bulk-patch`, {
       method: 'POST',
       credentials: 'same-origin',

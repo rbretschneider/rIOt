@@ -4,10 +4,13 @@
  */
 import * as demo from './demo-data'
 import type { DevicePatchInfo } from './client'
+import type { Command } from '../types/models'
 
 const delay = (ms = 400) => new Promise(r => setTimeout(r, ms))
 
 export { type DevicePatchInfo }
+// Shared with client.ts so `instanceof` and the demo build agree on one class.
+export { CommandConflictError } from './client'
 
 export const api = {
   getDevices: () => Promise.resolve(demo.getDevices()),
@@ -31,6 +34,11 @@ export const api = {
   sendCommand: async () => { await delay(); return demo.getCommands()[0] },
   getDeviceCommands: (_id: string, _params?: { limit?: number; offset?: number; status?: string; action?: string }) => Promise.resolve(demo.getCommands()),
   getCommandOutput: () => Promise.resolve([]),
+  // CMD-LIFECYCLE-001: demo commands are never in flight, so there is nothing to track or cancel.
+  getCommand: (_deviceId: string, commandId: string): Promise<Command> => Promise.resolve(demo.getCommands().find(c => c.id === commandId) ?? demo.getCommands()[0]),
+  getActiveCommands: (_deviceId: string, _targetKey?: string): Promise<Command[]> => Promise.resolve([]),
+  cancelCommand: async (_deviceId: string, _commandId: string): Promise<Command> => { await delay(); return demo.getCommands()[0] },
+  bulkDockerUpdate: async (_deviceId: string, _containerIds: string[]): Promise<Command> => { await delay(); return demo.getCommands()[0] },
   getProbes: () => Promise.resolve(demo.getProbes()),
   createProbe: async (probe: any) => { await delay(); return { id: 99, ...probe, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
   updateProbe: async (_id: number, probe: any) => { await delay(); return { id: _id, ...probe, updated_at: new Date().toISOString() } },

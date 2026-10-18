@@ -289,9 +289,17 @@ export interface ContainerInfo {
   repo_url?: string
   riot?: RiotLabels
   update_available?: boolean | null
+  // CMD-LIFECYCLE-001 (AD-016): per-container freshness verdict. Absent when the
+  // agent predates the verdict; fall back to update_available in that case.
+  image_id?: string
+  update_status?: UpdateStatus
+  update_reason?: UpdateReason
   network_mode?: string
   uses_gpu?: boolean
 }
+
+export type UpdateStatus = 'up_to_date' | 'update_available' | 'pinned' | 'check_failed'
+export type UpdateReason = 'registry_newer' | 'pulled_not_recreated'
 
 export interface PortMapping {
   container_port: string
@@ -667,6 +675,11 @@ export interface WSMessage {
   type: string
   device_id?: string
   data?: unknown
+  // CMD-LIFECYCLE-001 (AD-018): server-supplied timestamps on telemetry and
+  // heartbeat envelopes. collected_at is agent time, clamped by the server to
+  // at most received_at + 2m. Absent when talking to a pre-lifecycle server.
+  collected_at?: string
+  received_at?: string
 }
 
 // Alert Rules & Notifications
@@ -756,17 +769,90 @@ export interface AutoUpdatePolicy {
 }
 
 // Commands
+
+/** Canonical command states (CMD-LIFECYCLE-001 FR-071). */
+export type CommandState =
+  | 'queued'
+  | 'dispatched'
+  | 'acknowledged'
+  | 'running'
+  | 'verifying'
+  | 'succeeded'
+  | 'failed'
+  | 'timed_out'
+  | 'cancelled'
+  | 'expired'
+
+/** Values a pre-lifecycle server may still return (FR-083). */
+export type LegacyCommandStatus = 'pending' | 'sent' | 'success' | 'error'
+
+export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch'
+
 export interface Command {
   id: string
   device_id: string
   action: string
   params: Record<string, unknown>
-  status: 'pending' | 'sent' | 'queued' | 'success' | 'error'
+  /** Canonical from a lifecycle server; may be legacy from an older one. Use normalizeStatus(). */
+  status: CommandState | LegacyCommandStatus
   result_msg: string
   duration_ms: number | null
   exit_code: number | null
   created_at: string
   updated_at: string
+  // Lifecycle fields (ADD 6.1). Optional so a pre-lifecycle server still typechecks.
+  expires_at?: string
+  exec_deadline_s?: number
+  deadline_at?: string
+  dispatched_at?: string
+  acknowledged_at?: string
+  started_at?: string
+  verifying_at?: string
+  finished_at?: string
+  step?: string
+  progress?: number | null
+  failure_step?: string
+  stderr_tail?: string
+  origin?: CommandOrigin
+  policy_id?: number | null
+  target_key?: string
+  target_keys?: string[]
+}
+
+/** WS `command_update` payload (ADD 6.5), one per accepted transition. */
+export interface CommandUpdate {
+  command_id: string
+  device_id: string
+  action: string
+  target_key: string
+  target_keys: string[]
+  status: CommandState | LegacyCommandStatus
+  step: string
+  progress: number | null
+  message: string
+  failure_step: string
+  origin: CommandOrigin
+  updated_at: string
+}
+
+/** One skipped target of a bulk update (ADD 6.2). */
+export interface BulkConflict {
+  container_id: string
+  target_key: string
+  existing_command_id: string
+}
+
+/** 201 body of the bulk docker update: the created Command plus skipped targets. */
+export type BulkDockerUpdateResult = Command & { conflicts?: BulkConflict[] }
+
+/** 409 body shared by single and bulk create (ADD 6.2). */
+export interface CommandConflictBody {
+  error: string
+  code: 'conflict'
+  existing_command_id: string
+  existing_status?: CommandState | LegacyCommandStatus
+  target_key?: string
+  conflicts?: BulkConflict[]
 }
 
 export interface CommandOutput {
