@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/pprof"
+	"path"
 
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
@@ -24,24 +25,39 @@ func pprofHandler() http.Handler {
 	return mux
 }
 
+// globalMiddleware returns the middleware chain applied to every request, in
+// order. It is a single function so router tests exercise exactly the chain
+// production uses (HARDEN-002 AD-013).
+//
+// OIDC-001 AD-020: chimw.RealIP is replaced with a trusted-proxy-gated
+// client-identity resolver. RIOT_TRUSTED_PROXIES defaults to empty
+// (trust nobody), so forwarding headers are ignored unless the
+// immediate peer is explicitly trusted — this closes the pre-existing
+// bypass where an unconditional chimw.RealIP made loginLimiter and
+// registerLimiter keyable on an attacker-supplied header.
+//
+// HARDEN-002 AD-003: SecurityHeaders runs second, after RealIP (HSTS needs
+// the trusted-proxy scheme) and before everything that can write a response
+// (CORS 204, SetupGuard 503, auth 401/403, Recoverer 500), and never wraps the
+// ResponseWriter.
+func (s *Server) globalMiddleware() []func(http.Handler) http.Handler {
+	trustedProxies := middleware.ParseTrustedProxies(s.Config.TrustedProxies)
+	return []func(http.Handler) http.Handler{
+		middleware.RealIP(trustedProxies),
+		middleware.SecurityHeaders(),
+		middleware.Logger,
+		chimw.Recoverer,
+		middleware.CORS(s.Config.AllowedOrigins),
+		// Setup guard: blocks non-setup API routes until setup is complete
+		middleware.SetupGuard(&s.SetupComplete),
+	}
+}
+
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Global middleware.
-	// OIDC-001 AD-020: chimw.RealIP is replaced with a trusted-proxy-gated
-	// client-identity resolver. RIOT_TRUSTED_PROXIES defaults to empty
-	// (trust nobody), so forwarding headers are ignored unless the
-	// immediate peer is explicitly trusted — this closes the pre-existing
-	// bypass where an unconditional chimw.RealIP made loginLimiter and
-	// registerLimiter keyable on an attacker-supplied header.
-	trustedProxies := middleware.ParseTrustedProxies(s.Config.TrustedProxies)
-	r.Use(middleware.RealIP(trustedProxies))
-	r.Use(middleware.Logger)
-	r.Use(chimw.Recoverer)
-	r.Use(middleware.CORS(s.Config.AllowedOrigins))
-
-	// Setup guard: blocks non-setup API routes until setup is complete
-	r.Use(middleware.SetupGuard(&s.SetupComplete))
+	// Global middleware (HARDEN-002 AD-013: one definition, shared with tests).
+	r.Use(s.globalMiddleware()...)
 
 	// Set up enrollment handler if mTLS is enabled
 	var enrollH *handlers.EnrollHandler
@@ -305,19 +321,49 @@ func (s *Server) setupRouter() *chi.Mux {
 	return r
 }
 
+// staticContentTypes pins the Content-Type of embedded frontend assets.
+// With X-Content-Type-Options: nosniff the browser refuses scripts and styles
+// with the wrong type, and Go's built-in MIME table is OS-dependent (the
+// Windows registry can override .js; .ico, .woff2, .woff, .ttf and
+// .webmanifest are missing, and sniffing turns .webmanifest into text/plain).
+// Unknown extensions are left to http.FileServer (HARDEN-002 AD-005).
+var staticContentTypes = map[string]string{
+	".html":        "text/html; charset=utf-8",
+	".js":          "text/javascript; charset=utf-8",
+	".mjs":         "text/javascript; charset=utf-8",
+	".css":         "text/css; charset=utf-8",
+	".json":        "application/json",
+	".map":         "application/json",
+	".webmanifest": "application/manifest+json",
+	".ico":         "image/x-icon",
+	".png":         "image/png",
+	".svg":         "image/svg+xml",
+	".jpg":         "image/jpeg",
+	".jpeg":        "image/jpeg",
+	".webp":        "image/webp",
+	".woff2":       "font/woff2",
+	".woff":        "font/woff",
+	".ttf":         "font/ttf",
+	".txt":         "text/plain; charset=utf-8",
+}
+
 func (s *Server) serveFrontend(r *chi.Mux) {
 	fileServer := http.FileServer(http.FS(s.FrontendFS))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the file; if not found, serve index.html for SPA routing
-		path := r.URL.Path[1:]
-		if path == "" {
-			path = "index.html"
+		name := r.URL.Path[1:]
+		if name == "" {
+			name = "index.html"
 		}
-		f, err := s.FrontendFS.Open(path)
+		f, err := s.FrontendFS.Open(name)
 		if err != nil {
 			r.URL.Path = "/"
+			name = "index.html"
 		} else {
 			f.Close()
+		}
+		if ct, ok := staticContentTypes[path.Ext(name)]; ok {
+			w.Header().Set("Content-Type", ct)
 		}
 		fileServer.ServeHTTP(w, r)
 	})
