@@ -154,13 +154,7 @@ export function formatContainerUptime(createdTimestamp: number): string {
   return `${days}d ${hours % 24}h`
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
-  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(1)} TB`
-}
+export { formatBytes } from './format'
 
 export function formatPorts(c: ContainerInfo): string {
   if (!c.ports || c.ports.length === 0) return ''

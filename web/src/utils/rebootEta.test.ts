@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { formatUtc, rebootEtaTooltip } from './rebootEta'
+import { formatUtc as canonicalFormatUtc, formatTimestamp } from './format'
 
 const START = '2026-10-19T02:00:00Z'
 
@@ -205,5 +206,30 @@ describe('[AC-005] tooltip is plain text for a native title attribute', () => {
     for (const v of variants) {
       expect(v, 'tooltip text must not contain HTML angle brackets').not.toMatch(/[<>]/)
     }
+  })
+})
+
+
+describe('[UIF AC-107] reboot ETA stays UTC under the Local preference', () => {
+  const LOS_ANGELES = { zone: 'Local', localTimeZone: 'America/Los_Angeles' } as const
+
+  it('formatUtc is re-exported from the canonical format module', () => {
+    expect(formatUtc).toBe(canonicalFormatUtc)
+  })
+
+  it('returns the UTC string even while the Local preference renders the same instant as PDT', () => {
+    expect(formatTimestamp('2026-10-17T14:03:00Z', LOS_ANGELES, 'minute')).toBe('2026-10-17 07:03 PDT')
+    expect(formatUtc('2026-10-17T14:03:00Z')).toBe('2026-10-17 14:03 UTC')
+  })
+
+  it('keeps the maintenance-window tooltip in UTC', () => {
+    const tip = rebootEtaTooltip({
+      os_patch_mode: 'window',
+      next_window_start: '2026-10-17T14:03:00Z',
+      os_patch_cooldown_minutes: 0,
+      allow_reboot: true,
+      reboot_class_count: 1,
+    })
+    expect(tip).toContain('2026-10-17 14:03 UTC')
   })
 })
