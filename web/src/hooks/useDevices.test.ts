@@ -645,3 +645,191 @@ describe('[AC-080] [AC-081] stale live telemetry is dropped', () => {
     expect(qc.getQueryData<{ status: string }[]>(['devices'])![0].status).toBe('online')
   })
 })
+
+// ---------------------------------------------------------------------------
+// CMD-LIFECYCLE-001 (FR-094): stop/die is not "exited" while a tracked update runs
+// ---------------------------------------------------------------------------
+
+describe('[AC-112] stop and die during a tracked update are not shown as exited', () => {
+  function commandUpdate(status: string, targetKeys: string[] = ['docker:container:my-app'], id = 'cmd-1', updatedAt = '2026-10-17T10:00:00Z'): WSMessage {
+    return {
+      type: 'command_update',
+      device_id: 'dev-1',
+      data: {
+        command_id: id,
+        device_id: 'dev-1',
+        action: 'docker_update',
+        target_key: targetKeys[0],
+        target_keys: targetKeys,
+        status,
+        step: 'recreate',
+        progress: null,
+        message: '',
+        failure_step: '',
+        origin: 'user',
+        updated_at: updatedAt,
+      },
+    }
+  }
+
+  function dockerEvent(action: string): WSMessage {
+    return {
+      type: 'docker_update',
+      device_id: 'dev-1',
+      data: { container_id: 'abc123full', container_name: 'my-app', action },
+    }
+  }
+
+  function stateOf(qc: QueryClient): string {
+    const detail = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    return detail.latest_telemetry.data.docker.containers[0].state
+  }
+
+  it.each(['stop', 'die'])('keeps the container running on %s while a command_update says the update is running', (action) => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(dockerEvent(action)) })
+
+    expect(stateOf(qc), `${action} during a tracked update must not show exited`).toBe('running')
+  })
+
+  it('suppresses from the cached active commands, as fetched on mount', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    qc.setQueryData(['commands-active', 'dev-1'], [{
+      id: 'cmd-1', device_id: 'dev-1', action: 'docker_update', params: {}, status: 'running', result_msg: '',
+      duration_ms: null, exit_code: null, created_at: '2026-10-17T10:00:00Z', updated_at: '2026-10-17T10:00:00Z',
+      target_keys: ['docker:container:my-app'],
+    }])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(dockerEvent('die')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('suppresses for a compose container when the whole stack is being updated', () => {
+    const qc = makeQC()
+    const composeContainer = {
+      ...baseContainer,
+      labels: {
+        'com.docker.compose.project': 'media',
+        'com.docker.compose.service': 'app',
+        'com.docker.compose.project.working_dir': '/srv/media',
+      },
+    }
+    qc.setQueryData(['device', 'dev-1'], {
+      ...baseDeviceDetail,
+      latest_telemetry: { ...baseDeviceDetail.latest_telemetry, data: { docker: { available: true, containers: [composeContainer] } } },
+    })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running', ['docker:compose:/srv/media'])) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('shows exited again once the update command reaches a terminal state', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(commandUpdate('failed')) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc), 'a finished update must not keep suppressing').toBe('exited')
+    expect(qc.getQueryData(['commands-active', 'dev-1'])).toEqual([])
+  })
+
+  it('does not suppress a stop for a different container being updated', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running', ['docker:container:other'])) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc)).toBe('exited')
+  })
+
+  it('still lets start report running while the update is tracked', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], {
+      ...baseDeviceDetail,
+      latest_telemetry: { ...baseDeviceDetail.latest_telemetry, data: { docker: { available: true, containers: [{ ...baseContainer, state: 'created' }] } } },
+    })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(dockerEvent('start')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('ignores a stale command_update that would move the command backward', () => {
+    const qc = makeQC()
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('verifying', ['docker:container:my-app'], 'cmd-1', '2026-10-17T10:00:09Z')) })
+    act(() => { wsState.handler!(commandUpdate('running')) }) // updated_at 10:00:00Z is older
+
+    const list = qc.getQueryData<{ status: string }[]>(['commands-active', 'dev-1'])!
+    expect(list).toHaveLength(1)
+    expect(list[0].status, 'an older update must not move the command backward').toBe('verifying')
+  })
+
+  it('does not create an empty active list from a terminal update for an unknown command', () => {
+    const qc = makeQC()
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('succeeded')) })
+
+    expect(qc.getQueryData(['commands-active', 'dev-1'])).toBeUndefined()
+  })
+})
+
+describe('[AC-113] with no tracked command a stop event still shows exited', () => {
+  it('maps stop to exited exactly as before', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'docker_update',
+        device_id: 'dev-1',
+        data: { container_id: 'abc123full', container_name: 'my-app', action: 'stop' },
+      })
+    })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].state).toBe('exited')
+  })
+
+  it('maps die to exited when the only tracked command is an operator stop, not an update', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    qc.setQueryData(['commands-active', 'dev-1'], [{
+      id: 'cmd-2', device_id: 'dev-1', action: 'docker_stop', params: {}, status: 'running', result_msg: '',
+      duration_ms: null, exit_code: null, created_at: '2026-10-17T10:00:00Z', updated_at: '2026-10-17T10:00:00Z',
+      target_keys: ['docker:container:my-app'],
+    }])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'docker_update',
+        device_id: 'dev-1',
+        data: { container_id: 'abc123full', container_name: 'my-app', action: 'die' },
+      })
+    })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].state).toBe('exited')
+  })
+})

@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
 import { mergeTelemetry } from './telemetryMerge'
-import type { Device, DeviceDetailResponse, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
+import { applyActiveUpdate, isTerminal, shouldSuppressExited } from '../utils/commandLifecycle'
+import type { Command, CommandUpdate, Device, DeviceDetailResponse, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
 
 export function useDevices() {
   const queryClient = useQueryClient()
@@ -92,6 +93,18 @@ export function useDevices() {
           return updated
         })
       }
+    } else if (msg.type === 'command_update') {
+      // Keep the device's list of non-terminal commands current so the stop/die
+      // suppression below (FR-094) works on every page that uses this hook, not
+      // only where a command tracker is mounted.
+      const update = msg.data as CommandUpdate | undefined
+      const deviceId = update?.device_id ?? msg.device_id
+      if (update && deviceId) {
+        queryClient.setQueryData<Command[]>(['commands-active', deviceId], (old) => {
+          if (old === undefined && isTerminal(update.status)) return undefined
+          return applyActiveUpdate(old, update)
+        })
+      }
     } else if (msg.type === 'docker_update' && msg.device_id) {
       const evt = msg.data as DockerEvent
       // Significant actions get a targeted state update in the device detail
@@ -112,11 +125,16 @@ export function useDevices() {
         if (newState) {
           // Strip leading '/' that Docker sometimes includes in container_name
           const name = evt.container_name?.replace(/^\//, '')
+          // FR-094: while a tracked update targets this container, a stop/die is
+          // the recreate in progress, not an exit. Leave the state alone; the
+          // "Updating…" label is shown instead and telemetry settles the rest.
+          const activeCommands = queryClient.getQueryData<Command[]>(['commands-active', msg.device_id])
           queryClient.setQueryData(['device', msg.device_id], (old: any) => {
             if (!old?.latest_telemetry?.data?.docker?.containers) return old
             const containers = old.latest_telemetry.data.docker.containers as ContainerInfo[]
             const idx = containers.findIndex((c: ContainerInfo) => c.name === name)
             if (idx < 0) return old
+            if (newState === 'exited' && shouldSuppressExited(activeCommands, containers[idx])) return old
             const updatedContainers = [...containers]
             updatedContainers[idx] = { ...updatedContainers[idx], state: newState }
             return {
