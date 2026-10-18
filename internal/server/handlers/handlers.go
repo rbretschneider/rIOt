@@ -137,21 +137,6 @@ func (h *Handlers) isSetupComplete() bool {
 	return h.setupComplete != nil && h.setupComplete.Load()
 }
 
-func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		dbOK := database.Healthy(r.Context())
-		if !dbOK {
-			status = "degraded"
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":   status,
-			"database": dbOK,
-			"time":     time.Now().UTC(),
-		})
-	}
-}
-
 func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	// Check registration key: if server has one configured, require it
 	regKey, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")

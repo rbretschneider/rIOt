@@ -61,6 +61,9 @@ type Server struct {
 	UpdateChecker  *updates.Checker
 	JWTSecret      []byte
 	SetupComplete  atomic.Bool
+	// MigrationsComplete is set once schema migrations have finished in this
+	// process (or there are none to run). /readyz reports it (HARDEN-002 AD-011).
+	MigrationsComplete atomic.Bool
 	httpServer     *http.Server
 	pprof          *pprofServer
 	listener       net.Listener
@@ -92,6 +95,7 @@ func (s *Server) Start() error {
 			return fmt.Errorf("migrations: %w", err)
 		}
 	}
+	s.MigrationsComplete.Store(true)
 
 	// Initialize repos
 	s.DeviceRepo = db.NewDeviceRepo(s.DB)

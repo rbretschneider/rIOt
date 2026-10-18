@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,6 +175,30 @@ func TestHARDEN002_AC015_NoHSTSOnPlainHTTPOrUntrustedPeer(t *testing.T) {
 		r.Header.Set("X-Forwarded-Proto", "https")
 	})
 	assert.Empty(t, untrusted.Header().Get("Strict-Transport-Security"), "untrusted peer's X-Forwarded-Proto must not enable HSTS")
+}
+
+func TestHARDEN002_AC050_HealthEndpointsPublicAndSetupIndependent(t *testing.T) {
+	for _, setupComplete := range []bool{false, true} {
+		s, h := newRouterHarness(t, nil)
+		s.SetupComplete.Store(setupComplete)
+
+		for _, path := range []string{"/health", "/readyz"} {
+			rec := doRequest(h, "GET", path, nil)
+			what := path
+			assert.NotEqual(t, http.StatusUnauthorized, rec.Code, "%s (setup=%v): must not require auth", what, setupComplete)
+			assert.NotEqual(t, http.StatusForbidden, rec.Code, "%s (setup=%v): must not require auth", what, setupComplete)
+			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"), "%s (setup=%v): must be JSON, not the SPA", what, setupComplete)
+			assert.NotContains(t, rec.Body.String(), "setup_required", "%s (setup=%v): must not be the setup guard's response", what, setupComplete)
+			assert.NotContains(t, rec.Body.String(), spaMarker, "%s (setup=%v): must not be the SPA catch-all", what, setupComplete)
+
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), "%s body: %q", what, rec.Body.String())
+			assert.Contains(t, body, "status", "%s (setup=%v): must be the health body", what, setupComplete)
+			// The harness has no database, so both report the down state.
+			assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "%s (setup=%v): nil DB is reported as down", what, setupComplete)
+			assertBaselineHeaders(t, rec, what)
+		}
+	}
 }
 
 func TestHARDEN002_AC018_StaticAssetContentTypes(t *testing.T) {

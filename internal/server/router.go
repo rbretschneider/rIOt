@@ -103,7 +103,15 @@ func (s *Server) setupRouter() *chi.Mux {
 	oidcLimiter := middleware.NewRateLimiter(5, 5) // 5/min, same policy as loginLimiter
 
 	// === PUBLIC routes (no auth) ===
-	r.Get("/health", h.Health(s.DB))
+	// HARDEN-002 AD-011: /health returns 503 when degraded; /readyz also
+	// requires migrations to have completed. Only assign s.DB when non-nil: a
+	// typed-nil *db.DB inside the interface would panic on probe.
+	hh := &handlers.HealthHandler{Migrated: s.MigrationsComplete.Load}
+	if s.DB != nil {
+		hh.DB = s.DB
+	}
+	r.Get("/health", hh.Health)
+	r.Get("/readyz", hh.Readyz)
 
 	// Setup wizard routes
 	r.Route("/api/v1/setup", func(r chi.Router) {
