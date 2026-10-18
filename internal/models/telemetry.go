@@ -358,6 +358,46 @@ type ContainerInfo struct {
 	UpdateAvailable *bool             `json:"update_available,omitempty"`
 	NetworkMode     string            `json:"network_mode,omitempty"`
 	UsesGPU         bool              `json:"uses_gpu,omitempty"` // HostConfig requests GPU devices (PATCH-GATE FR-028)
+	// Per-container image freshness (CMD-LIFECYCLE-001, AD-016). UpdateAvailable
+	// above is true only when UpdateStatus is UpdateStatusAvailable, false for
+	// up_to_date and pinned, and nil for check_failed.
+	ImageID      string `json:"image_id,omitempty"`      // the container's running image ID
+	UpdateStatus string `json:"update_status,omitempty"` // UpdateStatus* constants
+	UpdateReason string `json:"update_reason,omitempty"` // UpdateReason* constants, only with update_available
+}
+
+// Container image freshness verdicts (ContainerInfo.UpdateStatus).
+const (
+	UpdateStatusUpToDate  = "up_to_date"
+	UpdateStatusAvailable = "update_available"
+	UpdateStatusPinned    = "pinned"
+	UpdateStatusFailed    = "check_failed"
+)
+
+// Reasons for UpdateStatusAvailable (ContainerInfo.UpdateReason).
+const (
+	UpdateReasonRegistryNewer      = "registry_newer"
+	UpdateReasonPulledNotRecreated = "pulled_not_recreated"
+)
+
+// TelemetryFutureTolerance is how far ahead of the server's receive time an
+// agent-supplied snapshot timestamp may be before it is replaced by the receive
+// time (SEC C-3). "Latest" telemetry queries ignore rows further ahead.
+const TelemetryFutureTolerance = 2 * time.Minute
+
+// BoundTelemetryTimestamp returns the timestamp used to order, store and
+// broadcast a snapshot as collected_at: a zero timestamp becomes receivedAt
+// (FR-070), and one more than TelemetryFutureTolerance ahead of receivedAt is
+// replaced by receivedAt. clamped is true only for the future case (the caller
+// logs it, throttled). A timestamp exactly at the tolerance edge is kept.
+func BoundTelemetryTimestamp(snapTS, receivedAt time.Time) (bounded time.Time, clamped bool) {
+	if snapTS.IsZero() {
+		return receivedAt, false
+	}
+	if snapTS.Sub(receivedAt) > TelemetryFutureTolerance {
+		return receivedAt, true
+	}
+	return snapTS, false
 }
 
 // PortMapping represents a container port binding.
