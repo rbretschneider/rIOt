@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { settingsApi } from '../api/settings'
 import { Link } from 'react-router-dom'
-import type { ContainerInfo, AlertRule, ContainerLogEntry } from '../types/models'
+import type { ContainerInfo, AlertRule, ContainerLogEntry, Command } from '../types/models'
 import { displayName, formatBytes, formatContainerUptime, isSensitiveKey, maskValue, matchesContainerScope, statusColor } from '../utils/docker'
+import { hasUpdateAvailable, isTerminal, normalizeStatus, targetKeyForContainer, updateIndicatorTitle, updateStatusNote } from '../utils/commandLifecycle'
+import { useCommandTracker } from '../hooks/useCommandTracker'
 import ContainerStatusBadge from './ContainerStatusBadge'
 import ContainerMetricChart from './ContainerMetricChart'
 import GaugeBar from './GaugeBar'
@@ -22,12 +24,20 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   const name = displayName(c.riot, c.name)
 
-  const commandMutation = useMutation({
-    mutationFn: ({ action, params }: { action: string; params: Record<string, unknown> }) =>
-      api.sendCommand(deviceId!, action, params),
-    onSuccess: () => { setTimeout(() => commandMutation.reset(), 5000) },
-    onError: () => { setTimeout(() => commandMutation.reset(), 5000) },
-  })
+  // CMD-LIFECYCLE-001: follow the command by id until it is terminal. The
+  // target key is the container's compose project (compose containers) or its
+  // name, so an update started elsewhere shows up here too (FR-092).
+  const tracker = useCommandTracker(deviceId, deviceId ? targetKeyForContainer(c) : null)
+
+  const sendAction = (action: string, params: Record<string, unknown>) =>
+    tracker.track(() => api.sendCommand(deviceId!, action, params))
+
+  // docker_update resolves the target by name first and falls back to the id
+  // (old agents only understand the id); the other actions are addressed by id.
+  const paramsFor = (action: string): Record<string, unknown> =>
+    action === 'docker_update'
+      ? { container: c.name.replace(/^\//, ''), container_id: c.id }
+      : { container_id: c.id }
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'general', label: 'General', show: true },
@@ -47,23 +57,30 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
         </div>
         {deviceId && (
           <div className="flex gap-1">
-            {c.update_available && (
-              <ActionBtn label="Update" onClick={() => setConfirmAction('docker_update')} pending={commandMutation.isPending} />
+            {hasUpdateAvailable(c) && (
+              <ActionBtn
+                label="Update"
+                title={updateIndicatorTitle(c) ?? undefined}
+                onClick={() => setConfirmAction('docker_update')}
+                pending={tracker.isBusy}
+                starting={tracker.isStarting}
+              />
             )}
             {c.state === 'running' && (
               <ActionBtn
-                label={commandMutation.isSuccess && commandMutation.variables?.action === 'docker_check_updates' ? 'Queued' : 'Check Updates'}
-                onClick={() => commandMutation.mutate({ action: 'docker_check_updates', params: {} })}
-                pending={commandMutation.isPending}
+                label="Check Updates"
+                onClick={() => sendAction('docker_check_updates', {})}
+                pending={tracker.isBusy}
+                starting={tracker.isStarting}
               />
             )}
             {c.state === 'running' ? (
               <>
-                <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={commandMutation.isPending} />
-                <ActionBtn label="Stop" variant="danger" onClick={() => setConfirmAction('docker_stop')} pending={commandMutation.isPending} />
+                <ActionBtn label="Restart" onClick={() => setConfirmAction('docker_restart')} pending={tracker.isBusy} starting={tracker.isStarting} />
+                <ActionBtn label="Stop" variant="danger" onClick={() => setConfirmAction('docker_stop')} pending={tracker.isBusy} starting={tracker.isStarting} />
               </>
             ) : (
-              <ActionBtn label="Start" onClick={() => setConfirmAction('docker_start')} pending={commandMutation.isPending} />
+              <ActionBtn label="Start" onClick={() => setConfirmAction('docker_start')} pending={tracker.isBusy} starting={tracker.isStarting} />
             )}
           </div>
         )}
@@ -86,15 +103,20 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
         ))}
       </div>
 
-      {/* Command feedback */}
-      {commandMutation.isSuccess && (
-        <div className="mb-4 px-3 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
-          Command sent ({commandMutation.data?.status})
-        </div>
+      {/* Command feedback: the live state of the tracked command (FR-090, FR-095) */}
+      {tracker.command && tracker.label && (
+        <CommandStatusBanner
+          command={tracker.command}
+          label={tracker.label}
+          canCancel={tracker.canCancel}
+          cancelling={tracker.isCancelling}
+          onCancel={() => { void tracker.cancel() }}
+          onDismiss={tracker.dismiss}
+        />
       )}
-      {commandMutation.isError && (
-        <div className="mb-4 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
-          {(commandMutation.error as Error).message}
+      {tracker.error && (
+        <div role="alert" className="mb-4 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
+          {tracker.error}
         </div>
       )}
 
@@ -106,7 +128,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
           confirmLabel={confirmAction.replace('docker_', '').replace(/^\w/, c => c.toUpperCase())}
           confirmVariant={confirmAction === 'docker_stop' ? 'danger' : 'primary'}
           onConfirm={() => {
-            commandMutation.mutate({ action: confirmAction, params: { container_id: c.id } })
+            void sendAction(confirmAction, paramsFor(confirmAction))
             setConfirmAction(null)
           }}
           onCancel={() => setConfirmAction(null)}
@@ -250,8 +272,9 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
           {c.restart_policy && <InfoItem label="Restart Policy" value={c.restart_policy} />}
           {(c.restart_count ?? 0) > 0 && <InfoItem label="Restart Count" value={String(c.restart_count)} />}
           {c.health_status && <InfoItem label="Health" value={c.health_status} />}
-          {c.update_available === true && <InfoItem label="Image" value="Newer version available" valueClassName="text-amber-400" />}
-          {c.update_available === false && <InfoItem label="Image" value="Up to date" valueClassName="text-emerald-400/70" />}
+          {hasUpdateAvailable(c) && <InfoItem label="Image" value="Newer version available" valueClassName="text-amber-400" />}
+          {updateStatusNote(c) && <InfoItem label="Image" value={updateStatusNote(c)!} valueClassName="text-gray-400" />}
+          {!hasUpdateAvailable(c) && !updateStatusNote(c) && c.update_available === false && <InfoItem label="Image" value="Up to date" valueClassName="text-emerald-400/70" />}
         </div>
       </Section>
 
@@ -695,18 +718,70 @@ function AddContainerAlertButton({ containerName, deviceId }: { containerName: s
   )
 }
 
-function ActionBtn({ label, onClick, variant = 'default', pending }: { label: string; onClick: () => void; variant?: 'default' | 'danger'; pending: boolean }) {
+// `pending` disables the control while the target's command is in flight;
+// `starting` swaps the label for an ellipsis only while the create request is
+// out, so a tracked command shows its state in the banner, not on every button.
+function ActionBtn({ label, onClick, variant = 'default', pending, starting = false, title }: { label: string; onClick: () => void; variant?: 'default' | 'danger'; pending: boolean; starting?: boolean; title?: string }) {
   return (
     <button
       onClick={onClick}
       disabled={pending}
+      title={title}
       className={`px-2 py-1 text-xs rounded transition-colors disabled:opacity-50 ${
         variant === 'danger'
           ? 'text-red-400 hover:bg-red-900/30 border border-red-800/50'
           : 'text-gray-400 hover:text-white border border-gray-700 hover:bg-gray-800'
       }`}
     >
-      {pending ? '...' : label}
+      {starting ? '...' : label}
     </button>
+  )
+}
+
+// Live state of the tracked command. `label` and the command's text fields are
+// agent-originated for failures, so everything here is a React text node: never
+// markup, never an href, src or title (SEC C-11).
+function CommandStatusBanner({ command, label, canCancel, cancelling, onCancel, onDismiss }: {
+  command: Command
+  label: string
+  canCancel: boolean
+  cancelling: boolean
+  onCancel: () => void
+  onDismiss: () => void
+}) {
+  const state = normalizeStatus(command.status)
+  const tone =
+    state === 'succeeded' ? 'bg-emerald-900/30 border-emerald-800 text-emerald-400'
+      : state === 'failed' ? 'bg-red-900/30 border-red-800 text-red-400'
+      : isTerminal(state) ? 'bg-amber-900/30 border-amber-800 text-amber-400'
+      : 'bg-blue-900/30 border-blue-800 text-blue-300'
+  const dismissible = isTerminal(state) && state !== 'succeeded'
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="command-status"
+      className={`mb-4 px-3 py-2 border rounded text-sm flex items-start gap-3 ${tone}`}
+    >
+      <span className="flex-1 min-w-0 break-words whitespace-pre-wrap">{label}</span>
+      {canCancel && (
+        <button
+          onClick={onCancel}
+          disabled={cancelling}
+          className="px-2 py-0.5 text-xs rounded border border-current hover:bg-white/10 disabled:opacity-50 flex-shrink-0"
+        >
+          Cancel
+        </button>
+      )}
+      {dismissible && (
+        <button
+          onClick={onDismiss}
+          className="px-2 py-0.5 text-xs rounded border border-current hover:bg-white/10 flex-shrink-0"
+        >
+          Dismiss
+        </button>
+      )}
+    </div>
   )
 }

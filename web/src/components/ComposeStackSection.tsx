@@ -4,9 +4,19 @@ import { api } from '../api/client'
 import type { ContainerInfo, AutoUpdatePolicy } from '../types/models'
 import type { ComposeStackGroup } from '../utils/docker'
 import { getNetworkParent, resolveNetworkParent } from '../utils/docker'
+import { composeTargetKey, hasUpdateAvailable, isTerminal, normalizeStatus } from '../utils/commandLifecycle'
+import { useCommandTracker } from '../hooks/useCommandTracker'
 import CompactContainerTile from './CompactContainerTile'
 import NetworkClusterGroup from './NetworkClusterGroup'
 import UpdateConfirmModal from './UpdateConfirmModal'
+
+function statusTone(status: string): string {
+  const state = normalizeStatus(status)
+  if (state === 'succeeded') return 'bg-emerald-900/20 text-emerald-400'
+  if (state === 'failed') return 'bg-red-900/20 text-red-400'
+  if (isTerminal(state)) return 'bg-amber-900/20 text-amber-400'
+  return 'bg-blue-900/20 text-blue-300'
+}
 
 interface Props {
   stack: ComposeStackGroup
@@ -34,17 +44,23 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
   const stackAutoUpdate = policyMap.get(stack.name)
   const isStackAutoUpdate = stackAutoUpdate?.enabled ?? false
 
-  const stackMutation = useMutation({
-    mutationFn: () => api.sendCommand(deviceId, 'docker_update', { compose_work_dir: stack.workDir }),
-    onSuccess: () => { setTimeout(() => stackMutation.reset(), 5000) },
-    onError: () => { setTimeout(() => stackMutation.reset(), 5000) },
-  })
+  // CMD-LIFECYCLE-001: a stack update and a network-group (bulk) update both
+  // run against the stack's compose project, so one tracker follows whichever
+  // command is in flight for it, by id, until it is terminal.
+  const tracker = useCommandTracker(deviceId, stack.workDir ? composeTargetKey(stack.workDir) : null)
+  const [skippedTargets, setSkippedTargets] = useState(0)
 
-  const bulkUpdateMutation = useMutation({
-    mutationFn: (containerIds: string[]) => api.bulkDockerUpdate(deviceId, containerIds),
-    onSuccess: () => { setTimeout(() => bulkUpdateMutation.reset(), 5000) },
-    onError: () => { setTimeout(() => bulkUpdateMutation.reset(), 5000) },
-  })
+  const updateStack = () => {
+    setSkippedTargets(0)
+    void tracker.track(() => api.sendCommand(deviceId, 'docker_update', { compose_work_dir: stack.workDir }))
+  }
+
+  const updateGroup = (containerIds: string[]) => {
+    setSkippedTargets(0)
+    void tracker.track(() => api.bulkDockerUpdate(deviceId, containerIds)).then((created) => {
+      setSkippedTargets(created?.conflicts?.length ?? 0)
+    })
+  }
 
   const autoUpdateMutation = useMutation({
     mutationFn: (enabled: boolean) =>
@@ -53,7 +69,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
   })
 
   const runningCount = stack.containers.filter(c => c.state === 'running').length
-  const updatable = stack.containers.filter(c => c.update_available)
+  const updatable = stack.containers.filter(c => hasUpdateAvailable(c))
 
   // Find cross-stack network parents for loose containers
   const crossStackMap = useMemo(() => {
@@ -89,10 +105,10 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         {updatable.length > 0 && (
           <button
             onClick={() => setShowStackConfirm(true)}
-            disabled={stackMutation.isPending}
+            disabled={tracker.isBusy}
             className="px-2.5 py-0.5 text-xs font-medium rounded bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors disabled:opacity-50"
           >
-            {stackMutation.isPending ? 'Updating...' : `Update Stack (${updatable.length})`}
+            {tracker.isStarting ? 'Updating...' : `Update Stack (${updatable.length})`}
           </button>
         )}
 
@@ -110,17 +126,42 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         </button>
       </div>
 
-      {stackMutation.isSuccess && (
-        <div className="px-2 py-1 mb-2 bg-emerald-900/20 rounded text-xs text-emerald-400">Stack update command sent</div>
+      {/* Live state of the tracked command (FR-090, FR-095). The label can carry
+          agent-originated failure text, so it is rendered as a text node only. */}
+      {tracker.command && tracker.label && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="stack-command-status"
+          className={`px-2 py-1 mb-2 rounded text-xs flex items-start gap-2 ${statusTone(tracker.command.status)}`}
+        >
+          <span className="flex-1 min-w-0 break-words whitespace-pre-wrap">{tracker.label}</span>
+          {tracker.canCancel && (
+            <button
+              onClick={() => { void tracker.cancel() }}
+              disabled={tracker.isCancelling}
+              className="px-1.5 py-px rounded border border-current hover:bg-white/10 disabled:opacity-50 flex-shrink-0"
+            >
+              Cancel
+            </button>
+          )}
+          {isTerminal(tracker.command.status) && normalizeStatus(tracker.command.status) !== 'succeeded' && (
+            <button
+              onClick={tracker.dismiss}
+              className="px-1.5 py-px rounded border border-current hover:bg-white/10 flex-shrink-0"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
       )}
-      {stackMutation.isError && (
-        <div className="px-2 py-1 mb-2 bg-red-900/20 rounded text-xs text-red-400">{(stackMutation.error as Error).message}</div>
+      {tracker.error && (
+        <div role="alert" className="px-2 py-1 mb-2 bg-red-900/20 rounded text-xs text-red-400">{tracker.error}</div>
       )}
-      {bulkUpdateMutation.isSuccess && (
-        <div className="px-2 py-1 mb-2 bg-emerald-900/20 rounded text-xs text-emerald-400">Network group update sent</div>
-      )}
-      {bulkUpdateMutation.isError && (
-        <div className="px-2 py-1 mb-2 bg-red-900/20 rounded text-xs text-red-400">{(bulkUpdateMutation.error as Error).message}</div>
+      {skippedTargets > 0 && (
+        <div className="px-2 py-1 mb-2 bg-amber-900/20 rounded text-xs text-amber-400">
+          {skippedTargets} {skippedTargets === 1 ? 'target was' : 'targets were'} skipped: an update is already in progress
+        </div>
       )}
 
       {/* Loose containers */}
@@ -131,6 +172,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
               key={c.id}
               container={c}
               onClick={onContainerClick}
+              updating={tracker.isActive}
               crossStackParent={crossStackMap.get(c.id)}
             />
           ))}
@@ -143,8 +185,8 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
           key={cluster.parent.id}
           cluster={cluster}
           onContainerClick={onContainerClick}
-          onBulkUpdate={ids => bulkUpdateMutation.mutate(ids)}
-          updating={bulkUpdateMutation.isPending}
+          onBulkUpdate={updateGroup}
+          updating={tracker.isBusy}
         />
       ))}
 
@@ -157,7 +199,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
             dependents: stack.networkClusters.flatMap(nc => nc.dependents.map(d => d.name)),
           } : undefined}
           onConfirm={() => {
-            stackMutation.mutate()
+            updateStack()
             setShowStackConfirm(false)
           }}
           onCancel={() => setShowStackConfirm(false)}
