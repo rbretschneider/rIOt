@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { Command, CommandOutput, WSMessage } from '../types/models'
+import { isAllowedStatusFilter, normalizeStatus, STATUS_FILTER_OPTIONS, statusChipLabel } from '../utils/commandLifecycle'
 
 const PAGE_SIZE = 20
 
@@ -29,13 +30,20 @@ function formatDuration(ms: number | null): string {
   return rem > 0 ? `${m}m ${rem}s` : `${m}m`
 }
 
+// Colour follows the canonical state, so legacy rows (pending, sent, success,
+// error) from before the lifecycle migration look the same as new ones.
 function statusColor(status: string): string {
-  switch (status) {
-    case 'success': return 'bg-emerald-500/20 text-emerald-400'
-    case 'error': return 'bg-red-500/20 text-red-400'
-    case 'pending': return 'bg-gray-500/20 text-gray-400'
-    case 'sent': return 'bg-amber-500/20 text-amber-400'
-    case 'queued': return 'bg-amber-500/20 text-amber-400'
+  switch (normalizeStatus(status)) {
+    case 'succeeded': return 'bg-emerald-500/20 text-emerald-400'
+    case 'failed': return 'bg-red-500/20 text-red-400'
+    case 'timed_out': return 'bg-orange-500/20 text-orange-400'
+    case 'dispatched':
+    case 'acknowledged': return 'bg-amber-500/20 text-amber-400'
+    case 'running':
+    case 'verifying': return 'bg-blue-500/20 text-blue-400'
+    case 'queued':
+    case 'cancelled':
+    case 'expired':
     default: return 'bg-gray-500/20 text-gray-400'
   }
 }
@@ -51,15 +59,21 @@ export default function ActivityLog({ deviceId }: Props) {
     queryKey: ['device-commands', deviceId, limit, statusFilter, actionFilter],
     queryFn: () => api.getDeviceCommands(deviceId, {
       limit,
-      status: statusFilter || undefined,
+      // Only allowlisted canonical values reach the server, which answers
+      // anything else with 400 invalid_filter.
+      status: isAllowedStatusFilter(statusFilter) ? statusFilter : undefined,
       action: actionFilter || undefined,
     }),
     enabled: !!deviceId,
   })
 
-  // Real-time: invalidate commands when a command_result arrives for this device
+  // Real-time: refresh the history when a command changes state for this device.
+  // command_update is the lifecycle push; command_result is what a
+  // pre-lifecycle server still sends.
   const handleWS = useCallback((msg: WSMessage) => {
-    if (msg.type === 'command_result' && msg.device_id === deviceId) {
+    if (msg.type !== 'command_update' && msg.type !== 'command_result') return
+    const target = msg.device_id ?? (msg.data as { device_id?: string } | undefined)?.device_id
+    if (target === deviceId) {
       queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] })
     }
   }, [deviceId, queryClient])
@@ -80,11 +94,9 @@ export default function ActivityLog({ deviceId }: Props) {
           className="px-2 py-1 text-xs bg-gray-800 border border-gray-700 rounded-md text-gray-300 focus:outline-none focus:border-gray-500"
         >
           <option value="">All statuses</option>
-          <option value="success">Success</option>
-          <option value="error">Error</option>
-          <option value="pending">Pending</option>
-          <option value="sent">Sent</option>
-          <option value="queued">Queued</option>
+          {STATUS_FILTER_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
         </select>
         <select
           value={actionFilter}
@@ -127,7 +139,7 @@ export default function ActivityLog({ deviceId }: Props) {
                     <td className="py-1.5 pr-3 text-gray-200">{formatAction(cmd.action)}</td>
                     <td className="py-1.5 pr-3">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColor(cmd.status)}`}>
-                        {cmd.status}
+                        {statusChipLabel(cmd.status)}
                       </span>
                     </td>
                     <td className="py-1.5 pr-3 text-gray-400 max-w-xs truncate hidden sm:table-cell">
@@ -195,7 +207,7 @@ function CommandDetailModal({ cmd, deviceId, onClose }: {
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-medium text-gray-100">{formatAction(cmd.action)}</h3>
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColor(cmd.status)}`}>
-              {cmd.status}
+              {statusChipLabel(cmd.status)}
             </span>
           </div>
           <button
