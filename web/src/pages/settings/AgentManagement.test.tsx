@@ -115,6 +115,12 @@ describe('[UIF AC-068] update all confirm and counts toast', () => {
     expect(within(dialog).getByRole('button', { name: 'Update all' })).toHaveAttribute('data-variant', 'primary')
   })
 
+  it('focuses Cancel, never the fleet-wide confirm, when it opens (SEC-001)', async () => {
+    const dialog = await openDialog()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: 'Update all' })).not.toHaveFocus()
+  })
+
   it('does not call the API before confirmation and not at all when cancelled', async () => {
     const dialog = await openDialog()
     expect(api.bulkUpdateAgents).not.toHaveBeenCalled()
