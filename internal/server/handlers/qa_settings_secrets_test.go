@@ -135,6 +135,8 @@ func TestHARDEN002_QA_AC030_WebhookHeaderEdgeCases(t *testing.T) {
 		require.Equal(t, http.StatusOK, code, body)
 		assertNoSentinelStored(t, s.stored(id).Config, "non-map headers")
 		assert.NotContains(t, body, "Bearer A")
+		assert.Equal(t, map[string]interface{}{"Authorization": "Bearer A"}, s.stored(id).Config["headers"],
+			"QA-2: a sentinel in place of the headers map keeps the stored headers")
 	})
 	t.Run("header values never appear in the create response", func(t *testing.T) {
 		s := newSecretsHarness(t)

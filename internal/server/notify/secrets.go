@@ -291,7 +291,9 @@ func MergeSecrets(stored *models.NotificationChannel, submitted models.Notificat
 // mergeWebhookHeaders applies the headers rules to out.
 func mergeWebhookHeaders(out, submitted, prev map[string]interface{}, inherit bool) {
 	hv, present := submitted[webhookHeadersKey]
-	if !present || hv == nil {
+	// A bare sentinel in place of the headers map means "unchanged", the same
+	// as omitting it; otherwise the sweep would wipe the stored headers (QA-2).
+	if !present || hv == nil || isSentinel(hv) {
 		if inherit {
 			if ph, ok := prev[webhookHeadersKey]; ok {
 				out[webhookHeadersKey] = deepCopyValue(ph)
