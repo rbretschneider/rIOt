@@ -7,6 +7,8 @@ import type {
   ContainerInfo, Event, FleetSummary, ProbeWithResult, ProbeResult,
   AlertRule, AlertTemplate, NotificationChannel, NotificationLog,
   Command, UPSInfo, WebServerInfo, USBInfo, SecurityScoreResult,
+  AutomationConfig, ContainerLogEntry, DeviceProbeResult, DeviceProbeWithResultEnriched,
+  FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
 
@@ -669,6 +671,8 @@ export function getSecurityOverview() {
     firewall_inactive: 0,
     selinux_enforcing: 0,
     apparmor_enabled: 5,
+    certs_expiring_soon: 0,
+    total_certs: getCerts().length,
   }
 }
 
@@ -684,6 +688,9 @@ export function getSecurityDevices() {
     failed_logins_24h: d.hostname === 'proxmox-01' ? 14 : d.hostname === 'pi-dns' ? 3 : 0,
     logged_in_users: 1,
     open_ports: d.hostname === 'proxmox-01' ? [22, 80, 443, 8006, 8080, 9090] : [22],
+    pending_security_count: d.hostname === 'proxmox-01' ? 2 : 0,
+    unattended_upgrades: d.tags.includes('hypervisor') ? false : true,
+    certs_expiring_soon: 0,
   }))
 }
 
@@ -905,4 +912,169 @@ export function getSecurityScore(deviceId: string): SecurityScoreResult {
   }
 
   return scores[deviceId] ?? defaultScore
+}
+
+// ── Fleet dashboard (heartbeats, containers) ─────────────────────────────────
+
+/** Small deterministic hash so each device gets its own phase without randomness. */
+function seedOf(text: string): number {
+  return Math.abs(Array.from(text).reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 7))
+}
+
+const clampPct = (v: number) => Math.max(1, Math.min(99, v))
+
+/**
+ * Heartbeat sample for one telemetry snapshot. `index` is the snapshot's position in
+ * the series (0 = oldest) and varies the values deterministically, so charts show a
+ * believable wave rather than a flat line. Also used by the single-device heartbeat history.
+ */
+export function toHeartbeatData(snapshot: TelemetrySnapshot, index = 0): HeartbeatData {
+  const phase = seedOf(snapshot.device_id) % 17
+  const wave = (period: number, amplitude: number) => Math.sin((index + phase) / period) * amplitude
+  const cpu = snapshot.data.cpu?.usage_percent ?? 0
+  const mem = snapshot.data.memory?.usage_percent ?? 0
+  return {
+    uptime: snapshot.data.os?.uptime ?? 0,
+    cpu_percent: clampPct(cpu + wave(4, 12)),
+    mem_percent: clampPct(mem + wave(9, 4)),
+    load_avg_1m: Math.max(0.05, (snapshot.data.cpu?.load_avg_1m ?? 0) + wave(5, 0.4)),
+    disk_root_percent: snapshot.data.disks?.filesystems?.[0]?.usage_percent ?? 0,
+    disk_io_percent: clampPct(8 + wave(3, 6) + (phase % 5)),
+    net_rx_bytes_sec: Math.round(120_000 + (wave(4, 1) + 1) * 90_000 + phase * 2_000),
+    net_tx_bytes_sec: Math.round(40_000 + (wave(6, 1) + 1) * 30_000 + phase * 1_000),
+  }
+}
+
+/** Heartbeat series for every demo device, oldest first (the order the real API returns). */
+export function getFleetHeartbeats(): FleetHeartbeatsResponse {
+  const devices: Record<string, FleetHeartbeat[]> = {}
+  for (const device of getDevices()) {
+    const history = getDeviceHistory(device.id).slice().reverse()
+    devices[device.id] = history.map((snapshot, index) => ({
+      device_id: device.id,
+      timestamp: snapshot.timestamp,
+      data: toHeartbeatData(snapshot, index),
+    }))
+  }
+  return { since: ago(60 * MIN), until: ago(0), devices, devices_with_gpu: [] }
+}
+
+/** The Docker containers of the demo Docker host (proxmox-01), shaped for the fleet leaderboard. */
+export function getFleetContainers(): FleetContainerRow[] {
+  const host = getDevices()[0]
+  return getContainers().map(c => ({
+    device_id: host.id,
+    hostname: host.hostname,
+    container_id: c.id,
+    container_name: c.name,
+    image: c.image,
+    stack: c.riot?.group ?? '',
+    state: c.state,
+    cpu_percent: c.cpu_percent,
+    mem_usage: c.mem_usage,
+    mem_limit: c.mem_limit,
+    restart_count: c.restart_count ?? 0,
+    update_available: c.update_available ?? null,
+  }))
+}
+
+// ── Device probes ────────────────────────────────────────────────────────────
+
+export function getDeviceProbes(): DeviceProbeWithResultEnriched[] {
+  const host = getDevices()[0]
+  const stamp = ago(0)
+  return [
+    {
+      id: 101, device_id: host.id, device_hostname: host.hostname, name: 'Docker socket', type: 'shell', enabled: true,
+      config: { command: 'docker info --format {{.ServerVersion}}', shell: '/bin/sh' },
+      assertions: [{ field: 'exit_code', operator: '==', value: '0' }],
+      interval_seconds: 60, timeout_seconds: 10, created_at: ago(30 * DAY), updated_at: ago(30 * DAY),
+      latest_result: { id: 1001, probe_id: 101, device_id: host.id, success: true, latency_ms: 84, output: { exit_code: 0 }, created_at: stamp },
+      success_rate: 1, total_checks: 1440,
+    },
+    {
+      id: 102, device_id: host.id, device_hostname: host.hostname, name: 'Plex port', type: 'port', enabled: true,
+      config: { host: '127.0.0.1', port: 32400 },
+      assertions: [],
+      interval_seconds: 30, timeout_seconds: 5, created_at: ago(20 * DAY), updated_at: ago(20 * DAY),
+      latest_result: { id: 1002, probe_id: 102, device_id: host.id, success: true, latency_ms: 3, output: {}, created_at: stamp },
+      success_rate: 0.998, total_checks: 2880,
+    },
+  ]
+}
+
+export function getDeviceProbeResults(probeId: number): DeviceProbeResult[] {
+  const probe = getDeviceProbes().find(p => p.id === probeId)
+  if (!probe) return []
+  return Array.from({ length: 30 }, (_, i) => ({
+    id: 30 - i,
+    probe_id: probeId,
+    device_id: probe.device_id,
+    success: true,
+    latency_ms: (probe.latest_result?.latency_ms ?? 5) + ((i * 7) % 9) - 4,
+    output: {},
+    created_at: ago(i * 2 * MIN),
+  }))
+}
+
+/** Container log lines for the demo logs tab. */
+export function getContainerLogs(containerId: string): ContainerLogEntry[] {
+  const container = getContainers().find(c => c.id === containerId || c.short_id === containerId) ?? getContainers()[0]
+  const lines: Array<[ContainerLogEntry['stream'], string]> = [
+    ['stdout', 'service started'],
+    ['stdout', 'listening on :8080'],
+    ['stdout', 'GET /healthz 200 2ms'],
+    ['stdout', 'GET /api/status 200 11ms'],
+    ['stderr', 'warn: cache miss for key session:42'],
+    ['stdout', 'GET /healthz 200 1ms'],
+    ['stdout', 'POST /api/events 202 7ms'],
+    ['stdout', 'GET /healthz 200 2ms'],
+    ['stderr', 'warn: slow upstream response (412ms)'],
+    ['stdout', 'GET /healthz 200 1ms'],
+  ]
+  return lines.map(([stream, line], i) => ({
+    id: i + 1,
+    container_id: container.id,
+    container_name: container.name,
+    timestamp: ago((lines.length - i) * 20_000),
+    stream,
+    line,
+  }))
+}
+
+/** A short Markdown summary, the same shape as the server's device export. */
+export function getDeviceSummaryMarkdown(id: string): string {
+  const detail = getDeviceDetail(id)
+  if (!detail) return ''
+  const { device } = detail
+  const hardware = device.hardware_profile
+  return [
+    `# ${device.hostname}`,
+    '',
+    `- Status: ${device.status}`,
+    `- Architecture: ${device.arch}`,
+    `- Agent: v${device.agent_version ?? 'unknown'}`,
+    `- Address: ${device.primary_ip ?? 'unknown'}`,
+    hardware ? `- CPU: ${hardware.cpu_model} (${hardware.cpu_cores} cores)` : '',
+    hardware ? `- RAM: ${Math.round(hardware.total_ram_mb / 1024)} GB` : '',
+    '',
+    '_Demo data: nothing here is a real device._',
+    '',
+  ]
+    .filter((line, i, all) => line !== '' || all[i - 1] !== '')
+    .join('\n')
+}
+
+// ── Automation ───────────────────────────────────────────────────────────────
+
+export function getAutomationConfig(): AutomationConfig {
+  return {
+    os_patch: {
+      mode: 'window', start_time: '03:00', end_time: '05:00', cooldown_minutes: 60,
+      stagger_seconds: 600, frequency: 'daily', reboot_class: 'off',
+    },
+    docker_update: {
+      mode: 'anytime', start_time: '', end_time: '', cooldown_minutes: 60, stagger_seconds: 600,
+    },
+  }
 }
