@@ -158,13 +158,21 @@ func listenPprof(addr string, log *slog.Logger) (*pprofServer, error) {
 // startPprof applies RIOT_PPROF_ADDR. It returns nil when pprof is disabled,
 // the value is rejected, or the bind fails. It never panics and never returns
 // an error: a pprof misconfiguration must not stop the main server.
-func startPprof(raw string, log *slog.Logger) *pprofServer {
+//
+// pprof binds before the main listener, so a pprof port equal to mainPort is
+// rejected: on Linux a 127.0.0.1:P listener makes the main wildcard bind of :P
+// fail with EADDRINUSE, which would exit the server (QA-1).
+func startPprof(raw string, mainPort int, log *slog.Logger) *pprofServer {
 	addr, err := ParsePprofAddr(raw)
 	if err != nil {
 		log.Error("rejected RIOT_PPROF_ADDR; pprof disabled", "value", raw, "reason", err.Error())
 		return nil
 	}
 	if addr == "" {
+		return nil
+	}
+	if _, portStr, _ := net.SplitHostPort(addr); portStr == strconv.Itoa(mainPort) {
+		log.Error("rejected RIOT_PPROF_ADDR; pprof disabled", "value", raw, "reason", "port collides with the main server port")
 		return nil
 	}
 	p, err := listenPprof(addr, log)

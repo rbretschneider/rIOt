@@ -52,7 +52,7 @@ func TestHARDEN002_AC002_PprofDisabledByDefault(t *testing.T) {
 	assert.Equal(t, "", addr, "empty value means disabled")
 
 	log, buf := newCapturedLogger()
-	p := startPprof("", log)
+	p := startPprof("", 7331, log)
 	assert.Nil(t, p, "no listener may start when RIOT_PPROF_ADDR is empty")
 	assert.Equal(t, "", p.Addr(), "nil server reports no address")
 	assert.Empty(t, strings.TrimSpace(buf.String()), "disabled pprof must log nothing")
@@ -88,7 +88,7 @@ func TestHARDEN002_AC003_C5_BindAddrBuiltFromParsedValues(t *testing.T) {
 		port := freeLoopbackPort(t)
 		raw := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 		log, buf := newCapturedLogger()
-		p := startPprof(raw, log)
+		p := startPprof(raw, 7331, log)
 		require.NotNil(t, p, "listener should start on a free loopback port")
 		defer p.Shutdown(context.Background())
 
@@ -140,7 +140,7 @@ func TestHARDEN002_AC004_NonLoopbackAddrsRejected(t *testing.T) {
 
 			log, buf := newCapturedLogger()
 			assert.NotPanics(t, func() {
-				assert.Nil(t, startPprof(tc.raw, log), "startPprof must not start a listener for %q", tc.raw)
+				assert.Nil(t, startPprof(tc.raw, 7331, log), "startPprof must not start a listener for %q", tc.raw)
 			})
 			recs := logRecords(t, buf)
 			require.Len(t, recs, 1, "one ERROR record expected for %q, got %s", tc.raw, buf.String())
@@ -160,12 +160,34 @@ func TestHARDEN002_AC004_BindFailureDoesNotAbort(t *testing.T) {
 
 	log, buf := newCapturedLogger()
 	var p *pprofServer
-	assert.NotPanics(t, func() { p = startPprof(raw, log) })
+	assert.NotPanics(t, func() { p = startPprof(raw, 7331, log) })
 	assert.Nil(t, p, "a bind failure must disable pprof, not abort startup")
 	recs := logRecords(t, buf)
 	require.Len(t, recs, 1, "got %s", buf.String())
 	assert.Equal(t, "ERROR", recs[0]["level"])
 	assert.Equal(t, raw, recs[0]["addr"])
+}
+
+// QA-1: on Linux a loopback pprof bind of the main port makes the main
+// wildcard bind fail and the server exit, so the collision is rejected up front.
+func TestHARDEN002_AC004_QA1_PprofPortEqualToMainPortRejected(t *testing.T) {
+	port := freeLoopbackPort(t)
+	raw := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+
+	log, buf := newCapturedLogger()
+	var p *pprofServer
+	assert.NotPanics(t, func() { p = startPprof(raw, port, log) })
+	assert.Nil(t, p, "a pprof port equal to the main port must disable pprof")
+
+	recs := logRecords(t, buf)
+	require.Len(t, recs, 1, "got %s", buf.String())
+	assert.Equal(t, "ERROR", recs[0]["level"])
+	assert.Equal(t, raw, recs[0]["value"])
+	assert.Equal(t, "port collides with the main server port", recs[0]["reason"])
+
+	ln, err := net.Listen("tcp", raw)
+	require.NoError(t, err, "the port must still be free for the main listener")
+	ln.Close()
 }
 
 func TestHARDEN002_AC005_LoopbackListenerServesPprof(t *testing.T) {

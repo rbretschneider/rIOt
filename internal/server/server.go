@@ -219,7 +219,7 @@ func (s *Server) Start() error {
 
 	// HARDEN-002 AD-002: opt-in loopback-only pprof listener. Returns nil
 	// (and logs) when disabled, rejected or the bind fails; never aborts startup.
-	s.pprof = startPprof(s.Config.PprofAddr, slog.Default())
+	s.pprof = startPprof(s.Config.PprofAddr, s.Config.Port, slog.Default())
 
 	// Graceful shutdown
 	s.done = make(chan os.Signal, 1)
