@@ -53,6 +53,9 @@ func newLifecycleHarnessAt(t *testing.T, dir string) *lifecycleHarness {
 	h.tr = &fakeTransport{wsUp: true, log: h.log}
 	h.a = &Agent{config: &Config{}, telemetryNow: make(chan struct{}, 1)}
 	h.a.config.Agent.DeviceID = "dev-1"
+	// Tests never talk to a real Docker daemon: Docker is unavailable unless a
+	// test installs a fake.
+	h.a.dockerFactory = func() (dockerAPI, error) { return nil, errors.New("docker is not available in this test") }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.a.cmdCtx, h.a.cmdCancel = context.WithCancel(context.Background())

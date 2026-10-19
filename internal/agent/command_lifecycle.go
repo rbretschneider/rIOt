@@ -595,7 +595,7 @@ func (a *Agent) recoverInterruptedCommands(ctx context.Context) {
 			continue
 		}
 
-		summary, unreachable := a.reconcileMarker(ctx, entry.ID, m)
+		summary, unreachable := a.reconcileInterrupted(ctx, entry.ID, m)
 
 		if !m.Reported && !a.out.Has(entry.ID) {
 			message := restartedMessage
@@ -625,12 +625,8 @@ func (a *Agent) recoverInterruptedCommands(ctx context.Context) {
 			slog.Warn("recovery: could not clear marker", "id", entry.ID, "error", err)
 		}
 	}
-}
 
-// reconcileMarker is the Docker reconciliation hook of recovery. Non-Docker
-// markers have nothing to reconcile.
-func (a *Agent) reconcileMarker(ctx context.Context, id string, m inflightMarker) (summary string, unreachable bool) {
-	return "", false
+	a.cleanupSanitizedLeftovers(ctx)
 }
 
 // ---------------------------------------------------------------------------
