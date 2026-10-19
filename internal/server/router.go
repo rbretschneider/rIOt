@@ -126,13 +126,26 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Get("/health", hh.Health)
 	r.Get("/readyz", hh.Readyz)
 
+	// GROWTH-001 AD-030 / SEC-032: every cookie-authenticated route takes this
+	// one chain (origin check, then the session check). It is attached per
+	// route or group, never to the shared /api/v1/devices/{id} route, which
+	// also carries the agent POSTs: agents authenticate with a device key or
+	// client certificate, send no Origin, and must not be refused. The origin
+	// check runs before the session check, so an unauthenticated cross-origin
+	// write gets 403, not 401.
+	adminAuth := middleware.AdminAuthSameOrigin(s.JWTSecret, s.Config.AllowedOrigins)
+
 	// Setup wizard routes
 	r.Route("/api/v1/setup", func(r chi.Router) {
+		// Setup and login run before any session exists, so they cannot use
+		// adminAuth. They need the origin check alone (login CSRF).
+		r.Use(middleware.SameOrigin(s.Config.AllowedOrigins))
 		r.Get("/status", setupH.Status)
 		r.With(loginLimiter.Middleware()).Post("/complete", setupH.Complete)
 	})
 
 	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Use(middleware.SameOrigin(s.Config.AllowedOrigins))
 		r.With(loginLimiter.Middleware()).Post("/login", h.Login)
 		r.Post("/logout", h.Logout)
 		r.Get("/check", h.AuthCheck)
@@ -185,7 +198,6 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(deviceAuth...).Post("/logs", h.ReceiveDeviceLogs)
 
 		// Admin-authenticated endpoints
-		adminAuth := middleware.AdminAuth(s.JWTSecret)
 		r.With(adminAuth).Get("/", h.GetDevice)
 		r.With(adminAuth).Get("/history", h.GetDeviceHistory)
 		r.With(adminAuth).Get("/containers", h.GetDeviceContainers)
@@ -218,8 +230,6 @@ func (s *Server) setupRouter() *chi.Mux {
 	})
 
 	// === ADMIN routes (JWT cookie auth) ===
-	adminAuth := middleware.AdminAuth(s.JWTSecret)
-
 	// HARDEN-002 AD-001: profiling is never served on this listener. The
 	// explicit 404 keeps the SPA catch-all from answering these paths with
 	// index.html and 200. Profiles are available only on the opt-in loopback
