@@ -2268,7 +2268,16 @@ type FakeAgents struct {
 	mu        sync.Mutex
 	Connected map[string]bool
 	SendErr   error
-	sent      []FakeSentCommand
+	// OnConnectCheck, when set, runs inside IsConnected (before it answers), so a
+	// test can interleave an operator action between the check and the claim.
+	OnConnectCheck func()
+	// OnSend, when set, runs inside SendCommand before it answers, so a test can
+	// interleave an agent report with the send.
+	OnSend func(deviceID string, payload models.CommandPayload)
+	// DisconnectAfterCheck makes SendCommand report "not connected" even though
+	// IsConnected said yes (the connection vanished in between).
+	DisconnectAfterCheck bool
+	sent                 []FakeSentCommand
 }
 
 func NewFakeAgents(connected ...string) *FakeAgents {
@@ -2281,20 +2290,33 @@ func NewFakeAgents(connected ...string) *FakeAgents {
 
 func (f *FakeAgents) IsConnected(deviceID string) bool {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.Connected[deviceID]
+	hook := f.OnConnectCheck
+	connected := f.Connected[deviceID]
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return connected
 }
 
 func (f *FakeAgents) SendCommand(deviceID string, payload models.CommandPayload) (bool, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if !f.Connected[deviceID] {
+	connected := f.Connected[deviceID] && !f.DisconnectAfterCheck
+	sendErr := f.SendErr
+	hook := f.OnSend
+	f.mu.Unlock()
+	if !connected {
 		return false, nil
 	}
-	if f.SendErr != nil {
-		return false, f.SendErr
+	if hook != nil {
+		hook(deviceID, payload)
 	}
+	if sendErr != nil {
+		return false, sendErr
+	}
+	f.mu.Lock()
 	f.sent = append(f.sent, FakeSentCommand{DeviceID: deviceID, Payload: payload})
+	f.mu.Unlock()
 	return true, nil
 }
 
