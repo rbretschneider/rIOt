@@ -403,3 +403,109 @@ func TestDoctor_AC019_InfoLinePerFallbackSource(t *testing.T) {
 	assert.Contains(t, out, strings.Trim(strconv.Quote(src), `"`), "the source is named")
 	assert.Contains(t, out, "is trusted", "and the stack itself passes")
 }
+
+// unitSection returns the lines of one [Section] of a unit file.
+func unitSection(t *testing.T, unit, section string) []string {
+	t.Helper()
+	var lines []string
+	in := false
+	for _, line := range strings.Split(strings.ReplaceAll(unit, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "["):
+			in = line == "["+section+"]"
+		case in && line != "":
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// installerUnit extracts the unit file text that install.sh writes.
+func installerUnit(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../scripts/install.sh")
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	script := strings.ReplaceAll(string(data), "\r\n", "\n")
+	const start = "cat > /etc/systemd/system/riot-agent.service <<EOF\n"
+	i := strings.Index(script, start)
+	if i < 0 {
+		t.Fatal("install.sh no longer writes the riot-agent unit with the expected heredoc")
+	}
+	rest := script[i+len(start):]
+	return rest[:strings.Index(rest, "\nEOF\n")]
+}
+
+const goldenSystemctlShow = "MemoryMax=536870912\nOOMPolicy=continue\nKillMode=control-group\nEnvironment=GOMEMLIMIT=200MiB\n"
+
+func TestGROWTH_AC059_InstallerUnitAndDoctorMemoryLimit(t *testing.T) {
+	wantDirectives := []string{"MemoryMax=50%", "Environment=GOMEMLIMIT=200MiB", "OOMPolicy=continue"}
+
+	t.Run("the installer writes the three memory directives in the [Service] section", func(t *testing.T) {
+		service := unitSection(t, installerUnit(t), "Service")
+		for _, d := range wantDirectives {
+			assert.Contains(t, service, d, "[AC-059] install.sh's unit must contain %s", d)
+		}
+	})
+
+	t.Run("the standalone unit file carries the same three lines", func(t *testing.T) {
+		data, err := os.ReadFile("../../scripts/riot-agent.service")
+		if err != nil {
+			t.Fatalf("read riot-agent.service: %v", err)
+		}
+		service := unitSection(t, string(data), "Service")
+		for _, d := range wantDirectives {
+			assert.Contains(t, service, d, "[AC-059] scripts/riot-agent.service must contain %s", d)
+		}
+	})
+
+	t.Run("doctor reports MemoryMax in bytes, OOMPolicy, KillMode and GOMEMLIMIT on a good unit", func(t *testing.T) {
+		out := captureStdout(func() { reportMemoryLimit(goldenSystemctlShow, nil) })
+
+		assert.Contains(t, out, "MemoryMax = 536870912 bytes (512 MiB)", "[AC-059] the limit is shown in bytes")
+		assert.Contains(t, out, "OOMPolicy = continue")
+		assert.Contains(t, out, "KillMode = control-group")
+		assert.Contains(t, out, "GOMEMLIMIT = 200MiB")
+		assert.NotContains(t, out, "no memory limit")
+	})
+
+	t.Run("doctor fails a unit without a limit and says how to fix it", func(t *testing.T) {
+		for name, show := range map[string]string{
+			"infinity":        "MemoryMax=infinity\nOOMPolicy=stop\nKillMode=control-group\nEnvironment=\n",
+			"legacy infinity": "MemoryMax=18446744073709551615\nOOMPolicy=stop\nKillMode=control-group\nEnvironment=\n",
+			"missing":         "OOMPolicy=stop\n",
+		} {
+			out := captureStdout(func() { reportMemoryLimit(show, nil) })
+
+			assert.Contains(t, out, "no memory limit on the agent unit", "[AC-059] %s must fail", name)
+			assert.Contains(t, out, "Re-run the install script", "[AC-059] %s must point at the installer", name)
+			assert.NotContains(t, out, "MemoryMax = ")
+		}
+	})
+
+	t.Run("doctor warns when OOMPolicy is not continue or GOMEMLIMIT is unset", func(t *testing.T) {
+		out := captureStdout(func() {
+			reportMemoryLimit("MemoryMax=1073741824\nOOMPolicy=stop\nKillMode=process\nEnvironment=OTHER=1\n", nil)
+		})
+
+		assert.Contains(t, out, `OOMPolicy = "stop" (expected continue)`)
+		assert.Contains(t, out, "KillMode = process")
+		assert.Contains(t, out, "GOMEMLIMIT is not set")
+		assert.Contains(t, out, "MemoryMax = 1073741824 bytes (1024 MiB)")
+	})
+
+	t.Run("GOMEMLIMIT is found among several environment assignments", func(t *testing.T) {
+		v, ok := environmentValue(`FOO=bar "GOMEMLIMIT=200MiB" BAZ=1`, "GOMEMLIMIT")
+		assert.True(t, ok)
+		assert.Equal(t, "200MiB", v)
+		_, ok = environmentValue("XGOMEMLIMIT=1", "GOMEMLIMIT")
+		assert.False(t, ok, "a suffix match must not count")
+	})
+
+	t.Run("a systemd query failure is a warning, not a crash", func(t *testing.T) {
+		out := captureStdout(func() { reportMemoryLimit("", fmt.Errorf("exec: systemctl not found")) })
+		assert.Contains(t, out, "could not query systemd")
+	})
+}

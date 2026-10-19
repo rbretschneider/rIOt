@@ -545,6 +545,12 @@ if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
     # even though User=riot, so the verifier can write /usr/local/bin. "-" ignores
     # a non-zero exit or a missing file, so a host without the verifier (or one
     # that refuses a bad staged update) still starts the current agent.
+    # Memory limits (GROWTH-001 AD-019): MemoryMax caps the agent's whole cgroup
+    # at half of RAM, GOMEMLIMIT makes the Go runtime collect garbage well before
+    # that, and OOMPolicy=continue stops systemd from killing the whole unit when
+    # one process in it is OOM-killed. Residual: the cgroup includes the
+    # apt/dpkg children the agent starts, so a cgroup OOM or an agent restart can
+    # interrupt a running upgrade (see the README, "Memory limit").
     # The comment is outside the heredoc so it is not written into the unit file.
     cat > /etc/systemd/system/riot-agent.service <<EOF
 [Unit]
@@ -562,6 +568,9 @@ User=${RIOT_USER}
 Group=${RIOT_USER}
 ${SUPPLEMENTARY_GROUPS}
 LimitNOFILE=65536
+MemoryMax=50%
+Environment=GOMEMLIMIT=200MiB
+OOMPolicy=continue
 ${PROTECT_SYSTEM}
 ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR} ${RIOT_BIN}
 PrivateTmp=true

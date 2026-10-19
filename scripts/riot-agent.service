@@ -12,6 +12,9 @@ User=riot
 Group=riot
 SupplementaryGroups=docker systemd-journal
 LimitNOFILE=65536
+MemoryMax=50%
+Environment=GOMEMLIMIT=200MiB
+OOMPolicy=continue
 
 # Security hardening
 ProtectSystem=strict
