@@ -236,7 +236,25 @@ func swapDefaultLogger(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// resetUnknownStatusDedupe empties the package-level once-per-value dedupe set
+// for the duration of a test and restores it afterwards. Added by QA Engineer:
+// without it the test passes only on its first run in a process and fails under
+// -count=N or -shuffle (the set survives between runs).
+func resetUnknownStatusDedupe(t *testing.T) {
+	t.Helper()
+	unknownStatusMu.Lock()
+	prev := unknownStatusLogged
+	unknownStatusLogged = map[string]struct{}{}
+	unknownStatusMu.Unlock()
+	t.Cleanup(func() {
+		unknownStatusMu.Lock()
+		unknownStatusLogged = prev
+		unknownStatusMu.Unlock()
+	})
+}
+
 func TestCL_AC101_UnknownStatusMapsToFailedWithOneWarnPerValue(t *testing.T) {
+	resetUnknownStatusDedupe(t)
 	buf := swapDefaultLogger(t)
 	value := "weird_status_ac101_unique"
 	for i := 0; i < 3; i++ {
