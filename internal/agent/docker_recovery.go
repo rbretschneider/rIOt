@@ -45,7 +45,7 @@ func (a *Agent) reconcileInterrupted(ctx context.Context, id string, m inflightM
 		parts = append(parts, a.reconcileStandalone(ctx, api, rec, all)...)
 		parts = append(parts, a.reconcileDependents(ctx, api, rec, all)...)
 		if rec.SanitizedFile != "" && filepath.Base(rec.SanitizedFile) == sanitizedComposeName {
-			removeSanitized(rec.SanitizedFile)
+			parts = append(parts, a.removeRecordedSanitized(ctx, api, rec.SanitizedFile)...)
 		}
 	}
 	summary = strings.Join(parts, "; ")
@@ -53,6 +53,26 @@ func (a *Agent) reconcileInterrupted(ctx context.Context, id string, m inflightM
 		slog.Warn("interrupted docker update reconciled", "command_id", id, "action", m.Action, "summary", summary)
 	}
 	return summary, false
+}
+
+// removeRecordedSanitized removes the sanitized copy a marker recorded, but only
+// from a directory that passes the compose trust check. The path in a marker is
+// just a string on disk; a directory that no longer validates is left alone and
+// named in the summary (AUTOUPD-HARDEN-001 AD-010). The summary line is bounded.
+func (a *Agent) removeRecordedSanitized(ctx context.Context, api dockerAPI, path string) []string {
+	dir := filepath.Dir(path)
+	snap, err := loadDaemonSnapshot(ctx, api)
+	if err != nil {
+		slog.Warn("recovery: cannot read Docker state, leaving sanitized compose file", "error", models.TruncateHead(err.Error(), maxRefusalValueBytes))
+		return []string{"sanitized compose file left in place: cannot read Docker state"}
+	}
+	td, err := a.composeTrust().Check(snap, trustRequest{Dir: dir})
+	if err != nil {
+		slog.Warn("recovery: leaving sanitized compose file in a directory that fails the trust check", "refusal", err.Error())
+		return []string{models.TruncateHead("sanitized compose file left in place: "+err.Error(), 300)}
+	}
+	removeSanitized(filepath.Join(td.Path(), sanitizedComposeName))
+	return nil
 }
 
 // reconcileStandalone puts a set-aside previous container back, if it can be
@@ -139,20 +159,26 @@ func (a *Agent) cleanupSanitizedLeftovers(ctx context.Context) {
 		return
 	}
 	defer api.Close()
-	all, err := api.ContainerList(ctx, container.ListOptions{All: true})
+	snap, err := loadDaemonSnapshot(ctx, api)
 	if err != nil {
-		slog.Debug("recovery: cannot list containers, skipping sanitized-file cleanup", "error", err)
+		slog.Debug("recovery: cannot read Docker state, skipping sanitized-file cleanup", "error", models.TruncateHead(err.Error(), maxRefusalValueBytes))
 		return
 	}
+	ct := a.composeTrust()
 	seen := map[string]bool{}
-	for _, c := range all {
+	for _, c := range snap.composeSources() {
 		dir := c.Labels[models.LabelComposeWorkingDir]
-		if dir == "" || seen[dir] || !filepath.IsAbs(dir) {
+		if seen[dir] || !filepath.IsAbs(dir) {
 			continue
 		}
 		seen[dir] = true
-		if removeLeftoverSanitized(dir) {
-			slog.Info("recovery: removed leftover sanitized compose file", "dir", dir)
+		td, err := ct.Check(snap, trustRequest{Dir: dir, Project: c.Labels[models.LabelComposeProject]})
+		if err != nil {
+			slog.Debug("recovery: skipping sanitized-file cleanup in a directory that fails the trust check", "refusal", err.Error())
+			continue
+		}
+		if removeLeftoverSanitized(td.Path()) {
+			slog.Info("recovery: removed leftover sanitized compose file", "dir", models.TruncateHead(td.Path(), maxRefusalValueBytes))
 		}
 	}
 }

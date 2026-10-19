@@ -71,7 +71,7 @@ type Agent struct {
 	// Test seams for the Docker paths; nil = the real Docker client, a real
 	// child process, a real wait and the collector's freshness cache.
 	dockerFactory func() (dockerAPI, error)
-	procFactory   func(name string, args ...string) limitedProcess
+	procFactory   func(name string, env []string, args ...string) limitedProcess
 	pause         func(ctx context.Context, d time.Duration) bool
 	freshness     freshnessInvalidator
 

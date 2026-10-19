@@ -225,7 +225,7 @@ func TestCL_AC050_StartFailureIsReturned(t *testing.T) {
 func TestCL_AC050_ExecProcessCapturesOutput(t *testing.T) {
 	exe, err := os.Executable()
 	require.NoError(t, err)
-	p := newExecProcess(exe, "-test.list=TestCL_AC050_ExecProcessCapturesOutput")
+	p := newExecProcess(exe, nil, "-test.list=TestCL_AC050_ExecProcessCapturesOutput")
 
 	out, timedOut, err := runLimited(context.Background(), p, time.Minute, time.Second, realClock{})
 

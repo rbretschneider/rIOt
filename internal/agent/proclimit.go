@@ -84,10 +84,14 @@ type execProcess struct {
 	buf lockedBuffer
 }
 
-// newExecProcess builds an unstarted process whose stdout and stderr are
+// newExecProcess builds an unstarted process, with the given environment when it
+// is not nil, whose stdout and stderr are
 // captured together.
-func newExecProcess(name string, args ...string) *execProcess {
+func newExecProcess(name string, env []string, args ...string) *execProcess {
 	p := &execProcess{cmd: exec.Command(name, args...)}
+	if env != nil {
+		p.cmd.Env = env
+	}
 	p.cmd.Stdout = &p.buf
 	p.cmd.Stderr = &p.buf
 	// Bound how long Wait lingers on output pipes inherited by grandchildren

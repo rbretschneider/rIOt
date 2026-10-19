@@ -15,24 +15,19 @@ import (
 // `env_file` paths resolve against the compose file's own location.
 const sanitizedComposeName = ".compose.riot-sanitized.yml"
 
-// sanitizeComposeFile creates a copy of the compose file in workDir with
-// problematic keys removed (version, deploy sections) so that Docker Compose
-// doesn't reject files with Swarm-only config in non-Swarm environments. The
-// copy is created exclusively with mode 0600 (SEC C-5). The caller records the
-// path in the in-flight marker first and defers removeSanitized.
-func sanitizeComposeFile(workDir string) (string, error) {
-	// Find compose file — Docker Compose checks these names in order
-	var composeFile string
-	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"} {
-		candidate := filepath.Join(workDir, name)
-		if _, err := os.Stat(candidate); err == nil {
-			composeFile = candidate
-			break
-		}
+// sanitizeComposeFile creates a copy of the first validated compose file in the
+// validated directory with problematic keys removed (version, deploy sections)
+// so that Docker Compose doesn't reject files with Swarm-only config in
+// non-Swarm environments. It accepts only a trustedDir, so the copy is never
+// written into a directory that failed validation (AUTOUPD-HARDEN-001 AD-010).
+// The copy is created exclusively with mode 0600 (SEC C-5). The caller records
+// the path in the in-flight marker first and defers removeSanitized.
+func sanitizeComposeFile(td trustedDir) (string, error) {
+	if !td.valid() {
+		return "", errors.New("compose directory has not been validated")
 	}
-	if composeFile == "" {
-		return "", fmt.Errorf("no compose file found in %s", workDir)
-	}
+	composeFile := td.Files()[0]
+	workDir := td.Path()
 
 	data, err := os.ReadFile(composeFile)
 	if err != nil {

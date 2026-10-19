@@ -451,6 +451,7 @@ func (f *fakeDocker) Close() error { return nil }
 type fakeProcs struct {
 	mu    sync.Mutex
 	argv  [][]string
+	envs  [][]string
 	procs []*fakeProcess
 	// configure shapes each new process by its argv; nil means "succeeds at once".
 	configure func(args []string, p *fakeProcess)
@@ -462,13 +463,14 @@ func newFakeProcs(log *eventLog) *fakeProcs {
 	return &fakeProcs{created: make(chan *fakeProcess, 16), log: log}
 }
 
-func (fp *fakeProcs) factory(name string, args ...string) limitedProcess {
+func (fp *fakeProcs) factory(name string, env []string, args ...string) limitedProcess {
 	p := newFakeProcess()
 	p.log = fp.log
 	p.autoExit = true
 	full := append([]string{name}, args...)
 	fp.mu.Lock()
 	fp.argv = append(fp.argv, full)
+	fp.envs = append(fp.envs, env)
 	fp.procs = append(fp.procs, p)
 	cfg := fp.configure
 	fp.mu.Unlock()
@@ -832,3 +834,22 @@ func (rootOwnedFS) ReadDirNames(p string) ([]string, error) { return nil, fakeNo
 func (rootOwnedFS) HasAccessACL(string) (bool, error) { return false, nil }
 
 func (rootOwnedFS) EUID() int { return 0 }
+
+// testTrusted builds a trustedDir by hand for tests of code downstream of the
+// check. Production code cannot do this outside compose_trust.go.
+func testTrusted(dir string, files ...string) trustedDir {
+	if len(files) == 0 {
+		files = []string{filepath.Join(dir, "compose.yaml")}
+	}
+	return trustedDir{dir: dir, files: files}
+}
+
+// isSanitizedF reports whether an argv selects the sanitized copy with -f.
+func isSanitizedF(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-f=") && strings.HasSuffix(a, sanitizedComposeName) {
+			return true
+		}
+	}
+	return false
+}

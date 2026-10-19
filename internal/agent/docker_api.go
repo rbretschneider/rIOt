@@ -62,11 +62,11 @@ func (a *Agent) newDocker() (dockerAPI, error) {
 
 // newProc builds an unstarted child process: the injected factory in tests, a
 // real exec.Cmd wrapper otherwise.
-func (a *Agent) newProc(name string, args ...string) limitedProcess {
+func (a *Agent) newProc(name string, env []string, args ...string) limitedProcess {
 	if a.procFactory != nil {
-		return a.procFactory(name, args...)
+		return a.procFactory(name, env, args...)
 	}
-	return newExecProcess(name, args...)
+	return newExecProcess(name, env, args...)
 }
 
 // pauseFor waits d unless ctx ends first, and reports whether the full wait
