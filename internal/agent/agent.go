@@ -411,20 +411,30 @@ func (a *Agent) reregisterLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.register(ctx); err != nil {
-				if errors.Is(err, errIdentityNotPersistable) {
-					// Only an ID mismatch fails hard (GROWTH-001 AD-018): the server
-					// issued a different ID that cannot be saved.
-					select {
-					case a.fatalCh <- err:
-					default:
-					}
-					return
-				}
-				slog.Warn("periodic re-registration failed", "error", err)
+			if a.reregister(ctx) {
+				return
 			}
 		}
 	}
+}
+
+// reregister is one periodic registration. It reports true when the error is
+// fatal and has been handed to Run: only an ID mismatch that cannot be saved
+// fails hard (GROWTH-001 AD-018). Any other failure is just logged.
+func (a *Agent) reregister(ctx context.Context) (fatal bool) {
+	err := a.register(ctx)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errIdentityNotPersistable) {
+		select {
+		case a.fatalCh <- err:
+		default:
+		}
+		return true
+	}
+	slog.Warn("periodic re-registration failed", "error", err)
+	return false
 }
 
 // detectHTTPS probes the server with a plain HTTP request. If it gets back the

@@ -342,6 +342,49 @@ func TestGROWTH_AC053_PeriodicReRegistrationWithADifferentIDIsFatal(t *testing.T
 	require.ErrorIs(t, err, errIdentityNotPersistable, "[AC-053] an ID mismatch that cannot be saved must fail hard")
 }
 
+func TestGROWTH_AC053_PeriodicLoopSignalsRunOnlyForAnUnpersistableIDMismatch(t *testing.T) {
+	t.Run("a different ID that cannot be saved is handed to Run", func(t *testing.T) {
+		captureLogs(t)
+		fx := newIdentityFixture(t)
+		fx.agent.fatalCh = make(chan error, 1)
+		fx.agent.config.Agent.DeviceID = "dev-OLD"
+		fx.fs.setFaults(syscall.ENOSPC, nil, "")
+
+		fatal := fx.agent.reregister(fx.ctx)
+
+		assert.True(t, fatal, "[AC-053] the loop must stop")
+		select {
+		case err := <-fx.agent.fatalCh:
+			assert.ErrorIs(t, err, errIdentityNotPersistable)
+		default:
+			t.Fatal("[AC-053] Run must be told, so it can exit non-zero")
+		}
+	})
+
+	t.Run("a same-ID re-registration with a full disk keeps running", func(t *testing.T) {
+		captureLogs(t)
+		fx := newIdentityFixture(t)
+		fx.agent.fatalCh = make(chan error, 1)
+		fx.agent.config.Agent.DeviceID = "dev-123"
+		fx.fs.setFaults(syscall.ENOSPC, nil, "")
+
+		assert.False(t, fx.agent.reregister(fx.ctx))
+		assert.Empty(t, fx.agent.fatalCh, "[AC-053] nothing is signalled for a same-ID re-registration")
+	})
+
+	t.Run("an ordinary server error is only logged", func(t *testing.T) {
+		logs := captureLogs(t)
+		fx := newIdentityFixture(t)
+		fx.agent.fatalCh = make(chan error, 1)
+		fx.agent.config.Agent.DeviceID = "dev-123"
+		fx.agent.client = NewHTTPClient("http://127.0.0.1:1", "") // nothing listens
+
+		assert.False(t, fx.agent.reregister(fx.ctx))
+		assert.Empty(t, fx.agent.fatalCh)
+		assert.Contains(t, logs.String(), "periodic re-registration failed")
+	})
+}
+
 func TestGROWTH_AC053_ExitPathLogsPathWaitsSixtySecondsAndReturnsTheError(t *testing.T) {
 	logs := captureLogs(t)
 	fx := newIdentityFixture(t)
