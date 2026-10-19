@@ -549,11 +549,13 @@ func (t *composeTrust) check(snap daemonSnapshot, req trustRequest) (trustedDir,
 	if e := s.checkProject(req, r); e != nil {
 		return trustedDir{}, e
 	}
+	if !win {
+		s.trust = t.trustSet() // the host-account rules also settle unreadable mount sources
+	}
 	if e := s.checkPlacement(r); e != nil {
 		return trustedDir{}, e
 	}
 	if !win {
-		s.trust = t.trustSet()
 		if e := s.permWalk(r, true); e != nil {
 			return trustedDir{}, e
 		}
@@ -745,14 +747,22 @@ func quoteAll(ss []string) string {
 // writableSource is a host location a container can write through a read-write
 // mount, volume or bind-device volume.
 type writableSource struct {
-	container  string
-	source     string // as the daemon reports it
-	dest       string
-	path       string // resolved; unusable when unresolved
+	container string
+	source    string // as the daemon reports it
+	dest      string
+	// path is the location compared against: the resolved source, the cleaned
+	// source when it does not exist, or, for a fallback source, the resolvable
+	// prefix joined with the cleaned remainder. Unusable when unresolved.
+	path       string
 	unresolved bool
+	why        string // extra detail for an unresolved refusal
+	// fallback is set when the agent user cannot read below prefix, so the
+	// source was compared through its resolvable prefix (QA-D2).
+	fallback bool
+	prefix   string
 }
 
-// evalOrClean resolves symlinks, falling back to the cleaned path only when the
+// evalMount resolves symlinks, falling back to the cleaned path only when the
 // path does not exist.
 func (s *checkState) evalMount(p string) (string, bool) {
 	res, err := s.t.fs.EvalSymlinks(filepath.Clean(p))
@@ -787,6 +797,7 @@ func (s *checkState) exemptFromWritable(c container.Summary) bool {
 
 // writableSources lists every read-write source of every container in the
 // snapshot, running or stopped, except those of socket-mounting containers.
+// A source the agent user cannot resolve is handled by resolveFallbacks.
 func (s *checkState) writableSources() []writableSource {
 	if s.wrDone {
 		return s.writables
@@ -826,7 +837,110 @@ func (s *checkState) writableSources() []writableSource {
 			}
 		}
 	}
+	s.resolveFallbacks()
 	return s.writables
+}
+
+// resolveFallbacks settles the sources the agent user could not resolve. A
+// source under a directory the agent user cannot enter (a home directory with
+// mode 0750, say) would otherwise block every compose update on the host, so it
+// is compared through its resolvable prefix, but only when that is as safe as
+// the full resolution (security ruling QA-D2):
+//
+//   - the failure is a permission error on the first component that does not
+//     resolve (ELOOP, ENOTDIR and every other error refuse);
+//   - the last directory that does resolve, P, is a real directory, and P and
+//     all its ancestors pass the host-account rules, so no untrusted account can
+//     plant a symlink below P;
+//   - no other writable source of a container, compared both lexically and by
+//     resolved prefix, is at or above P and so could plant one as root;
+//   - the comparison uses the resolved prefix joined with the cleaned remainder.
+func (s *checkState) resolveFallbacks() {
+	for i := range s.writables {
+		w := &s.writables[i]
+		if !w.unresolved {
+			continue
+		}
+		prefix, rem, err := s.firstFailure(w.source)
+		if err == nil || !errors.Is(err, fs.ErrPermission) || prefix == "" || len(rem) == 0 || s.t.windows() {
+			continue // stays unresolved: refused as "cannot resolve"
+		}
+		if e := s.typeWalk(prefix); e != nil {
+			w.why = "the last readable directory is not a real directory"
+			continue
+		}
+		if e := s.permWalk(prefix, true); e != nil {
+			w.why = fmt.Sprintf("the last readable directory fails the ownership rules (%s)", e.Rule)
+			continue
+		}
+		lexical := filepath.Clean(w.source)
+		blocked := false
+		for j := range s.writables {
+			o := s.writables[j]
+			if j == i {
+				continue
+			}
+			ol := filepath.Clean(o.source)
+			if (ol != lexical && within(ol, lexical, false)) || (!o.unresolved && within(o.path, prefix, false)) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			w.why = "another read-write mount of a container is above it and could redirect it"
+			continue
+		}
+		w.path = filepath.Join(append([]string{prefix}, rem...)...)
+		w.unresolved, w.fallback, w.prefix = false, true, prefix
+	}
+}
+
+// firstFailure resolves the prefixes of the cleaned path from the root. It
+// returns the resolved deepest prefix that resolves, the remaining components
+// (starting with the one that failed) and the error of that first failure.
+func (s *checkState) firstFailure(src string) (prefix string, rem []string, err error) {
+	p := filepath.Clean(src)
+	vol := filepath.VolumeName(p)
+	sep := string(filepath.Separator)
+	var comps []string
+	for _, c := range strings.Split(strings.TrimPrefix(p, vol), sep) {
+		if c != "" {
+			comps = append(comps, c)
+		}
+	}
+	cur := vol + sep
+	resolved, rerr := s.t.fs.EvalSymlinks(cur)
+	if rerr != nil {
+		return "", comps, rerr
+	}
+	for i, c := range comps {
+		next := filepath.Join(cur, c)
+		res, e := s.t.fs.EvalSymlinks(next)
+		if e != nil {
+			return resolved, comps[i:], e
+		}
+		cur, resolved = next, res
+	}
+	return resolved, nil, nil
+}
+
+// FallbackSources lists the writable sources that were compared through their
+// resolvable prefix, for the doctor.
+func (t *composeTrust) FallbackSources(snap daemonSnapshot) []writableSource {
+	s := &checkState{
+		t: t, snap: t.bind(snap),
+		metas: map[string]fileMeta{}, typeOK: map[string]bool{}, leafOK: map[string]bool{}, ancOK: map[string]bool{},
+	}
+	if !t.windows() {
+		s.trust = t.trustSet()
+	}
+	var out []writableSource
+	for _, w := range s.writableSources() {
+		if w.fallback {
+			out = append(out, w)
+		}
+	}
+	return out
 }
 
 func underAny(roots []string, p string, fold bool) bool {
@@ -860,7 +974,11 @@ func (s *checkState) checkPlacement(p string) *composeTrustError {
 	}
 	for _, w := range s.writableSources() {
 		if w.unresolved {
-			return s.refuse(ruleContainerWritable, "cannot resolve %q, the read-write mount (%q → %q) of container %q", w.source, w.source, w.dest, w.container)
+			detail := ""
+			if w.why != "" {
+				detail = "; " + w.why
+			}
+			return s.refuse(ruleContainerWritable, "cannot resolve %q, the read-write mount (%q → %q) of container %q%s", w.source, w.source, w.dest, w.container, detail)
 		}
 		if within(w.path, p, fold) {
 			return s.refuse(ruleContainerWritable, "%q is under %q, the read-write mount (%q → %q) of container %q", p, w.path, w.source, w.dest, w.container)

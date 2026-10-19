@@ -990,3 +990,141 @@ func (x *trustFx) relTo(target string) string {
 	require.NoError(x.t, err)
 	return filepath.ToSlash(rel)
 }
+
+// ---------------------------------------------------------------------------
+// QA-D2 (security ruling): a read-write mount source below a directory the agent
+// user cannot enter is compared through its readable prefix, under conditions.
+// ---------------------------------------------------------------------------
+
+// sandboxSource sets up /home/sandbox with mode 0750 (root-owned) and a bind
+// source below it that the agent user cannot resolve (EACCES).
+func (x *trustFx) sandboxSource() (home, src string) {
+	home = x.p("home", "sandbox")
+	x.fs.chain(home)
+	x.fs.get(home).mode = os.ModeDir | 0750
+	src = filepath.Join(home, "data")
+	x.fs.evalErr[filepath.Clean(src)] = syscall.EACCES
+	x.writer("sandbox", bindRW(src, "/data"))
+	return home, src
+}
+
+func TestComposeTrust_AC019_UnreadableTrustedHomeSourceAccepted(t *testing.T) {
+	x := newTrustFx(t)
+	home, src := x.sandboxSource()
+
+	x.accept()
+
+	fb := x.ct.FallbackSources(x.snap)
+	require.Len(t, fb, 1, "[AC-019] the source was compared through its prefix")
+	assert.Equal(t, src, fb[0].source)
+	assert.Equal(t, home, fb[0].prefix)
+	assert.Equal(t, src, fb[0].path, "[AC-019] resolved prefix plus the cleaned remainder")
+}
+
+func TestComposeTrust_AC019_FallbackComparesPrefixPlusRemainder(t *testing.T) {
+	x := newTrustFx(t)
+	home, src := x.sandboxSource()
+	// The stack lives below the unreadable source: it is a container-writable
+	// location and must be refused, wherever the daemon spelled the source.
+	x.dir = filepath.Join(src, "stack")
+	x.fs.chain(x.dir)
+	x.fs.file(filepath.Join(x.dir, "compose.yaml"), 0, 0, 0644, "")
+	x.snap.Containers[0].Labels[models.LabelComposeWorkingDir] = x.dir
+	x.fs.get(home).mode = os.ModeDir | 0750
+
+	te := x.refuse(ruleContainerWritable)
+	assert.Contains(t, te.Error(), "sandbox", "[AC-019] the container is named")
+}
+
+func TestComposeTrust_AC019_FallbackUntrustedOwnedPrefixRefused(t *testing.T) {
+	x := newTrustFx(t)
+	home, _ := x.sandboxSource()
+	x.fs.get(home).uid = uidMallory // an untrusted account owns the last readable directory
+
+	te := x.refuse(ruleContainerWritable)
+	assert.Contains(t, te.Error(), "cannot resolve", "[AC-019]")
+	assert.Contains(t, te.Error(), "owner", "[AC-019] the failed host-account rule is named")
+}
+
+func TestComposeTrust_AC019_FallbackGroupWritablePrefixWithACLRefused(t *testing.T) {
+	x := newTrustFx(t)
+	home, _ := x.sandboxSource()
+	n := x.fs.get(home)
+	n.mode, n.gid, n.acl = os.ModeDir|0775, gidDocker, true
+
+	te := x.refuse(ruleContainerWritable)
+	assert.Contains(t, te.Error(), "acl", "[AC-019]")
+}
+
+func TestComposeTrust_AC019_FallbackRefusedWhenUntrustedAncestorOfPrefix(t *testing.T) {
+	x := newTrustFx(t)
+	x.sandboxSource()
+	x.fs.get(x.p("home")).mode = os.ModeDir | 0777 // every ancestor of the prefix is checked too
+
+	x.refuse(ruleContainerWritable)
+}
+
+func TestComposeTrust_AC019_FallbackRefusedWhenAnotherWritableSourceIsAbove(t *testing.T) {
+	t.Run("lexical ancestor", func(t *testing.T) {
+		x := newTrustFx(t)
+		x.sandboxSource()
+		x.writer("whole-home", bindRW(x.p("home"), "/home")) // a container could plant a symlink below it
+
+		te := x.refuse(ruleContainerWritable)
+		assert.Contains(t, te.Error(), "above it", "[AC-019]")
+	})
+	t.Run("ancestor through a symlink to the readable prefix", func(t *testing.T) {
+		x := newTrustFx(t)
+		home, _ := x.sandboxSource()
+		x.fs.chain(x.p("alias"))
+		x.fs.link(x.p("alias", "home-link"), home, 0)
+		x.writer("via-link", bindRW(x.p("alias", "home-link"), "/h")) // resolves to the prefix itself
+
+		x.refuse(ruleContainerWritable)
+	})
+	t.Run("a sibling source is not above it", func(t *testing.T) {
+		x := newTrustFx(t)
+		x.sandboxSource()
+		x.writer("other", bindRW(x.p("srv", "elsewhere"), "/o"))
+
+		x.accept()
+	})
+}
+
+func TestComposeTrust_AC019_FallbackOnlyForPermissionErrors(t *testing.T) {
+	for name, errno := range map[string]error{
+		"ELOOP":   syscall.ELOOP,
+		"ENOTDIR": syscall.ENOTDIR,
+		"EIO":     syscall.EIO,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "ENOTDIR" && runtime.GOOS == "windows" {
+				t.Skip("syscall.ENOTDIR is ERROR_PATH_NOT_FOUND on Windows, which means not-exist")
+			}
+			x := newTrustFx(t)
+			_, src := x.sandboxSource()
+			x.fs.evalErr[filepath.Clean(src)] = errno
+
+			te := x.refuse(ruleContainerWritable)
+			assert.Contains(t, te.Error(), "cannot resolve", "[AC-019] %s refuses", name)
+		})
+	}
+}
+
+func TestComposeTrust_AC019_FallbackENOENTKeepsLexicalComparison(t *testing.T) {
+	x := newTrustFx(t)
+	_, src := x.sandboxSource()
+	x.fs.evalErr[filepath.Clean(src)] = fakeNotExist("lstat", src)
+
+	x.accept()
+	assert.Empty(t, x.ct.FallbackSources(x.snap), "[AC-019] a missing source is the old lexical case, not a fallback")
+}
+
+func TestComposeTrust_AC019_FallbackNeverOnWindows(t *testing.T) {
+	x := newTrustFx(t)
+	x.sandboxSource()
+	x.ct.goos = "windows"
+	x.ct.roots = []string{x.p("opt", "stacks")}
+
+	x.refuse(ruleContainerWritable)
+}

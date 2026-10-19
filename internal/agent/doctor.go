@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -503,6 +505,10 @@ func pass(format string, args ...interface{}) {
 	fmt.Printf("  \033[32m✓\033[0m %s\n", fmt.Sprintf(format, args...))
 }
 
+func info(format string, args ...interface{}) {
+	fmt.Printf("  \033[36mi\033[0m %s\n", fmt.Sprintf(format, args...))
+}
+
 func warn(format string, args ...interface{}) {
 	fmt.Printf("  \033[33m!\033[0m %s\n", fmt.Sprintf(format, args...))
 }
@@ -540,6 +546,9 @@ const maxDoctorLine = 1100
 // agent user is trusted through the Docker socket group anyway.
 func checkComposeTrust(cfg *Config) {
 	t := &composeTrust{fs: osTrustFS{}, goos: runtime.GOOS, socket: cfg.Docker.SocketPath, roots: cfg.Docker.ComposeRoots, rootsErr: cfg.Docker.rootsErr}
+	if runtime.GOOS != "windows" {
+		reportPrivilegeMismatch(os.Geteuid(), agentServiceUser(os.ReadFile), lookupUID)
+	}
 	cli, err := newDockerClient(cfg.Docker.SocketPath)
 	if err != nil {
 		reportComposeTrust(cfg.Docker, daemonSnapshot{}, err, t)
@@ -574,6 +583,11 @@ func reportComposeTrust(cfg DockerConfig, snap daemonSnapshot, snapErr error, t 
 	if snapErr != nil {
 		warn("%s", line("cannot read docker state: %s", models.TruncateHead(snapErr.Error(), maxRefusalValueBytes)))
 		return
+	}
+
+	for _, w := range t.FallbackSources(snap) {
+		info("%s", line("mount source %q of container %q was compared through its readable prefix %q (the agent user cannot read below it)",
+			models.TruncateHead(w.source, maxRefusalValueBytes), models.TruncateHead(w.container, maxRefusalValueBytes), models.TruncateHead(w.prefix, maxRefusalValueBytes)))
 	}
 
 	var ignored []string
@@ -619,4 +633,42 @@ func reportComposeTrust(cfg DockerConfig, snap daemonSnapshot, snapErr error, t 
 		}
 		pass("%s", line("project %q: %q is trusted (%d compose file(s))", models.TruncateHead(p.project, maxRefusalValueBytes), td.Path(), len(td.Files())))
 	}
+}
+
+// agentServiceUnitPath is where install.sh writes the agent's systemd unit.
+const agentServiceUnitPath = "/etc/systemd/system/riot-agent.service"
+
+// agentServiceUser is the user the agent service runs as: the User= line of its
+// unit, or "riot", the installer's default.
+func agentServiceUser(readFile func(string) ([]byte, error)) string {
+	if data, err := readFile(agentServiceUnitPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "User="); ok && strings.TrimSpace(rest) != "" {
+				return models.TruncateHead(strings.TrimSpace(rest), maxRefusalValueBytes)
+			}
+		}
+	}
+	return "riot"
+}
+
+// lookupUID resolves a user name to its UID.
+func lookupUID(name string) (int, bool) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, false
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	return uid, err == nil
+}
+
+// reportPrivilegeMismatch warns when the doctor runs as a different user than
+// the agent service. Run as root, the doctor can read mount sources and files
+// the agent user cannot, so a green doctor could hide a refusing agent.
+func reportPrivilegeMismatch(euid int, serviceUser string, lookup func(string) (int, bool)) {
+	uid, ok := lookup(serviceUser)
+	if !ok || uid == euid {
+		return
+	}
+	warn("%s", models.TruncateHead(fmt.Sprintf("the doctor runs as uid %d but the agent runs as user %q (uid %d): the compose checks below can read mount sources and files that the agent user cannot, so the agent may refuse what passes here; run it as that user, for example: sudo -u %s riot-agent doctor",
+		euid, serviceUser, uid, serviceUser), maxDoctorLine))
 }

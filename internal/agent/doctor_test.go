@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"strconv"
 	"testing"
 	"time"
 
@@ -366,4 +367,39 @@ func TestDoctor_AC021_WindowsExplainsRootsRequirement(t *testing.T) {
 
 	assert.Contains(t, out, "compose updates on Windows require docker.compose_roots (ownership cannot be verified)", "[AC-021]")
 	assert.Contains(t, out, "(windows_requires_roots)", "[AC-021] each project line says why it fails")
+}
+
+// QA-D2 condition 4: the doctor says when it runs with more privilege than the
+// agent, and notes each mount source compared through its readable prefix.
+func TestDoctor_AC019_EuidWarningNamesServiceUser(t *testing.T) {
+	lookup := func(name string) (int, bool) { return 998, name == "riot" }
+
+	out := captureStdout(func() { reportPrivilegeMismatch(0, "riot", lookup) })
+	assert.Contains(t, out, "uid 0", "[AC-019]")
+	assert.Contains(t, out, `user "riot" (uid 998)`, "[AC-019] the service user is named")
+	assert.Contains(t, out, "sudo -u riot riot-agent doctor")
+
+	same := captureStdout(func() { reportPrivilegeMismatch(998, "riot", lookup) })
+	assert.Empty(t, same, "[AC-019] no warning when the doctor runs as the agent user")
+	unknown := captureStdout(func() { reportPrivilegeMismatch(0, "nosuch", lookup) })
+	assert.Empty(t, unknown, "[AC-019] nothing to compare against when the user does not exist")
+}
+
+func TestDoctor_AC019_ServiceUserFromUnitFile(t *testing.T) {
+	unit := func(string) ([]byte, error) { return []byte("[Service]\nUser=agentsvc\nGroup=x\n"), nil }
+	missing := func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	assert.Equal(t, "agentsvc", agentServiceUser(unit), "[AC-019] the unit decides")
+	assert.Equal(t, "riot", agentServiceUser(missing), "[AC-019] the installer default otherwise")
+}
+
+func TestDoctor_AC019_InfoLinePerFallbackSource(t *testing.T) {
+	x := newTrustFx(t)
+	_, src := x.sandboxSource()
+
+	out := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "compared through its readable prefix", "[AC-019]")
+	assert.Contains(t, out, `container "sandbox"`)
+	assert.Contains(t, out, strings.Trim(strconv.Quote(src), `"`), "the source is named")
+	assert.Contains(t, out, "is trusted", "and the stack itself passes")
 }
