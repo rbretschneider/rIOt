@@ -40,11 +40,8 @@ Environment note: the working tree is CRLF (`core.autocrlf=true`, index LF). `go
 | `internal/agent/config.go` | MODIFY | `DockerConfig.ComposeRoots`, unexported `rootsErr`, `normalizeComposeRoots`, template line `# compose_roots: []` |
 | `internal/agent/doctor.go` | MODIFY | `checkComposeTrust`, `reportComposeTrust` (every printed line bounded) |
 | `scripts/install.sh` | MODIFY | generated `agent.yaml` `docker:` section shows `# compose_roots: []` as a commented example |
-| `internal/models/events.go` | MODIFY | `EventStackUpdateSkipped = "stack_update_skipped"` (no migration: `events.type` is free text) |
-| `internal/server/handlers/auto_update.go` | MODIFY | stack dispatch sends `compose_project` + `compose_work_dir`; a project with more than one working-dir key is skipped |
-| `internal/server/handlers/stack_skip.go` | CREATE | `composeProjectWorkDirs`, `skipLimiter` (bounded, swept), `noteStackSkipped` (Warn log + bounded warning event) |
-| `internal/server/handlers/handlers.go` | MODIFY | `skipEvents` limiter field and wiring |
-| `internal/server/commands/targets.go` | MODIFY | `compose_project` key fallback (unique telemetry working dir, else none) |
+| `internal/server/handlers/auto_update.go` | MODIFY | stack dispatch sends `compose_project` + `compose_work_dir`; a project whose containers carry several working-dir labels is dispatched by `compose_project` alone (QA-D1 round, replaces the first-round skip) |
+| `internal/server/commands/targets.go` | MODIFY | `compose_project` key fallback (the working-dir keys of the project in telemetry; all of them when labels disagree) |
 | `web/src/components/ComposeStackSection.tsx` | MODIFY | manual stack update sends `{ compose_project: stack.name, compose_work_dir: stack.workDir }` |
 | `README.md` | MODIFY | `docker.compose_roots` row, "Compose directory trust" section (rules, UPG rule, `.env` readability, Windows, INFO-1 transitive trust, condition 6 residual risks), recovery bullet |
 | Tests | CREATE / MODIFY | see the AC table; fakes in `fakes_docker_test.go` (`fakeTrustFS`, `rootOwnedFS`, `fakeDocker.Info/VolumeInspect/imageLabels/Mounts`, `fakeProcs` records env); existing tests moved to the new signatures |
@@ -93,7 +90,7 @@ These lists are `composeDefaultNames` and `composeOverrideNames` in `compose_tru
 | 1 | Verification gate | Done (section above). |
 | 2 | AD-014 unresolvable mount sources: a writable source outside the data root that fails `EvalSymlinks` for any reason other than not-exist refuses with `container_writable` and a "cannot resolve" message; no lexical fallback | Done in `checkState.evalMount`/`checkPlacement`. Tests `..._AC019_UnresolvableMountSourceRefused`, `..._NonexistentMountSourceFallsBackToLexical`. |
 | 3 | AD-003 enumeration: with `systemd` in nsswitch, member enumeration is on only when no userdb user/group/membership records exist in the standard directories and no homed socket exists; a `+`/`-` line in passwd or group marks the account database unavailable | Done (`enumerationEnabled`, `userdbClear`, `parsePasswd`, `parseGroup`). Tests `..._SystemdUserdbRecordsDisableMemberRule` (3 record kinds), `..._HomedSocketDisablesMemberRule`, `..._UnreadableUserdbDirDisablesMemberRule`, `..._CompatPlusAndMinusLinesMarkDBUnavailable`, `..._NonFilesNSSDisablesMemberRule`. |
-| 4 | AD-011 visible skip | Done: a warning event `stack_update_skipped` naming the device, project and conflicting working directories, deduplicated (see Bounds). Tests `TestAutoUpdate_AC014_AmbiguousProjectNotDispatched`, `..._SkipEventRaisedOncePerWindow`, `..._SkipEventWindowFollowsLongerCooldown`, `..._SkipEventIsBoundedAndQuoted`. No migration. |
+| 4 | AD-011 visible skip | Superseded in QA round 1 (orchestrator decision): the server no longer skips a multi-directory stack and raises no event. It dispatches `compose_project` alone and the agent, which can resolve symlinks, decides; a genuinely ambiguous project fails there as `ambiguous_project`, a visible failed command with the normal backoff. The first-round event, limiter and Warn log were removed. See "QA round 1 fixes". |
 | 5 | Provenance by key presence | Done (`inspectImageProvenance` tests `_, has := Labels[key]`). Test `TestSnapshot_AC018_EmptyValueImageLabelExcluded`. |
 | 6 | README residual risks (unit-level `Group=`/`SupplementaryGroups=`, `gshadow` passwords, writers from a since-removed container) | Done in the README section "Compose directory trust". |
 
@@ -118,7 +115,7 @@ Every test named in ADD section 8 exists. Names follow the ADD (`TestComposeTrus
 | AC-011 | same | `..._WorkDirAloneMapsToOneProject`, `..._WorkDirAloneTwoProjectsRefused`, `..._WorkDirAloneUntrustedRefused` | pass |
 | AC-012 | `docker_update_trust_test.go`, `docker_deps_test.go` | `TestDockerUpdate_AC012_SingleServiceUntrustedLabelRefused`, `TestDockerBulkUpdate_AC012_UntrustedComposeMemberRefused`, `TestRestoreDependents_AC012_UntrustedDependentDirNotRecreated`, `TestComposeArgs_AC012_ZeroTrustedDirRefused` | pass |
 | AC-013 | `docker_update_trust_test.go` | `TestComposeCore_AC013_SanitizedNotWrittenWhenRecheckFails`, `..._DirChangedBetweenChecksRefused`, `..._SanitizedRemovedWhenThirdCheckRefuses` (cleanup on a failure path, added for the standing bounds requirement), `TestCleanupSanitized_AC013_SkipsRefusedDir`, `TestReconcile_AC013_SanitizedRemovalSkipsRefusedDir` | pass |
-| AC-014 | `stack_skip_test.go`, `targets_test.go`, `service_test.go` | `TestAutoUpdate_AC014_StackDispatchSendsProjectAndWorkDir`, `..._ContainerPolicySendsNeither`, `..._AmbiguousProjectNotDispatched`, `..._SameDirTrailingSlashIsNotAmbiguous`, `..._SkipEventRaisedOncePerWindow`, `..._SkipEventWindowFollowsLongerCooldown`, `..._SkipEventIsBoundedAndQuoted`, `..._NilLimiterStillWorks`, `..._RefusedStackDispatchBacksOff`, `TestResolveDockerUpdateKeys_AC014_ProjectOnlyMapsViaTelemetry`, `..._ProjectOnlyAmbiguousHasNoKey`, `..._WorkDirStillWins`, `TestAUTOUPD_RefusalCountsAsFailureForBackoff` | pass |
+| AC-014 | `auto_update_stack_test.go`, `targets_test.go`, `service_test.go` | `TestAutoUpdate_AC014_StackDispatchSendsProjectAndWorkDir`, `..._ContainerPolicySendsNeither`, `..._SameDirTrailingSlashKeepsWorkDir`, `..._SeveralWorkDirsDispatchProjectOnly`, `..._MixedLinkAndResolvedLabelsDispatchProjectOnly`, `..._ProjectOnlyDispatchIsBackoffGated`, `..._ProjectOnlyDispatchHoldsKeysAgainstDuplicates`, `..._RefusedStackDispatchBacksOff`, `TestResolveDockerUpdateKeys_AC014_ProjectOnlyMapsViaTelemetry`, `..._ProjectOnlyHoldsEveryReportedDir`, `..._WorkDirStillWins`, `TestAUTOUPD_RefusalCountsAsFailureForBackoff` | pass |
 | AC-015 | `ComposeStackSection.test.tsx` | `[AC-015] manual stack update sends compose_project and compose_work_dir` (the older AC-108 test's assertion updated as the ADD says) | pass |
 | AC-016 | `doctor_test.go` | `TestDoctor_AC016_ReportComposeTrustRootsAndPerProjectLines`, `..._InvalidRootsFail`, `..._DockerUnreachableWarns`, `..._ContainerWritableNamesContainerAndMount` | pass |
 | AC-017 | `compose_trust_test.go`, `docker_update_trust_test.go` | `TestComposeTrust_AC017_MessageNamesPathAndRule` (23 rules), `TestDockerUpdate_AC017_RefusalIsPrecheckWithRule` | pass |
@@ -181,30 +178,27 @@ Every new log line, event, stored message and file has a fixed cap, and every re
 | Recovery summary line for a refused directory | 300 bytes | `removeRecordedSanitized` |
 | Dependent restore reason | 1200 bytes | `restoreDependents.fail` |
 | Doctor lines carrying a derived value | 1100 bytes (terminal output, not stored) | `reportComposeTrust` |
-| Server skip event message | 700 bytes (`maxSkipEventBytes`); at most 5 directories named, each at most 200 bytes, quoted | `noteStackSkipped` |
-| Server skip Warn log line | counts only (device id, project capped at 200 bytes, directory count): about 250 bytes | `noteStackSkipped` |
 | `.env` read | 1 MiB read cap, content never stored or echoed | `trustFS.ReadFile` |
 | Passwd, group, nsswitch read | 1 MiB each | `maxTrustFileBytes` |
 | Temp file | one sanitized copy per stack, fixed name, `O_EXCL`, 0600, removed by `defer` on every exit including panic, refusal at check #3, and recovery | `composeCore`, `writeSanitizedCompose` |
-| Server dedupe state | one map entry per (device, stack policy), swept on every call once older than the window | `skipLimiter` |
 
 ### Worst-case growth per device per day
 
-**Server events.** A skip event is raised at most once per (device, stack policy) per window, where the window is `max(maintenance cooldown, 6h)`. With a cooldown of at most 6 hours that is at most 24h / 6h = 4 events per policy per day. Each event is at most 700 bytes of message plus a fixed row overhead (about 150 bytes for type, severity, ids, timestamps). With P stack policies on the device: 4 × P × (700 + 150) = 3.4 KB × P per day. Ten stack policies, which is more than a typical fleet host: 34 KB per device per day, 100 devices: 3.4 MB per day, removed by the existing event retention purge. Telemetry arrives every `poll_interval` (default 60 s), which is 1440 evaluations per day. Without the limiter that would be 1440 events per policy per day; the limiter makes it 4, and a test drives 50 cycles and asserts one event.
+**Server events and logs.** This change adds no server event type and no server log line. The first-round skip event, its limiter and its Warn log were removed in QA round 1. The only server-side growth is the existing command rows and `command_completed` events of the failed runs counted below.
 
-A hostile image cannot multiply this. Events are keyed by the operator's policies, not by containers, so adding containers or labels adds no keys.
+A hostile image cannot multiply the failed-run chain either: runs are keyed by the operator's policies, not by containers, and a project-only dispatch holds the conflict keys of the reported directories, so a queued command is never duplicated by the next telemetry cycle (`TestAutoUpdate_AC014_ProjectOnlyDispatchHoldsKeysAgainstDuplicates`).
 
 **Failed-run chain from agent refusals.** A refusal is an ordinary failed run, so the existing backoff `min(15m × 2^(n-1), 6h)` applies (`TestAUTOUPD_RefusalCountsAsFailureForBackoff`, `TestAutoUpdate_AC014_RefusedStackDispatchBacksOff`). For one persistently refused stack policy the dispatch times in the first day are t = 0, 15, 45, 105, 225, 465, 825 and 1185 minutes (gaps 15, 30, 60, 120, 240, 360, 360), so 8 attempts in the first 24 hours, and then 4 per day at the 6 h ceiling. Each attempt writes:
 
 - one command result message of at most 1024 bytes, plus the existing fixed-size result fields;
 - two existing lifecycle events (`command_sent` about 150 bytes, `command_completed` message capped by the existing 200-byte reason cut, about 350 bytes);
-- one agent Warn log line of at most about 1.2 KB (1024-byte refusal plus framing).
+- two agent Warn log lines, each at most about 1.2 KB: `docker_update: compose directory refused` (the refusal, 1024 bytes plus framing) and the existing `command: failed` line, which carries the same message (about 2.4 KB in total).
 
-First day: 8 × (1024 + 150 + 350 + 1200) ≈ 8 × 2.7 KB ≈ 22 KB per refused policy. Steady state: 4 × 2.7 KB ≈ 11 KB per refused policy per day. Ten refused policies: about 110 KB per device per day at steady state. A refusal never reaches a stop, rename, create or remove (`TestDockerUpdate_AC017_RefusalIsPrecheckWithRule`), so it produces no Docker events.
+Per attempt: 1024 + 150 + 350 + 2400 ≈ 3.9 KB. First day: 8 × 3.9 KB ≈ 31 KB per refused policy. Steady state: 4 × 3.9 KB ≈ 16 KB per refused policy per day. Ten refused policies: about 160 KB per device per day at steady state. This is the whole worst case of the change, since the skip event it replaces is gone: a truly ambiguous project now costs one such failed run per backoff step instead of one event per 6 hours. A refusal never reaches a stop, rename, create or remove (`TestDockerUpdate_AC017_RefusalIsPrecheckWithRule`), so it produces no Docker events.
 
-**Manual and bulk updates.** A user-triggered update that is refused writes one result of at most 1024 bytes and one 1.2 KB log line per command; growth is bounded by the command rate limiter that already exists in the command service.
+**Manual and bulk updates.** A user-triggered update that is refused writes one result of at most 1024 bytes and two log lines of about 1.2 KB per command (about 3.4 KB); growth is bounded by the command rate limiter that already exists in the command service.
 
-**Dependent recreates.** Each stale dependent whose directory is refused adds one Warn log line (at most about 1.2 KB) and one restore reason (at most 1200 bytes, in the existing result `stderr`, which is already capped at `MaxStderrTailBytes` = 8192). With D stale dependents on one command, the result stays at or below 8 KB and the log grows by at most D × 1.2 KB; D is the number of containers sharing a network namespace with the updated one, which is a handful. Even at D = 50 this is 60 KB, once per backoff step.
+**Dependent recreates.** Each stale dependent whose directory is refused adds one Warn log line (at most about 1.2 KB) and one restore reason (at most 1200 bytes, in the existing result `stderr`, which is already capped at `MaxStderrTailBytes` = 8192), and the command then adds its own `command: failed` line. With D stale dependents on one command, the result stays at or below 8 KB and the log grows by at most D × 1.2 KB + 1.2 KB; D is the number of containers sharing a network namespace with the updated one, which is a handful. Even at D = 50 this is about 61 KB, once per backoff step.
 
 **Agent startup recovery.** `cleanupSanitizedLeftovers` logs one Debug line (suppressed at the default Info level) per refused directory and one Info line per removed leftover, each at most about 1.2 KB. It runs once per agent start. `reconcileInterrupted` adds at most one 300-byte summary line per recorded marker record, and the in-flight store already bounds the number of markers. Agent restarts are limited by systemd's restart limit.
 
@@ -223,10 +217,8 @@ These trigger architect review. None changes a security property.
 3. **File discovery follows the installed compose order,** not the order in the old `sanitizeComposeFile` (see Condition 1). This is what ADD section 12 asked for; it is listed because it changes which file `sanitizeComposeFile` reads when both `docker-compose.yml` and `docker-compose.yaml` exist.
 4. **Unquoted `.env` values may have trailing whitespace.** The ADD regex for the unquoted form does not allow it while the quoted forms do. The line is right-trimmed before matching. Security is unaffected, because compose gets only the validated `-f` files.
 5. **Empty `DockerRootDir` fails the snapshot.** The ADD does not say what an empty data root means. A daemon that does not report one cannot be checked, so the snapshot fails closed (`daemon_unavailable`).
-6. **Dedup window for the server skip event is `max(cooldown, 6 h)`.** Condition 4 asks for "at most once per policy per cooldown"; the 6-hour floor keeps the worst case at 4 events per policy per day even with a 1-minute cooldown. It never allows more than the cooldown would.
-7. **`stack_skip.go` and `stack_skip_test.go` are new files** in `internal/server/handlers`. The ADD lists `auto_update.go` (+ `_test.go`) for the server change; the event helper and limiter live in their own file. `internal/server/commands/service_test.go` gains one test (refusal counts for the backoff) and `internal/models/events.go` gains the event type constant; neither is in ADD section 4.
-8. **Test file split.** The ADD names `compose_trust_test.go` and `docker_update_trust_test.go`; the dashboard test for AC-015 is a new `it` next to the old assertion rather than a replacement of it.
-9. **FRD file was not edited.** The ADD lists the FRD amendment as done in revision 2, and it was already in the repository.
+6. **Test file split.** The ADD names `compose_trust_test.go` and `docker_update_trust_test.go`; the dashboard test for AC-015 is a new `it` next to the old assertion rather than a replacement of it.
+7. **FRD file was not edited.** The ADD lists the FRD amendment as done in revision 2, and it was already in the repository.
 
 ## Follow-ups (out of scope)
 
@@ -243,4 +235,68 @@ These trigger architect review. None changes a security property.
 - Try an old agent against the new server (it ignores `compose_project`) and a new agent against an old server (`compose_work_dir` alone).
 - Edge: `COMPOSE_FILE` entries that are absolute paths cannot be written with a backslash on Windows (the `.env` grammar rejects it); tests use slash-separated relative entries.
 - Edge: a project name with uppercase letters is refused (`invalid_project`). Compose always lower-cases project names, so no real container has one.
-- The server skip event type `stack_update_skipped` has no explicit label in the dashboard; `enumLabel` humanises it to "Stack update skipped".
+
+---
+
+## QA round 1 fixes
+
+QA returned FAIL (`docs/qa/AUTOUPD-HARDEN-001-qa-report.md`) with two blocking defects and a ruling on a third. Everything below is on the same branch, nothing pushed.
+
+### Commits
+
+| Hash | Subject |
+|---|---|
+| `79e6135` | `fix: dispatch a multi-directory stack by project only instead of skipping it (QA-D1, QA-D5)` |
+| `c7487ef` | `fix: treat working-dir labels that resolve to one directory as one (QA-D1)` |
+| `3edfaf8` | `fix: .env parsing skips a UTF-8 BOM and matches COMPOSE_FILE keys exactly (QA-D3, QA-D4)` |
+| `edfd896` | `fix: compare unreadable mount sources through their readable prefix (QA-D2)` |
+| (this report) | `docs: implementation report, QA round 1 fixes and corrected bounds` |
+
+### QA-D1 (blocking): symlinked stack directory stuck as ambiguous
+
+- **Agent.** `composeTrust.bind` gives the snapshot a resolver: a working-dir label is compared by the key of the real directory (`EvalSymlinks` through `trustFS`). A label that does not resolve (not-exist, or any other error) is compared by its cleaned path, so it still counts as its own directory and can make a project ambiguous, which fails closed. `projectsForDir`, `resolveProject`, `scopeOf` (update scope and post-update verification), the `compose_work_dir` cross-check and the old-server form all use it. Verification finds containers under either label form. `resolveProject` returns the smallest label of the one directory, so the answer is deterministic. QA's `TestQA_D1_...` is green. Added `TestUpdateStack_AC009_LinkAndTargetLabelsAreOneDirectory` (project only, work dir as link, work dir as target, old-server form with link and with target), `..._TrulyDifferentDirsStayAmbiguous` (a link to a different directory is a different directory) and `TestComposeCore_AC002_VerifyFindsContainersUnderEitherLabelForm`.
+- **Server (orchestrator decision, replaces the AD-011 skip).** When telemetry shows more than one working-dir label for a stack policy project, the server dispatches `docker_update` with `compose_project` only. An old agent gets no path and fails closed on its existing "required" precheck. The skip path, the `stack_update_skipped` event type, its limiter, the Warn log and their tests (including QA two limiter tests, which tested dead code) are removed. The single-directory case is unchanged.
+- **Deviation from the decision as written.** "No key is reserved when the project key is ambiguous" caused a queue pile-up in my own test: with no target key there is no conflict, so every telemetry cycle after the backoff would queue another command while the first was still in flight (22 commands instead of 2). A project-only command therefore holds the existing `docker:compose:<dir>` key of every working directory the device reports for the project (sorted, trailing slashes removed). This uses only the frozen key kind, conflicts with a manual update of either directory, and the agent still takes its own lock on the resolved directory. Tests: `TestResolveDockerUpdateKeys_AC014_ProjectOnlyHoldsEveryReportedDir`, `TestAutoUpdate_AC014_ProjectOnlyDispatchHoldsKeysAgainstDuplicates`, `TestAutoUpdate_AC014_ProjectOnlyDispatchIsBackoffGated`. This is the one point where QA or the architect may want to overrule me.
+- **QA-D5** (unthrottled server Warn) is resolved by removing the line.
+
+### QA-D3 (blocking): BOM-prefixed `.env`
+
+A leading UTF-8 BOM is stripped before parsing, as compose does. QA `TestQA_D3_...` is green, and `TestComposeTrust_AC020_BOMPrefixedEnvIsParsed` checks both the honoured form and that an unreadable form after the BOM is still refused.
+
+### QA-D4: key match
+
+Only a key named exactly `COMPOSE_FILE` or `COMPOSE_PATH_SEPARATOR` is a candidate; the next character must be end of line, whitespace or `=`. `COMPOSE_FILES_DIR` and similar are ignored (also after `export`). The exact key in an unmodelled form (`COMPOSE_FILE`, `COMPOSE_FILE =a`, `export COMPOSE_FILE=a`) is still refused. Test `TestComposeTrust_AC020_OnlyExactKeysAreParsed`.
+
+### QA-D2: unreadable mount sources (security ruling, five conditions)
+
+Implemented in `resolveFallbacks` and `firstFailure` (`compose_trust.go`). A writable mount source that cannot be resolved is compared through its readable prefix only when all of these hold; otherwise it refuses as `container_writable` ("cannot resolve ...", with the reason appended):
+
+1. The first component that fails to resolve fails with a permission error (EACCES or EPERM). ELOOP, ENOTDIR and every other error refuse; ENOENT keeps the old lexical comparison.
+2. P, the last directory that resolves, is a real directory (`typeWalk`, which `Lstat`s every component), and the AD-003 owner, mode and ACL rules hold for P and every ancestor of P (`permWalk`, leaf rule for P). The trust set is now computed before the placement check for this.
+3. No other writable source of a container without a socket mount is at or above P, tested both lexically (a proper ancestor of the unresolved source) and by resolved prefix (including through a symlink).
+4. The comparison path is the resolved prefix joined with the cleaned remainder, not the original string.
+5. Windows never uses the fallback.
+
+Doctor: `reportPrivilegeMismatch` warns when the euid of the doctor differs from the UID of the service user of the agent (read from the `User=` line of the installed unit, default `riot`) and names that user and the `sudo -u` command. `reportComposeTrust` prints an info line per source compared through the fallback. Tests: `TestComposeTrust_AC019_UnreadableTrustedHomeSourceAccepted`, `..._FallbackComparesPrefixPlusRemainder`, `..._FallbackUntrustedOwnedPrefixRefused`, `..._FallbackGroupWritablePrefixWithACLRefused`, `..._FallbackRefusedWhenUntrustedAncestorOfPrefix`, `..._FallbackRefusedWhenAnotherWritableSourceIsAbove` (3 subtests), `..._FallbackOnlyForPermissionErrors` (ELOOP, ENOTDIR, EIO), `..._FallbackENOENTKeepsLexicalComparison`, `..._FallbackNeverOnWindows`, `TestDoctor_AC019_EuidWarningNamesServiceUser`, `..._ServiceUserFromUnitFile`, `..._InfoLinePerFallbackSource`. The existing `..._UnresolvableMountSourceRefused` still passes.
+
+Consequence worth knowing: the QA live case was `/home/<user>/data` with the home directory owned by an ordinary user. That user is an untrusted account and could plant a symlink below its own home, so P fails the owner rule and the host is still blocked by that mount. The fallback helps for root-owned or Docker-account-owned parents (for example a root-owned 0750 sandbox directory). The README says this next to `container_writable`.
+
+### Bounds recomputed
+
+With the skip event and its log line removed, the change adds no server events and no server log lines. The agent writes two Warn lines per refusal (`docker_update: compose directory refused` and the existing `command: failed`), not one: each attempt is about 3.9 KB, the first day has 8 attempts (about 31 KB per refused policy), and the steady state is 4 per day (about 16 KB per refused policy per day, 160 KB for ten). See the corrected Bounds section above. New in this round: the label resolver memo is per snapshot, bounded by the number of containers, and discarded with it; doctor info lines are capped at 1100 bytes and are terminal output only.
+
+### README
+
+The line "Path components must be plain directories, not symlinks" now says the stack directory is symlink-resolved first and every walked component of the resolved path must be a real directory. The skip paragraph is replaced by the project-only dispatch description, and the `container_writable` bullet documents the unreadable-source rule.
+
+### Test results after the fixes
+
+| Run | Result |
+|---|---|
+| Windows `go test -count=1 ./...` | 21 packages ok, 1477 top-level and 1284 sub-test passes, 0 failures. QA red repros `TestQA_D1_...` and `TestQA_D3_...` are green. |
+| Windows `go vet ./...`, `GOOS=linux go vet ./internal/agent/...`, `GOOS=darwin go vet ./internal/agent/`, `GOOS=linux go build ./...` | clean |
+| `cmd/riot-agent` cross builds (linux amd64, 386, arm64, arm; darwin amd64, arm64; windows amd64) | all ok |
+| Linux, `golang:1.24` container, `go test -count=1 -race ./internal/agent/... ./internal/server/... ./internal/models/...`, tree exported with `git archive` (LF) | **root: all packages ok. Non-root uid 1234: all packages ok.** The real `osTrustFS` test (`TestOSTrustFS_ReportsOwnerAndNoACL`) and the QA D1 and D3 repros pass in both. |
+| `cd web && npm run test:run` / `npx tsc --noEmit` | 66 files, 1410 tests passed / clean |
+
+One Windows-only test quirk: the ENOTDIR subtest of `..._FallbackOnlyForPermissionErrors` is skipped on Windows because `syscall.ENOTDIR` equals `ERROR_PATH_NOT_FOUND` there. It runs and passes in the Linux containers.
