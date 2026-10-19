@@ -236,9 +236,8 @@ func TestHARDEN002_AC007_PprofEnableLoggedAndShutdownCloses(t *testing.T) {
 	defer cancel()
 	require.NoError(t, p.Shutdown(ctx))
 
-	conn, err = net.DialTimeout("tcp", addr, time.Second)
-	if err == nil {
-		conn.Close()
-	}
-	assert.Error(t, err, "after shutdown %s must no longer accept connections", addr)
+	// Assert on the listener itself, not by re-dialing the port: another test in
+	// the package can bind the freed ephemeral port before the dial.
+	_, err = p.ln.Accept()
+	assert.ErrorIs(t, err, net.ErrClosed, "after shutdown the listener on %s must be closed", addr)
 }
