@@ -81,6 +81,15 @@ const (
 	installedFileMode fs.FileMode = 0o755
 	tempSuffixBytes               = 8
 	tempFilePrefix                = ".riot-agent.apply."
+
+	// tempNameHexLen is the number of hex characters tempPathBeside appends. It
+	// is derived from tempSuffixBytes so the sweep's name match can never drift
+	// from the name the installer produces (GROWTH-001 SEC-023).
+	tempNameHexLen = 2 * tempSuffixBytes
+
+	// staleTempAge is how old a leftover temp file must be before the sweep
+	// removes it, so a concurrent install's file is never touched.
+	staleTempAge = time.Hour
 )
 
 // targetAssetName is the release asset name whose checksums.txt entry
@@ -114,6 +123,13 @@ type installer struct {
 	// betweenVerifyAndWrite is a test seam invoked after the bytes are
 	// verified and before they are written. Production leaves it nil.
 	betweenVerifyAndWrite func()
+
+	// dirOwnerUID is the owner the target directory must have for the stale
+	// temp sweep to run. The zero value is root, which is what production uses;
+	// tests set it to the test user.
+	dirOwnerUID uint32
+	// now is the sweep's clock; nil means time.Now.
+	now func() time.Time
 }
 
 // serviceController starts and stops the agent service.
@@ -160,6 +176,7 @@ func runMode(args []string, in *installer, svc serviceController, sleep func(tim
 // runApply stops the service, verifies and installs, and ALWAYS restarts the
 // service so a refused update never leaves the agent down.
 func runApply(in *installer, svc serviceController, sleep func(time.Duration)) int {
+	in.sweepStaleTemps()
 	sleep(applyStopDelay)
 	if err := svc.Stop(); err != nil {
 		in.logger.Warn("could not stop service; continuing", "error", err)
@@ -184,6 +201,7 @@ func runApply(in *installer, svc serviceController, sleep func(time.Duration)) i
 // runBoot applies a pending staged update at service start. It never blocks
 // the current agent from starting: every outcome returns exitOK (NFR-005).
 func runBoot(in *installer) int {
+	in.sweepStaleTemps()
 	if _, err := os.Lstat(in.staged.binary); errors.Is(err, fs.ErrNotExist) {
 		return exitOK
 	}
@@ -324,6 +342,74 @@ func writeTargetAtomically(target string, data []byte) error {
 		return fmt.Errorf("rename into place: %w", err)
 	}
 	return nil
+}
+
+// isTempName reports whether name is exactly what tempPathBeside produces:
+// tempFilePrefix followed by tempNameHexLen lowercase hex characters.
+func isTempName(name string) bool {
+	suffix, ok := strings.CutPrefix(name, tempFilePrefix)
+	if !ok || len(suffix) != tempNameHexLen {
+		return false
+	}
+	for i := 0; i < len(suffix); i++ {
+		c := suffix[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// sweepStaleTemps removes temp files an interrupted install left beside the
+// target (GROWTH-001 FR-073, SEC-023). It is defence in depth for a root
+// process, so it removes only when everything is as expected:
+//
+//   - the target directory is owned by root and not writable by group or
+//     others, so no unprivileged user can plant or swap entries in it;
+//   - the entry name matches tempPathBeside's output exactly;
+//   - Lstat says it is a regular file (a symlink or directory is left alone);
+//   - it is more than staleTempAge old.
+//
+// Removal is os.Remove, which never follows a link. Every problem is logged and
+// skipped: the sweep must never get in the way of an update or of a start.
+func (in *installer) sweepStaleTemps() {
+	dir := filepath.Dir(in.targetBin)
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid != in.dirOwnerUID || info.Mode().Perm()&0o022 != 0 {
+		in.logger.Warn("skipping the stale temp sweep: the directory is not owned by root or is writable by others", "dir", dir)
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		in.logger.Warn("could not list the target directory for the stale temp sweep", "dir", dir, "error", err)
+		return
+	}
+	now := time.Now
+	if in.now != nil {
+		now = in.now
+	}
+	for _, entry := range entries {
+		if !isTempName(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		fi, err := os.Lstat(path)
+		if err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		if now().Sub(fi.ModTime()) <= staleTempAge {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			in.logger.Warn("could not remove a stale temp file", "path", path, "error", err)
+			continue
+		}
+		in.logger.Info("removed a stale temp file", "path", path)
+	}
 }
 
 func tempPathBeside(target string) (string, error) {

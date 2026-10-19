@@ -586,3 +586,189 @@ func TestSEC001_RunMode_NoArgsAppliesAndBootFlagBoots(t *testing.T) {
 	assert.Empty(t, boot.svc.calls)
 	assert.Equal(t, newBinaryBytes, boot.installedBytes())
 }
+
+// sweepFixture is an applyFixture whose target directory counts as "owned by
+// root" (the test user stands in for root) and whose clock is fixed.
+type sweepFixture struct {
+	*applyFixture
+	binDir string
+	now    time.Time
+}
+
+func newSweepFixture(t *testing.T) *sweepFixture {
+	t.Helper()
+	fx := newApplyFixture(t)
+	// Far enough ahead that files created during the test already look old.
+	now := time.Now().Add(3 * time.Hour)
+	fx.in.dirOwnerUID = uint32(os.Getuid())
+	fx.in.now = func() time.Time { return now }
+	return &sweepFixture{applyFixture: fx, binDir: filepath.Dir(fx.targetAt), now: now}
+}
+
+// plant creates a regular file with the given age relative to the fixture clock.
+func (s *sweepFixture) plant(name string, age time.Duration) string {
+	s.t.Helper()
+	path := filepath.Join(s.binDir, name)
+	require.NoError(s.t, os.WriteFile(path, []byte("leftover"), 0o755))
+	mtime := s.now.Add(-age)
+	require.NoError(s.t, os.Chtimes(path, mtime, mtime))
+	return path
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+const (
+	staleName = tempFilePrefix + "0123456789abcdef"
+	youngName = tempFilePrefix + "fedcba9876543210"
+)
+
+func TestGROWTH_AC067_HelperSweepsStaleTempOnly(t *testing.T) {
+	t.Run("the 2 h old temp file is deleted and the 10 min old one remains", func(t *testing.T) {
+		s := newSweepFixture(t)
+		stale := s.plant(staleName, 2*time.Hour)
+		young := s.plant(youngName, 10*time.Minute)
+
+		s.in.sweepStaleTemps()
+
+		assert.False(t, exists(stale), "[AC-067] the 2 h old temp file must be deleted")
+		assert.True(t, exists(young), "[AC-067] the 10 min old temp file may belong to a running install")
+		assert.True(t, exists(s.targetAt), "the installed agent binary is never touched")
+	})
+
+	t.Run("the boundary: exactly 1 h is kept, 1 h and a second is deleted", func(t *testing.T) {
+		s := newSweepFixture(t)
+		edge := s.plant(staleName, time.Hour)
+		over := s.plant(youngName, time.Hour+time.Second)
+
+		s.in.sweepStaleTemps()
+
+		assert.True(t, exists(edge), "[AC-067] not older than 1 h yet")
+		assert.False(t, exists(over), "[AC-067] older than 1 h")
+	})
+
+	t.Run("the sweep runs in --boot mode", func(t *testing.T) {
+		s := newSweepFixture(t)
+		stale := s.plant(staleName, 2*time.Hour)
+
+		assert.Equal(t, exitOK, runBoot(s.in))
+
+		assert.False(t, exists(stale), "[AC-067] --boot must sweep even when nothing is staged")
+	})
+
+	t.Run("the sweep runs in apply mode", func(t *testing.T) {
+		s := newSweepFixture(t)
+		s.stageValid(newBinaryBytes)
+		stale := s.plant(staleName, 2*time.Hour)
+
+		assert.Equal(t, exitOK, runApply(s.in, s.svc, s.fakeSleep))
+
+		assert.False(t, exists(stale), "[AC-067] apply mode must sweep too")
+		assert.Equal(t, newBinaryBytes, s.installedBytes(), "the update itself still installs")
+	})
+
+	t.Run("a planted symlink and a prefixed directory are left untouched", func(t *testing.T) {
+		s := newSweepFixture(t)
+		outside := filepath.Join(t.TempDir(), "precious")
+		require.NoError(t, os.WriteFile(outside, []byte(secretBytes), 0o600))
+		link := filepath.Join(s.binDir, staleName)
+		require.NoError(t, os.Symlink(outside, link))
+
+		dir := filepath.Join(s.binDir, youngName)
+		require.NoError(t, os.Mkdir(dir, 0o755))
+		inner := filepath.Join(dir, "keep")
+		require.NoError(t, os.WriteFile(inner, []byte("x"), 0o644))
+		old := s.now.Add(-5 * time.Hour)
+		require.NoError(t, os.Chtimes(dir, old, old))
+
+		s.in.sweepStaleTemps()
+
+		_, linkErr := os.Lstat(link)
+		assert.NoError(t, linkErr, "[AC-067] a symlink with the temp name is not a temp file and must stay")
+		got, err := os.ReadFile(outside)
+		require.NoError(t, err)
+		assert.Equal(t, secretBytes, string(got), "[AC-067] the link target must never be touched")
+		assert.True(t, exists(dir), "[AC-067] a directory with the prefix must not be removed")
+		assert.True(t, exists(inner), "[AC-067] and nothing inside it either")
+	})
+}
+
+func TestGROWTH_SEC023_HelperSweepRequiresRootOwnedDirExactName(t *testing.T) {
+	t.Run("the name match is derived from what tempPathBeside produces", func(t *testing.T) {
+		produced, err := tempPathBeside("/usr/local/bin/riot-agent")
+		require.NoError(t, err)
+		name := filepath.Base(produced)
+
+		assert.True(t, isTempName(name), "[SEC-023] the sweep must recognise the installer's own temp names")
+		assert.Equal(t, len(tempFilePrefix)+2*tempSuffixBytes, len(name), "[SEC-023] the length comes from tempSuffixBytes")
+		assert.Equal(t, 2*tempSuffixBytes, tempNameHexLen)
+	})
+
+	t.Run("a name one character too short or too long, non-hex or upper-case hex is not matched", func(t *testing.T) {
+		valid := staleName
+		for name, want := range map[string]bool{
+			valid:                                  true,
+			valid[:len(valid)-1]:                   false,
+			valid + "0":                            false,
+			tempFilePrefix:                         false,
+			tempFilePrefix + "0123456789abcdeg":    false,
+			tempFilePrefix + "0123456789ABCDEF":    false,
+			"x" + valid:                            false,
+			valid + ".bak":                         false,
+			"riot-agent":                           false,
+			tempFilePrefix + "0123456789abcdef/..": false,
+		} {
+			assert.Equal(t, want, isTempName(name), "[SEC-023] isTempName(%q)", name)
+		}
+	})
+
+	t.Run("non-matching old entries are not removed", func(t *testing.T) {
+		s := newSweepFixture(t)
+		keep := []string{
+			s.plant(tempFilePrefix+"0123456789abcde", 5*time.Hour),
+			s.plant(tempFilePrefix+"0123456789abcdef0", 5*time.Hour),
+			s.plant(tempFilePrefix+"0123456789ABCDEF", 5*time.Hour),
+			s.plant(tempFilePrefix+"nothexnothexnoth", 5*time.Hour),
+			s.plant("riot-agent.apply.0123456789abcdef", 5*time.Hour),
+		}
+
+		s.in.sweepStaleTemps()
+
+		for _, path := range keep {
+			assert.True(t, exists(path), "[SEC-023] %s does not match the exact name and must stay", filepath.Base(path))
+		}
+	})
+
+	t.Run("a directory not owned by root is not swept", func(t *testing.T) {
+		s := newSweepFixture(t)
+		s.in.dirOwnerUID = uint32(os.Getuid()) + 1
+		stale := s.plant(staleName, 5*time.Hour)
+
+		s.in.sweepStaleTemps()
+
+		assert.True(t, exists(stale), "[SEC-023] the sweep must not run in a directory another user owns")
+	})
+
+	t.Run("a directory writable by group or others is not swept", func(t *testing.T) {
+		for name, mode := range map[string]os.FileMode{"group-writable": 0o775, "other-writable": 0o757} {
+			s := newSweepFixture(t)
+			stale := s.plant(staleName, 5*time.Hour)
+			require.NoError(t, os.Chmod(s.binDir, mode))
+
+			s.in.sweepStaleTemps()
+
+			assert.True(t, exists(stale), "[SEC-023] a %s directory must not be swept", name)
+		}
+	})
+
+	t.Run("a root-owned-equivalent private directory is swept", func(t *testing.T) {
+		s := newSweepFixture(t)
+		stale := s.plant(staleName, 5*time.Hour)
+
+		s.in.sweepStaleTemps()
+
+		assert.False(t, exists(stale), "[SEC-023] control: with the conditions met the stale file goes")
+	})
+}
