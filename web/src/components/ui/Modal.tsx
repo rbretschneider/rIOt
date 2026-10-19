@@ -228,6 +228,7 @@ function OpenModal({
             {footer}
           </div>
         )}
+        {/* Without a footer the body would end flush with the panel's rounded edge. */}
         {footer == null && <div className="pb-3" />}
       </div>
     </div>

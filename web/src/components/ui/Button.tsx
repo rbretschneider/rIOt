@@ -58,6 +58,9 @@ export function Button({
   ref,
   ...rest
 }: ButtonProps) {
+  // type defaults to "button" so a Button inside a <form> never submits it by accident.
+  // Pending also disables the button: the disabled attribute is what stops a second
+  // click while the first action is in flight.
   return (
     <button
       {...rest}

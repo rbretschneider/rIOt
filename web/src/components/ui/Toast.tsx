@@ -78,6 +78,7 @@ export function ToastProvider({ children, duration = 5000, max = 4, now = defaul
         title: input.title || DEFAULT_TITLES[input.tone],
         message: input.message,
       }
+      // Newest first; slicing from the front drops the oldest when the cap is hit.
       setToasts(current => [record, ...current].slice(0, max))
       return id
     },
@@ -98,6 +99,12 @@ export function ToastProvider({ children, duration = 5000, max = 4, now = defaul
   return (
     <ToastContext.Provider value={api}>
       {children}
+      {/*
+        The region ignores pointer events so its empty area never blocks clicks on the
+        page underneath; each toast turns them back on. It sits on --z-toast, above
+        modals, so an error raised during a dialog is still visible. A toast is outside
+        an aria-modal dialog, so it cannot be reached with Tab while a dialog is open.
+      */}
       <div
         role="region"
         aria-label="Notifications"

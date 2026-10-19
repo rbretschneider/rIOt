@@ -61,6 +61,8 @@ export function QueryState<T>({
     void refetch?.()
   }
 
+  // Order matters: data first, so a failed background refetch keeps the last good
+  // view; error second, so a failed first load is never shown as empty or loading.
   if (data !== undefined) {
     if (isEmpty?.(data)) return <>{empty}</>
     return <>{children(data)}</>
