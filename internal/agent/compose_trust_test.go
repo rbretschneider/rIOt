@@ -765,9 +765,17 @@ func TestComposeTrust_AC021_WindowsWithoutRootsRefused(t *testing.T) {
 }
 
 func TestComposeTrust_AC021_WindowsRootsCaseInsensitive(t *testing.T) {
-	assert.True(t, within(`C:\Stacks`, `c:\stacks\App`, true), "[AC-021] roots compare case-insensitively on Windows")
-	if runtime.GOOS != "windows" {
-		assert.False(t, within(`C:\Stacks`, `c:\stacks\App`, false), "and case-sensitively elsewhere")
+	// Fixed by QA Engineer: the drive-letter paths only mean something to
+	// filepath on Windows; on Linux the backslash is an ordinary character, so
+	// the original assertion failed on the ubuntu CI runner. The fold itself is
+	// platform independent and is checked with slash paths everywhere.
+	if runtime.GOOS == "windows" {
+		assert.True(t, within(`C:\Stacks`, `c:\stacks\App`, true), "[AC-021] roots compare case-insensitively on Windows")
+	}
+	root, below := filepath.Join(string(filepath.Separator), "Srv", "Stacks"), filepath.Join(string(filepath.Separator), "srv", "stacks", "App")
+	assert.True(t, within(root, below, true), "[AC-021] roots compare case-insensitively when the fold is on")
+	if runtime.GOOS != "windows" { // filepath.Rel is already case-insensitive there
+		assert.False(t, within(root, below, false), "and case-sensitively without the fold")
 	}
 }
 
