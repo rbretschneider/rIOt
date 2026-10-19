@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -79,6 +80,14 @@ type Agent struct {
 	// the real filesystem and runtime.GOOS.
 	trustFS       trustFS
 	trustPlatform string
+
+	// Identity persistence seams (GROWTH-001 AD-018); zero values mean the real
+	// file system and the default ID path.
+	fsys   stateFS
+	idPath string
+	// fatalCh carries an unrecoverable identity error from a background loop to
+	// Run, which exits non-zero.
+	fatalCh chan error
 
 	// Disk I/O tracking for delta computation between heartbeats.
 	// owned by heartbeatLoop only — no concurrent access
@@ -184,8 +193,12 @@ func (a *Agent) Run() error {
 		a.client = NewHTTPClient(a.config.Server.URL, a.config.Server.APIKey)
 	}
 
+	// Remove staged self-update files an interrupted update left behind
+	// (GROWTH-001 AD-020).
+	sweepStaleStaging(a.newUpdatePipeline().paths, time.Now(), staleStagingAge)
+
 	// Initialize offline buffer
-	buf, err := NewBuffer(BufferPath())
+	buf, err := NewBufferWithLimit(BufferPath(), a.config.Limits().BufferMaxBytes())
 	if err != nil {
 		slog.Warn("failed to init offline buffer, continuing without", "error", err)
 	} else {
@@ -193,8 +206,13 @@ func (a *Agent) Run() error {
 		defer a.buffer.Close()
 	}
 
-	// Register with server
+	// Register with server. An identity that cannot be written is fatal: the
+	// agent must not run under an ID it would forget on restart (FR-057).
+	a.fatalCh = make(chan error, 1)
 	if err := a.register(ctx); err != nil {
+		if errors.Is(err, errIdentityNotPersistable) {
+			return a.exitUnpersistableIdentity(ctx, err)
+		}
 		slog.Error("registration failed, will retry", "error", err)
 	}
 
@@ -299,14 +317,34 @@ func (a *Agent) Run() error {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
-	<-done
+	var fatal error
+	select {
+	case <-done:
+	case fatal = <-a.fatalCh:
+	}
 	slog.Info("shutting down agent")
 	a.shuttingDown.Store(true)
 	cancel()
 	a.waitForCommands(models.AgentShutdownGrace)
 	wg.Wait()
 	slog.Info("agent stopped")
+	if fatal != nil {
+		return a.exitUnpersistableIdentity(context.Background(), fatal)
+	}
 	return nil
+}
+
+// exitUnpersistableIdentity logs the path and the error, waits identityExitDelay
+// so a restart loop cannot spin, and returns err so the process exits non-zero.
+func (a *Agent) exitUnpersistableIdentity(ctx context.Context, err error) error {
+	var pe *identityPersistError
+	if errors.As(err, &pe) {
+		slog.Error("cannot persist the device identity; exiting", "path", pe.Path, "error", pe.Err)
+	} else {
+		slog.Error("cannot persist the device identity; exiting", "error", err)
+	}
+	a.pauseFor(ctx, identityExitDelay)
+	return err
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {
@@ -371,6 +409,15 @@ func (a *Agent) reregisterLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := a.register(ctx); err != nil {
+				if errors.Is(err, errIdentityNotPersistable) {
+					// Only an ID mismatch fails hard (GROWTH-001 AD-018): the server
+					// issued a different ID that cannot be saved.
+					select {
+					case a.fatalCh <- err:
+					default:
+					}
+					return
+				}
 				slog.Warn("periodic re-registration failed", "error", err)
 			}
 		}
