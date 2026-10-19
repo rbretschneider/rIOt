@@ -3331,3 +3331,30 @@ addresses, home paths or email addresses. Every example uses placeholders (`host
 `192.0.2.x`, `example.internal`, `/srv/stacks/<name>`, `<db-host>`). Any runbook record or
 `db-fingerprint` / `migrate` output pasted into implementation reports must follow the same
 rule (C-30, C-43, C-52).
+
+---
+
+## Decisions recorded (2026-10-19)
+
+The product owner accepted all ten CC.5 product decisions with the recommended values. They
+are recorded as resolved in ADD §17.1 (revision 3.3a) and FRD §13.1 (S-10). The verdict above
+is unchanged: **APPROVED WITH CONDITIONS (phase-gated)**.
+
+1. **D-57:** at critical free space (below 512 MiB), store only priority lines (stderr and
+   error lines) plus one snapshot per device per hour, until free space is back above the
+   emergency threshold. Now a requirement (ADD AD-041 §3).
+2. **D-58:** at most 500 registered devices (configurable), plus a daily registration cap
+   (value set at implementation, configurable). This turns follow-up **F-1** into a
+   requirement and closes the device-count residual noted in CC.3.
+3. **D-30 (b):** origin control on every state-changing route, including pre-existing ones
+   (reboot, uninstall, settings). This turns follow-up **F-5** into a requirement and closes
+   the pre-existing **SEC-001** exposure (ADD R-12).
+4. **D-44:** container-writable stack files are refused from P1.
+5. **D-45:** the terminal-audit export before the P2 purge stays documented and optional.
+6. **D-53:** keep the catch-all (DEFAULT) partition; drop partitions under a 1 s lock timeout,
+   stopping at the first timeout.
+7. **D-21 (ii):** the live-log byte caps are accepted.
+8. **D-46 to D-48:** the stored-log ceiling, event and command limits are accepted.
+9. **D-54 to D-56:** the quota, disk-threshold and fairness values are accepted, to be tuned
+   once real fleets run.
+10. **D-24:** `axe-core` is approved as a devDependency.
