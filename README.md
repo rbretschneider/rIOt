@@ -1668,7 +1668,7 @@ Example (window mode, one device, agent reports `allow_reboot`):
 [
   {
     "device_id": "3f6c1c2e-0000-0000-0000-000000000000",
-    "hostname": "vermont",
+    "hostname": "nas-01",
     "pending_updates": 4,
     "security_count": 1,
     "reboot_class_count": 1,
