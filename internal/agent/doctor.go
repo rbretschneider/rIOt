@@ -542,8 +542,9 @@ const maxDoctorLine = 1100
 
 // checkComposeTrust runs the compose trust check against every compose project
 // directory the local Docker daemon knows (AUTOUPD-HARDEN-001 AD-012). It runs
-// with the doctor's own privileges, usually root; that is harmless because the
-// agent user is trusted through the Docker socket group anyway.
+// with the doctor's own privileges. Root can read mount sources and files the
+// agent user cannot, so a pass as root can hide a refusal; reportPrivilegeMismatch
+// warns when the doctor is not running as the agent's service user (QA-D2).
 func checkComposeTrust(cfg *Config) {
 	t := &composeTrust{fs: osTrustFS{}, goos: runtime.GOOS, socket: cfg.Docker.SocketPath, roots: cfg.Docker.ComposeRoots, rootsErr: cfg.Docker.rootsErr}
 	if runtime.GOOS != "windows" {

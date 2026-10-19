@@ -84,9 +84,9 @@ type execProcess struct {
 	buf lockedBuffer
 }
 
-// newExecProcess builds an unstarted process, with the given environment when it
-// is not nil, whose stdout and stderr are
-// captured together.
+// newExecProcess builds an unstarted process whose stdout and stderr are
+// captured together. A nil env inherits the agent's environment; the compose
+// children pass an explicit one (AUTOUPD-HARDEN-001 AD-016).
 func newExecProcess(name string, env []string, args ...string) *execProcess {
 	p := &execProcess{cmd: exec.Command(name, args...)}
 	if env != nil {

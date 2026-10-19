@@ -22,7 +22,8 @@ import (
 )
 
 // updateTarget is what a docker_update names: a container by name (preferred,
-// BR-001), by ID (legacy servers), or a whole compose stack by directory.
+// BR-001), by ID (legacy servers), or a whole compose stack by project name
+// (AUTOUPD-HARDEN-001) or, from a legacy server, by directory.
 type updateTarget struct {
 	Name    string
 	ID      string
@@ -293,10 +294,10 @@ func (s composeSpec) markerKey() string { return "compose:" + s.WorkDir }
 // (AUTOUPD-HARDEN-001 AD-001). The tokens are, in order: the resolved project
 // directory, the pinned project name, one -f per validated file (or only the
 // sanitized copy), the sub-command and its flags, then "--" and the service
-// names. Each is one "=" token; the project and service names are validated
-// against the compose charsets, so no label value can be read as a flag. The
-// explicit -f tokens stop compose from discovering other files, walking up to a
-// parent directory, or honouring COMPOSE_FILE.
+// names. Each option is one name=value token and the project and service names
+// are validated against the compose charsets, so no label value can be read as
+// a flag. The explicit -f tokens stop compose from discovering other files,
+// walking up to a parent directory, or honouring COMPOSE_FILE.
 func composeArgs(td trustedDir, project, sanitizedFile string, sub []string, services ...string) ([]string, error) {
 	if !td.valid() {
 		return nil, errors.New("compose directory has not been validated")

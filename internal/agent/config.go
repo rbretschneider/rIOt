@@ -212,7 +212,7 @@ docker:
   # check_updates: true    # Check registries for newer images (30min cache)
   # terminal_enabled: false  # Allow remote exec into containers
   # socket_path: ""        # Override Docker socket auto-detection
-  # compose_roots: []      # Directories compose updates may run in (required on Windows)
+  # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)
 
 commands:
   allow_reboot: false      # Allow remote reboot commands
