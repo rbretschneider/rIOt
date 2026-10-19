@@ -346,3 +346,43 @@ correction, before implementation.
 No HIGH or CRITICAL findings remain. The conditions above are LOW to MEDIUM and need no
 further design change, except condition 1, which sends the story back only if verification
 fails.
+
+---
+
+## QA-D2 ruling (re-review condition 2)
+
+**Ruling:** APPROVE WITH CONDITIONS. This replaces condition 2 above with the refinement
+below. Condition 2 as written would block every update on common hosts (a source under a home
+directory with mode 0700/0750).
+
+The refinement's premise holds only for one directory: the first directory the agent cannot
+traverse, called P here. An untrusted host account cannot add a symlink inside P if P and its
+ancestors are trusted-owned and not untrusted-writable. A **container**, however, can. If any
+container has a read-write mount at or above P, its root user can replace a remainder component
+with a symlink, and the file is root-owned, so it counts as trusted. The next start of the
+container that mounts the source then follows that symlink, and its bind lands somewhere else,
+such as `/opt/stacks`. The lexical comparison misses that.
+
+Conditions:
+1. **No other writable source above it.** The lexical fallback is refused when any other
+   writable source of a container without a socket mount is a proper ancestor of the
+   unresolved source. The ancestor test is made against both the lexical path and the
+   resolvable prefix.
+2. **Compare the right string.** The comparison uses the resolved prefix up to P, joined with
+   the cleaned remainder, not the original string. Symlinks above P are still honoured.
+3. **P itself.**
+   - EACCES qualifies only when `Lstat` reports P as a real directory.
+   - The AD-003 owner, mode and ACL rules apply to P and every ancestor of P.
+   - ENOTDIR, ELOOP and any other error refuse as `container_writable` ("cannot resolve").
+   - ENOENT keeps the AD-014 fallback.
+4. **Doctor.**
+   - Doctor warns when its euid differs from the UID of the agent's service user, and names
+     that user.
+   - Doctor prints an info line for each source that was compared through the fallback.
+5. **Tests.** Add these cases:
+   - the home-0750 sandbox source is accepted;
+   - an untrusted-owned P is refused;
+   - a group-writable P with an ACL is refused;
+   - a writable source that is an ancestor of the unresolved source is refused;
+   - ELOOP and ENOTDIR are refused;
+   - the doctor euid warning.
