@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
-	"github.com/DesyncTheThird/rIOt/internal/redact"
+
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"io"
@@ -61,7 +61,7 @@ func (c *agentWSClient) logEvent(id string, backfill bool, kind string, n int, r
 	if reason != "" {
 		d["reason"] = reason
 	}
-	b, _ := json.Marshal(d)
+	b, _ := marshalLogJSON(d)
 	c.send(AgentWSMessage{Type: "logs_event", SessionID: id, Data: b})
 }
 func (c *agentWSClient) handleLogs(ctx context.Context, msg AgentWSMessage) {
@@ -316,7 +316,11 @@ func (c *agentWSClient) streamLogs(ctx context.Context, req logRequest, backfill
 				skip.Add(1)
 				return true
 			}
-			line := prepareLiveLine(e)
+			limit := 16 << 10
+			if c.agent != nil && c.agent.config != nil {
+				limit = c.agent.config.Limits().ContainerLogMaxLineBytes
+			}
+			line := prepareLiveLineWithLimit(e, limit)
 			if backfill {
 				select {
 				case lines <- line:
@@ -349,7 +353,7 @@ func (c *agentWSClient) streamLogs(ctx context.Context, req logRequest, backfill
 		} else {
 			d["stream_id"] = id
 		}
-		b, _ := json.Marshal(d)
+		b, _ := marshalLogJSON(d)
 		if c.send(AgentWSMessage{Type: "logs_data", SessionID: id, Data: b}) != nil {
 			r.Close()
 		}
@@ -385,7 +389,7 @@ func (c *agentWSClient) streamLogs(ctx context.Context, req logRequest, backfill
 				}
 				return
 			}
-			encoded, _ := json.Marshal(line)
+			encoded, _ := marshalLogJSON(line)
 			n := len(encoded) + 1
 			if batchBytes+n > 60<<10 {
 				flush()
@@ -406,27 +410,14 @@ func (c *agentWSClient) streamLogs(ctx context.Context, req logRequest, backfill
 	}
 }
 
-func prepareLiveLine(e models.ContainerLogEntry) liveLine {
-	masked, _ := redact.MaskLine(models.SanitizeText(e.Line))
-	line := liveLine{Stream: "o", Time: e.Timestamp.Truncate(time.Microsecond), Line: masked, Truncated: strings.HasSuffix(e.Line, " [truncated]")}
+func prepareLiveLine(e models.ContainerLogEntry) liveLine { return prepareLiveLineWithLimit(e, 16<<10) }
+func prepareLiveLineWithLimit(e models.ContainerLogEntry, limit int) liveLine {
+	text := collectors.CanonicalLogLine(e.Line, limit)
+	line := liveLine{Stream: "o", Time: e.Timestamp.Truncate(time.Microsecond), Line: text, Truncated: strings.HasSuffix(text, " [truncated]")}
 	if e.Stream == "stderr" {
 		line.Stream = "e"
 	}
-	if len(line.Line) > 16<<10 {
-		line.Line = models.TruncateHead(line.Line, 16<<10)
-		line.Truncated = true
-	}
-	// JSON escaping can enlarge a line. Keep a single encoded line below the
-	// batch limit while retaining the full 16 KiB for ordinary text.
-	for {
-		encoded, _ := json.Marshal(line)
-		if len(encoded) <= 60<<10 {
-			return line
-		}
-		limit := len(line.Line) * (59 << 10) / len(encoded)
-		line.Line = models.TruncateHead(line.Line, max(limit, 1))
-		line.Truncated = true
-	}
+	return line
 }
 
 // The independent skip scan counts only, so even very long backfills never

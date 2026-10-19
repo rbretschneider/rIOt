@@ -20,6 +20,8 @@ Lifecycle remains migration 23. The six imported partition migrations occupy 24â
 
 Telemetry inventory is separated from historical snapshots. Stored snapshots may omit oversized sections with explicit metadata; readers restore omitted prior sections instead of inventing empty security/update state. Live freshness is maintained even when storage downsamples snapshots. Fleet/host projections avoid transferring complete telemetry or arbitrary container labels.
 
+The integrated GROWTH-001 agent hardening retains corruption recovery/vacuum, typed HTTP backoff and permanent-rejection handling, journal/ring bounds, payload guards and atomic identity persistence. Docker defaults follow this design: 50 stored lines and 16 KiB per container/pass, with a 16 KiB line limit; the offline buffer defaults to 50 MiB and is configurable up to the 64 MiB hard ceiling. Existing hardening tests exercise configurable maxima explicitly where they differ from the new defaults. Stored/live line normalization uses the same effective configured limit.
+
 Log ingestion sanitizes NUL/control content, validates identities/streams, restamps out-of-window timestamps and charges actual masked bytes. Priority classification occurs before masking. Live and stored output share masking fixtures with the frontend. Compose source masking preserves original line layout and comments, resolves bounded aliases/merges, and fails closed on malformed input. File reads use trusted paths and Linux descriptor/no-follow checks.
 
 ## Validation

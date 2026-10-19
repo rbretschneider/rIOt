@@ -816,6 +816,9 @@ func (a *Agent) handleFetchLogs(ctx context.Context, payload models.CommandPaylo
 		return "error", fmt.Sprintf("journalctl: %s", err)
 	}
 
+	// fetch_logs applies the same per-message truncation as the logs collector.
+	maxLineBytes := a.config.Limits().JournalMaxLineBytes
+
 	var entries []models.LogEntry
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if line == "" {
@@ -852,8 +855,8 @@ func (a *Agent) handleFetchLogs(ctx context.Context, payload models.CommandPaylo
 		entries = append(entries, models.LogEntry{
 			Timestamp: ts,
 			Priority:  priority,
-			Unit:      unit,
-			Message:   message,
+			Unit:      collectors.TruncateLogLine(unit, 256),
+			Message:   collectors.TruncateLogLine(message, maxLineBytes),
 		})
 	}
 

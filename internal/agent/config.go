@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -79,17 +82,29 @@ type AgentConfig struct {
 	PollInterval      int      `yaml:"poll_interval"`
 	HeartbeatInterval int      `yaml:"heartbeat_interval"`
 	AutoUpdate        *bool    `yaml:"auto_update,omitempty"` // nil = true (default enabled)
+	// BufferMaxMB caps the offline telemetry buffer in MiB (default 50, range 5-64).
+	BufferMaxMB LimitInt `yaml:"buffer_max_mb,omitempty"`
 }
 
-type ContainerLogsConfig struct {
-	MaxLines int `yaml:"max_lines"`
-	MaxBytes int `yaml:"max_bytes"`
-}
 type CollectorConfig struct {
-	ContainerLogs ContainerLogsConfig `yaml:"container_logs"`
 	Enabled       []string            `yaml:"enabled"`
 	SMARTInterval int                 `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
 	Webservers    WebServersConfig    `yaml:"webservers"`
+	ContainerLogs ContainerLogsConfig `yaml:"container_logs,omitempty"`
+	Logs          LogsConfig          `yaml:"logs,omitempty"`
+}
+
+// ContainerLogsConfig bounds the container_logs collector (GROWTH-001 AD-017).
+type ContainerLogsConfig struct {
+	MaxLines     LimitInt `yaml:"max_lines,omitempty"`      // lines kept per container per pass
+	MaxBytes     LimitInt `yaml:"max_bytes,omitempty"`      // bytes kept per container per pass
+	MaxLineBytes LimitInt `yaml:"max_line_bytes,omitempty"` // longer lines are truncated
+}
+
+// LogsConfig bounds the journal logs collector (GROWTH-001 AD-017).
+type LogsConfig struct {
+	MaxEntriesPerPass LimitInt `yaml:"max_entries_per_pass,omitempty"` // journal entries kept per pass
+	MaxLineBytes      LimitInt `yaml:"max_line_bytes,omitempty"`       // longer messages are truncated
 }
 
 // WebServersConfig holds per-collector configuration for the webservers collector.
@@ -113,7 +128,6 @@ func DefaultConfig() *Config {
 			HeartbeatInterval: 15,
 		},
 		Collector: CollectorConfig{
-			ContainerLogs: ContainerLogsConfig{MaxLines: 50, MaxBytes: 16384},
 			Enabled: []string{
 				"system", "cpu", "memory", "disk", "network",
 				"os_info", "updates", "services", "processes",
@@ -147,18 +161,7 @@ func LoadConfig(path string) (*Config, error) {
 		return cfg, err
 	}
 	cfg.Docker.normalizeComposeRoots()
-	if cfg.Collector.ContainerLogs.MaxLines < 1 || cfg.Collector.ContainerLogs.MaxLines > 1000 {
-		if cfg.Collector.ContainerLogs.MaxLines != 0 {
-			slog.Warn("invalid container_logs.max_lines; using 50")
-		}
-		cfg.Collector.ContainerLogs.MaxLines = 50
-	}
-	if cfg.Collector.ContainerLogs.MaxBytes < 1024 || cfg.Collector.ContainerLogs.MaxBytes > 262144 {
-		if cfg.Collector.ContainerLogs.MaxBytes != 0 {
-			slog.Warn("invalid container_logs.max_bytes; using 16384")
-		}
-		cfg.Collector.ContainerLogs.MaxBytes = 16384
-	}
+	cfg.Validate()
 
 	return cfg, nil
 }
@@ -205,6 +208,7 @@ agent:
   # device_name: ""        # Override auto-detected hostname
   # auto_update: true      # Auto-update agent binary when server offers a new version
   # tags: []               # Device tags for grouping/filtering
+  # buffer_max_mb: 50      # Offline telemetry buffer size cap in MiB (5-64)
 
 collectors:
   enabled:
@@ -223,9 +227,12 @@ collectors:
     - ups
   # smart_interval: 14400  # SMART scan interval in seconds (default 14400 = 4 hours)
   # container_logs:
-  #   max_lines: 50         # Newest stored lines per container, 1..1000
-  #   max_bytes: 16384      # Stored bytes per container, 1024..262144
-  # Add docker_inventory to enabled above for opt-in inventory scans (15 min).
+  #   max_lines: 50       # newest lines kept per container per pass (1-1000)
+  #   max_bytes: 16384     # bytes kept per container per pass (1024-262144)
+  #   max_line_bytes: 16384 # longer lines are truncated (1024-16384)
+  # logs:
+  #   max_entries_per_pass: 5000  # newest journal entries kept per pass (500-20000)
+  #   max_line_bytes: 4096        # longer messages are truncated (1024-16384)
   # webservers:
   #   nginx:
   #     access_log: /var/log/nginx/access.log  # Enable nginx access log monitoring
@@ -236,9 +243,9 @@ docker:
   # check_updates: true    # Check registries for newer images (30min cache)
   # terminal_enabled: false  # Allow remote exec into containers
   # socket_path: ""        # Override Docker socket auto-detection
+  # compose_trusted_roots: [] # Host-local reviewed roots containers may write
+  # prune_superseded_images: false # Opt-in removal of unused, untagged previous images
   # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)
-  # compose_trusted_roots: [] # Reviewed roots a container may write (host-local opt-in)
-  # prune_superseded_images: false # Remove unused, untagged previous images after successful updates
 
 commands:
   allow_reboot: false      # Allow remote reboot commands
@@ -251,12 +258,27 @@ host_terminal:
   # shell: ""              # Override default shell (e.g., /bin/bash)
 `
 
+// Save writes the config atomically (temp file, fsync, rename, directory
+// fsync) so a full disk or a crash can never leave a truncated agent.yaml.
+//
+// The temp file is created beside the config, so the agent needs write access
+// to the config DIRECTORY, not only to the file. A root-owned directory, a
+// symlinked agent.yaml (the rename replaces the link) or a single-file bind
+// mount (the rename fails with "busy") no longer works. install.sh chowns
+// /etc/riot to the agent user, so installer installs are unaffected.
 func (c *Config) Save(path string) error {
+	return c.SaveWith(osStateFS{}, path)
+}
+
+// SaveWith is Save over an injectable file system. The identity pre-flight and
+// the post-registration writes both go through the same atomic helper, so the
+// pre-flight proves the path the real write will take (GROWTH-001 SEC-016).
+func (c *Config) SaveWith(fsys stateFS, path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return newAtomicJSONFile(path, fsys).SaveBytes(data)
 }
 
 // ConfigPath returns the default config file path for the current OS.
@@ -384,4 +406,165 @@ func InflightPath() string {
 		return os.Getenv("PROGRAMDATA") + "\\riot\\inflight-commands.json"
 	}
 	return "/var/lib/riot/inflight-commands.json"
+}
+
+// ---------------------------------------------------------------------------
+// Bounded collector and buffer limits (GROWTH-001 AD-017)
+// ---------------------------------------------------------------------------
+
+// LimitInt is an optional integer limit read leniently from YAML. A value that
+// is not an integer resolves to the key's default; an integer outside the key's
+// range is clamped. Neither stops the agent from starting, because a typo in
+// agent.yaml must never take monitoring down (and must never unbound a cap).
+type LimitInt struct {
+	set     bool
+	garbage bool
+	value   int64
+	raw     string
+}
+
+// UnmarshalYAML accepts any scalar and records whether it was an integer.
+func (l *LimitInt) UnmarshalYAML(n *yaml.Node) error {
+	*l = LimitInt{set: true, raw: n.Value}
+	if n.Kind != yaml.ScalarNode {
+		l.garbage = true
+		l.raw = "<non-scalar>"
+		return nil
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(n.Value), 10, 64)
+	switch {
+	case err == nil:
+		l.value = v
+	case errors.Is(err, strconv.ErrRange):
+		// A number too large for int64 is still a number: saturate so the
+		// range clamp (not the default) applies.
+		if strings.HasPrefix(strings.TrimSpace(n.Value), "-") {
+			l.value = -1 << 63
+		} else {
+			l.value = 1<<63 - 1
+		}
+	default:
+		l.garbage = true
+	}
+	return nil
+}
+
+// MarshalYAML writes back what the operator wrote, so Config.Save never
+// rewrites a hand-edited limit.
+func (l LimitInt) MarshalYAML() (interface{}, error) {
+	if l.garbage {
+		return l.raw, nil
+	}
+	return l.value, nil
+}
+
+// IsZero lets yaml omit an unset limit (omitempty).
+func (l LimitInt) IsZero() bool { return !l.set }
+
+// limitOf builds a set LimitInt; tests and code use it instead of YAML.
+func limitOf(v int) LimitInt { return LimitInt{set: true, value: int64(v), raw: strconv.Itoa(v)} }
+
+// limitSpec is the default and the inclusive range of one configurable bound.
+type limitSpec struct {
+	key           string
+	def, min, max int64
+}
+
+// resolve returns the value to use and, when the configured value had to be
+// changed, why.
+func (s limitSpec) resolve(l LimitInt) (value int64, why string) {
+	switch {
+	case !l.set:
+		return s.def, ""
+	case l.garbage:
+		return s.def, "not an integer; using the default"
+	case l.value < s.min:
+		return s.min, "below the minimum; using the minimum"
+	case l.value > s.max:
+		return s.max, "above the maximum; using the maximum"
+	}
+	return l.value, ""
+}
+
+const (
+	keyContainerLogMaxLines     = "collectors.container_logs.max_lines"
+	keyContainerLogMaxBytes     = "collectors.container_logs.max_bytes"
+	keyContainerLogMaxLineBytes = "collectors.container_logs.max_line_bytes"
+	keyLogsMaxEntries           = "collectors.logs.max_entries_per_pass"
+	keyLogsMaxLineBytes         = "collectors.logs.max_line_bytes"
+	keyBufferMaxMB              = "agent.buffer_max_mb"
+)
+
+// agentLimitSpecs are the six configurable agent bounds (GROWTH-001 AD-017).
+var agentLimitSpecs = map[string]limitSpec{
+	keyContainerLogMaxLines:     {keyContainerLogMaxLines, 50, 1, 1000},
+	keyContainerLogMaxBytes:     {keyContainerLogMaxBytes, 16 << 10, 1 << 10, 256 << 10},
+	keyContainerLogMaxLineBytes: {keyContainerLogMaxLineBytes, 16 << 10, 1 << 10, 16 << 10},
+	keyLogsMaxEntries:           {keyLogsMaxEntries, 5000, 500, 20000},
+	keyLogsMaxLineBytes:         {keyLogsMaxLineBytes, 4 << 10, 1 << 10, 16 << 10},
+	keyBufferMaxMB:              {keyBufferMaxMB, 50, 5, 64},
+}
+
+type configuredLimit struct {
+	spec limitSpec
+	val  LimitInt
+}
+
+// configuredLimits pairs each key with the value read from the file, in a
+// fixed order so Validate's log output is stable.
+func (c *Config) configuredLimits() []configuredLimit {
+	return []configuredLimit{
+		{agentLimitSpecs[keyContainerLogMaxLines], c.Collector.ContainerLogs.MaxLines},
+		{agentLimitSpecs[keyContainerLogMaxBytes], c.Collector.ContainerLogs.MaxBytes},
+		{agentLimitSpecs[keyContainerLogMaxLineBytes], c.Collector.ContainerLogs.MaxLineBytes},
+		{agentLimitSpecs[keyLogsMaxEntries], c.Collector.Logs.MaxEntriesPerPass},
+		{agentLimitSpecs[keyLogsMaxLineBytes], c.Collector.Logs.MaxLineBytes},
+		{agentLimitSpecs[keyBufferMaxMB], c.Agent.BufferMaxMB},
+	}
+}
+
+// Validate logs one Warn for each configured limit that had to be adjusted. It
+// never fails and never changes the config: Limits() returns the values the
+// agent actually uses.
+func (c *Config) Validate() {
+	for _, e := range c.configuredLimits() {
+		if v, why := e.spec.resolve(e.val); why != "" {
+			slog.Warn("config limit adjusted",
+				"key", e.spec.key,
+				"configured", e.val.raw,
+				"using", v,
+				"min", e.spec.min,
+				"max", e.spec.max,
+				"reason", why)
+		}
+	}
+}
+
+// Limits is the resolved, always in-range set of agent bounds.
+type Limits struct {
+	ContainerLogMaxLines     int
+	ContainerLogMaxBytes     int
+	ContainerLogMaxLineBytes int
+	JournalMaxEntries        int
+	JournalMaxLineBytes      int
+	BufferMaxMB              int
+}
+
+// BufferMaxBytes is the offline buffer cap in bytes.
+func (l Limits) BufferMaxBytes() int64 { return int64(l.BufferMaxMB) << 20 }
+
+// Limits resolves every configurable bound to a finite in-range value.
+func (c *Config) Limits() Limits {
+	r := func(key string, v LimitInt) int {
+		val, _ := agentLimitSpecs[key].resolve(v)
+		return int(val)
+	}
+	return Limits{
+		ContainerLogMaxLines:     r(keyContainerLogMaxLines, c.Collector.ContainerLogs.MaxLines),
+		ContainerLogMaxBytes:     r(keyContainerLogMaxBytes, c.Collector.ContainerLogs.MaxBytes),
+		ContainerLogMaxLineBytes: r(keyContainerLogMaxLineBytes, c.Collector.ContainerLogs.MaxLineBytes),
+		JournalMaxEntries:        r(keyLogsMaxEntries, c.Collector.Logs.MaxEntriesPerPass),
+		JournalMaxLineBytes:      r(keyLogsMaxLineBytes, c.Collector.Logs.MaxLineBytes),
+		BufferMaxMB:              r(keyBufferMaxMB, c.Agent.BufferMaxMB),
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -22,6 +25,125 @@ type HTTPClient struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+
+	// now is the injected clock for the telemetry back-off; nil = time.Now.
+	now func() time.Time
+
+	// Telemetry back-off (GROWTH-001 AD-017). It is client-wide for telemetry
+	// only: heartbeats, events and command reports are never gated by it, so a
+	// throttled telemetry route cannot silence liveness.
+	backoffMu    sync.Mutex
+	backoffUntil time.Time
+	backoffStep  time.Duration
+}
+
+// Telemetry back-off bounds (GROWTH-001 AD-017, 429 handling).
+const (
+	retryAfterMin     = time.Second
+	retryAfterMax     = time.Hour
+	backoffInitial    = 30 * time.Second
+	backoffCap        = 10 * time.Minute
+	maxErrorBodyBytes = 4 << 10
+)
+
+// ErrBackoff is returned by SendTelemetry, without touching the network, while
+// a 429, 401, 403 (or a 5xx with Retry-After) back-off is in force. The caller
+// keeps the item; this is not a rejection.
+var ErrBackoff = errors.New("telemetry back-off in force")
+
+// StatusError is a non-success HTTP answer. RetryAfter is zero when the server
+// sent no usable Retry-After.
+type StatusError struct {
+	Op         string
+	StatusCode int
+	RetryAfter time.Duration
+	Body       string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s failed: status %d: %s", e.Op, e.StatusCode, e.Body)
+}
+
+func (c *HTTPClient) clockNow() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// newStatusError reads a bounded part of the error body and the Retry-After
+// header (seconds or an HTTP date).
+func (c *HTTPClient) newStatusError(op string, resp *http.Response) *StatusError {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	return &StatusError{
+		Op:         op,
+		StatusCode: resp.StatusCode,
+		RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), c.clockNow()),
+		Body:       strings.TrimSpace(string(b)),
+	}
+}
+
+// parseRetryAfter returns 0 for an absent, malformed or non-positive value.
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		if secs > int64(retryAfterMax/time.Second) {
+			return retryAfterMax + 1 // caller clamps; avoids Duration overflow
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// telemetryBlocked reports whether a back-off is in force.
+func (c *HTTPClient) telemetryBlocked() (time.Time, bool) {
+	c.backoffMu.Lock()
+	defer c.backoffMu.Unlock()
+	if until := c.backoffUntil; !until.IsZero() && c.clockNow().Before(until) {
+		return until, true
+	}
+	return time.Time{}, false
+}
+
+// noteTelemetryOutcome updates the back-off after a telemetry answer.
+func (c *HTTPClient) noteTelemetryOutcome(err *StatusError) {
+	c.backoffMu.Lock()
+	defer c.backoffMu.Unlock()
+	if err == nil {
+		c.backoffUntil = time.Time{}
+		c.backoffStep = 0
+		return
+	}
+	now := c.clockNow()
+	switch {
+	case err.StatusCode == http.StatusTooManyRequests,
+		err.StatusCode == http.StatusUnauthorized,
+		err.StatusCode == http.StatusForbidden:
+		if err.RetryAfter > 0 {
+			c.backoffUntil = now.Add(min(max(err.RetryAfter, retryAfterMin), retryAfterMax))
+			return
+		}
+		if c.backoffStep == 0 {
+			c.backoffStep = backoffInitial
+		} else {
+			c.backoffStep = min(c.backoffStep*2, backoffCap)
+		}
+		c.backoffUntil = now.Add(c.backoffStep)
+	case err.StatusCode >= 500 && err.RetryAfter > 0:
+		// A 5xx honours Retry-After when present; otherwise the next tick retries.
+		c.backoffUntil = now.Add(min(max(err.RetryAfter, retryAfterMin), retryAfterMax))
+	}
 }
 
 func NewHTTPClient(baseURL, apiKey string) *HTTPClient {
@@ -355,7 +477,12 @@ func (c *HTTPClient) PostCommandReport(ctx context.Context, deviceID, commandID 
 	return reply, nil
 }
 
+// SendTelemetry pushes one snapshot. A non-success answer is a *StatusError. While
+// a back-off is in force it returns ErrBackoff without sending anything.
 func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *models.TelemetrySnapshot) error {
+	if until, blocked := c.telemetryBlocked(); blocked {
+		return fmt.Errorf("%w until %s", ErrBackoff, until.UTC().Format(time.RFC3339))
+	}
 	body, _ := json.Marshal(snap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("%s/api/v1/devices/%s/telemetry", c.baseURL, deviceID), bytes.NewReader(body))
@@ -372,21 +499,10 @@ func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *m
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		retry := time.Minute
-		if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds > 0 {
-			retry = time.Duration(seconds) * time.Second
-		} else if at, e := http.ParseTime(resp.Header.Get("Retry-After")); e == nil {
-			retry = time.Until(at)
-		}
-		retry = min(max(retry, time.Second), time.Hour)
-		return &telemetryHTTPError{Status: resp.StatusCode, RetryAfter: retry}
+		statusErr := c.newStatusError("telemetry push", resp)
+		c.noteTelemetryOutcome(statusErr)
+		return statusErr
 	}
+	c.noteTelemetryOutcome(nil)
 	return nil
 }
-
-type telemetryHTTPError struct {
-	Status     int
-	RetryAfter time.Duration
-}
-
-func (e *telemetryHTTPError) Error() string { return fmt.Sprintf("telemetry HTTP status %d", e.Status) }

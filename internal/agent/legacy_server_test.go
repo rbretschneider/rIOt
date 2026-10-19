@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
@@ -174,4 +175,107 @@ func TestCL_AC100_NewAgentAgainstLegacyServer(t *testing.T) {
 	acks := ls.typed("command_ack")
 	require.Len(t, acks, 1, "[AC-100] only the first command is acked; legacy mode skips it")
 	assert.Equal(t, hits, ls.reportHits(), "[AC-100] legacy mode must not retry HTTP within the hour")
+}
+
+// v267Server behaves like a v2.67.0 server on the telemetry route: it decodes
+// the snapshot into the fields that release knew, answers 200 {"status":"ok"}
+// or a plain-text error, and knows nothing of Retry-After or throttling.
+type v267Server struct {
+	srv *httptest.Server
+
+	mu        sync.Mutex
+	down      bool
+	delivered map[string]int
+	topKeys   map[string]bool
+}
+
+func newV267Server(t *testing.T) *v267Server {
+	t.Helper()
+	s := &v267Server{delivered: map[string]int{}, topKeys: map[string]bool{}}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.down {
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var raw map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		for k := range raw {
+			s.topKeys[k] = true
+		}
+		var deviceID string
+		_ = json.Unmarshal(raw["device_id"], &deviceID)
+		s.delivered[deviceID]++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func (s *v267Server) setDown(down bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.down = down
+}
+
+func (s *v267Server) total() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, c := range s.delivered {
+		n += c
+	}
+	return n
+}
+
+// AC-073 (NFR-010): a new agent pushes and flushes against a v2.67.0 server,
+// and all data is delivered. That server answers 503 with a plain-text body
+// while it is down, never sends Retry-After, and knows only the original
+// snapshot fields.
+func TestGROWTH_AC073_NewAgentDeliversToLegacyServer(t *testing.T) {
+	captureLogs(t)
+	srv := newV267Server(t)
+	buf := openTestBuffer(t, filepath.Join(t.TempDir(), "buffer.db"), 50<<20)
+	cfg := &Config{}
+	cfg.Agent.DeviceID = "dev"
+	a := &Agent{
+		config:   cfg,
+		client:   NewHTTPClient(srv.srv.URL, "key"),
+		buffer:   buf,
+		registry: collectors.NewRegistry(),
+	}
+
+	// The server is down for three pushes: each is buffered, none is lost, and
+	// there is no back-off to delay recovery (a 503 without Retry-After).
+	srv.setDown(true)
+	for i := 0; i < 3; i++ {
+		a.sendTelemetry(context.Background())
+	}
+	require.Equal(t, 3, buf.Len(), "[AC-073] the pushes made while the server is down are buffered")
+	require.Equal(t, 0, srv.total())
+
+	// Two more items of another origin are also waiting.
+	require.NoError(t, buf.Store(bufSnap("extra-1", 10)))
+	require.NoError(t, buf.Store(bufSnap("extra-2", 10)))
+
+	// The server returns. The next push delivers itself and the whole backlog.
+	srv.setDown(false)
+	a.sendTelemetry(context.Background())
+
+	assert.Equal(t, 0, buf.Len(), "[AC-073] the buffer must be empty after the flush")
+	assert.Equal(t, 6, srv.total(), "[AC-073] 1 live push + 3 buffered pushes + 2 extra items must all arrive")
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	assert.Equal(t, 4, srv.delivered["dev"])
+	assert.Equal(t, 1, srv.delivered["extra-1"])
+	assert.Equal(t, 1, srv.delivered["extra-2"])
+	for key := range srv.topKeys {
+		assert.Contains(t, []string{"device_id", "timestamp", "data"}, key,
+			"[AC-073] the snapshot must carry no top-level field the v2.67.0 server did not know")
+	}
 }

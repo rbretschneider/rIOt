@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -45,7 +46,7 @@ func TestDUX_BufferDeletesEachSuccessfulSnapshot(t *testing.T) {
 	if len(items) != 2 || items[0].Snapshot.DeviceID != "second" {
 		t.Fatalf("already accepted snapshot was retained: %+v", items)
 	}
-	if time.Until(a.telemetryRetryUntil) < 110*time.Second {
+	if until, blocked := a.client.telemetryBlocked(); !blocked || time.Until(until) < 110*time.Second {
 		t.Fatal("429 retry-after was ignored")
 	}
 }
@@ -242,8 +243,8 @@ func TestDUX_LiveLinePreservesFullTextWithinFrameBound(t *testing.T) {
 	}
 	e.Line = strings.Repeat("<", 16<<10)
 	line = prepareLiveLine(e)
-	raw, _ := json.Marshal(line)
-	if len(raw) > 60<<10 || !line.Truncated {
+	raw, _ := marshalLogJSON(line)
+	if len(raw) > 60<<10 || line.Truncated || line.Line != e.Line {
 		t.Fatal("escaped JSON line exceeded frame budget", len(raw))
 	}
 }
@@ -273,5 +274,13 @@ func TestDUX_CheckUpdatesWithoutSelectionStillClearsHostCache(t *testing.T) {
 	defer h.fresh.mu.Unlock()
 	if !h.fresh.cleared {
 		t.Fatal("legacy host check no longer clears cache")
+	}
+}
+
+func TestDUX_ConfiguredStoredLiveLineIdentity(t *testing.T) {
+	e := models.ContainerLogEntry{Line: "password=supersecret " + strings.Repeat("€", 5000)}
+	got := prepareLiveLineWithLimit(e, 4096)
+	if got.Line != collectors.CanonicalLogLine(e.Line, 4096) || len(got.Line) > 4096 || strings.Contains(got.Line, "supersecret") || !strings.HasSuffix(got.Line, " [truncated]") {
+		t.Fatal("configured live/stored line identity differs")
 	}
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -254,7 +255,7 @@ func (c *agentWSClient) connected() bool {
 // connection so the read loop ends and the client reconnects (FR-012). It never
 // terminates the process.
 func (c *agentWSClient) send(msg AgentWSMessage) error {
-	data, err := json.Marshal(msg)
+	data, err := marshalLogJSON(msg)
 	if err != nil {
 		return fmt.Errorf("agent ws: marshal %s: %w", msg.Type, err)
 	}
@@ -290,4 +291,14 @@ func (a *Agent) sendWS(msg AgentWSMessage) error {
 func (c *agentWSClient) failConn(conn agentWSConn) {
 	c.clearConn(conn)
 	conn.Close()
+}
+
+// HTML escaping is unnecessary in WebSocket JSON and would expand valid log
+// text beyond the frame bound, changing its identity relative to stored logs.
+func marshalLogJSON(v interface{}) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	err := enc.Encode(v)
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), err
 }

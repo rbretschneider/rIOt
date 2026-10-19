@@ -111,6 +111,18 @@ func Doctor(configPath string) {
 	fmt.Printf("  Heartbeat:    %ds\n", hb)
 	fmt.Printf("  SMART:        %s\n", friendlyDuration(smart))
 
+	// ── Collection Limits (GROWTH-001) ──
+	// The effective, clamped values the agent uses, so a typo in agent.yaml is
+	// visible here rather than silently replaced by a default.
+	lim := cfg.Limits()
+	fmt.Println()
+	section("Collection Limits")
+	fmt.Printf("  Container logs: %d lines, %d bytes per container; lines cut at %d bytes\n",
+		lim.ContainerLogMaxLines, lim.ContainerLogMaxBytes, lim.ContainerLogMaxLineBytes)
+	fmt.Printf("  Journal:        %d entries per pass; messages cut at %d bytes\n",
+		lim.JournalMaxEntries, lim.JournalMaxLineBytes)
+	fmt.Printf("  Offline buffer: %d MiB (at most %d items)\n", lim.BufferMaxMB, maxBuffered)
+
 	// ── Collectors ──
 	fmt.Println()
 	section("Collectors")
@@ -214,7 +226,7 @@ func Doctor(configPath string) {
 			fmt.Printf("  Socket:       auto-detect\n")
 		}
 		fmt.Printf("  Stats:        %v\n", cfg.Docker.CollectStats)
-		lines, bytes := cfg.Collector.ContainerLogs.MaxLines, cfg.Collector.ContainerLogs.MaxBytes
+		lines, bytes := cfg.Limits().ContainerLogMaxLines, cfg.Limits().ContainerLogMaxBytes
 		if lines < 1 || lines > 1000 {
 			lines = 50
 		}
@@ -270,6 +282,16 @@ func Doctor(configPath string) {
 	// verifier binary that installs verified updates.
 	if runtime.GOOS == "linux" && (cfg.Agent.AutoUpdate == nil || *cfg.Agent.AutoUpdate) {
 		checkUpdatePrivilege()
+	}
+
+	// ── Memory Limit (GROWTH-001 AD-019) ──
+	// The unit written by install.sh caps the agent's memory. Installing a new
+	// agent binary does not rewrite the unit, so a host whose unit predates the
+	// cap has none until the installer is re-run; this section is the only
+	// signal of that. (The helper's temp-file sweep needs the same re-run, but
+	// nothing here can detect it.)
+	if runtime.GOOS == "linux" {
+		checkMemoryLimit()
 	}
 
 	// ── OS Update Self-Heal (interrupted-dpkg recovery) ──
@@ -390,6 +412,118 @@ func reportUpdatePrivilege(run collectors.CommandRunner, stat func(string) (os.F
 	default:
 		pass("apply helper present (%s)", applyBinPath)
 	}
+}
+
+// agentUnit is the systemd unit install.sh writes.
+const agentUnit = "riot-agent"
+
+// memoryLimitProbeTimeout bounds the systemctl query.
+const memoryLimitProbeTimeout = 10 * time.Second
+
+// unlimitedBytes is the threshold above which systemd's numeric MemoryMax
+// means "no limit" (older systemd prints 2^64-1 instead of "infinity").
+const unlimitedBytes = uint64(1) << 62
+
+// checkMemoryLimit asks systemd for the agent unit's memory properties.
+func checkMemoryLimit() {
+	ctx, cancel := context.WithTimeout(context.Background(), memoryLimitProbeTimeout)
+	defer cancel()
+	out, err := execRunner(ctx, "systemctl", "show", agentUnit,
+		"-p", "MemoryMax", "-p", "OOMPolicy", "-p", "KillMode", "-p", "Environment")
+	reportMemoryLimit(string(out), err)
+}
+
+// reportMemoryLimit prints the memory-limit section from `systemctl show`
+// output. It is split from checkMemoryLimit so tests can feed it text.
+func reportMemoryLimit(showOutput string, queryErr error) {
+	fmt.Println()
+	section("Memory Limit")
+	for _, f := range memoryLimitFindings(showOutput, queryErr) {
+		switch f.level {
+		case findingPass:
+			pass("%s", f.text)
+		case findingWarn:
+			warn("%s", f.text)
+		case findingFail:
+			fail("%s", f.text)
+		default:
+			fmt.Printf("  %s\n", f.text)
+		}
+	}
+}
+
+type findingLevel int
+
+const (
+	findingInfo findingLevel = iota
+	findingPass
+	findingWarn
+	findingFail
+)
+
+type finding struct {
+	level findingLevel
+	text  string
+}
+
+const reinstallHint = "  Re-run the install script (curl … | sudo bash) to rewrite the service unit"
+
+// memoryLimitFindings turns `systemctl show` output into doctor findings:
+// MemoryMax in bytes (infinity fails), OOMPolicy, KillMode and whether
+// GOMEMLIMIT is set.
+func memoryLimitFindings(showOutput string, queryErr error) []finding {
+	if queryErr != nil {
+		return []finding{{findingWarn, fmt.Sprintf("could not query systemd for the %s unit (not installed as a service?): %v", agentUnit, queryErr)}}
+	}
+	props := map[string]string{}
+	for _, line := range strings.Split(showOutput, "\n") {
+		if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			props[key] = value
+		}
+	}
+
+	var out []finding
+
+	maxBytes, parseErr := strconv.ParseUint(props["MemoryMax"], 10, 64)
+	switch {
+	case parseErr != nil || maxBytes >= unlimitedBytes:
+		out = append(out,
+			finding{findingFail, "no memory limit on the agent unit (MemoryMax=infinity) — a runaway collector can exhaust the host"},
+			finding{findingInfo, reinstallHint})
+	default:
+		out = append(out, finding{findingPass, fmt.Sprintf("MemoryMax = %d bytes (%d MiB)", maxBytes, maxBytes>>20)})
+	}
+
+	if policy := props["OOMPolicy"]; policy == "continue" {
+		out = append(out, finding{findingPass, "OOMPolicy = continue"})
+	} else {
+		out = append(out,
+			finding{findingWarn, fmt.Sprintf("OOMPolicy = %q (expected continue); one OOM-killed process would stop the whole unit", policy)},
+			finding{findingInfo, reinstallHint})
+	}
+
+	out = append(out, finding{findingInfo, fmt.Sprintf("KillMode = %s", props["KillMode"])})
+
+	if limit, ok := environmentValue(props["Environment"], "GOMEMLIMIT"); ok {
+		out = append(out, finding{findingPass, "GOMEMLIMIT = " + limit})
+	} else {
+		out = append(out,
+			finding{findingWarn, "GOMEMLIMIT is not set in the unit; the Go runtime will not collect garbage early under memory pressure"},
+			finding{findingInfo, reinstallHint})
+	}
+	return out
+}
+
+// environmentValue finds NAME=value among the space-separated assignments of a
+// `systemctl show -p Environment` line.
+func environmentValue(env, name string) (string, bool) {
+	for _, field := range strings.Fields(env) {
+		field = strings.Trim(field, `"`)
+		if value, ok := strings.CutPrefix(field, name+"="); ok {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func commandExists(name string) bool {

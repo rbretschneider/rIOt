@@ -45,7 +45,7 @@ func TestDUX_LogReaderOversizeFrameContinues(t *testing.T) {
 	}
 }
 func TestDUX_CapRingNewestAndBytes(t *testing.T) {
-	r := capRing{maxLines: 3, maxBytes: 8}
+	r := containerLogCapRing{maxLines: 3, maxBytes: 8}
 	for _, s := range []string{"old", "next", "new"} {
 		r.add(models.ContainerLogEntry{Line: s, Timestamp: time.Now()})
 	}
@@ -53,7 +53,7 @@ func TestDUX_CapRingNewestAndBytes(t *testing.T) {
 		t.Fatalf("unexpected ring %+v", r)
 	}
 	r.add(models.ContainerLogEntry{Line: strings.Repeat("界", 20)})
-	if len(r.entries) != 1 || len(r.entries[0].Line) > 8 || !utf8.ValidString(r.entries[0].Line) {
+	if r.dropped != 2 || len(r.entries) != 2 || !utf8.ValidString(r.entries[0].Line) {
 		t.Fatal("byte cap must preserve UTF-8")
 	}
 }

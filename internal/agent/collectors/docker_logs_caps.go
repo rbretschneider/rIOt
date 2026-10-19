@@ -89,19 +89,18 @@ func readDockerLogs(r io.Reader, tty, truncateTime bool, emit func(models.Contai
 	}
 }
 
-type capRing struct {
+type containerLogCapRing struct {
 	entries                   []models.ContainerLogEntry
 	bytes, maxLines, maxBytes int
 	dropped                   int64
 	droppedAt                 time.Time
 }
 
-func (r *capRing) add(e models.ContainerLogEntry) {
+func (r *containerLogCapRing) add(e models.ContainerLogEntry) {
 	if len(e.Line) > r.maxBytes {
-		e.Line = e.Line[:r.maxBytes]
-		for !utf8.ValidString(e.Line) {
-			e.Line = e.Line[:len(e.Line)-1]
-		}
+		r.dropped++
+		r.droppedAt = e.Timestamp
+		return
 	}
 	r.entries = append(r.entries, e)
 	r.bytes += len(e.Line)
@@ -116,8 +115,25 @@ func (r *capRing) add(e models.ContainerLogEntry) {
 func MaskLogEntries(entries []models.ContainerLogEntry) {
 	for i := range entries {
 		entries[i].Timestamp = entries[i].Timestamp.Truncate(time.Microsecond)
-		entries[i].Line, _ = redact.MaskLine(entries[i].Line)
+		entries[i].Line = CanonicalLogLine(entries[i].Line, 16<<10)
 	}
+}
+
+// CanonicalLogLine applies the identical configured line limit and masking to
+// stored and live logs, preserving their boundary identity after truncation.
+func CanonicalLogLine(line string, maxBytes int) string {
+	if maxBytes < 1024 || maxBytes > 16<<10 {
+		maxBytes = 16 << 10
+	}
+	line = TruncateLogLine(line, maxBytes)
+	if len(line) > maxBytes {
+		line = TruncateLogLine(line, maxBytes-len(truncationMarker))
+	}
+	line, _ = redact.MaskLine(line)
+	if len(line) > maxBytes {
+		return TruncateLogLine(line, maxBytes-len(truncationMarker))
+	}
+	return line
 }
 
 type ContainerLogBatch struct {

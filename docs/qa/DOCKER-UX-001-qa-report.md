@@ -118,3 +118,44 @@ ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	0.601s
 ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	0.767s
 ?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
 ```
+
+## Latest-main integration verification
+
+Integrated main at `2addf5c` (GROWTH-001 agent hardening). Resolved six overlapping agent files while retaining corruption recovery/vacuum, HTTP backoff/permanent rejection, journal bounds, payload guards and the Docker UX limits. Updated old collector fixtures for ContainerLogBatch and explicit configurable maxima; added a 4 KiB multibyte/secret regression proving identical stored/live text. Effective defaults and buffer ceiling are documented in README and CHANGELOG.
+
+Final Windows command: `go test ./... -count=1 -timeout=120s`. PASS. This run uses no live PostgreSQL; the earlier full PostgreSQL evidence above remains applicable to the unchanged server schema. `go vet ./...` also passed without output. GitHub CI validates the final merged revision on Linux.
+
+```text
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent-apply	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-server	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	0.914s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent	15.980s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent/collectors	13.069s
+ok  	github.com/DesyncTheThird/rIOt/internal/logbudget	0.418s
+ok  	github.com/DesyncTheThird/rIOt/internal/models	0.474s
+ok  	github.com/DesyncTheThird/rIOt/internal/redact	0.455s
+ok  	github.com/DesyncTheThird/rIOt/internal/releasekey	0.551s
+ok  	github.com/DesyncTheThird/rIOt/internal/resilient	0.962s
+ok  	github.com/DesyncTheThird/rIOt/internal/server	2.691s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/auth	0.551s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ca	0.562s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/commands	1.068s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/db	0.908s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/events	0.617s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/handlers	10.046s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ingest	0.634s
+?   	github.com/DesyncTheThird/rIOt/internal/server/logstore	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/internal/server/middleware	1.044s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/notify	0.984s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/oidc	1.971s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/partition	0.550s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/probes	0.996s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/quota	0.475s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/scoring	0.590s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/storage	0.870s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/summary	0.700s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	0.607s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	0.817s
+?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
+```
