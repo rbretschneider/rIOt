@@ -25,7 +25,11 @@ type fakeProcess struct {
 	log      *eventLog
 	// honorTerm makes Terminate end the process (a well-behaved child).
 	honorTerm bool
-	once      sync.Once
+	// autoExit makes the process finish at once with exitErr (a quick command).
+	autoExit bool
+	// onTerminate runs when SIGTERM arrives, before the process reacts.
+	onTerminate func()
+	once     sync.Once
 }
 
 func newFakeProcess() *fakeProcess {
@@ -38,6 +42,9 @@ func (f *fakeProcess) Start() error {
 	}
 	f.log.add("start")
 	close(f.started)
+	if f.autoExit {
+		f.finish(f.exitErr)
+	}
 	return nil
 }
 
@@ -51,6 +58,9 @@ func (f *fakeProcess) Terminate() error {
 	f.signals = append(f.signals, "SIGTERM")
 	f.mu.Unlock()
 	f.log.add("terminate")
+	if f.onTerminate != nil {
+		f.onTerminate()
+	}
 	if f.honorTerm {
 		f.finish(errors.New("signal: terminated"))
 	}

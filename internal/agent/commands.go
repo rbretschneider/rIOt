@@ -110,15 +110,15 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 
 	switch payload.Action {
 	case "docker_stop":
-		status, message = a.dockerCommand(ctx, payload, "stop")
+		return a.dockerCommand(cr, "stop")
 	case "docker_restart":
-		status, message = a.dockerCommand(ctx, payload, "restart")
+		return a.dockerCommand(cr, "restart")
 	case "docker_start":
-		status, message = a.dockerCommand(ctx, payload, "start")
+		return a.dockerCommand(cr, "start")
 	case "docker_update":
-		status, message = a.dockerUpdate(ctx, payload)
+		return a.dockerUpdate(cr)
 	case "docker_bulk_update":
-		status, message = a.dockerBulkUpdate(ctx, payload)
+		return a.dockerBulkUpdate(cr)
 	case "docker_check_updates":
 		a.clearFreshnessCache()
 		a.triggerTelemetry()
@@ -179,33 +179,58 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 }
 
 // dockerCommand runs a docker stop/start/restart on the specified container.
-func (a *Agent) dockerCommand(ctx context.Context, payload models.CommandPayload, action string) (string, string) {
-	containerID, _ := payload.Params["container_id"].(string)
+// It takes no target lock but is refused while an update holds the container or
+// its compose project, so it cannot cut a recreate in half (AD-012).
+func (a *Agent) dockerCommand(cr *cmdRun, action string) commandExecResult {
+	containerID, _ := cr.payload.Params["container_id"].(string)
 	if containerID == "" {
-		return "error", "container_id is required"
+		return commandExecResult{Status: "error", Message: "container_id is required"}
 	}
 
-	cli, err := newDockerClient(a.config.Docker.SocketPath)
+	api, err := a.newDocker()
 	if err != nil {
-		return "error", fmt.Sprintf("docker client: %s", err)
+		return commandExecResult{Status: "error", Message: fmt.Sprintf("docker client: %s", err)}
 	}
-	defer cli.Close()
+	defer api.Close()
+
+	ctx := cr.ctx
+	if insp, ierr := api.ContainerInspect(ctx, containerID); ierr == nil {
+		keys := []string{models.TargetKeyContainer(strings.TrimPrefix(insp.Name, "/"))}
+		if insp.Config != nil {
+			if wd := insp.Config.Labels[models.LabelComposeWorkingDir]; wd != "" {
+				keys = append(keys, models.TargetKeyCompose(wd))
+			}
+		}
+		for _, k := range keys {
+			if h, held := a.locks.Holder(k); held {
+				return conflictResult(k, h)
+			}
+		}
+	}
 
 	timeout := 30 // seconds
 
 	switch action {
 	case "stop":
-		err = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		err = api.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 	case "restart":
-		err = cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		err = api.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
 	case "start":
-		err = cli.ContainerStart(ctx, containerID, container.StartOptions{})
+		err = api.ContainerStart(ctx, containerID, container.StartOptions{})
 	}
 
 	if err != nil {
-		return "error", fmt.Sprintf("docker %s: %s", action, err)
+		return commandExecResult{Status: "error", Message: fmt.Sprintf("docker %s: %s", action, err)}
 	}
-	return "success", fmt.Sprintf("container %s: %s ok", containerID[:12], action)
+	return commandExecResult{Status: "success", Message: fmt.Sprintf("container %s: %s ok", shortID(containerID), action)}
+}
+
+// shortID is the first 12 characters of a container ID.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // handleReboot triggers a system reboot if allowed by config.

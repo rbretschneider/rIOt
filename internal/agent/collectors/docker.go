@@ -420,6 +420,19 @@ func (c *DockerCollector) ClearFreshnessCache() {
 	}
 }
 
+// InvalidateFreshness drops the cache entries for the given image references
+// only, in memory and on disk, so the next telemetry cycle re-checks exactly the
+// images an update touched while every other verdict stays cached (FR-052).
+func (c *DockerCollector) InvalidateFreshness(refs ...string) {
+	c.cacheOnce.Do(func() { c.loadFreshnessCache() })
+	c.cacheMu.Lock()
+	for _, ref := range refs {
+		delete(c.digestCache, ref)
+	}
+	c.cacheMu.Unlock()
+	c.saveFreshnessCache()
+}
+
 // checkImageUpdates queries registries to determine if running container images
 // have newer versions available. Results are cached for 30 minutes in-memory
 // and on disk. Uses a bounded worker pool (FR-005, FR-006). Each individual

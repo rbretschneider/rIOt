@@ -68,6 +68,13 @@ type Agent struct {
 	// executor overrides executeAction in tests; nil = real execution.
 	executor func(cr *cmdRun) commandExecResult
 
+	// Test seams for the Docker paths; nil = the real Docker client, a real
+	// child process, a real wait and the collector's freshness cache.
+	dockerFactory func() (dockerAPI, error)
+	procFactory   func(name string, args ...string) limitedProcess
+	pause         func(ctx context.Context, d time.Duration) bool
+	freshness     freshnessInvalidator
+
 	// Disk I/O tracking for delta computation between heartbeats.
 	// owned by heartbeatLoop only — no concurrent access
 	prevDiskIO     map[string]diskIOSnapshot
