@@ -3,9 +3,12 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // SnapshotSummary is a lightweight projection of a telemetry snapshot
@@ -45,13 +48,38 @@ func (r *TelemetryRepo) StoreSnapshot(ctx context.Context, snap *models.Telemetr
 	return err
 }
 
+// latestBound hides snapshots stamped more than TelemetryFutureTolerance ahead
+// of the database clock from every "latest" query (SEC C-3). Rows stored before
+// the server clamped agent timestamps therefore age out harmlessly, and a
+// future-dated snapshot can never freeze a device's current state. History
+// queries are unaffected. The tolerance is a typed constant, never request data.
+var latestBound = fmt.Sprintf("timestamp <= NOW() + INTERVAL '%d seconds'", int(models.TelemetryFutureTolerance/time.Second))
+
+// LatestSnapshotTime returns the timestamp of the device's current telemetry
+// state (the newest snapshot inside latestBound), or ok=false when it has none.
+// The server compares an incoming snapshot against it to keep history in order
+// (FR-069).
+func (r *TelemetryRepo) LatestSnapshotTime(ctx context.Context, deviceID string) (time.Time, bool, error) {
+	var ts time.Time
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT timestamp FROM telemetry_snapshots
+		 WHERE device_id=$1 AND `+latestBound+` ORDER BY timestamp DESC LIMIT 1`, deviceID).Scan(&ts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return ts, true, nil
+}
+
 // GetLatestSnapshot returns the most recent telemetry for a device.
 func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) (*models.TelemetrySnapshot, error) {
 	snap := &models.TelemetrySnapshot{}
 	var dataJSON []byte
 	err := r.db.Pool.QueryRow(ctx,
 		`SELECT id, device_id, timestamp, data FROM telemetry_snapshots
-		 WHERE device_id=$1 ORDER BY timestamp DESC LIMIT 1`, deviceID,
+		 WHERE device_id=$1 AND `+latestBound+` ORDER BY timestamp DESC LIMIT 1`, deviceID,
 	).Scan(&snap.ID, &snap.DeviceID, &snap.Timestamp, &dataJSON)
 	if err != nil {
 		return nil, err
@@ -64,7 +92,7 @@ func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) 
 func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.TelemetrySnapshot, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT DISTINCT ON (device_id) id, device_id, timestamp, data
-		 FROM telemetry_snapshots ORDER BY device_id, timestamp DESC`)
+		 FROM telemetry_snapshots WHERE `+latestBound+` ORDER BY device_id, timestamp DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +123,7 @@ func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSu
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+latestBound+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest`)
 	if err != nil {
@@ -235,6 +264,7 @@ func (r *TelemetryRepo) GetGPUDeviceIDs(ctx context.Context) ([]string, error) {
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+latestBound+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest
 		 WHERE jsonb_array_length(data->'gpu_telemetry'->'gpus') > 0`)
@@ -270,6 +300,7 @@ func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]Fle
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+latestBound+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest
 		 WHERE data ? 'docker'`)

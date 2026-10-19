@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
@@ -20,6 +21,11 @@ type WSMessage struct {
 	Type     string      `json:"type"`
 	DeviceID string      `json:"device_id,omitempty"`
 	Data     interface{} `json:"data,omitempty"`
+	// CollectedAt (agent time, bounded by the server) and ReceivedAt (server
+	// time) are top-level so the dashboard can order live telemetry without
+	// trusting its own clock (FR-066). Heartbeats carry ReceivedAt only.
+	CollectedAt *time.Time `json:"collected_at,omitempty"`
+	ReceivedAt  *time.Time `json:"received_at,omitempty"`
 }
 
 // Hub manages WebSocket clients and broadcasts.
@@ -99,12 +105,12 @@ func (h *Hub) BroadcastDeviceUpdate(device *models.Device) {
 	h.broadcastMsg(WSMessage{Type: "device_update", DeviceID: device.ID, Data: device})
 }
 
-func (h *Hub) BroadcastHeartbeat(deviceID string, data *models.HeartbeatData) {
-	h.broadcastMsg(WSMessage{Type: "heartbeat", DeviceID: deviceID, Data: data})
+func (h *Hub) BroadcastHeartbeat(deviceID string, data *models.HeartbeatData, receivedAt time.Time) {
+	h.broadcastMsg(WSMessage{Type: "heartbeat", DeviceID: deviceID, Data: data, ReceivedAt: &receivedAt})
 }
 
-func (h *Hub) BroadcastTelemetry(deviceID string, data *models.FullTelemetryData) {
-	h.broadcastMsg(WSMessage{Type: "telemetry", DeviceID: deviceID, Data: data})
+func (h *Hub) BroadcastTelemetry(deviceID string, data *models.FullTelemetryData, collectedAt, receivedAt time.Time) {
+	h.broadcastMsg(WSMessage{Type: "telemetry", DeviceID: deviceID, Data: data, CollectedAt: &collectedAt, ReceivedAt: &receivedAt})
 }
 
 func (h *Hub) BroadcastEvent(event *models.Event) {

@@ -73,7 +73,7 @@ type Handlers struct {
 	devices            db.DeviceRepository
 	telemetry          db.TelemetryRepository
 	events             db.EventRepository
-	hub                *websocket.Hub
+	hub                dashboardHub
 	eventGen           *events.Generator
 	updateChecker      *updates.Checker
 	adminRepo          db.AdminRepository
@@ -114,6 +114,46 @@ type Handlers struct {
 	cmdOnce  sync.Once
 	now      func() time.Time
 	agents   *agentRegistry
+
+	// tlog throttles the telemetry-clamp Warn per device; async runs the
+	// detached telemetry post-work (nil means a goroutine).
+	tlogOnce sync.Once
+	tlog     *commands.LogThrottle
+	async    func(func())
+}
+
+// dashboardHub is the part of websocket.Hub the handlers use. An interface so
+// tests can observe broadcasts.
+type dashboardHub interface {
+	BroadcastDeviceUpdate(device *models.Device)
+	BroadcastHeartbeat(deviceID string, data *models.HeartbeatData, receivedAt time.Time)
+	BroadcastTelemetry(deviceID string, data *models.FullTelemetryData, collectedAt, receivedAt time.Time)
+	BroadcastEvent(event *models.Event)
+	BroadcastDeviceRemoved(deviceID string)
+	BroadcastDockerUpdate(deviceID string, data interface{})
+	BroadcastCommandUpdate(u models.CommandUpdate)
+	HandleWS(w http.ResponseWriter, r *http.Request)
+}
+
+var _ dashboardHub = (*websocket.Hub)(nil)
+
+// telemetryLogs returns the per-device throttle for the telemetry clamp Warn
+// (SEC C-3), created on first use.
+func (h *Handlers) telemetryLogs() *commands.LogThrottle {
+	h.tlogOnce.Do(func() {
+		h.tlog = commands.NewLogThrottle(h.clock, slog.Default())
+	})
+	return h.tlog
+}
+
+// runAsync runs the detached telemetry post-work; tests substitute a
+// synchronous runner.
+func (h *Handlers) runAsync(fn func()) {
+	if h.async != nil {
+		h.async(fn)
+		return
+	}
+	go fn()
 }
 
 // clock returns the current UTC time from the injected clock.
@@ -180,13 +220,12 @@ func NewCompletionEvents(gen *events.Generator, devices db.DeviceRepository) com
 }
 
 func New(deps HandlerDeps) *Handlers {
-	return &Handlers{
+	h := &Handlers{
 		commands:          deps.Commands,
 		now:               deps.Clock,
 		devices:           deps.Devices,
 		telemetry:         deps.Telemetry,
 		events:            deps.Events,
-		hub:               deps.Hub,
 		eventGen:          deps.EventGen,
 		updateChecker:     deps.UpdateChecker,
 		adminRepo:         deps.AdminRepo,
@@ -209,6 +248,11 @@ func New(deps HandlerDeps) *Handlers {
 		externalIdentityRepo: deps.ExternalIdentityRepo,
 		setupComplete:        deps.SetupComplete,
 	}
+	// A nil *websocket.Hub must stay a nil interface (typed-nil trap).
+	if deps.Hub != nil {
+		h.hub = deps.Hub
+	}
+	return h
 }
 
 // isSetupComplete reports the live setup-complete state via the shared
@@ -353,8 +397,9 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hb.DeviceID = deviceID
+	receivedAt := h.clock()
 	if hb.Timestamp.IsZero() {
-		hb.Timestamp = time.Now().UTC()
+		hb.Timestamp = receivedAt
 	}
 
 	if err := h.telemetry.StoreHeartbeat(r.Context(), &hb); err != nil {
@@ -381,7 +426,7 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	h.eventGen.CheckHeartbeatThresholds(r.Context(), deviceID, hostname, &hb.Data)
 
 	// Broadcast heartbeat via WebSocket
-	h.hub.BroadcastHeartbeat(deviceID, &hb.Data)
+	h.hub.BroadcastHeartbeat(deviceID, &hb.Data, receivedAt)
 
 	// Include pending commands in the heartbeat response for agents without WS
 	resp := map[string]interface{}{"status": "ok"}
@@ -414,9 +459,16 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snap.DeviceID = deviceID
-	if snap.Timestamp.IsZero() {
-		snap.Timestamp = time.Now().UTC()
+	// The timestamp used for ordering, storage and the dashboard broadcast is
+	// bounded by server time (SEC C-3): a missing one is the receive time, and one
+	// more than TelemetryFutureTolerance ahead is replaced by it, so a skewed or
+	// hostile agent clock cannot make every later snapshot look stale.
+	receivedAt := h.clock()
+	boundedAt, clamped := models.BoundTelemetryTimestamp(snap.Timestamp, receivedAt)
+	if clamped && h.telemetryLogs().Allow(deviceID) {
+		slog.Warn("telemetry timestamp clamped", "device_id", deviceID, "skew", snap.Timestamp.Sub(receivedAt).String())
 	}
+	snap.Timestamp = boundedAt
 
 	// Extract logs BEFORE storing the snapshot so they don't bloat the JSONB blob.
 	// Logs are stored in their own tables, not in the telemetry snapshot.
@@ -448,6 +500,19 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// A snapshot that is not newer than the device's current state (the agent
+	// flushes older buffered snapshots after a fresh one) is stored in history
+	// but must not replace the current state (FR-069).
+	stale := false
+	if prev, ok, err := h.telemetry.LatestSnapshotTime(ctx, deviceID); err != nil {
+		slog.Error("read latest snapshot time", "device_id", deviceID, "error", err.Error())
+	} else {
+		stale = ok && !snap.Timestamp.After(prev)
+	}
+	if stale {
+		slog.Debug("stale telemetry stored as history only", "device_id", deviceID)
+	}
+
 	if err := h.telemetry.StoreSnapshot(ctx, &snap); err != nil {
 		slog.Error("store telemetry", "error", err.Error())
 		http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
@@ -455,21 +520,25 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	h.devices.UpdateTelemetryTime(ctx, deviceID)
 
-	// Extract and store primary IP from network telemetry
-	if ip := extractPrimaryIP(&snap.Data); ip != "" {
-		h.devices.UpdatePrimaryIP(ctx, deviceID, ip)
-	}
+	if !stale {
+		// Extract and store primary IP from network telemetry
+		if ip := extractPrimaryIP(&snap.Data); ip != "" {
+			h.devices.UpdatePrimaryIP(ctx, deviceID, ip)
+		}
 
-	// Detect if this device hosts the rIOt server (no DB — just an atomic swap)
-	if hasRiotServerContainer(&snap.Data) {
-		h.serverHostID.Store(deviceID)
-	}
+		// Detect if this device hosts the rIOt server (no DB — just an atomic swap)
+		if hasRiotServerContainer(&snap.Data) {
+			h.serverHostID.Store(deviceID)
+		}
 
-	// Broadcast a lightweight view via WebSocket — strip heavy fields that the
-	// dashboard doesn't need in real-time (it fetches full telemetry on demand).
-	// This avoids serializing multi-MB JSON per device per broadcast cycle.
-	broadcastData := stripHeavyTelemetry(&snap.Data)
-	h.hub.BroadcastTelemetry(deviceID, broadcastData)
+		// Broadcast a lightweight view via WebSocket — strip heavy fields that the
+		// dashboard doesn't need in real-time (it fetches full telemetry on demand).
+		// This avoids serializing multi-MB JSON per device per broadcast cycle.
+		// collected_at is the bounded timestamp the server stored; received_at is
+		// server time, so the dashboard never uses its own clock for data.
+		broadcastData := stripHeavyTelemetry(&snap.Data)
+		h.hub.BroadcastTelemetry(deviceID, broadcastData, snap.Timestamp, receivedAt)
+	}
 
 	// Respond to the agent immediately so its request context isn't waiting on
 	// log inserts, alert evaluation, etc.
@@ -481,7 +550,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// cascade into "context deadline exceeded" on the others — which was
 	// silently disabling auto-updates because loadAutomationConfig would time
 	// out and fall back to the default (disabled) config.
-	go h.processTelemetryPostWork(deviceID, snap, deviceLogs, containerLogs)
+	h.runAsync(func() { h.processTelemetryPostWork(deviceID, snap, deviceLogs, containerLogs, stale) })
 }
 
 // processTelemetryPostWork runs everything that isn't on the agent's critical
@@ -493,25 +562,31 @@ func (h *Handlers) processTelemetryPostWork(
 	snap models.TelemetrySnapshot,
 	deviceLogs []models.LogEntry,
 	containerLogs []models.ContainerLogEntry,
+	stale bool,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Track whether Docker is available on this device, plus how many of its
-	// containers are covered by an enabled auto-update policy (stack-level or
-	// individual). The count powers the fleet page's "Auto: X/Y" badge.
-	dockerAvail := snap.Data.Docker != nil && snap.Data.Docker.Available
-	var containerCount, autoUpdateCount int
-	if snap.Data.Docker != nil {
-		containerCount = snap.Data.Docker.TotalContainers
-		if h.autoUpdateRepo != nil {
-			policies, err := h.autoUpdateRepo.ListByDevice(ctx, deviceID)
-			if err == nil {
-				autoUpdateCount = countAutoUpdateContainers(snap.Data.Docker.Containers, policies)
+	// A stale snapshot (older than the device's current state) only contributes
+	// its logs and container metrics; current-state work, alerting and the
+	// auto-update/auto-patch evaluation must not run on outdated data.
+	if !stale {
+		// Track whether Docker is available on this device, plus how many of its
+		// containers are covered by an enabled auto-update policy (stack-level or
+		// individual). The count powers the fleet page's "Auto: X/Y" badge.
+		dockerAvail := snap.Data.Docker != nil && snap.Data.Docker.Available
+		var containerCount, autoUpdateCount int
+		if snap.Data.Docker != nil {
+			containerCount = snap.Data.Docker.TotalContainers
+			if h.autoUpdateRepo != nil {
+				policies, err := h.autoUpdateRepo.ListByDevice(ctx, deviceID)
+				if err == nil {
+					autoUpdateCount = countAutoUpdateContainers(snap.Data.Docker.Containers, policies)
+				}
 			}
 		}
+		h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount, autoUpdateCount)
 	}
-	h.devices.UpdateDockerAvailable(ctx, deviceID, dockerAvail, containerCount, autoUpdateCount)
 
 	// Store device logs in their dedicated table
 	if len(deviceLogs) > 0 && h.deviceLogRepo != nil {
@@ -549,6 +624,10 @@ func (h *Handlers) processTelemetryPostWork(
 				slog.Error("store container metrics", "error", err.Error())
 			}
 		}
+	}
+
+	if stale {
+		return
 	}
 
 	// Check thresholds (alert evaluation)

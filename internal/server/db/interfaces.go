@@ -37,6 +37,10 @@ type TelemetryRepository interface {
 	StoreHeartbeat(ctx context.Context, hb *models.Heartbeat) error
 	StoreSnapshot(ctx context.Context, snap *models.TelemetrySnapshot) error
 	GetLatestSnapshot(ctx context.Context, deviceID string) (*models.TelemetrySnapshot, error)
+	// LatestSnapshotTime is the timestamp of the device's current telemetry state
+	// (snapshots more than models.TelemetryFutureTolerance ahead of now are
+	// ignored); ok is false when the device has none.
+	LatestSnapshotTime(ctx context.Context, deviceID string) (ts time.Time, ok bool, err error)
 	GetAllLatestSnapshots(ctx context.Context) ([]models.TelemetrySnapshot, error)
 	GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error)
 	GetHistory(ctx context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error)

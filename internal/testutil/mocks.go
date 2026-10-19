@@ -274,6 +274,9 @@ type MockTelemetryRepo struct {
 	// is invoked. Tests for AD-011 assert this is NOT set after calling the
 	// FleetContainers handler.
 	GetAllLatestSnapshotsCalled bool
+	// Now, when set, makes the "latest" reads ignore snapshots stamped more than
+	// models.TelemetryFutureTolerance ahead of it (SEC C-3).
+	Now func() time.Time
 }
 
 func NewMockTelemetryRepo() *MockTelemetryRepo {
@@ -299,16 +302,40 @@ func (m *MockTelemetryRepo) StoreSnapshot(_ context.Context, snap *models.Teleme
 	return nil
 }
 
+// latest mirrors the SQL "latest" queries: the snapshot with the greatest
+// timestamp (the later-stored one on a tie), ignoring snapshots more than
+// models.TelemetryFutureTolerance ahead of Now when Now is set.
+func (m *MockTelemetryRepo) latest(deviceID string) (models.TelemetrySnapshot, bool) {
+	var best models.TelemetrySnapshot
+	found := false
+	for _, s := range m.Snapshots[deviceID] {
+		if m.Now != nil && s.Timestamp.After(m.Now().Add(models.TelemetryFutureTolerance)) {
+			continue
+		}
+		if !found || !s.Timestamp.Before(best.Timestamp) {
+			best, found = s, true
+		}
+	}
+	return best, found
+}
+
 func (m *MockTelemetryRepo) GetLatestSnapshot(_ context.Context, deviceID string) (*models.TelemetrySnapshot, error) {
 	if m.Err != nil {
 		return nil, m.Err
 	}
-	snaps := m.Snapshots[deviceID]
-	if len(snaps) == 0 {
+	s, ok := m.latest(deviceID)
+	if !ok {
 		return nil, fmt.Errorf("not found")
 	}
-	s := snaps[len(snaps)-1]
 	return &s, nil
+}
+
+func (m *MockTelemetryRepo) LatestSnapshotTime(_ context.Context, deviceID string) (time.Time, bool, error) {
+	if m.Err != nil {
+		return time.Time{}, false, m.Err
+	}
+	s, ok := m.latest(deviceID)
+	return s.Timestamp, ok, nil
 }
 
 func (m *MockTelemetryRepo) GetAllLatestSnapshots(_ context.Context) ([]models.TelemetrySnapshot, error) {
