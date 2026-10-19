@@ -1,4 +1,5 @@
 import type { AlertRule, AlertTemplate, AutomationConfig, NotificationChannel, NotificationLog } from '../types/models'
+import { ApiError } from './errors'
 
 const BASE = '/api/v1/settings'
 
@@ -8,7 +9,7 @@ async function fetchJSON<T>(url: string): Promise<T> {
     window.location.reload()
     throw new Error('Unauthorized')
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}: ${res.statusText}`)
   return res.json()
 }
 
@@ -23,7 +24,7 @@ async function mutate<T>(url: string, method: string, body?: unknown): Promise<T
     window.location.reload()
     throw new Error('Unauthorized')
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}: ${res.statusText}`)
   return res.json()
 }
 
@@ -144,3 +145,5 @@ export interface ServerErrorAlertConfig {
   window_minutes: number
   cooldown_minutes: number
 }
+
+export type SettingsClient = typeof settingsApi

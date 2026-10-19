@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { ApiError } from './errors'
 
 // We need to test fetchJSON and the api object
 // Since fetchJSON is not exported, we test through the api methods
@@ -130,5 +131,146 @@ describe('api client', () => {
     const authApi = await getAuthApi()
     const result = await authApi.check()
     expect(result).toBe(true)
+  })
+})
+
+describe('[UIF AC-088] typed error carries status', () => {
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  async function rejectionFrom(status: number, statusText: string, call: (api: typeof import('./client').api) => Promise<unknown>) {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status, statusText })
+    const { api } = await import('./client')
+    return call(api).then(
+      () => { throw new Error('expected the call to reject') },
+      (e: unknown) => e,
+    )
+  }
+
+  it('rejects a 404 with an Error whose status is 404 and message is exactly "HTTP 404: Not Found"', async () => {
+    const e = await rejectionFrom(404, 'Not Found', api => api.getDevice('missing'))
+    expect(e).toBeInstanceOf(Error)
+    expect(e).toBeInstanceOf(ApiError)
+    expect((e as ApiError).status).toBe(404)
+    expect((e as ApiError).message).toBe('HTTP 404: Not Found')
+  })
+
+  it('keeps the plain "HTTP <status>" message for client mutations and carries the status', async () => {
+    const e = await rejectionFrom(500, 'Internal Server Error', api => api.deleteDevice('dev-1'))
+    expect(e).toBeInstanceOf(ApiError)
+    expect((e as ApiError).status).toBe(500)
+    expect((e as ApiError).message).toBe('HTTP 500')
+  })
+
+  it('uses the server error text for sendCommand while keeping the status', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+      json: () => Promise.resolve({ error: 'command already queued' }),
+    })
+    const { api } = await import('./client')
+    const e = await api.sendCommand('dev-1', 'reboot').catch((err: unknown) => err)
+    expect(e).toBeInstanceOf(ApiError)
+    expect((e as ApiError).status).toBe(409)
+    expect((e as ApiError).message).toBe('command already queued')
+  })
+
+  it('falls back to "HTTP <status>" for sendCommand when the body has no error', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      json: () => Promise.reject(new Error('not json')),
+    })
+    const { api } = await import('./client')
+    const e = await api.sendCommand('dev-1', 'reboot').catch((err: unknown) => err)
+    expect((e as ApiError).message).toBe('HTTP 502')
+    expect((e as ApiError).status).toBe(502)
+  })
+
+  it('does not give a network failure a status (stays a native TypeError)', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    const { api } = await import('./client')
+    const e = await api.getDevices().catch((err: unknown) => err)
+    expect(e).toBeInstanceOf(TypeError)
+    expect(e).not.toBeInstanceOf(ApiError)
+  })
+
+  it('re-exports the same ApiError class that api/errors defines', async () => {
+    const client = await import('./client')
+    expect(client.ApiError).toBe(ApiError)
+  })
+
+  it('settings fetchJSON and mutate throw ApiError with the unchanged message', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' })
+    const { settingsApi } = await import('./settings')
+    const read = await settingsApi.getAlertRules().catch((err: unknown) => err)
+    const write = await settingsApi.deleteAlertRule(1).catch((err: unknown) => err)
+    expect(read).toBeInstanceOf(ApiError)
+    expect((read as ApiError).message).toBe('HTTP 404: Not Found')
+    expect((read as ApiError).status).toBe(404)
+    expect(write).toBeInstanceOf(ApiError)
+    expect((write as ApiError).message).toBe('HTTP 404: Not Found')
+  })
+})
+
+describe('[UIF AC-089] 401 still reloads and stays a plain Error', () => {
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, reload: vi.fn() },
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('fetchJSON reloads and throws a plain Error("Unauthorized"), not an ApiError', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized' })
+    const { api } = await import('./client')
+    const e = await api.getDevices().catch((err: unknown) => err)
+    expect(window.location.reload).toHaveBeenCalledTimes(1)
+    expect(e).toBeInstanceOf(Error)
+    expect(e).not.toBeInstanceOf(ApiError)
+    expect((e as Error).message).toBe('Unauthorized')
+  })
+
+  it('sendCommand reloads and throws a plain Error("Unauthorized")', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized' })
+    const { api } = await import('./client')
+    const e = await api.sendCommand('dev-1', 'reboot').catch((err: unknown) => err)
+    expect(window.location.reload).toHaveBeenCalledTimes(1)
+    expect(e).not.toBeInstanceOf(ApiError)
+    expect((e as Error).message).toBe('Unauthorized')
+  })
+
+  it('settings fetchJSON reloads and throws a plain Error("Unauthorized")', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized' })
+    const { settingsApi } = await import('./settings')
+    const e = await settingsApi.getAlertRules().catch((err: unknown) => err)
+    expect(window.location.reload).toHaveBeenCalledTimes(1)
+    expect(e).not.toBeInstanceOf(ApiError)
+    expect((e as Error).message).toBe('Unauthorized')
+  })
+
+  it('settings mutate reloads and throws a plain Error("Unauthorized")', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: 'Unauthorized' })
+    const { settingsApi } = await import('./settings')
+    const e = await settingsApi.deleteAlertRule(1).catch((err: unknown) => err)
+    expect(window.location.reload).toHaveBeenCalledTimes(1)
+    expect(e).not.toBeInstanceOf(ApiError)
+    expect((e as Error).message).toBe('Unauthorized')
   })
 })

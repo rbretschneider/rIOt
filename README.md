@@ -23,7 +23,7 @@
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, container log viewer, and optional remote terminal (exec into running containers from the browser)
-- **Real-time dashboard** — dark-mode React UI with live WebSocket updates
+- **Real-time dashboard** — dark-mode React UI with live WebSocket updates; click the header clock to switch every timestamp between UTC and your browser's local time ([details](#time-display))
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
@@ -1265,6 +1265,18 @@ The protection is against disclosure through API responses, logs, browser caches
 
 ---
 
+## Time Display
+
+The dashboard shows every timestamp in UTC by default, in 24-hour form, with the zone always written out (for example `2026-10-17 14:03:22 UTC`). Relative times such as "5m ago" show the exact time when you hover over them.
+
+To switch to your browser's local time, click the clock in the header. Click it again to switch back. The choice applies to every page, including chart axes and chart tooltips, and applies immediately.
+
+The browser stores the choice in `localStorage` under the key `riot-time-zone`. The value `Local` selects local time. Any other value, or a browser that blocks storage, gives UTC. The setting is per browser and is not synced to the server or to other browsers.
+
+The reboot ETA tooltip and maintenance-window times always show UTC, whatever the clock is set to.
+
+---
+
 ## API
 
 All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. When mTLS is enabled, agent endpoints additionally require a valid client certificate (both are checked). Dashboard endpoints require admin authentication (JWT cookie).
@@ -1411,6 +1423,8 @@ make coverage
 ```
 
 CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+
+Frontend contributors: the shared UI components, design tokens and the rules that tests enforce (no native `confirm()`, no hex colors in primitives, one formatting module) are described in [web/src/components/ui/README.md](web/src/components/ui/README.md).
 
 ---
 

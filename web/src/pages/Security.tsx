@@ -43,7 +43,7 @@ export default function Security() {
 
       {/* Overview Cards */}
       {overview && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-none xl:grid-flow-col xl:auto-cols-fr gap-4">
           <StatCard
             label="Failed Logins (24h)"
             value={overview.total_failed_logins}
@@ -63,23 +63,12 @@ export default function Security() {
               color={overview.certs_expiring_soon > 0 ? 'text-amber-400' : 'text-emerald-400'}
             />
           )}
-        </div>
-      )}
-
-      {/* MAC/Security Modules */}
-      {overview && (overview.selinux_enforcing > 0 || overview.apparmor_enabled > 0) && (
-        <div className="grid grid-cols-2 gap-4">
+          {/* MAC modules share the stat row so a lone card never orphans on its own line */}
           {overview.selinux_enforcing > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-              <p className="text-xs text-gray-500 uppercase">SELinux Enforcing</p>
-              <p className="text-2xl font-bold text-emerald-400">{overview.selinux_enforcing}</p>
-            </div>
+            <StatCard label="SELinux Enforcing" value={overview.selinux_enforcing} color="text-emerald-400" />
           )}
           {overview.apparmor_enabled > 0 && (
-            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-              <p className="text-xs text-gray-500 uppercase">AppArmor Enabled</p>
-              <p className="text-2xl font-bold text-emerald-400">{overview.apparmor_enabled}</p>
-            </div>
+            <StatCard label="AppArmor Enabled" value={overview.apparmor_enabled} color="text-emerald-400" />
           )}
         </div>
       )}
@@ -245,7 +234,7 @@ function SortableSecurityTable({ devices, sortKey, sortDir, toggleSort, onShowMo
           {sorted.map(d => (
             <tr key={d.device_id} className="text-gray-300">
               <td className="px-4 py-3">
-                <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium uppercase">
+                <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium">
                   {d.hostname}
                 </Link>
               </td>

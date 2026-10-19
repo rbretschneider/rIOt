@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import type { ContainerMetric } from '../types/models'
+import { chartColors } from '../theme/chartColors'
+import { useTimeFormatters } from '../contexts/TimePreferenceProvider'
 
 interface Props {
   metrics: ContainerMetric[]
@@ -10,6 +12,7 @@ interface Props {
 }
 
 export default function ContainerMetricChart({ metrics, mode, label, color }: Props) {
+  const { chartTick, chartTooltip } = useTimeFormatters()
   const data = useMemo(() =>
     metrics.map(m => ({
       time: new Date(m.timestamp).getTime(),
@@ -45,23 +48,20 @@ export default function ContainerMetricChart({ metrics, mode, label, color }: Pr
             dataKey="time"
             type="number"
             domain={['dataMin', 'dataMax']}
-            tickFormatter={ts => {
-              const d = new Date(ts)
-              return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-            }}
-            tick={{ fill: '#6b7280', fontSize: 10 }}
-            stroke="#374151"
+            tickFormatter={chartTick}
+            tick={{ fill: chartColors.axisText, fontSize: 10 }}
+            stroke={chartColors.axisLine}
           />
           <YAxis
             domain={[0, 100]}
-            tick={{ fill: '#6b7280', fontSize: 10 }}
-            stroke="#374151"
+            tick={{ fill: chartColors.axisText, fontSize: 10 }}
+            stroke={chartColors.axisLine}
             width={35}
             tickFormatter={v => `${v}%`}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: 6, fontSize: 12 }}
-            labelFormatter={ts => new Date(ts).toLocaleString()}
+            contentStyle={{ backgroundColor: chartColors.tooltipBg, border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: 6, fontSize: 12 }}
+            labelFormatter={ts => chartTooltip(Number(ts))}
             formatter={(value: number | undefined) => [`${(value ?? 0).toFixed(1)}%`, label]}
           />
           <Area

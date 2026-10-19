@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import SeverityBadge from '../components/SeverityBadge'
+import { Timestamp, enumLabel } from '../components/ui'
 
 const PAGE_SIZE = 25
 
@@ -115,18 +116,17 @@ export default function Alerts() {
                 return (
                   <tr
                     key={e.id}
-                    className={`hover:bg-gray-800/30 ${isAcked ? 'opacity-50' : ''}`}
-                    style={!isAcked && (e.severity === 'critical' || e.severity === 'warning') ? {
-                      borderLeft: `3px solid ${e.severity === 'critical' ? '#f87171' : '#fbbf24'}`
-                    } : undefined}
+                    className={`hover:bg-gray-800/30 ${isAcked ? 'opacity-50' : ''} ${
+                      isAcked ? '' : e.severity === 'critical' ? 'border-l-[3px] border-l-danger-fg' : e.severity === 'warning' ? 'border-l-[3px] border-l-warn-fg' : ''
+                    }`.trim()}
                   >
                     <td className="px-4 py-3 text-sm text-gray-400 font-mono whitespace-nowrap">
-                      {new Date(e.created_at).toLocaleString()}
+                      <Timestamp value={e.created_at} />
                     </td>
                     <td className="px-4 py-3"><SeverityBadge severity={e.severity} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {device ? (
-                        <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm uppercase">
+                        <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm">
                           {device.hostname}
                         </Link>
                       ) : (
@@ -148,7 +148,7 @@ export default function Alerts() {
                         </>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-400">{e.type.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-3 text-sm text-gray-400">{enumLabel('eventType', e.type)}</td>
                     <td className="px-4 py-3 text-sm text-gray-200">{e.message}</td>
                     <td className="px-4 py-3">
                       {!isAcked && (

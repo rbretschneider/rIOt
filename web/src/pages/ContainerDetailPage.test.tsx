@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import React from 'react'
 import ContainerDetailPage from './ContainerDetailPage'
+import { ApiError } from '../api/errors'
 import type { ContainerInfo } from '../types/models'
 
 // Added by QA Engineer: LocationDisplay helper to assert the current URL in tests
@@ -148,7 +149,7 @@ describe('[AC-006] Container recreation navigates to new container URL with repl
     // The URL should have changed. We verify by checking that the old content
     // is still visible (the new container has the same name), and that the
     // page did not flash "Container not found".
-    expect(screen.queryByText('Container not found.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Container not found')).not.toBeInTheDocument()
   })
 
   it('does not navigate when the short_id in the URL still matches a container', async () => {
@@ -158,7 +159,7 @@ describe('[AC-006] Container recreation navigates to new container URL with repl
 
     // Container should display normally
     expect(await screen.findByTestId('container-content')).toBeInTheDocument()
-    expect(screen.queryByText('Container not found.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Container not found')).not.toBeInTheDocument()
   })
 
   it('uses the container name field (not riot.name label) for fallback lookup', async () => {
@@ -187,7 +188,7 @@ describe('[AC-006] Container recreation navigates to new container URL with repl
 
     // The fallback must match by container.name ('my-app'), not riot.name ('My Display App')
     await waitFor(() => {
-      expect(screen.queryByText('Container not found.')).not.toBeInTheDocument()
+      expect(screen.queryByText('Container not found')).not.toBeInTheDocument()
     })
   })
 })
@@ -287,7 +288,7 @@ describe('[AC-007] Genuinely removed container shows "Container not found"', () 
       expect(screen.queryByText('Loading...')).not.toBeInTheDocument()
     })
 
-    expect(await screen.findByText('Container not found.')).toBeInTheDocument()
+    expect(await screen.findByText('Container not found')).toBeInTheDocument()
   })
 
   it('shows a "Back to Containers" link when container is not found', async () => {
@@ -308,7 +309,7 @@ describe('[AC-007] Genuinely removed container shows "Container not found"', () 
     renderAtPath('/devices/dev-1/containers/abc123')
 
     expect(await screen.findByTestId('container-content')).toBeInTheDocument()
-    expect(screen.queryByText('Container not found.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Container not found')).not.toBeInTheDocument()
   })
 })
 
@@ -334,6 +335,60 @@ describe('[AC-001] Container detail page renders correct container data when cac
 
     // Container content should appear; "not found" must never be rendered
     await screen.findByTestId('container-content')
-    expect(screen.queryByText('Container not found.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Container not found')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// UI-FOUNDATION-001: honest device-query states on the container detail page
+// ---------------------------------------------------------------------------
+
+describe('[UIF AC-096] 404 shows Device not found', () => {
+  it('renders "Device not found" with a link back to Fleet', async () => {
+    mockGetDevice.mockRejectedValue(new ApiError(404, 'HTTP 404: Not Found'))
+    renderAtPath('/devices/dev-1/containers/abc123')
+    expect(await screen.findByRole('heading', { name: 'Device not found' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to Fleet' })).toHaveAttribute('href', '/')
+  })
+})
+
+describe('[UIF AC-097] non-404 shows error and retry', () => {
+  it('renders "Couldn\'t load device", the message and Retry', async () => {
+    mockGetDevice.mockRejectedValue(new ApiError(500, 'HTTP 500: Internal Server Error'))
+    renderAtPath('/devices/dev-1/containers/abc123')
+    // The page retries a non-404 once (1 s default backoff in this file's QueryClient) before giving up.
+    expect(await screen.findByRole('heading', { name: "Couldn't load device" }, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('HTTP 500: Internal Server Error')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.queryByText('Device not found')).not.toBeInTheDocument()
+  })
+})
+
+describe('[UIF AC-099] missing container in loaded device', () => {
+  it('shows "Container not found" and a link to that device\'s containers page', async () => {
+    mockGetDevice.mockResolvedValue(makeDeviceResponse([]))
+    renderAtPath('/devices/dev-1/containers/abc123')
+    expect(await screen.findByRole('heading', { name: 'Container not found' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to Containers' })).toHaveAttribute('href', '/devices/dev-1/containers')
+  })
+})
+
+describe('[UIF AC-121] container details still render', () => {
+  it('renders the container content for a device that has the container', async () => {
+    mockGetDevice.mockResolvedValue(makeDeviceResponse([baseContainer]))
+    renderAtPath('/devices/dev-1/containers/abc123')
+    expect(await screen.findByTestId('container-content')).toHaveTextContent('my-app')
+  })
+})
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the breadcrumb hostname in its reported case with no uppercase class', async () => {
+    mockGetDevice.mockResolvedValue({
+      ...makeDeviceResponse([baseContainer]),
+      device: { ...baseDevice, hostname: 'Web-01.lan' },
+    })
+    renderAtPath('/devices/dev-1/containers/abc123')
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.className).not.toContain('uppercase')
   })
 })

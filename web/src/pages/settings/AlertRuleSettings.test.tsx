@@ -4,15 +4,17 @@
 //
 // Extended for LOG-001: AC-021, AC-022, AC-023, AC-025, AC-030
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import AlertRuleSettings from './AlertRuleSettings'
 import { settingsApi } from '../../api/settings'
+import { ToastProvider } from '../../components/ui'
 
 vi.mock('../../api/settings', () => ({
   settingsApi: {
     getAlertRules: vi.fn().mockResolvedValue([]),
+    deleteAlertRule: vi.fn(),
     getAlertTemplates: vi.fn().mockResolvedValue([
       {
         id: 'nginx_5xx_high',
@@ -49,7 +51,7 @@ function renderWithProviders() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <AlertRuleSettings />
+        <ToastProvider><AlertRuleSettings /></ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -136,7 +138,7 @@ function renderWithTemplates(templates: object[]) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <AlertRuleSettings />
+        <ToastProvider><AlertRuleSettings /></ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -274,5 +276,133 @@ describe('[AC-025] severity is editable after template selection', () => {
         expect((severitySelect as HTMLSelectElement).value).toBe('critical')
       }
     })
+  })
+})
+
+const globalRule = {
+  id: 11,
+  name: 'High memory',
+  enabled: true,
+  metric: 'mem_percent',
+  operator: '>',
+  threshold: 90,
+  target_name: '',
+  target_state: '',
+  severity: 'warning',
+  include_devices: '',
+  exclude_devices: '',
+  include_containers: '',
+  exclude_containers: '',
+  cooldown_seconds: 3600,
+  notify: true,
+  template_id: '',
+}
+
+const granularRule = { ...globalRule, id: 12, name: 'Web disk full', metric: 'disk_percent', include_devices: 'web-01' }
+
+describe('[UIF AC-069] delete rule (global table) uses danger dialog', () => {
+  beforeEach(() => {
+    vi.mocked(settingsApi.deleteAlertRule).mockReset().mockResolvedValue(undefined as never)
+    vi.mocked(settingsApi.getAlertRules).mockResolvedValue([globalRule] as never)
+  })
+
+  it('opens a danger ConfirmDialog naming the rule', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete alert rule' })
+    expect(dialog).toHaveTextContent('"High memory"')
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
+  })
+
+  it('cancelling does not call the API', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(settingsApi.deleteAlertRule).not.toHaveBeenCalled()
+  })
+
+  it('confirming deletes by id and raises the "Rule deleted" toast', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(settingsApi.deleteAlertRule).toHaveBeenCalledWith(11))
+    const region = screen.getByRole('region', { name: 'Notifications' })
+    expect(await within(region).findByText('Rule deleted')).toBeInTheDocument()
+  })
+})
+
+describe('[UIF AC-070] delete rule (granular table) uses danger dialog', () => {
+  beforeEach(() => {
+    vi.mocked(settingsApi.deleteAlertRule).mockReset().mockResolvedValue(undefined as never)
+    vi.mocked(settingsApi.getAlertRules).mockResolvedValue([granularRule] as never)
+  })
+
+  it('opens the same danger dialog for a granular rule and deletes that rule on confirm', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete alert rule' })
+    expect(dialog).toHaveTextContent('"Web disk full"')
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(settingsApi.deleteAlertRule).toHaveBeenCalledWith(12))
+  })
+
+  it('cancelling does not call the API', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    expect(settingsApi.deleteAlertRule).not.toHaveBeenCalled()
+  })
+})
+
+describe('[UIF AC-030] alert rule edit modal and template picker are named dialogs', () => {
+  beforeEach(() => {
+    vi.mocked(settingsApi.getAlertRules).mockResolvedValue([])
+  })
+
+  it('names the create dialog by its title, closes on Escape and restores focus to the opener', async () => {
+    renderWithProviders()
+    const opener = (await screen.findAllByRole('button', { name: /add rule/i }))[0]
+    opener.focus()
+    fireEvent.click(opener)
+    expect(screen.getByRole('dialog', { name: 'Create Alert Rule' })).toHaveAttribute('aria-modal', 'true')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(opener).toHaveFocus()
+  })
+
+  it('names the template picker dialog', async () => {
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: 'Create from Template' }))
+    expect(screen.getByRole('dialog', { name: 'Create from Template' })).toBeInTheDocument()
+  })
+})
+
+describe('[UIF AC-014] rule severity and cooldown use the shared label and duration formatters', () => {
+  beforeEach(() => {
+    vi.mocked(settingsApi.getAlertRules).mockResolvedValue([globalRule] as never)
+  })
+
+  it('renders the severity as a mapped "Warning" badge, not the raw token', async () => {
+    renderWithProviders()
+    const row = (await screen.findByText('High memory')).closest('tr') as HTMLElement
+    const badge = within(row).getByText('Warning')
+    expect(badge).toHaveAttribute('data-tone', 'warn')
+    expect(within(row).queryByText('warning')).toBeNull()
+  })
+
+  it('renders a one hour cooldown through formatDuration', async () => {
+    renderWithProviders()
+    const row = (await screen.findByText('High memory')).closest('tr') as HTMLElement
+    expect(within(row).getByText('1h 0m')).toBeInTheDocument()
+  })
+
+  it('labels the severity options in the editor with mapped text and keeps the raw values', async () => {
+    renderWithProviders()
+    fireEvent.click((await screen.findAllByRole('button', { name: /add rule/i }))[0])
+    const dialog = screen.getByRole('dialog', { name: 'Create Alert Rule' })
+    const select = within(dialog).getByDisplayValue('Warning') as HTMLSelectElement
+    const options = Array.from(select.options).map(o => [o.value, o.textContent])
+    expect(options).toEqual([['info', 'Info'], ['warning', 'Warning'], ['critical', 'Critical']])
   })
 })

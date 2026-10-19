@@ -11,17 +11,19 @@ import {
 } from 'recharts'
 import type { DeviceSeries, ChartPoint } from '../../hooks/useFleetMetrics'
 import { formatPercent, formatBytesPerSec, formatBytesPerSecAxis } from '../../utils/format'
+import { chartColors } from '../../theme/chartColors'
+import { useTimeFormatters } from '../../contexts/TimePreferenceProvider'
 
 const METRICS = [
-  { key: 'cpu', label: 'CPU',  color: '#3b82f6' },
-  { key: 'mem', label: 'RAM',  color: '#10b981' },
-  { key: 'disk', label: 'Disk I/O', color: '#f59e0b' },
-  { key: 'load', label: 'Load', color: '#a855f7' },
+  { key: 'cpu', label: 'CPU',  color: chartColors.series.cpu },
+  { key: 'mem', label: 'RAM',  color: chartColors.series.memAlt },
+  { key: 'disk', label: 'Disk I/O', color: chartColors.series.diskIo },
+  { key: 'load', label: 'Load', color: chartColors.series.load },
 ] as const
 
 const NET_METRICS = [
-  { key: 'rx', label: 'In',  color: '#06b6d4' },
-  { key: 'tx', label: 'Out', color: '#f97316' },
+  { key: 'rx', label: 'In',  color: chartColors.series.netRx },
+  { key: 'tx', label: 'Out', color: chartColors.series.netTx },
 ] as const
 
 interface MergedRow {
@@ -79,6 +81,8 @@ interface DeviceChartCardProps {
 }
 
 const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCardProps) {
+  const { chartTooltip } = useTimeFormatters()
+  const tooltipLabel = useCallback((ts: unknown) => chartTooltip(Date.parse(String(ts))), [chartTooltip])
   const data = useMemo(() => mergeSeries(series), [series])
   const netData = useMemo(() => mergeNetSeries(series.netRxPoints, series.netTxPoints), [series.netRxPoints, series.netTxPoints])
   const last = data[data.length - 1]
@@ -113,7 +117,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
       data-testid={`device-chart-${series.deviceId}`}
     >
       <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white truncate uppercase tracking-wide">{series.hostname}</h3>
+        <h3 className="text-sm font-semibold text-white truncate tracking-wide">{series.hostname}</h3>
         {last && (
           <div className="flex items-center gap-3 text-[11px] tabular-nums">
             {METRICS.map(m => {
@@ -140,12 +144,12 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               </linearGradient>
             ))}
           </defs>
-          <CartesianGrid strokeDasharray="2 4" stroke="#1f2937" vertical={false} />
+          <CartesianGrid strokeDasharray="2 4" stroke={chartColors.grid} vertical={false} />
           <XAxis dataKey="ts" hide />
           <YAxis
             domain={[0, 100]}
             ticks={[0, 25, 50, 75, 100]}
-            tick={{ fontSize: 10, fill: '#6b7280' }}
+            tick={{ fontSize: 10, fill: chartColors.axisText }}
             width={32}
             tickFormatter={v => `${v}%`}
             axisLine={false}
@@ -156,8 +160,9 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               const m = METRICS.find(m => m.key === key)
               return [value == null ? '—' : formatPercent(value), m?.label ?? (key ?? '')]
             }}
-            contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: 6 }}
-            labelStyle={{ display: 'none' }}
+            contentStyle={{ backgroundColor: chartColors.tooltipBgDense, border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: 6 }}
+            labelStyle={{ color: chartColors.legendText, fontSize: 11 }}
+            labelFormatter={tooltipLabel}
           />
           <Legend
             wrapperStyle={{ paddingTop: 4, cursor: 'pointer', userSelect: 'none' }}
@@ -169,7 +174,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
               const m = METRICS.find(m => m.key === v)
               const isHidden = hiddenPct.has(v)
               return (
-                <span style={{ fontSize: 10, color: isHidden ? '#4b5563' : '#9ca3af', textDecoration: isHidden ? 'line-through' : 'none' }}>
+                <span style={{ fontSize: 10, color: isHidden ? chartColors.legendTextHidden : chartColors.legendText, textDecoration: isHidden ? 'line-through' : 'none' }}>
                   {m?.label ?? v}
                 </span>
               )
@@ -208,10 +213,10 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
                 </linearGradient>
               ))}
             </defs>
-            <CartesianGrid strokeDasharray="2 4" stroke="#1f2937" vertical={false} />
+            <CartesianGrid strokeDasharray="2 4" stroke={chartColors.grid} vertical={false} />
             <XAxis dataKey="ts" hide />
             <YAxis
-              tick={{ fontSize: 9, fill: '#6b7280' }}
+              tick={{ fontSize: 9, fill: chartColors.axisText }}
               width={32}
               tickFormatter={formatBytesPerSecAxis}
               axisLine={false}
@@ -222,8 +227,9 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
                 const m = NET_METRICS.find(m => m.key === key)
                 return [value == null ? '—' : formatBytesPerSec(value), m?.label ?? (key ?? '')]
               }}
-              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: 6 }}
-              labelStyle={{ display: 'none' }}
+              contentStyle={{ backgroundColor: chartColors.tooltipBgDense, border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: 6 }}
+              labelStyle={{ color: chartColors.legendText, fontSize: 11 }}
+              labelFormatter={tooltipLabel}
             />
             <Legend
               wrapperStyle={{ paddingTop: 2, cursor: 'pointer', userSelect: 'none' }}
@@ -235,7 +241,7 @@ const DeviceChartCard = memo(function DeviceChartCard({ series }: DeviceChartCar
                 const m = NET_METRICS.find(m => m.key === v)
                 const isHidden = hiddenNet.has(v)
                 return (
-                  <span style={{ fontSize: 10, color: isHidden ? '#4b5563' : '#9ca3af', textDecoration: isHidden ? 'line-through' : 'none' }}>
+                  <span style={{ fontSize: 10, color: isHidden ? chartColors.legendTextHidden : chartColors.legendText, textDecoration: isHidden ? 'line-through' : 'none' }}>
                     {m?.label ?? v}
                   </span>
                 )
