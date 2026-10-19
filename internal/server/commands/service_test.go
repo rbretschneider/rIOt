@@ -69,7 +69,7 @@ func (h *harness) seed(id, action, status string, mod func(*models.Command)) *mo
 	if mod != nil {
 		mod(c)
 	}
-	h.repo.Commands[id] = c
+	h.repo.Seed(c)
 	return c
 }
 

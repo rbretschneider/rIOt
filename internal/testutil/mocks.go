@@ -838,6 +838,14 @@ func NewMockCommandRepo() *MockCommandRepo {
 	return &MockCommandRepo{Commands: make(map[string]*models.Command)}
 }
 
+// Seed stores c under the mock's lock. Use it instead of writing Commands
+// directly whenever a goroutine (e.g. a running sweeper) may read the repo.
+func (m *MockCommandRepo) Seed(c *models.Command) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Commands[c.ID] = c
+}
+
 // FailOn makes the named repository method return err (nil clears it).
 func (m *MockCommandRepo) FailOn(method string, err error) {
 	m.mu.Lock()
