@@ -129,11 +129,16 @@ func (s *Server) setupRouter() *chi.Mux {
 	// GROWTH-001 AD-030 / SEC-032: every cookie-authenticated route takes this
 	// one chain (origin check, then the session check). It is attached per
 	// route or group, never to the shared /api/v1/devices/{id} route, which
-	// also carries the agent POSTs.
+	// also carries the agent POSTs: agents authenticate with a device key or
+	// client certificate, send no Origin, and must not be refused. The origin
+	// check runs before the session check, so an unauthenticated cross-origin
+	// write gets 403, not 401.
 	adminAuth := middleware.AdminAuthSameOrigin(s.JWTSecret, s.Config.AllowedOrigins)
 
 	// Setup wizard routes
 	r.Route("/api/v1/setup", func(r chi.Router) {
+		// Setup and login run before any session exists, so they cannot use
+		// adminAuth. They need the origin check alone (login CSRF).
 		r.Use(middleware.SameOrigin(s.Config.AllowedOrigins))
 		r.Get("/status", setupH.Status)
 		r.With(loginLimiter.Middleware()).Post("/complete", setupH.Complete)

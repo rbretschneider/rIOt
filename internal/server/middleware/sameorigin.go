@@ -62,6 +62,8 @@ func newSameOrigin(allowedOrigins []string, now func() time.Time) func(http.Hand
 				return
 			}
 			if !originAccepted(r, allowed) || !bodyIsJSONOrAbsent(r) {
+				// One body for every refusal reason, and no header values in
+				// the log: the headers are attacker-controlled input.
 				throttle.log(r)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
@@ -96,13 +98,22 @@ func isStateChanging(method string) bool {
 // originAccepted reports whether the request demonstrably comes from the
 // application's own origin or a configured allowed origin.
 func originAccepted(r *http.Request, allowed []string) bool {
+	// Browsers set Sec-Fetch-Site and scripts cannot forge it. It is checked
+	// first because behind a TLS-terminating proxy that rewrites Host, Origin
+	// never equals the scheme and Host rIOt sees, yet the dashboard must work.
 	if r.Header.Get("Sec-Fetch-Site") == "same-origin" {
 		return true
 	}
+	// A missing Origin is refused: a client that sends neither header cannot
+	// prove where it came from, and header-less scripts must opt in by sending
+	// Origin. "null" is what sandboxed or redirected cross-site pages send.
 	origin := r.Header.Get("Origin")
 	if origin == "" || origin == "null" {
 		return false
 	}
+	// Case-insensitive because scheme and host are case-insensitive. Entries
+	// in allowed are otherwise exact: no trailing slash, no default port,
+	// because browsers send neither.
 	if strings.EqualFold(origin, RequestScheme(r)+"://"+r.Host) {
 		return true
 	}
@@ -117,6 +128,9 @@ func originAccepted(r *http.Request, allowed []string) bool {
 // bodyIsJSONOrAbsent is true for bodyless requests and for requests whose
 // media type is application/json.
 func bodyIsJSONOrAbsent(r *http.Request) bool {
+	// Requiring JSON closes the form and text/plain route: a cross-site page
+	// can send those without a CORS preflight. ContentLength is -1 for chunked
+	// bodies, so only an exact 0 counts as "no body".
 	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
 		return true
 	}
@@ -132,6 +146,8 @@ type refusalLogThrottle struct {
 	last map[string]time.Time
 }
 
+// log is throttled because a cross-origin flood would otherwise write one log
+// line per request and grow the log without bound.
 func (t *refusalLogThrottle) log(r *http.Request) {
 	ip := ClientIP(r)
 	if !t.allow(ip) {
