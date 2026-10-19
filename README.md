@@ -508,6 +508,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.collect_stats` | `true` | Collect per-container CPU/memory stats |
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
+| `docker.compose_roots` | not enforced | List of absolute directories. When set, compose updates run only in a project directory inside one of them. Required on Windows. See [Compose directory trust](#compose-directory-trust) |
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard. The agent also reports this value to the server (display-only) so the Fleet Overview reboot-ETA tooltip can say "Manual reboot required" — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
@@ -1763,7 +1764,7 @@ On startup, the agent reconciles any Docker update that was running when it stop
 - It renames a set-aside container back when no container holds the original name, and restarts it if it was running.
 - It leaves both containers untouched when the original name is already in use, and says so in the result.
 - It restarts dependents that the update had stopped.
-- It deletes a leftover sanitized compose file.
+- It deletes a leftover sanitized compose file, but only from a directory that passes the [compose directory trust](#compose-directory-trust) check.
 - It never removes a container.
 
 The command then ends `failed` with "agent restarted during execution; outcome unknown", followed by a `reconciled:` summary. Agent self-update, reboot, and shutdown commands are excluded and keep their own completion reporting.
@@ -1771,6 +1772,34 @@ The command then ends `failed` with "agent restarted during execution; outcome u
 On SIGTERM, the agent waits up to 20 seconds for running commands to finish. A command that arrives during shutdown fails at `precheck` with "agent shutting down". The agent also refuses `agent_update` and `agent_uninstall` while a Docker update runs, and refuses Docker updates while an agent update or uninstall runs.
 
 To disable update checking, set `docker.check_updates: false` in the agent config.
+
+#### Compose directory trust
+
+The agent runs `docker compose` with Docker (root-equivalent) rights, so it decides where compose may run. It never takes that decision from a container label alone, because an image can set any label it likes. Before every compose invocation, and before it writes or removes its sanitized compose copy, the agent validates the project directory and the files compose will read. A refused update fails at `precheck` with `compose directory refused (<rule>)`, naming the path and the rule, and nothing is stopped or recreated. A refusal counts as a failed run for the auto-update backoff, so a persistent refusal is retried on the backoff schedule only.
+
+What the agent requires:
+
+- **Where the directory comes from.** A stack update names the compose project (`compose_project`). The agent looks the project up among the live containers and needs exactly one working directory for it. A directory sent by the server is only a cross-check. Containers whose image itself defines the `com.docker.compose.project.working_dir` label are ignored as a source of directories, because an image can forge it. Images built by compose do not carry that label and are not affected.
+- **Who may write.** The resolved directory and every parent up to `/` must be owned by root or by an account that already has Docker rights (the owner of the Docker socket, and the members of the socket's group when the socket grants that group read and write). None may be writable by anyone else: not world-writable (except a sticky parent such as `/tmp`), and not group-writable by a group that has any member without Docker rights. A group-writable path with an extended ACL is refused. A user-private group (a group whose only members are trusted accounts) is accepted. Path components must be plain directories, not symlinks.
+- **Which files.** At least one of `compose.yaml`, `compose.yml`, `docker-compose.yml` or `docker-compose.yaml` must be in the directory itself (compose would otherwise walk up to a parent). Compose, override and `.env` files must be regular files with the same ownership rules, or symlinks that stay inside the directory. The agent passes the validated files to compose as explicit `-f` arguments, in compose's own order, so compose loads nothing else. If `.env` sets `COMPOSE_FILE`, each listed file is validated and used instead. The agent reads `.env` only to find `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR`, and refuses a form it cannot read with certainty (interpolation, `export`, backslashes, inline comments, duplicates, empty entries). It never echoes `.env` content.
+- **Read access to `.env`.** The agent user must be able to read `.env`, as compose, running as the same user, must too. A `.env` with mode `0640` owned by an operator needs the agent user in that group. Refusals say `env_unreadable` with this hint.
+- **Container-writable locations.** A directory or compose file must not be at or under the Docker data root, nor at or under a read-write bind mount source or volume of any container (running or stopped), because a compromised image could rewrite it. Containers that mount the Docker socket are exempt. A stack directory that only contains a bind source (`./config:/config`) is accepted; a stack that mounts its own directory read-write (`.:/app`) is refused.
+- **One directory, one project.** The directory must belong to exactly one project, the one passed to compose as `--project-name`.
+- **Pinned environment.** The compose child runs with `DOCKER_HOST` set to the configured socket and without any inherited `COMPOSE_*` or `DOCKER_CONTEXT` variable.
+- **Windows.** Ownership cannot be verified, so compose updates are refused unless `docker.compose_roots` is set. Roots compare case-insensitively.
+
+`docker.compose_roots` narrows this further. When set, the directory (and any `COMPOSE_FILE` entry) must be inside one of the listed directories; with it unset, roots are not enforced. An entry that is not an absolute path makes every compose update fail closed until it is fixed; the rest of the agent keeps running.
+
+`riot-agent doctor` prints the compose roots setting, lists containers ignored as compose sources, and shows a pass or fail line with the rule for each compose project directory.
+
+When a stack's containers report more than one working directory, the server does not dispatch its auto-update. It raises a warning event (`stack_update_skipped`) naming the project and the directories, at most once per policy per cooldown (and no more than once every 6 hours).
+
+**Not covered (residual risks).**
+
+- Files that trusted compose content itself references (`include`, `extends`, `env_file`, build contexts) are trusted transitively, as they are when the administrator runs `docker compose up` by hand.
+- Account membership is read from `/etc/passwd` and `/etc/group`. These are not visible to the agent, so user-private-group trust can over-trust: `Group=` or `SupplementaryGroups=` set on systemd units that run services; group passwords in `gshadow`; and writers that ran in a container that has since been removed (their files may remain in a directory that now looks clean). With LDAP, SSSD or similar sources, systemd userdb records or systemd-homed in use, the agent turns member enumeration off and trusts only root, the agent user and the socket owner.
+- FUSE mounts with `user_allow_other` can report an owner of the mounter's choosing.
+- An agent older than this change ignores `compose_project` and keeps the previous behavior until it is upgraded.
 
 ### Host Terminal
 
