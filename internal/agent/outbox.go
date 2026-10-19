@@ -499,6 +499,11 @@ func isLegacyReply(rep *ReportReply) bool {
 		rep.Response.Code == ""
 }
 
+// classifyReply decides what to do with an outbox entry after an HTTP report.
+// A 409 or 404 removes the entry only when it carries a rIOt error code, so a
+// proxy's generic error page cannot discard a result the server never saw. A
+// 400 or 413 is dropped because resending the same body can never succeed; every
+// other failure is retried (AD-010).
 func classifyReply(rep *ReportReply, commandID string) replyVerdict {
 	switch {
 	case rep.StatusCode >= 200 && rep.StatusCode < 300:

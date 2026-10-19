@@ -22,7 +22,7 @@
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
-- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update, container log viewer, and optional remote terminal (exec into running containers from the browser)
+- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update with rollback for standalone containers, container log viewer, and optional remote terminal (exec into running containers from the browser)
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
@@ -40,6 +40,7 @@
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot, system shutdown (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
+- **Command lifecycle** — every command is tracked by ID through queued, dispatched, acknowledged, running, and verifying to a final state, and the dashboard shows the real state and current step; queued commands expire instead of firing days late and can be cancelled; agents keep final results in a durable outbox and deliver them over HTTP when the WebSocket is down ([details](#command-lifecycle))
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
 - **Feature toggles** — 16 individually toggleable dashboard features (including device terminal and Docker terminal) via Settings > Features with search/filter; toggles control UI visibility only — agents continue collecting all data
 - **Web server monitoring** — auto-detects nginx, Caddy, and Ferron reverse proxies; shows sites/virtual hosts, SSL certificates with expiry tracking, upstreams/backends, and security config (rate limiting, access controls, security headers); certificate expiry alerts
@@ -1059,6 +1060,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
+| `POST` | `/api/v1/devices/:id/commands/:cid/report` | Report command progress or the final result over HTTP when the WebSocket is down. See [Command endpoints](#command-endpoints) |
 | `GET` | `/api/v1/update/check` | Agent update check. Returns the release asset locations, including `checksum_url` and `signature_url` (a locator only; the agent trusts its compiled-in key, not this response) |
 
 ### Enrollment (mTLS)
@@ -1082,9 +1084,12 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/containers/:cname/metrics` | Container metric history (query: `hours`) |
 | `DELETE` | `/api/v1/devices/:id` | Remove a device |
 | `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
-| `POST` | `/api/v1/devices/:id/commands` | Send command to agent |
-| `GET` | `/api/v1/devices/:id/commands` | List device command history |
+| `POST` | `/api/v1/devices/:id/commands` | Send command to agent. Returns `409` when the target already has a command in flight |
+| `GET` | `/api/v1/devices/:id/commands` | List device command history (query: `limit`, `offset`, `action`, `status`, `active`, `target_key`) |
+| `GET` | `/api/v1/devices/:id/commands/:cmdId` | Fetch one command with its state, step, progress, and per-state timestamps |
+| `POST` | `/api/v1/devices/:id/commands/:cmdId/cancel` | Cancel a `queued` command. Returns `409` once the command is dispatched |
 | `GET` | `/api/v1/devices/:id/commands/:cmdId/output` | Command output detail |
+| `POST` | `/api/v1/devices/:id/docker/bulk-update` | Update several containers with one `docker_bulk_update` command. Targets that already have a command in flight are skipped and reported |
 | `GET` | `/api/v1/summary` | Fleet summary stats |
 | `GET` | `/api/v1/events` | Event/alert list |
 | `GET` | `/api/v1/events/unread-count` | Count of unacknowledged events |
@@ -1104,8 +1109,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
 | `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. Lists only devices with at least one pending update. Each row also carries the reboot-ETA fields (all optional): `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot` — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
-| `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents |
-| `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices |
+| `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents. The response adds `conflicts`, the number of devices skipped because a host command was already in flight |
+| `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices. The response adds `conflicts`, as for bulk-update |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
 | `GET` | `/api/v1/fleet/containers` | Flat list of all containers across the fleet with CPU, memory, restart count, update status, and Compose stack name; used by the fleet dashboard leaderboard |
 | `GET` | `/api/v1/security/overview` | Security overview |
@@ -1125,9 +1130,150 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Endpoint | Description |
 |---|---|
-| `/ws` | Live dashboard updates (admin auth) |
-| `/ws/agent` | Agent WebSocket (terminal relay) |
+| `/ws` | Live dashboard updates (admin auth). Message types are listed under [WebSocket messages](#websocket-messages) |
+| `/ws/agent` | Agent WebSocket: command delivery, command lifecycle reports, and the terminal relay |
 | `/ws/terminal/:deviceId/:containerId` | Browser-to-container terminal (admin auth) |
+
+### Command endpoints
+
+All command endpoints sit under `/api/v1/devices/:id`. The admin endpoints require the dashboard session cookie. The report endpoint requires the device key in `X-rIOt-Key`, plus the client certificate when mTLS is enabled.
+
+A command ID is a lowercase UUID. The server answers `404` with `{"error":"command not found","code":"command_not_found"}` for a missing command, a command that belongs to another device, and an ID that is not a UUID. The three cases return the same body.
+
+**The command object**
+
+| Field | Type | Description |
+|---|---|---|
+| `id`, `device_id`, `action`, `params` | string, string, string, object | Identity and request |
+| `status` | string | One of the ten [states](#states-and-what-the-dashboard-shows). Rows written by older servers are returned in canonical form |
+| `result_msg` | string | Result or failure message from the agent, or the reason the server expired or cancelled the command |
+| `step`, `progress` | string, integer or `null` | Current step and an optional percent from 0 to 100 |
+| `failure_step`, `stderr_tail` | string, string | The step that failed, and the last 8 KiB of error text |
+| `origin` | string | `user`, `auto_update`, or `auto_patch` |
+| `policy_id` | integer or `null` | The auto-update policy that created the command |
+| `target_key`, `target_keys` | string, string array | The conflict keys for the command. `target_key` is the first entry. Examples: `host`, `docker:container:web`, `docker:compose:/srv/stack` |
+| `expires_at`, `exec_deadline_s`, `deadline_at` | RFC 3339, integer, RFC 3339 | The queued expiry, the execution deadline in seconds, and the absolute deadline (set at dispatch) |
+| `dispatched_at`, `acknowledged_at`, `started_at`, `verifying_at`, `finished_at` | RFC 3339 | Per-state timestamps. Each is absent until the command reaches that state |
+| `created_at`, `updated_at`, `duration_ms`, `exit_code` | | As before |
+
+**`POST /api/v1/devices/:id/commands`**
+
+Request body: `{"action": "<action>", "params": {...}}`. `action` must be a supported action. `params` is optional.
+
+| Status | Body |
+|---|---|
+| `201` | The command object. `status` is `queued`, or `dispatched` when the agent was connected and the server sent it immediately |
+| `400` | `{"error":"invalid request body"}` or `{"error":"invalid action"}` |
+| `409` | The conflict body below |
+| `500` | `{"error":"failed to create command"}` |
+
+The `409` conflict body names the command that holds the target:
+
+```json
+{
+  "error": "a command is already in progress for this target",
+  "code": "conflict",
+  "existing_command_id": "3f2c9a7e-5b1d-4c8e-9a0f-1d2e3f4a5b6c",
+  "existing_status": "running",
+  "target_key": "docker:container:web"
+}
+```
+
+The dashboard uses `existing_command_id` to attach to the command that is already running.
+
+**`POST /api/v1/devices/:id/docker/bulk-update`**
+
+Request body: `{"container_ids": ["<id>", ...]}`. The server creates one `docker_bulk_update` command for the targets that do not conflict.
+
+- `201`: the command object with an added `conflicts` array. Each entry is `{"container_id", "target_key", "existing_command_id"}` for a skipped target. The array is empty when nothing was skipped.
+- `409`: every target conflicts. The body has the conflict fields above plus the `conflicts` array.
+- `400`: `container_ids` is missing or empty.
+
+**`GET /api/v1/devices/:id/commands`**
+
+Returns a JSON array of command objects. The array is newest first, except with `active=true`, where it is oldest first.
+
+| Query parameter | Description |
+|---|---|
+| `limit` | Page size. Default `50` |
+| `offset` | Rows to skip |
+| `action` | Return only this action |
+| `status` | Comma-separated states. Accepts the ten canonical states and the legacy values `pending`, `sent`, `success`, and `error` |
+| `active=true` | Return every non-terminal command for the device (`queued` through `verifying`). With this parameter, `limit`, `offset`, and `action` do not apply |
+| `target_key` | Return only commands whose `target_keys` contain this key. Maximum 512 bytes. Combine with `active=true` to find the in-flight command for one container or stack |
+
+An unknown `status` value, or a `target_key` longer than 512 bytes, returns `400` with `{"error":"invalid status filter","code":"invalid_filter"}` (or `"invalid target_key filter"`).
+
+Example: `GET /api/v1/devices/<id>/commands?active=true&target_key=docker:container:web`.
+
+**`GET /api/v1/devices/:id/commands/:cid`**
+
+Returns the command object (`200`) or `404`.
+
+**`POST /api/v1/devices/:id/commands/:cid/cancel`**
+
+Cancels a `queued` command. The request body is empty.
+
+| Status | Body |
+|---|---|
+| `200` | The command object with `status` set to `cancelled` |
+| `404` | The not-found body above |
+| `409` | `{"error":"command cannot be cancelled after it has been dispatched","code":"not_cancellable","status":"<current state>"}` |
+
+**`POST /api/v1/devices/:id/commands/:cid/report`** (agent)
+
+The agent calls this endpoint to report a command when the WebSocket is down. The agent is the only intended caller. The server applies the device scope from the authenticated key, so a device can report only its own commands.
+
+Request body, capped at 512 KiB:
+
+| Field | Type | Description |
+|---|---|---|
+| `kind` | string, required | `ack`, `progress`, or `result` |
+| `command_id` | string, optional | Must equal the `:cid` path value when present |
+| `state` | string | For `progress`: `running` or `verifying` |
+| `step` | string | Matches `^[a-z0-9_]{1,64}$`. Any other value is stored as empty and the report still applies |
+| `progress` | integer | 0 to 100. The server drops an out-of-range value and still applies the state change |
+| `message` | string | Progress message. The server keeps the first 1 KiB |
+| `result` | object | For `result`: the final result with `status` (`success` or `error`), `message`, `exit_code`, `duration_ms`, `output`, and the optional `step`, `outcome`, `stderr`, and `reason` |
+
+The server removes NUL bytes, replaces invalid UTF-8, and truncates oversized text instead of rejecting the report.
+
+| Status | Body | Agent action |
+|---|---|---|
+| `200` | `{"command_id","result":"accepted"\|"duplicate"\|"coalesced","status"}` | Remove the outbox entry |
+| `400` | `{"error","code":"invalid_report"}` for an ID mismatch, an unknown `kind` or `state`, a missing `result`, or a non-UUID ID | Drop the report |
+| `401` | Missing or invalid `X-rIOt-Key`. The endpoint also answers `401` when a request reaches it without device authentication, because it never trusts the `:id` in the URL | Retry with backoff |
+| `403` | The key does not match the device in the URL | Retry with backoff |
+| `404` | `{"error":"command not found","code":"command_not_found"}` | Remove the entry |
+| `409` | `{"error","code":"already_terminal"\|"invalid_transition","status"}` | Remove the entry |
+| `413` | `{"error":"report too large","code":"invalid_report"}` | Drop the report |
+| `429` | `{"error":"too many requests","code":"rate_limited"}` | Retry with backoff |
+
+A `result` that repeats the outcome of an already-final command returns `200` with `"result":"duplicate"` and changes nothing. A `result` with a different outcome returns `409` `already_terminal`. Identical or too-frequent `running` progress reports return `200` with `"result":"coalesced"` and write nothing. The rate limit is 120 reports per minute per device with a burst of 60, shared by HTTP and WebSocket reports.
+
+### WebSocket messages
+
+**Server to dashboard (`/ws`)**
+
+| `type` | When | Notes |
+|---|---|---|
+| `command_update` | Once per accepted command state change | Replaces `command_result`. `data` holds `command_id`, `device_id`, `action`, `target_key`, `target_keys`, `status`, `step`, `progress`, `message`, `failure_step`, `origin`, and `updated_at`. Rejected and coalesced reports produce no message. The silent relabelling of pre-upgrade rows produces none either |
+| `telemetry` | Each accepted live snapshot | The envelope gains `collected_at` (the agent's collection time, never more than 2 minutes ahead of `received_at`) and `received_at` (the server's receive time) |
+| `heartbeat` | Each heartbeat | The envelope gains `received_at` |
+
+The dashboard discards a `telemetry` message whose `collected_at` is at or before the latest one it already applied for that device. It reads a device's last-seen time from `received_at`, never from the browser clock. The server stores every snapshot for history but does not replace a device's current state with an older one.
+
+**Agent and server (`/ws/agent`)**
+
+| Direction | `type` | `data` |
+|---|---|---|
+| Server to agent | `command` | `command_id`, `action`, `params`. Unchanged |
+| Server to agent | `command_receipt` | `command_id`, `result` (`accepted`, `duplicate`, `coalesced`, `already_terminal`, `invalid_transition`, or `not_found`), `status`. Sent after each `command_result` |
+| Agent to server | `command_ack` | `command_id`, `at` |
+| Agent to server | `command_progress` | `command_id`, `state` (`running` or `verifying`), `step`, optional `progress` and `message`, `at` |
+| Agent to server | `command_result` | The final result, with the optional `step`, `outcome`, `stderr`, and `reason` fields added |
+
+The server scopes every agent message to the device that authenticated the socket. A message that names a command from another device is ignored. The server drops a message with a non-UUID command ID or a message over the rate limit, and sends no receipt for it. Old servers ignore `command_ack` and `command_progress`.
 
 ---
 
@@ -1307,12 +1453,73 @@ services:
 
 The agent periodically checks container image registries for newer versions (every 30 minutes). Containers with available updates are highlighted in the dashboard with an amber "Update" badge.
 
-From the container detail panel, click **Update** to pull the new image and recreate the container:
+#### How update detection works
 
-- **Compose-managed containers** (detected via standard Docker Compose labels): uses `docker compose pull` + `docker compose up -d` for safe recreation
-- **Standalone containers**: pulls the new image, then stops, removes, and recreates the container with the same configuration
+The agent decides per container. It compares the image ID the container is running with the image ID its tag resolves to on the host, and compares the registry digest with the local digest. Hover the badge to see the reason:
+
+| Reason | Badge text | Meaning |
+|---|---|---|
+| `registry_newer` | Update available: newer image in registry | The registry holds a newer image for the tag than the host does. |
+| `pulled_not_recreated` | Update available: newer image pulled, container not recreated | The host already has the newer image, but this container still runs the old one. |
+
+Two other results never show the amber badge:
+
+- **Pinned by digest.** An image reference that contains `@sha256:` or is a bare `sha256:` ID makes no registry call. The container detail shows "Pinned by digest".
+- **Update check failed.** The registry lookup failed. The container detail shows "Update check failed". The agent never reports a failed check as up to date.
+
+The agent caches registry lookups per image reference: 30 minutes for a successful check and 5 minutes for a failed one. Two containers on the same tag share one registry lookup but can get different verdicts. After an update, the agent invalidates only the image references involved. The **Check Updates** action still clears the whole cache.
+
+#### Updating a container
+
+From the container detail panel, click **Update** to pull the new image and recreate the container. The dashboard then follows the command by ID (see [Command Lifecycle](#command-lifecycle)).
+
+- **Compose-managed containers** (detected via standard Docker Compose labels): the agent runs `docker compose pull`, then `docker compose up -d`. Ten seconds after `up`, it checks that every service that was running before is running again. Compose updates have no automatic rollback. A failure reports the step that failed.
+- **Standalone containers**: the agent keeps the old container until the replacement passes verification. See the sequence below.
 
 This works for any container, including the rIOt server itself — the agent on the server's host can update the server container.
+
+**Standalone update sequence (rename-aside rollback)**
+
+1. **Pull.** The agent reads the full pull stream. A registry error fails the command at `pull` and leaves the running container untouched.
+2. **Skip if unchanged.** When the pulled image ID equals the running container's image ID, the agent recreates nothing and reports "already up to date".
+3. **Stop and rename aside.** The agent stops the old container and renames it to `<name>.riot-old-<first 8 characters of the command ID>`.
+4. **Create the replacement.** It takes the original name, configuration, and network settings. The agent starts it only if the old container was running.
+5. **Verify.** If the old container was running, the replacement must be running and not restarting 10 seconds after start.
+6. **Clean up.** Only after verification passes, the agent removes the old container.
+
+If create, start, or verification fails, the agent removes the replacement, gives the old container its original name back, and returns it to its previous run state. The command ends `failed` with "rolled back to previous container".
+
+If the rollback itself fails, the command ends `failed` at step `rollback` and names the set-aside container. The agent never removes the old container in that case. A leftover set-aside container blocks the next update of that container: the new command fails at `precheck` and names the leftover. Inspect it, then rename it back or remove it by hand.
+
+**Network dependents**
+
+A dependent is a container that shares another container's network stack. Its network mode references the parent by name, by full container ID, or by Compose `service:` name. Before the agent recreates a parent, it stops the running dependents of that parent only. When the update ends, the agent starts every dependent that was running beforehand and re-attaches it to the current parent. This happens on every outcome: success, failure, step timeout, or a recovered panic. A dependent that was already stopped stays stopped.
+
+If any dependent cannot be restored, the command ends `failed` at step `restart_dependents`. The message lists the affected dependents and states the outcome of the main update. Restoring dependents has its own 2-minute budget, separate from the pull and `up` limits.
+
+**Step limits**
+
+| Step | Limit |
+|---|---|
+| Compose `pull` | 15 minutes |
+| Compose `up` | 10 minutes |
+| Standalone `pull` | 15 minutes |
+
+When a Compose step reaches its limit, the agent sends SIGTERM to the `docker compose` process and waits 60 seconds. It sends SIGKILL only if the process is still running. A standalone pull is cancelled at its limit. In both cases the command ends `failed` with the step name and "timed out after <limit>". Lifecycle events such as `update_failed` and the final result use a fresh 10-second budget, so they still reach the server after a timeout.
+
+**If the agent stops mid-update**
+
+On startup, the agent reconciles any Docker update that was running when it stopped:
+
+- It renames a set-aside container back when no container holds the original name, and restarts it if it was running.
+- It leaves both containers untouched when the original name is already in use, and says so in the result.
+- It restarts dependents that the update had stopped.
+- It deletes a leftover sanitized compose file.
+- It never removes a container.
+
+The command then ends `failed` with "agent restarted during execution; outcome unknown", followed by a `reconciled:` summary. Agent self-update, reboot, and shutdown commands are excluded and keep their own completion reporting.
+
+On SIGTERM, the agent waits up to 20 seconds for running commands to finish. A command that arrives during shutdown fails at `precheck` with "agent shutting down". The agent also refuses `agent_update` and `agent_uninstall` while a Docker update runs, and refuses Docker updates while an agent update or uninstall runs.
 
 To disable update checking, set `docker.check_updates: false` in the agent config.
 
@@ -1346,6 +1553,154 @@ The terminal uses a WebSocket relay: the browser connects to the server, which p
 ### Real-time Container Events
 
 When Docker is available, the agent watches the Docker event stream and forwards container lifecycle events (start, stop, die, OOM, pause, unpause, create, destroy) to the server in real-time. These appear in the dashboard event feed and trigger alerts for OOM kills.
+
+---
+
+## Command Lifecycle
+
+Every command that the dashboard sends to an agent has an ID and moves through a fixed set of states. The server enforces which moves are allowed. A late or duplicate report from an agent cannot change a finished command. The dashboard follows each command by ID, so it shows the real state and the current step instead of a guess from the HTTP round trip.
+
+### States and what the dashboard shows
+
+| State | Meaning | Label shown for an update |
+|---|---|---|
+| `queued` | The server created the command and has not delivered it. | Queued |
+| `dispatched` | The server claimed the command and sent it to the agent. | Sent to agent |
+| `acknowledged` | The agent received the command and has not started it. | Starting |
+| `running` | The agent is executing a step. | Updating… *step* |
+| `verifying` | The agent is checking that the update worked. | Verifying |
+| `succeeded` | The agent reported success. | Updated (for 5 seconds, then the normal view) |
+| `failed` | The agent reported failure. | Failed at *step*: *message* (until dismissed) |
+| `timed_out` | The agent sent no result before the execution deadline. The command may have run. | Timed out: outcome unknown |
+| `expired` | The command waited in `queued` past its TTL. The server never delivered it. | Expired: never delivered |
+| `cancelled` | The operator cancelled the command while it was `queued`. | Cancelled |
+
+Notes on reading the states:
+
+- `expired` is safe to retry, because the command never ran. `timed_out` is not, because the command was delivered and the outcome is unknown. A command can also time out when the agent never received it, for example when a heartbeat response is lost on the network.
+- `succeeded`, `failed`, `cancelled`, and `expired` are final. A `timed_out` command accepts one late final result from the agent and then becomes `succeeded` or `failed`.
+- Non-update commands show "Running… *step*" while running and "Done" when they succeed.
+- During `running`, the step appears as one of: Checking, Resolving container, Pulling image, Stopping dependents, Recreating, Verifying, Restarting dependents, Rolling back, Cleaning up. An unknown or empty step shows "Working".
+
+Where you see this:
+
+- **Container detail and Compose stack section.** The update control stays disabled while the command is in flight. Reloading the page picks up the in-flight command again. If another tab already started the same update, the dashboard attaches to that command instead of starting a second one.
+- **Container tiles.** While an update is in flight, stop and die events do not flip the tile to `exited`. It shows "Updating…" until the command ends.
+- **Activity log.** Rows written before this release show the same labels as new rows.
+- **Live updates.** The server pushes each accepted state change over the dashboard WebSocket. If no push arrives for 5 seconds, the dashboard re-fetches the command and keeps re-fetching every 5 seconds until the command ends. No fixed timer ends tracking.
+
+### Queued TTLs and execution deadlines
+
+Every command gets an expiry when it is created. A command that is still `queued` at that time becomes `expired` and is never delivered, even if the agent reconnects later. The server also checks the expiry at the moment it claims a command for delivery, so a stale reboot cannot slip through while the sweeper is behind.
+
+Once a command is `dispatched`, the execution deadline runs from the dispatch time. Progress reports do not move the deadline.
+
+| Command class | Actions | Queued TTL | Execution deadline |
+|---|---|---|---|
+| Power | `reboot`, `shutdown` | 15 minutes | 10 minutes |
+| OS patch | `os_update`, `enable_auto_updates` | 30 minutes | 40 minutes |
+| Docker update | `docker_update` | 60 minutes | 35 minutes |
+| Docker bulk update | `docker_bulk_update` | 60 minutes | min(35 minutes × number of targets + 5 minutes, 6 hours) |
+| Agent update | `agent_update` | 60 minutes | 15 minutes |
+| Other | Every other action, such as `docker_start`, `docker_stop`, `docker_restart`, and `docker_check_updates` | 30 minutes | 15 minutes |
+
+For auto-dispatched commands under a `window` maintenance window, the expiry is the earlier of the TTL and the end of the current window. A command that the automation queues in a window therefore never runs after the window closes.
+
+A background sweeper applies both rules. It runs once at server start and then every 60 seconds.
+
+### One in-flight command per target
+
+Each device and target can have at most one non-terminal command.
+
+| Target | Used by |
+|---|---|
+| Host | `reboot`, `shutdown`, `os_update`, `enable_auto_updates`, `agent_update` (one shared device-level target) |
+| Compose project | A Compose container or a whole stack, identified by the project working directory |
+| Container name | A standalone container |
+
+Docker targets and the host target do not conflict. A reboot can be queued while a Docker update runs. Two single-service updates in the same Compose project do conflict.
+
+When a conflict occurs, the API answers `409` with the existing command's ID (see [Command endpoints](#command-endpoints)). A bulk update skips each conflicting target, reports it, and still creates a command for the targets that do not conflict. Auto-update and auto-patch skip a conflicting dispatch and write a log entry.
+
+### Cancelling a queued command
+
+While a command is `queued`, the dashboard shows a **Cancel** button. A cancelled command is never delivered. Cancel and delivery are mutually exclusive: exactly one of them wins a race. After dispatch, a cancel request returns `409` with "command cannot be cancelled after it has been dispatched". The dashboard offers no cancel after dispatch because stopping a running Docker update halfway is not safe.
+
+If a WebSocket send fails in a way that leaves delivery uncertain, the server re-queues the command and records that an earlier send may have reached the agent. The history message for a later `expired` or `cancelled` result says so.
+
+### Auto-update behavior
+
+Per-container and per-stack auto-update policies follow these rules:
+
+- **The cooldown starts on success.** The server sets a policy's last-triggered time only when a command that the policy created reaches `succeeded`. The time is the moment of that transition. The cooldown length is the Docker update cooldown in **Settings > Agents**.
+- **Failures back off.** When a policy's command ends `failed`, `timed_out`, `expired`, or `cancelled`, the server counts a consecutive failure *n*. The policy then waits min(15 minutes × 2^(*n*−1), 6 hours) before it dispatches again.
+- **Success resets the count to 0.**
+- **A policy never dispatches while its own command is in flight.** A conflict skip does not count toward the backoff.
+- **Backoff retries obey the maintenance window and stagger rules.** Backoff never lets a dispatch happen outside a configured window.
+
+| Consecutive failures | Wait before the next dispatch |
+|---|---|
+| 1 | 15 minutes |
+| 2 | 30 minutes |
+| 3 | 1 hour |
+| 4 | 2 hours |
+| 5 | 4 hours |
+| 6 or more | 6 hours |
+
+A container-level policy sends both the container name and the container's current ID. New agents resolve the target by name, because container IDs change on every recreate, and fall back to the ID only when no name is given. A leading `/` does not affect name matching. Legacy agents resolve by ID only.
+
+### Reliable result delivery
+
+New agents report each command in stages: an acknowledgement before execution, a progress report at each step change, and a final result. Only the final result is durable. Acknowledgements and progress reports are best effort.
+
+1. The agent writes the final result to its outbox on disk before the first delivery attempt.
+2. When the WebSocket is connected, the agent sends the result over it and waits 10 seconds for the server's `command_receipt`.
+3. Without a receipt, or when the WebSocket is down, the agent posts the result to `POST /api/v1/devices/:id/commands/:cid/report` with its device key.
+4. The agent removes the entry only after the server confirms it: a 2xx response that echoes the command ID, a `409 already_terminal` or `409 invalid_transition` response, a `404 command_not_found` response, or a receipt.
+5. On any other failure the agent retries with backoff that starts at 5 seconds, doubles each time, and stops growing at 5 minutes.
+
+The outbox holds at most 200 entries and 1 MiB on disk. It drops entries older than 24 hours. When it is full, it drops the oldest entry first and writes a warning log, `outbox entry dropped`. Entries survive an agent restart.
+
+The agent also remembers the IDs of commands it has accepted (up to 1000 IDs for 48 hours) and never runs the same ID twice. If the agent cannot save an ID to disk, it refuses `reboot`, `shutdown`, `os_update`, and `agent_update` instead of risking a second run. Other actions run in degraded mode and log an error.
+
+**Agent state files.** The agent stores these files in its data directory: `/var/lib/riot/` on Linux and macOS, `%PROGRAMDATA%\riot\` on Windows. The agent writes them with mode `0600` and creates the directory with mode `0700`. They need no new privileges and no sudoers rule.
+
+| File | Contents | Bounds |
+|---|---|---|
+| `command-outbox.json` | Final results not yet confirmed by the server | 200 entries, 1 MiB, 24 hours |
+| `seen-commands.json` | IDs of commands the agent already accepted | 1000 entries, 48 hours |
+| `inflight-commands.json` | One marker per running command (action, target, last step, and Docker recovery details) | Running commands, plus records whose recovery is still pending |
+
+### Upgrade notes
+
+Read this section before you deploy the release that adds the command lifecycle.
+
+**Rollout order**
+
+1. Upgrade the server first. Migration `000023` runs on startup.
+2. Upgrade agents afterwards, with the normal agent update. Agents do not need `install.sh` to be re-run, and no collector whitelist change is needed. The release adds no collector, no sudoers rule, and no new agent privilege.
+
+**Version skew**
+
+| Combination | Result |
+|---|---|
+| Old agent, new server | Works. The server sends both the container name and the container ID. The old agent never acknowledges, so the command stays `dispatched` until its result arrives. Old agents keep their own bugs until upgraded: results travel over the WebSocket only, dependents are not restored, and standalone updates have no rollback. |
+| New agent, old server | Works in WebSocket-only legacy mode. The old server ignores acknowledgements and progress reports and has no report endpoint. The agent sees a `404` or `405` without an error code, delivers results over the WebSocket, and probes the HTTP endpoint again no more than once per hour. |
+| New agent, new server | Full lifecycle. |
+
+**Migration `000023`**
+
+- **Status mapping.** The migration rewrites stored statuses in place: `pending` becomes `queued`, `sent` becomes `dispatched`, `success` becomes `succeeded`, and `error` becomes `failed`. The server also maps legacy values when it reads, so a row that an older server writes during a rollback window still reads correctly.
+- **Historical rows are relabelled silently.** The migration marks every existing row as written before the lifecycle and backfills its expiry and deadline. The first sweep then moves old `dispatched` rows (formerly `sent`, with no result ever received) to `timed_out` and overdue queued rows to `expired`. The sweep writes one `legacy commands relabelled` log line with the counts. It sends no dashboard broadcast, creates no event, and sends no notification.
+- **Auto-update reset.** The migration clears `last_triggered_at` on every container-level auto-update policy. Stack policies keep their value. Container-level policies never worked before this release: the server sent a container name and the agent required an ID, so every run failed and started the cooldown. They will fire for the first time in the next maintenance window. Expect a burst of container recreations on the first telemetry that arrives inside the next Docker maintenance window, limited by the stagger setting. Disable or delete the policies you do not want to run before you upgrade.
+- **Down migration.** The down migration maps canonical values back to legacy ones (`cancelled` and `expired` become `error`, never `queued`). It first fails every queued `reboot`, `shutdown`, and `os_update` with `include_reboot_class`, regardless of expiry, so a downgrade cannot deliver a stale power action. It cannot restore the cleared `last_triggered_at` values.
+- **Migration number collisions.** The migration uses the number `000023`. If another unmerged branch also adds a migration with that number, renumber whichever branch merges second above the current maximum before you deploy. Check the `schema_migrations` table of the target database first.
+
+**Changes that affect API and WebSocket consumers**
+
+- The `status` field of a command now holds one of the ten states above. Code that matches `pending`, `sent`, `success`, or `error` must change.
+- Dashboard WebSocket clients receive `command_update` instead of `command_result`.
+- Creating a command can now return `409`. The history endpoint returns `400` for an unknown `status` filter value.
 
 ---
 

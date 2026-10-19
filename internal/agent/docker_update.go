@@ -761,6 +761,10 @@ func pullFailure(pullCtx, cmdCtx context.Context, msg, stderr string) commandExe
 	return commandExecResult{Status: models.ResultStatusError, Step: models.StepPull, Message: msg, Stderr: stderr}
 }
 
+// networkConfigFrom rebuilds the replacement's per-network settings from the old
+// container so it keeps its static address, aliases, MAC and links (FR-037). Only
+// configuration is copied; runtime-assigned fields (EndpointID, IPAddress,
+// Gateway) are left for Docker to assign to the new endpoint.
 func networkConfigFrom(insp container.InspectResponse) *network.NetworkingConfig {
 	if insp.NetworkSettings == nil || len(insp.NetworkSettings.Networks) == 0 {
 		return nil
