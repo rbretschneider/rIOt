@@ -78,6 +78,21 @@ const (
 	certRevocationUnavailable
 )
 
+// regPathName is the label logged when a key is issued. It names the proof that
+// was accepted, never any credential value.
+func regPathName(p regPath) string {
+	switch p {
+	case regPathOwnKey:
+		return "own-key"
+	case regPathCert:
+		return "certificate"
+	case regPathRegKey:
+		return "registration-key"
+	default:
+		return "none"
+	}
+}
+
 // regCredentials is the set of facts gathered for one re-registration request.
 type regCredentials struct {
 	// KeyPresented is true when the X-rIOt-Key header is non-empty.

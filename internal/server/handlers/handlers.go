@@ -163,21 +163,23 @@ func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
 }
 
 func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
-	// Check registration key: if server has one configured, require it
+	// REG-HARDEN-001: the registration key is read once. It is no longer a
+	// blanket gate at the top of the handler: it applies to new-device
+	// registration (below) and, for an existing device, only as path (c) of the
+	// proof decision. A device presenting its own key must re-register whether
+	// or not a registration key is configured.
 	regKey, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")
-	if regKey != "" {
-		apiKey := r.Header.Get("X-rIOt-Key")
-		if apiKey != regKey {
-			http.Error(w, `{"error":"invalid registration key"}`, http.StatusUnauthorized)
-			return
-		}
-	}
 
+	// The body is parsed before any credential is evaluated (the device_id picks
+	// the path), so cap it: an unauthenticated caller must not be able to make
+	// the server decode an unbounded payload.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRegistrationBodyBytes)
 	var reg models.DeviceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	presentedKey := r.Header.Get("X-rIOt-Key")
 
 	now := time.Now().UTC()
 	var device *models.Device
@@ -186,6 +188,21 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	if reg.DeviceID != "" {
 		existing, err := h.devices.FindByDeviceUUID(r.Context(), reg.DeviceID)
 		if err == nil && existing != nil {
+			// Prove the caller is this device BEFORE touching anything. Nothing
+			// below this decision (record update, key issue, WebSocket
+			// broadcast, DeviceOnline event) may run for a rejected request.
+			creds := h.collectRegCredentials(r.Context(), r, existing.ID, presentedKey, regKey)
+			dec := decideReRegistration(existing.ID, creds)
+			if dec.Path == regReject401 || dec.Path == regReject403 {
+				status := http.StatusUnauthorized
+				if dec.Path == regReject403 {
+					status = http.StatusForbidden
+				}
+				logRegReject(r, reg.DeviceID, dec.RejectClass, status)
+				writeRegReject(w, status)
+				return
+			}
+
 			wasOnline := existing.Status == models.DeviceStatusOnline
 			// Update existing device
 			existing.Hostname = reg.Hostname
@@ -203,18 +220,18 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			}
 			device = existing
 
-			// If the agent doesn't have an API key (e.g. device was created by
-			// mTLS enrollment which doesn't generate one), issue a new key now.
+			// Issue a new key only when the proof was a certificate or the
+			// registration key (device created by mTLS enrollment has no key).
+			// An agent proving itself with its own key gets none.
 			apiKey := ""
-			agentKey := r.Header.Get("X-rIOt-Key")
-			if agentKey == "" {
+			if dec.MintKey {
 				apiKey = generateAPIKey()
 				if err := h.devices.StoreAPIKey(r.Context(), apiKey, device.ID); err != nil {
 					slog.Error("store API key for enrolled device", "error", err.Error())
 					http.Error(w, `{"error":"failed to store API key"}`, http.StatusInternalServerError)
 					return
 				}
-				slog.Info("generated API key for enrolled device", "device_id", device.ID)
+				slog.Info("generated API key for enrolled device", "device_id", device.ID, "path", regPathName(dec.Path))
 			}
 
 			writeJSON(w, http.StatusOK, models.DeviceRegistrationResponse{
@@ -230,7 +247,15 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// New registration
+	// New registration. When a registration key is configured it is required
+	// (constant-time comparison). A device API key is not a registration key, so
+	// it is never looked up on this path.
+	if regKey != "" && !regKeyEqual(presentedKey, regKey) {
+		logRegReject(r, reg.DeviceID, rejectNewDeviceRegKeyMismatch, http.StatusUnauthorized)
+		writeRegReject(w, http.StatusUnauthorized)
+		return
+	}
+
 	deviceID := uuid.New().String()
 	shortID := deviceID[:8]
 	deviceKey := generateAPIKey()
