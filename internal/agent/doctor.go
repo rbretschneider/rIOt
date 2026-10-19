@@ -255,8 +255,11 @@ func Doctor(configPath string) {
 	}
 
 	// ── Memory Limit (GROWTH-001 AD-019) ──
-	// The unit written by install.sh caps the agent's memory. A host whose unit
-	// predates that has no cap until the installer is re-run.
+	// The unit written by install.sh caps the agent's memory. Installing a new
+	// agent binary does not rewrite the unit, so a host whose unit predates the
+	// cap has none until the installer is re-run; this section is the only
+	// signal of that. (The helper's temp-file sweep needs the same re-run, but
+	// nothing here can detect it.)
 	if runtime.GOOS == "linux" {
 		checkMemoryLimit()
 	}

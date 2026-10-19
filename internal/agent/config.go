@@ -256,6 +256,12 @@ host_terminal:
 
 // Save writes the config atomically (temp file, fsync, rename, directory
 // fsync) so a full disk or a crash can never leave a truncated agent.yaml.
+//
+// The temp file is created beside the config, so the agent needs write access
+// to the config DIRECTORY, not only to the file. A root-owned directory, a
+// symlinked agent.yaml (the rename replaces the link) or a single-file bind
+// mount (the rename fails with "busy") no longer works. install.sh chowns
+// /etc/riot to the agent user, so installer installs are unaffected.
 func (c *Config) Save(path string) error {
 	return c.SaveWith(osStateFS{}, path)
 }
