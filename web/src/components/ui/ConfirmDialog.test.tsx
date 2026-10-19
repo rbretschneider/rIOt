@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog'
 import { Modal } from './Modal'
-import { ToastProvider } from './Toast'
+import { ToastProvider, useToast } from './Toast'
 
 type Props = Partial<ConfirmDialogProps<unknown>>
 
@@ -503,5 +503,131 @@ describe('[UIF SEC-005] long unbroken messages cannot hide the footer buttons', 
     const body = dialog().querySelector('.overflow-y-auto')
     expect(body?.contains(confirmButton())).toBe(false)
     expect(body?.contains(cancelButton())).toBe(false)
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-035: the synchronous in-flight guard itself. The older double-click tests also pass
+// without the guard because the Confirm button is disabled by the time the second click lands.
+// Here both activations are queued inside one act(), so React has not re-rendered between them.
+describe('[UIF AC-035] QA: the in-flight ref guard, not just the disabled button', () => {
+  it('calls the action once when two activations land before React re-renders', async () => {
+    const pending = deferred()
+    const onConfirm = vi.fn(() => pending.promise)
+    render(<Harness onConfirm={onConfirm} />)
+    const button = confirmButton()
+
+    await act(async () => {
+      button.click()
+      button.click()
+    })
+
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    await act(async () => pending.resolve())
+  })
+
+  it('allows exactly one more invocation after a failure (guard is released, not stuck)', async () => {
+    const onConfirm = vi
+      .fn<() => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('first'))
+      .mockRejectedValueOnce(new Error('second'))
+    render(<Harness onConfirm={onConfirm} />)
+
+    await act(async () => {
+      confirmButton().click()
+      confirmButton().click()
+    })
+    await within(dialog()).findByRole('alert')
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(confirmButton())
+    await waitFor(() => expect(within(dialog()).getByRole('alert')).toHaveTextContent('second'))
+    expect(onConfirm).toHaveBeenCalledTimes(2)
+  })
+})
+
+// Covers AC-033: Escape while pending, wherever the event is dispatched.
+describe('[UIF AC-033] QA: Escape while pending, from anywhere', () => {
+  it('ignores Escape dispatched on document.body, on the panel and on the pending button', async () => {
+    const pending = deferred()
+    const onClose = vi.fn()
+    render(<Harness onConfirm={() => pending.promise} onClose={onClose} />)
+    await userEvent.click(confirmButton())
+    const busy = within(dialog()).getByRole('button', { name: 'Working…' })
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    fireEvent.keyDown(dialog(), { key: 'Escape' })
+    fireEvent.keyDown(busy, { key: 'Escape' })
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await act(async () => pending.resolve())
+  })
+
+  it('honours Escape again once a failed attempt has settled', async () => {
+    const onClose = vi.fn()
+    render(<Harness onConfirm={() => Promise.reject(new Error('x'))} onClose={onClose} />)
+    await userEvent.click(confirmButton())
+    await within(dialog()).findByRole('alert')
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+// Covers AC-051, AC-055: a toast raised while a modal is open (the toast layer sits above the modal layer).
+describe('[UIF AC-051] QA: a toast raised over an open dialog', () => {
+  function RaiseToast() {
+    const toast = useToast()
+    return <button onClick={() => toast.error('Background failure', 'HTTP 500: Internal Server Error')}>raise toast</button>
+  }
+
+  function Stage() {
+    const [open, setOpen] = useState(true)
+    return (
+      <ToastProvider>
+        <RaiseToast />
+        <ConfirmDialog
+          open={open}
+          title="Delete probe"
+          message="Remove nas-ping?"
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={() => undefined}
+          onClose={() => setOpen(false)}
+        />
+      </ToastProvider>
+    )
+  }
+
+  const raise = () => act(() => screen.getByRole('button', { name: 'raise toast', hidden: true }).click())
+
+  it('shows the toast outside the dialog without closing it or moving focus off Cancel', () => {
+    render(<Stage />)
+    raise()
+
+    const region = screen.getByRole('region', { name: 'Notifications' })
+    expect(within(region).getByRole('alert')).toHaveTextContent('HTTP 500: Internal Server Error')
+    expect(dialog().contains(region)).toBe(false)
+    expect(screen.getByRole('dialog', { name: 'Delete probe' })).toBeInTheDocument()
+    expect(cancelButton()).toHaveFocus()
+  })
+
+  it('Escape closes the dialog but leaves the persistent error toast in place', async () => {
+    render(<Stage />)
+    raise()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(within(screen.getByRole('region', { name: 'Notifications' })).getByRole('alert')).toBeInTheDocument()
+  })
+
+  it('keeps Tab inside the dialog even while a toast with a Dismiss button is on screen', async () => {
+    render(<Stage />)
+    raise()
+    const user = userEvent.setup()
+    for (let i = 0; i < 4; i++) {
+      await user.tab()
+      expect(dialog().contains(document.activeElement)).toBe(true)
+    }
   })
 })

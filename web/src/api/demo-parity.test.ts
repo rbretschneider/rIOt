@@ -262,3 +262,30 @@ describe('[UIF AC-132] unknown demo device is 404', () => {
     expect((await demoClient.api.getContainerDetail(host.id, container.short_id)).name).toBe(container.name)
   })
 })
+
+// Added by QA Engineer
+// Covers AC-134 (automated half). The demo console walkthrough was done by hand on four pages; the
+// Settings tabs were not walked. TanStack Query logs an error for a queryFn that resolves undefined, the
+// same noise as a missing method. Key-set parity proves every reader exists; this proves none of them
+// resolves to undefined, so every page and Settings tab gets data from the demo clients.
+describe('[UIF AC-134] QA: every demo reader resolves to a defined value', () => {
+  const host = () => demoData.getDevices()[0]
+  const readers = [
+    ...Object.entries(demoClient.api).map(([name, fn]) => ['api', name, fn] as const),
+    ...Object.entries(demoSettings.settingsApi).map(([name, fn]) => ['settingsApi', name, fn] as const),
+  ].filter(([, name]) => name.startsWith('get') || name === 'check')
+
+  it('finds the readers it is meant to check', () => {
+    expect(readers.length).toBeGreaterThan(40)
+  })
+
+  it.each(readers)('%s.%s resolves to something other than undefined (or a typed 404)', async (_group, _name, fn) => {
+    const call = fn as (...args: unknown[]) => Promise<unknown>
+    const result = await call(host().id, 'abc', 1).catch((e: unknown) => e)
+    if (result instanceof ApiError) {
+      expect(result.status).toBe(404)
+    } else {
+      expect(result).not.toBeUndefined()
+    }
+  })
+})

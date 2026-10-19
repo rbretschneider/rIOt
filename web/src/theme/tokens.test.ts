@@ -125,3 +125,26 @@ describe('[UIF AC-007] text tokens meet WCAG AA 4.5:1', () => {
     expect(contrast('#6b7280', TOKEN_HEX.raised)).toBeLessThan(4.5)
   })
 })
+
+// Added by QA Engineer
+// Covers AC-002. The tests above compare index.css with TOKEN_PALETTE, which lives in theme/tokens.ts, so
+// both sides could drift together. This pins the FRD section 7.1 table literally. success (emerald-500)
+// and info (blue-500) are the documented ADD DEV-01 hue-family deviations from green-500 and sky-500.
+describe('[UIF AC-002] QA: FRD 7.1 palette pinned independently of tokens.ts', () => {
+  const vars = declaredVars(blockBody(css, '@theme inline'))
+
+  it.each([
+    ['surface', 'gray-950'],
+    ['raised', 'gray-900'],
+    ['border', 'gray-800'],
+    ['text', 'gray-100'],
+    ['text-muted', 'gray-400'],
+    ['accent', 'blue-600'],
+    ['warn', 'amber-500'],
+    ['danger', 'red-600'],
+    ['success', 'emerald-500'],
+    ['info', 'blue-500'],
+  ])('--color-%s is var(--color-%s) in index.css', (token, palette) => {
+    expect(vars[`--color-${token}`]).toBe(`var(--color-${palette})`)
+  })
+})

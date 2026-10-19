@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
+import { onlineManager } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import FleetOverview from './FleetOverview'
 import { api } from '../api/client'
@@ -115,6 +116,41 @@ describe('[UIF AC-092] empty fleet shows SetupGuide', () => {
     await screen.findByText('alpha')
     await userEvent.type(screen.getByPlaceholderText('Search devices...'), 'zzz')
     expect(screen.getByText('No devices match your search')).toBeInTheDocument()
+    expect(screen.queryByTestId('setup-guide')).toBeNull()
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-092, AC-093, BR-004: the fleet is "positively confirmed empty" only by a successful empty
+// response. A fetch that never ran (browser offline, TanStack Query pauses it) and a failure that
+// follows an earlier success must both be anything but "Add your first device".
+describe('[UIF AC-092] QA: only a successful empty response yields the SetupGuide', () => {
+  afterEach(() => {
+    onlineManager.setOnline(true)
+  })
+
+  it('does not show the SetupGuide while the first fetch is paused because the browser is offline', async () => {
+    onlineManager.setOnline(false)
+    vi.mocked(api.getDevices).mockResolvedValue([])
+    renderWithProviders(<FleetOverview />)
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(api.getDevices).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('setup-guide')).toBeNull()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+  })
+
+  it('keeps the last good device list when a background refetch fails (no error panel, no SetupGuide)', async () => {
+    vi.mocked(api.getDevices)
+      .mockResolvedValueOnce([device('d1', 'alpha')] as never)
+      .mockRejectedValue(new Error('HTTP 500: Internal Server Error'))
+    const { queryClient } = renderWithProviders(<FleetOverview />)
+    await screen.findByText('alpha')
+
+    await queryClient.refetchQueries({ queryKey: ['devices'] }).catch(() => {})
+
+    expect(await screen.findByText('alpha')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByTestId('setup-guide')).toBeNull()
   })
 })

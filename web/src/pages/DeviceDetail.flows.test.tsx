@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, screen, waitFor, within } from '@testing-library/react'
+import { onlineManager } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import DeviceDetail from './DeviceDetail'
 import { api } from '../api/client'
@@ -467,6 +468,78 @@ describe('[UIF AC-137] Delete is a separated danger button', () => {
     vi.mocked(api.getDevice).mockResolvedValue(deviceResponse({ status: 'offline' }) as never)
     renderPage()
     expect(await screen.findByRole('button', { name: 'Delete' })).toHaveAttribute('data-variant', 'danger')
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-073, AC-084, BR-002: a failed command is reported exactly once, and never in the page body.
+describe('[UIF AC-084] QA: command and delete failures are reported exactly once', () => {
+  it('a rejected Reboot shows its message once, inside the dialog, and nowhere else', async () => {
+    vi.mocked(api.sendCommand).mockRejectedValue(new Error('HTTP 409: Conflict'))
+    renderPage()
+    await openPowerAction('Reboot')
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Reboot' }))
+    await within(dialog()).findByRole('alert')
+
+    const hits = screen.getAllByText(/HTTP 409: Conflict/)
+    expect(hits).toHaveLength(1)
+    expect(dialog().contains(hits[0])).toBe(true)
+    expect(toastRegion().querySelectorAll('li')).toHaveLength(0)
+  })
+
+  it('a rejected Delete shows its message once, inside the dialog, and raises no toast', async () => {
+    vi.mocked(api.deleteDevice).mockRejectedValue(new Error('HTTP 500: Internal Server Error'))
+    renderPage()
+    await openDelete()
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Delete' }))
+    await within(dialog()).findByRole('alert')
+
+    expect(screen.getAllByText(/HTTP 500: Internal Server Error/)).toHaveLength(1)
+    expect(toastRegion().querySelectorAll('li')).toHaveLength(0)
+  })
+})
+
+// Covers SEC-003 on the real page: the user leaves DeviceDetail while Reboot is still in flight and the
+// request then fails. The dialog is gone, so the failure must surface once as an error toast.
+describe('[UIF SEC-003] QA: a Reboot that fails after the page was left is still reported once', () => {
+  it('raises exactly one persistent error toast naming the action and the reason', async () => {
+    let rejectCommand: (reason: Error) => void = () => {}
+    vi.mocked(api.sendCommand).mockReturnValue(new Promise((_res, rej) => { rejectCommand = rej }) as never)
+    renderPage()
+    await openPowerAction('Reboot')
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Reboot' }))
+    await within(dialog()).findByRole('button', { name: 'Rebooting…' })
+
+    // Browser-back equivalent: the route changes under the pending dialog (the Probes route is not mounted in this harness).
+    act(() => screen.getByRole('link', { name: 'Probes', hidden: true }).click())
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    await act(async () => rejectCommand(new Error('HTTP 502: Bad Gateway')))
+
+    const alerts = within(toastRegion()).getAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toHaveTextContent('HTTP 502: Bad Gateway')
+  })
+})
+
+// Covers FR-084, FR-085, BR-004: "Device not found" may only be shown for a 404. When the browser is
+// offline TanStack Query PAUSES the fetch: no request is made, no error exists, isLoading is false.
+// DeviceQueryFallback treats "not loading and no error" as "not found", so a user who loses the network
+// and opens a device is told "This device no longer exists". KNOWN DEFECT QA-D2 (also affects
+// DeviceContainers and ContainerDetailPage, which share the component). it.fails keeps the suite green and
+// flips red once the fallback distinguishes a paused query; then change it.fails to it.
+describe('[UIF AC-095] QA: an offline browser is not "Device not found"', () => {
+  afterEach(() => {
+    onlineManager.setOnline(true)
+  })
+
+  it.fails('shows a loading or load-failure state, not "Device not found", while the fetch is paused offline (QA-D2)', async () => {
+    onlineManager.setOnline(false)
+    renderPage()
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(api.getDevice).not.toHaveBeenCalled()
+    expect(screen.queryByText('Device not found')).toBeNull()
   })
 })
 

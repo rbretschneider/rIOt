@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import {
   TIME_ZONE_STORAGE_KEY,
@@ -141,5 +141,66 @@ describe('[UIF SEC-006] tampered riot-time-zone resolves to UTC', () => {
   it('never feeds the stored value into the zone options (localTimeZone stays unset)', () => {
     renderProbe({ storage: memoryStorage('America/Nowhere'), children: null })
     expect(screen.getByTestId('has-local-tz').textContent).toBe('false')
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-116 and SEC-006 on the production path: no `storage` prop, so the provider resolves the
+// real window.localStorage itself (safeLocalStorage). Every test above injects a fake storage and
+// would stay green if that default path were broken.
+describe('[UIF AC-116] QA: default storage path (real window.localStorage)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    window.localStorage.clear()
+  })
+
+  const mountDefault = () =>
+    render(
+      <TimePreferenceProvider localTimeZone="America/Los_Angeles">
+        <Probe />
+      </TimePreferenceProvider>,
+    )
+
+  it.each([
+    ['banana', 'banana'],
+    ['an unknown IANA zone', 'America/Nowhere'],
+    ['wrong-case local', 'local'],
+    ['JSON', '{"zone":"Local"}'],
+    ['a 100 KB string', 'x'.repeat(100 * 1024)],
+  ])('a tampered stored value (%s) resolves to UTC and renders without throwing', (_label, value) => {
+    window.localStorage.setItem(TIME_ZONE_STORAGE_KEY, value)
+    expect(() => mountDefault()).not.toThrow()
+    expect(screen.getByTestId('zone').textContent).toBe('UTC')
+    expect(screen.getByTestId('stamp').textContent).toBe('2026-10-17 14:03:22 UTC')
+  })
+
+  it('restores a stored Local preference and writes a toggle back under riot-time-zone', () => {
+    window.localStorage.setItem(TIME_ZONE_STORAGE_KEY, 'Local')
+    mountDefault()
+    expect(screen.getByTestId('zone').textContent).toBe('Local')
+    expect(screen.getByTestId('stamp').textContent).toBe('2026-10-17 07:03:22 PDT')
+
+    act(() => screen.getByRole('button', { name: 'toggle' }).click())
+    expect(window.localStorage.getItem(TIME_ZONE_STORAGE_KEY)).toBe('UTC')
+  })
+
+  it('falls back to UTC when reading window.localStorage itself throws (blocked storage)', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError')
+    })
+    expect(() => mountDefault()).not.toThrow()
+    expect(screen.getByTestId('zone').textContent).toBe('UTC')
+
+    // The toggle still works for the session even though nothing can be persisted.
+    act(() => screen.getByRole('button', { name: 'toggle' }).click())
+    expect(screen.getByTestId('zone').textContent).toBe('Local')
+  })
+
+  it('falls back to UTC when getItem throws on the real Storage', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError')
+    })
+    expect(() => mountDefault()).not.toThrow()
+    expect(screen.getByTestId('zone').textContent).toBe('UTC')
   })
 })
