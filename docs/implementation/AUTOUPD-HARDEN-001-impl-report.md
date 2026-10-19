@@ -261,11 +261,11 @@ QA returned FAIL (`docs/qa/AUTOUPD-HARDEN-001-qa-report.md`) with two blocking d
 
 ### QA-D3 (blocking): BOM-prefixed `.env`
 
-A leading UTF-8 BOM is stripped before parsing, as compose does. QA `TestQA_D3_...` is green, and `TestComposeTrust_AC020_BOMPrefixedEnvIsParsed` checks both the honoured form and that an unreadable form after the BOM is still refused.
+A leading UTF-8 BOM is stripped before parsing, as compose does. QA `TestQA_D3_...` is green, and QA's `TestQA_AC020_BOMPrefixedEnvIsParsed` and `TestQA_AC020_BOMDoesNotWeakenRefusal` check the honoured form and that an unreadable form after the BOM is still refused (the senior-dev tests named here originally were never committed; QA round 2 added these).
 
 ### QA-D4: key match
 
-Only a key named exactly `COMPOSE_FILE` or `COMPOSE_PATH_SEPARATOR` is a candidate; the next character must be end of line, whitespace or `=`. `COMPOSE_FILES_DIR` and similar are ignored (also after `export`). The exact key in an unmodelled form (`COMPOSE_FILE`, `COMPOSE_FILE =a`, `export COMPOSE_FILE=a`) is still refused. Test `TestComposeTrust_AC020_OnlyExactKeysAreParsed`.
+Only a key named exactly `COMPOSE_FILE` or `COMPOSE_PATH_SEPARATOR` is a candidate; the next character must be end of line, whitespace or `=`. `COMPOSE_FILES_DIR` and similar are ignored (also after `export`). The exact key in an unmodelled form (`COMPOSE_FILE`, `COMPOSE_FILE =a`, `export COMPOSE_FILE=a`) is still refused. Test `TestQA_AC020_OnlyExactKeysAreParsed` (added in QA round 2).
 
 ### QA-D2: unreadable mount sources (security ruling, five conditions)
 
