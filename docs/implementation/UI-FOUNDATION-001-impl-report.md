@@ -285,16 +285,26 @@ Items 1 to 3 are conflicts the task instructions resolved; the rest need archite
 
 ## Visual verification (Clod)
 
-_To be completed by Clod: before/after screenshots and the AC-134 demo walkthrough._
+Clod checked the demo build (`web-demo`, port 5179) at 1440×900 with Playwright on 2026-10-18. All screenshots are in `docs/implementation/UI-FOUNDATION-001-screenshots/`.
 
-| Screenshot | Before | After | Notes |
+| Screenshot | Before | After | Result |
 |---|---|---|---|
-| Fleet | `before-fleet*.png` | pending | |
-| Toast stack | n/a | pending | |
-| Device detail chart tooltip | n/a | pending | |
-| Device detail header | `before-*` | pending | |
-| Dashboard (demo) | `before-*` | pending | |
-| Security | `before-*` | pending | |
+| Fleet (AC-119) | `before-fleet.png` | `after-fleet.png` | Hostnames render as reported (`backup-server`, not `BACKUP-SERVER`). "Last seen" uses `<RelativeTime>`. |
+| Toast stack (AC-052) | none (8 s inline banner below the table) | `after-toast-stack.png` | Fleet → Update Agents → Update all: a success toast at bottom-right ("Agent update dispatched", sent and skipped counts), with a Dismiss button. |
+| Confirm dialog (SEC-001) | none (native `confirm()`) | `after-confirm-dialog.png` | Device → Delete opens `role="dialog"` "Delete Device", focus starts on **Cancel**, and Escape closes it. |
+| Device detail header (AC-124, AC-133) | `before-device-top.png` | `after-device-detail-header.png` | The hostname keeps its case. The gauge has a "SECURITY SCORE" caption. Delete is a danger button in the right-hand cluster, behind a divider, no longer next to Docker · Probes · Terminal. |
+| Dashboard, demo (AC-135) | `before-dashboard.png` | `after-dashboard-demo.png` | Per-device charts, leaderboard and activity are populated. The "WebSocket disconnected" banner is gone. |
+| Security (AC-138) | `before-security.png` | `after-security.png` | All six stat cards fit one row. See fix 1 below. |
+| Device detail chart tooltip (AC-006) | n/a | not captured | Hover screenshots of recharts tooltips are unreliable in headless Playwright. The zone-labelled tooltip formatter is covered by unit tests (Section 8 mapping). |
+
+**AC-134 console walkthrough:** Clod visited Fleet, Dashboard, Device detail and Security in demo mode. `browser_console_messages` at warning level returned nothing: no "No queryFn" errors and no React warnings. Before this story, every page logged `[["feature-toggles"]]: No queryFn` and the Dashboard also logged `[["fleet-containers"]]` errors.
+
+**Fixes Clod made during visual verification** (commit `[UI-FOUNDATION-001] fix: visual-verification follow-ups`):
+1. **Security stat cards still orphaned.** The tightened demo data adds a "Certs Expiring" card, and SELinux/AppArmor sat in a separate 2-column grid, so "AppArmor Enabled" still wrapped onto a half-width row of its own. The MAC-module cards now render as `StatCard`s inside the single stat grid (`xl:grid-flow-col auto-cols-fr`), so every card shares one row.
+2. **Activity feed times had no date.** `ActivityRiver` rendered `Timestamp precision="time"`, so a 3-day-old "Device went offline" read `03:14:02 UTC` like a current event. It now uses `<RelativeTime>` ("3d ago"), with the absolute, zone-labelled time in the hover title.
+3. **Not a defect:** the text the accessibility tree showed at the end of `<body>` ("249K", then an ISO timestamp) is recharts' own `#recharts_measurement_span`. That span is `aria-hidden` and sits at `top:-20000px`, so nothing is visible.
+
+After the fixes: `npx tsc --noEmit` exits 0, and `npm run test:run` reports 56 files / 1070 tests passed.
 
 ## Release notes (for the technical writer, DEV-18)
 
