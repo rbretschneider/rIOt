@@ -683,6 +683,10 @@ type MockNotifyRepo struct {
 	NextChanID   int64
 	NextLogID    int64
 	Err          error
+
+	// UpdateChannelCalls counts UpdateChannel invocations, so tests can assert
+	// that a rejected request wrote nothing.
+	UpdateChannelCalls int
 }
 
 func NewMockNotifyRepo() *MockNotifyRepo {
@@ -732,6 +736,7 @@ func (m *MockNotifyRepo) CreateChannel(_ context.Context, ch *models.Notificatio
 }
 
 func (m *MockNotifyRepo) UpdateChannel(_ context.Context, ch *models.NotificationChannel) error {
+	m.UpdateChannelCalls++
 	if m.Err != nil {
 		return m.Err
 	}

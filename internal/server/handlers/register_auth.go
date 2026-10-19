@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"crypto/tls"
 	"log/slog"
 	"net/http"
@@ -188,7 +186,9 @@ func (h *Handlers) collectRegCredentials(ctx context.Context, r *http.Request, n
 
 	c.CertDeviceID, c.CertState = qualifyingCertDeviceID(ctx, r.TLS, h.caRepo)
 
-	c.RegKeyMatch = regKey != "" && regKeyEqual(presentedKey, regKey)
+	// registrationKeyMatches (HARDEN-002) treats two empty strings as equal, so
+	// the "is a key configured" guard stays here.
+	c.RegKeyMatch = regKey != "" && registrationKeyMatches(presentedKey, regKey)
 	if c.RegKeyMatch {
 		has, err := h.devices.HasAPIKey(ctx, namedDeviceID)
 		switch {
@@ -240,25 +240,6 @@ func qualifyingCertDeviceID(ctx context.Context, cs *tls.ConnectionState, caRepo
 		}
 	}
 	return cn, certQualifying
-}
-
-// regKeyEqual reports whether provided equals the configured registration key,
-// in time independent of where they first differ and of the length of provided.
-// An empty configured key never matches (registration key not configured).
-//
-// Both values are hashed first so ConstantTimeCompare always sees two
-// equal-length inputs.
-//
-// TODO(HARDEN-002): collapse into HARDEN-002's registrationKeyMatches helper when
-// that branch lands (same semantics). Do not declare a second helper with that
-// name here.
-func regKeyEqual(provided, configured string) bool {
-	if configured == "" {
-		return false
-	}
-	p := sha256.Sum256([]byte(provided))
-	c := sha256.Sum256([]byte(configured))
-	return subtle.ConstantTimeCompare(p[:], c[:]) == 1
 }
 
 // writeRegReject writes the fixed 401 or 403 body.

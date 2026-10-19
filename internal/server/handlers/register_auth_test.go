@@ -162,26 +162,32 @@ func TestDecideReRegistration_AC003_AC012_DecisionTable(t *testing.T) {
 // AC-018: constant-time registration key comparison
 // ---------------------------------------------------------------------------
 
-func TestRegKeyEqual_AC018_ConstantTimeCompare(t *testing.T) {
+func TestRegKeyMatch_AC018_ConstantTimeCompare(t *testing.T) {
 	const rk = "registration-key-0123456789abcdef"
 
 	t.Run("[AC-018] equal values match", func(t *testing.T) {
-		assert.True(t, regKeyEqual(rk, rk))
+		assert.True(t, registrationKeyMatches(rk, rk))
 	})
 	t.Run("[AC-018] differing in the first byte does not match", func(t *testing.T) {
-		assert.False(t, regKeyEqual("X"+rk[1:], rk))
+		assert.False(t, registrationKeyMatches("X"+rk[1:], rk))
 	})
 	t.Run("[AC-018] differing in the last byte does not match", func(t *testing.T) {
-		assert.False(t, regKeyEqual(rk[:len(rk)-1]+"X", rk))
+		assert.False(t, registrationKeyMatches(rk[:len(rk)-1]+"X", rk))
 	})
 	t.Run("[AC-018] different lengths do not match", func(t *testing.T) {
-		assert.False(t, regKeyEqual(rk+"x", rk), "longer provided value")
-		assert.False(t, regKeyEqual(rk[:len(rk)-1], rk), "shorter provided value")
-		assert.False(t, regKeyEqual("", rk), "empty provided value")
+		assert.False(t, registrationKeyMatches(rk+"x", rk), "longer provided value")
+		assert.False(t, registrationKeyMatches(rk[:len(rk)-1], rk), "shorter provided value")
+		assert.False(t, registrationKeyMatches("", rk), "empty provided value")
 	})
-	t.Run("[AC-018] empty configured key never matches", func(t *testing.T) {
-		assert.False(t, regKeyEqual("", ""), "both empty must not match: no key is configured")
-		assert.False(t, regKeyEqual("anything", ""))
+	// registrationKeyMatches treats two empty strings as equal; the caller owns
+	// the "no key configured" guard, so assert it there.
+	t.Run("[AC-018] empty configured key never matches at the call site", func(t *testing.T) {
+		h := &Handlers{devices: testutil.NewMockDeviceRepo()}
+		req := httptest.NewRequest(http.MethodPost, "/", nil)
+		for _, presented := range []string{"", "anything"} {
+			c := h.collectRegCredentials(context.Background(), req, "dev-1", presented, "")
+			assert.False(t, c.RegKeyMatch, "presented %q with no registration key configured must not match", presented)
+		}
 	})
 }
 

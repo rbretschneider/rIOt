@@ -15,7 +15,7 @@
 |---|---|---|
 | 1 | 2026-09-04 | Initial FINAL. AD-001 – AD-019. |
 | 2 | 2026-09-04 | Revised against `docs/security/OIDC-001-security-review.md` (verdict REVISE). **SEC-001** → AD-008 and §6.3: `riot_session` gains scheme-derived `Secure` at both mint sites. **SEC-002** → new **AD-020** (trusted-proxy client identity, `RIOT_TRUSTED_PROXIES`, `chimw.RealIP` removed); AD-013 and §10 rewritten to depend on it; covers the pre-existing `loginLimiter` and `registerLimiter` as well as the new `oidcLimiter`. **SEC-003** → AD-016 (`RecordLogin` reports insert-vs-update via `RETURNING (xmax = 0)`), new **AD-021** (first admission emits a `WARN`), new §4.5 (operator-documentation requirements, `register_oidc_app.py` named). **SEC-004** → AD-005: transaction MAC uses a domain-separated derived key. **SEC-005** → AD-005 and §10 login-CSRF rationale corrected. **SEC-006** → AD-005 records the delegated single-use property + a LIVE QA step. **SEC-007** → AD-002 security floors + `govulncheck` in §13. **SEC-008** → §4.5 redirect-URI registration requirements. **SEC-011** → AD-019 switches to exact path matching. SEC-009/SEC-010/SEC-012/SEC-013/SEC-014 acknowledged in §10 and §12 as out of scope and explicitly not to be fixed inline. New §8.1 maps the security-review conditions to tests. No AC weakened; two FRD amendments recorded in §0. |
-| 3 | 2026-09-04 | Documentation-only pass closing re-review conditions **C1**, **C2**, **C3** and **C6** (verdict on rev 2: APPROVED WITH CONDITIONS). §4.5 items 3 and 5 rewritten for the updated `D:\Repos\Hawaii\scripts\register_oidc_app.py`, which now supports `--redirect-uri`, `--launch-url`, and `--group` (creates the group if missing **and** creates the `PolicyBinding`, warning loudly when omitted) and PATCHes an existing provider's `redirect_uris` on re-run; the stale "creates no policy binding" and "adding that flag is a Hawaii-repo task" statements are removed, the runbook now carries the exact one-liner, and the append-not-replace behaviour of the re-run PATCH is recorded. **C6** → AD-020's "single place" claim narrowed to client identity and request scheme, with `handlers/setup.go`'s direct `X-Real-Ip` reads recorded as a known residual carried to the follow-up story. New §14 collects the deferred items. No decision, mechanism, contract, AC, or test mapping changed. |
+| 3 | 2026-09-04 | Documentation-only pass closing re-review conditions **C1**, **C2**, **C3** and **C6** (verdict on rev 2: APPROVED WITH CONDITIONS). §4.5 items 3 and 5 rewritten for the operator's updated `register_oidc_app.py` IdP registration script, which now supports `--redirect-uri`, `--launch-url`, and `--group` (creates the group if missing **and** creates the `PolicyBinding`, warning loudly when omitted) and PATCHes an existing provider's `redirect_uris` on re-run; the stale "creates no policy binding" and "adding that flag is an ops-repo task" statements are removed, the runbook now carries the exact one-liner, and the append-not-replace behaviour of the re-run PATCH is recorded. **C6** → AD-020's "single place" claim narrowed to client identity and request scheme, with `handlers/setup.go`'s direct `X-Real-Ip` reads recorded as a known residual carried to the follow-up story. New §14 collects the deferred items. No decision, mechanism, contract, AC, or test mapping changed. |
 | 4 | 2026-09-04 | Closes the last two re-review conditions. **C5** → AD-020 step 2 now specifies the all-trusted `X-Forwarded-For` chain: fall back to the immediate peer's `RemoteAddr`. Rationale recorded; the case added to §4.1 and §8.1's `clientip_test.go` rows. **C4** → §4.5 item 6 and the `.env.example` row in §4.4 now lead with the `Secure`-attribute consequence (behind a TLS-terminating proxy with `RIOT_TRUSTED_PROXIES` unset, `RequestScheme` resolves `http` and `riot_session` ships without `Secure`), with rate-limit granularity and audit IPs as the secondary reasons; AD-020's consequences bullet updated to match. All re-review conditions C1–C6 are now closed. No decision reversed, no AC changed. |
 
 ---
@@ -26,9 +26,9 @@ No questions for the Business Developer. Three corrections and two flagged amend
 
 **Corrections**
 
-1. **FRD §12 is stale.** It records "no IdP is deployed on hawaii yet". authentik 2026.8.1
-   is live at `https://auth.rbretschneider.com` on the production host. Per-application
-   issuer shape `https://auth.rbretschneider.com/application/o/<slug>/`, RS256, strict
+1. **FRD §12 is stale.** It records "no IdP is deployed yet". authentik 2026.8.1
+   is live at `https://<idp-host>` on the production host. Per-application
+   issuer shape `https://<idp-host>/application/o/<slug>/`, RS256, strict
    redirect matching. Automated ACs are still satisfied against a stubbed issuer (§8); a
    live end-to-end run against authentik is now a real, non-blocked QA step (§8, LIVE rows).
 2. **FRD §12 "Login throttling policy — Verify".** Verified: `POST /api/v1/auth/login`
@@ -1083,15 +1083,15 @@ The enable-SSO runbook (README + `docs/`) must contain, in the imperative:
    bound group and confirm authentik refuses it (rIOt shows `sso_denied`). Do this before
    enabling SSO for real.
 3. **Register the application with the group flag — one command.**
-   `D:\Repos\Hawaii\scripts\register_oidc_app.py` is the sanctioned registration path
+   the operator's `register_oidc_app.py` IdP registration script is the sanctioned registration path
    (`app_standards.md` §4 OIDC rule 10) and it creates the `PolicyBinding` for you when
    `--group` is passed, creating the group first if it does not exist. The runbook's command
    for rIOt is:
 
    ```
    python register_oidc_app.py riot \
-     --redirect-uri https://10.0.10.11:7331/api/v1/auth/oidc/callback \
-     --launch-url  https://10.0.10.11:7331/ \
+     --redirect-uri https://<server-host>:7331/api/v1/auth/oidc/callback \
+     --launch-url  https://<server-host>:7331/ \
      --group       "riot admins"
    ```
 
@@ -1103,13 +1103,13 @@ The enable-SSO runbook (README + `docs/`) must contain, in the imperative:
    be re-prefixed when they are copied into `.env`.
 4. **Redirect URIs must use `matching_mode: strict`, with one explicitly enumerated entry per
    scheme + host + port that rIOt is reached by** — for example
-   `https://10.0.10.11:7331/api/v1/auth/oidc/callback`. rIOt derives the redirect URI from the
+   `https://<server-host>:7331/api/v1/auth/oidc/callback`. rIOt derives the redirect URI from the
    incoming request (D-8, AD-009), and strict matching at the IdP is the *only* thing
    containing a poisoned `Host` header. The script registers everything it creates as
    `strict`; keep it that way.
 5. **Regex and wildcard redirect matching are prohibited**, and getting the redirect URI right
    on the first run avoids the temptation. Without `--redirect-uri` the script defaults to
-   `https://<slug>.rbretschneider.com/api/v1/auth/oidc/callback`, which will **not** match
+   `https://<slug>.<your-domain>/api/v1/auth/oidc/callback`, which will **not** match
    rIOt's direct-exposure shape on `:7331`. The operator's first SSO attempt then fails with
    an IdP redirect-mismatch error, and the path of least resistance in the authentik UI —
    switching `matching_mode` to `regex` — destroys AD-009's only mitigation and violates
@@ -1407,7 +1407,7 @@ and, after AD-020, cannot be drained by a third party spoofing the operator's IP
 ## 8. Acceptance Criteria Mapping
 
 `UNIT` = automated Go/vitest test. `LIVE` = manual verification against authentik at
-`https://auth.rbretschneider.com`; QA owns these and records them in the QA report.
+`https://<idp-host>`; QA owns these and records them in the QA report.
 
 | AC | Fulfilled By | Test Strategy |
 |---|---|---|
@@ -1567,7 +1567,7 @@ engineer will be tempted, and must not (§12 note 18).
 ## 12. Implementation Notes for Engineers
 
 1. **Copy the issuer URL verbatim, trailing slash included.** authentik's per-application
-   issuer is `https://auth.rbretschneider.com/application/o/<slug>/`. `go-oidc` compares the
+   issuer is `https://<idp-host>/application/o/<slug>/`. `go-oidc` compares the
    discovery document's `issuer` against the configured string exactly; a dropped trailing
    slash fails at `/start` with `sso_unavailable`. Do **not** reach for
    `oidc.InsecureIssuerURLContext` to paper over a mismatch — log both values in the

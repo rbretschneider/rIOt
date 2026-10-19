@@ -41,7 +41,7 @@ func (h *Handlers) issueSessionCookie(w http.ResponseWriter, r *http.Request, no
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   middleware.RequestScheme(r) == "https",
+		Secure:   middleware.IsHTTPS(r),
 		MaxAge:   86400, // 24 hours
 	})
 	return nil
@@ -57,7 +57,7 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   middleware.RequestScheme(r) == "https",
+		Secure:   middleware.IsHTTPS(r),
 		MaxAge:   -1,
 	})
 }

@@ -2,7 +2,7 @@ package server
 
 import (
 	"net/http"
-	"net/http/pprof"
+	"path"
 
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
@@ -12,37 +12,39 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
-func pprofHandler() http.Handler {
-	mux := chi.NewMux()
-	mux.HandleFunc("/", pprof.Index)
-	mux.HandleFunc("/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/profile", pprof.Profile)
-	mux.HandleFunc("/symbol", pprof.Symbol)
-	mux.HandleFunc("/trace", pprof.Trace)
-	mux.Handle("/heap", pprof.Handler("heap"))
-	mux.Handle("/goroutine", pprof.Handler("goroutine"))
-	mux.Handle("/allocs", pprof.Handler("allocs"))
-	return mux
+// globalMiddleware returns the middleware chain applied to every request, in
+// order. It is a single function so router tests exercise exactly the chain
+// production uses (HARDEN-002 AD-013).
+//
+// OIDC-001 AD-020: chimw.RealIP is replaced with a trusted-proxy-gated
+// client-identity resolver. RIOT_TRUSTED_PROXIES defaults to empty
+// (trust nobody), so forwarding headers are ignored unless the
+// immediate peer is explicitly trusted — this closes the pre-existing
+// bypass where an unconditional chimw.RealIP made loginLimiter and
+// registerLimiter keyable on an attacker-supplied header.
+//
+// HARDEN-002 AD-003: SecurityHeaders runs second, after RealIP (HSTS needs
+// the trusted-proxy scheme) and before everything that can write a response
+// (CORS 204, SetupGuard 503, auth 401/403, Recoverer 500), and never wraps the
+// ResponseWriter.
+func (s *Server) globalMiddleware() []func(http.Handler) http.Handler {
+	trustedProxies := middleware.ParseTrustedProxies(s.Config.TrustedProxies)
+	return []func(http.Handler) http.Handler{
+		middleware.RealIP(trustedProxies),
+		middleware.SecurityHeaders(),
+		middleware.Logger,
+		chimw.Recoverer,
+		middleware.CORS(s.Config.AllowedOrigins),
+		// Setup guard: blocks non-setup API routes until setup is complete
+		middleware.SetupGuard(&s.SetupComplete),
+	}
 }
 
 func (s *Server) setupRouter() *chi.Mux {
 	r := chi.NewRouter()
 
-	// Global middleware.
-	// OIDC-001 AD-020: chimw.RealIP is replaced with a trusted-proxy-gated
-	// client-identity resolver. RIOT_TRUSTED_PROXIES defaults to empty
-	// (trust nobody), so forwarding headers are ignored unless the
-	// immediate peer is explicitly trusted — this closes the pre-existing
-	// bypass where an unconditional chimw.RealIP made loginLimiter and
-	// registerLimiter keyable on an attacker-supplied header.
-	trustedProxies := middleware.ParseTrustedProxies(s.Config.TrustedProxies)
-	r.Use(middleware.RealIP(trustedProxies))
-	r.Use(middleware.Logger)
-	r.Use(chimw.Recoverer)
-	r.Use(middleware.CORS(s.Config.AllowedOrigins))
-
-	// Setup guard: blocks non-setup API routes until setup is complete
-	r.Use(middleware.SetupGuard(&s.SetupComplete))
+	// Global middleware (HARDEN-002 AD-013: one definition, shared with tests).
+	r.Use(s.globalMiddleware()...)
 
 	// Set up enrollment handler if mTLS is enabled
 	var enrollH *handlers.EnrollHandler
@@ -113,7 +115,15 @@ func (s *Server) setupRouter() *chi.Mux {
 	oidcLimiter := middleware.NewRateLimiter(5, 5) // 5/min, same policy as loginLimiter
 
 	// === PUBLIC routes (no auth) ===
-	r.Get("/health", h.Health(s.DB))
+	// HARDEN-002 AD-011: /health returns 503 when degraded; /readyz also
+	// requires migrations to have completed. Only assign s.DB when non-nil: a
+	// typed-nil *db.DB inside the interface would panic on probe.
+	hh := &handlers.HealthHandler{Migrated: s.MigrationsComplete.Load}
+	if s.DB != nil {
+		hh.DB = s.DB
+	}
+	r.Get("/health", hh.Health)
+	r.Get("/readyz", hh.Readyz)
 
 	// Setup wizard routes
 	r.Route("/api/v1/setup", func(r chi.Router) {
@@ -212,9 +222,12 @@ func (s *Server) setupRouter() *chi.Mux {
 	// === ADMIN routes (JWT cookie auth) ===
 	adminAuth := middleware.AdminAuth(s.JWTSecret)
 
-	// Debug profiling — no auth so operators can curl from the host.
-	// Bound to the server's listen address (not exposed beyond the host/network).
-	r.Mount("/debug/pprof", pprofHandler())
+	// HARDEN-002 AD-001: profiling is never served on this listener. The
+	// explicit 404 keeps the SPA catch-all from answering these paths with
+	// index.html and 200. Profiles are available only on the opt-in loopback
+	// listener (RIOT_PPROF_ADDR, see pprof.go).
+	r.Handle("/debug/pprof", pprofNotFound)
+	r.Handle("/debug/pprof/*", pprofNotFound)
 
 	r.Group(func(r chi.Router) {
 		r.Use(adminAuth)
@@ -317,19 +330,49 @@ func (s *Server) setupRouter() *chi.Mux {
 	return r
 }
 
+// staticContentTypes pins the Content-Type of embedded frontend assets.
+// With X-Content-Type-Options: nosniff the browser refuses scripts and styles
+// with the wrong type, and Go's built-in MIME table is OS-dependent (the
+// Windows registry can override .js; .ico, .woff2, .woff, .ttf and
+// .webmanifest are missing, and sniffing turns .webmanifest into text/plain).
+// Unknown extensions are left to http.FileServer (HARDEN-002 AD-005).
+var staticContentTypes = map[string]string{
+	".html":        "text/html; charset=utf-8",
+	".js":          "text/javascript; charset=utf-8",
+	".mjs":         "text/javascript; charset=utf-8",
+	".css":         "text/css; charset=utf-8",
+	".json":        "application/json",
+	".map":         "application/json",
+	".webmanifest": "application/manifest+json",
+	".ico":         "image/x-icon",
+	".png":         "image/png",
+	".svg":         "image/svg+xml",
+	".jpg":         "image/jpeg",
+	".jpeg":        "image/jpeg",
+	".webp":        "image/webp",
+	".woff2":       "font/woff2",
+	".woff":        "font/woff",
+	".ttf":         "font/ttf",
+	".txt":         "text/plain; charset=utf-8",
+}
+
 func (s *Server) serveFrontend(r *chi.Mux) {
 	fileServer := http.FileServer(http.FS(s.FrontendFS))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the file; if not found, serve index.html for SPA routing
-		path := r.URL.Path[1:]
-		if path == "" {
-			path = "index.html"
+		name := r.URL.Path[1:]
+		if name == "" {
+			name = "index.html"
 		}
-		f, err := s.FrontendFS.Open(path)
+		f, err := s.FrontendFS.Open(name)
 		if err != nil {
 			r.URL.Path = "/"
+			name = "index.html"
 		} else {
 			f.Close()
+		}
+		if ct, ok := staticContentTypes[path.Ext(name)]; ok {
+			w.Header().Set("Content-Type", ct)
 		}
 		fileServer.ServeHTTP(w, r)
 	})
