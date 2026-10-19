@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -233,7 +234,7 @@ func TestInMaintenanceWindow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := inMaintenanceWindow(tt.window)
+			got := inMaintenanceWindow(tt.window, time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC))
 			if got != tt.want {
 				t.Errorf("inMaintenanceWindow() = %v, want %v", got, tt.want)
 			}
@@ -668,3 +669,231 @@ func TestSetAutomationConfig_RejectsOutOfRangeDayOfWeek(t *testing.T) {
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// CMD-LIFECYCLE-001 item 1: targeting, success-only cooldown, failure backoff
+// ---------------------------------------------------------------------------
+
+type autoEnv struct {
+	h        *Handlers
+	repo     *testutil.MockCommandRepo
+	policies *testutil.MockAutoUpdateRepo
+	clock    *testClock
+}
+
+// newAutoEnv builds Handlers over the faithful mocks with an injected clock
+// (12:00 UTC on 2026-10-17) and the given maintenance windows.
+func newAutoEnv(t *testing.T, docker, osPatch models.MaintenanceWindow) *autoEnv {
+	t.Helper()
+	admin := testutil.NewMockAdminRepo("hash")
+	cfg, err := json.Marshal(models.AutomationConfig{OSPatch: osPatch, DockerUpdate: docker})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := admin.SetConfig(context.Background(), "automation_config", string(cfg)); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	devs := testutil.NewMockDeviceRepo()
+	devs.Devices["dev-1"] = &models.Device{ID: "dev-1", Hostname: "host", AutoPatch: true}
+	e := &autoEnv{repo: testutil.NewMockCommandRepo(), policies: testutil.NewMockAutoUpdateRepo(), clock: newTestClock()}
+	e.h = New(HandlerDeps{
+		Devices: devs, Telemetry: testutil.NewMockTelemetryRepo(), Events: testutil.NewMockEventRepo(),
+		AdminRepo: admin, CommandRepo: e.repo, AutoUpdateRepo: e.policies, Clock: e.clock.Now,
+	})
+	e.h.agents = newAgentRegistry()
+	return e
+}
+
+func anytime() models.MaintenanceWindow {
+	return models.MaintenanceWindow{Mode: "anytime", StartTime: "00:00", EndTime: "00:00", CooldownMinutes: 60}
+}
+
+func (e *autoEnv) policy(t *testing.T, target string, isStack bool, mod func(*models.AutoUpdatePolicy)) *models.AutoUpdatePolicy {
+	t.Helper()
+	p := &models.AutoUpdatePolicy{DeviceID: "dev-1", Target: target, IsStack: isStack, Enabled: true}
+	if err := e.policies.Upsert(context.Background(), p); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stored := &e.policies.Policies["dev-1"][len(e.policies.Policies["dev-1"])-1]
+	if mod != nil {
+		mod(stored)
+	}
+	return stored
+}
+
+func (e *autoEnv) dockerUpdates() []models.Command {
+	var out []models.Command
+	for _, c := range e.repo.All() {
+		if c.Action == "docker_update" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestCL_AC001_AutoUpdateDispatchIncludesNameAndID(t *testing.T) {
+	e := newAutoEnv(t, anytime(), anytime())
+	e.policy(t, "web", false, nil)
+	updateAvail := true
+	data := &models.FullTelemetryData{Docker: &models.DockerInfo{Containers: []models.ContainerInfo{
+		{ID: "abc", Name: "web", State: "running", UpdateAvailable: &updateAvail},
+	}}}
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+
+	cmds := e.dockerUpdates()
+	if assert.Len(t, cmds, 1) {
+		assert.Equal(t, "web", cmds[0].Params["container"], "[AC-001] the name is the stable identity")
+		assert.Equal(t, "abc", cmds[0].Params["container_id"], "[AC-001] legacy agents need the current id")
+		assert.Equal(t, models.OriginAutoUpdate, cmds[0].Origin)
+		if assert.NotNil(t, cmds[0].PolicyID) {
+			assert.Equal(t, e.policies.Policies["dev-1"][0].ID, *cmds[0].PolicyID)
+		}
+	}
+}
+
+func TestCL_AC008_BackoffGatesDispatch(t *testing.T) {
+	e := newAutoEnv(t, anytime(), anytime())
+	failedAt := e.clock.Now()
+	e.policy(t, "alpha", false, func(p *models.AutoUpdatePolicy) {
+		p.ConsecutiveFailures = 1
+		p.LastFailureAt = &failedAt
+	})
+	data := makeTelemetryWithUpdates("alpha")
+
+	e.clock.Advance(14 * time.Minute)
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+	assert.Empty(t, e.dockerUpdates(), "[AC-008] no dispatch at T+14m (backoff is 15m for n=1)")
+
+	e.clock.Advance(2 * time.Minute) // T+16m
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+	assert.Len(t, e.dockerUpdates(), 1, "[AC-008] one dispatch at T+16m")
+}
+
+func TestBackoffGrowsWithConsecutiveFailures(t *testing.T) {
+	e := newAutoEnv(t, anytime(), anytime())
+	failedAt := e.clock.Now()
+	e.policy(t, "alpha", false, func(p *models.AutoUpdatePolicy) {
+		p.ConsecutiveFailures = 3 // 60 minutes
+		p.LastFailureAt = &failedAt
+	})
+	data := makeTelemetryWithUpdates("alpha")
+
+	e.clock.Advance(59 * time.Minute)
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+	assert.Empty(t, e.dockerUpdates(), "n=3 backs off for 60 minutes")
+
+	e.clock.Advance(time.Minute)
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+	assert.Len(t, e.dockerUpdates(), 1, "the boundary instant is eligible")
+}
+
+func TestCL_AC010_NoDispatchWhilePolicyCommandRunning(t *testing.T) {
+	e := newAutoEnv(t, anytime(), anytime())
+	pol := e.policy(t, "alpha", false, nil)
+	now := e.clock.Now()
+	dl := now.Add(time.Hour)
+	policyID := pol.ID
+	e.repo.Commands["running-cmd"] = &models.Command{
+		ID: "running-cmd", DeviceID: "dev-1", Action: "docker_update", Params: map[string]interface{}{"container": "alpha"},
+		Status: "running", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour), ExecDeadlineS: 2100,
+		DeadlineAt: &dl, Origin: models.OriginAutoUpdate, PolicyID: &policyID, TargetKeys: []string{"docker:container:alpha"},
+	}
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", makeTelemetryWithUpdates("alpha"))
+
+	assert.Len(t, e.dockerUpdates(), 1, "[AC-010] no new command while the policy command is running")
+}
+
+func TestCL_AC012_OutsideWindowNoDispatch(t *testing.T) {
+	night := models.MaintenanceWindow{Mode: "window", StartTime: "02:00", EndTime: "03:00", CooldownMinutes: 60}
+	e := newAutoEnv(t, night, anytime())
+	failedAt := e.clock.Now().Add(-24 * time.Hour)
+	e.policy(t, "alpha", false, func(p *models.AutoUpdatePolicy) {
+		p.ConsecutiveFailures = 1
+		p.LastFailureAt = &failedAt // backoff long elapsed
+	})
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", makeTelemetryWithUpdates("alpha")) // 12:00 UTC
+
+	assert.Empty(t, e.dockerUpdates(), "[AC-012] backoff must never let a dispatch happen outside the window")
+
+	e.clock.Advance(14*time.Hour + 30*time.Minute) // 02:30 next day
+	e.h.checkAutoUpdates(context.Background(), "dev-1", makeTelemetryWithUpdates("alpha"))
+	assert.Len(t, e.dockerUpdates(), 1, "inside the window the elapsed backoff allows the retry")
+}
+
+func TestCL_AC030_AutoPatchExpiryCappedAtWindowEnd(t *testing.T) {
+	window := models.MaintenanceWindow{Mode: "window", StartTime: "08:00", EndTime: "11:00", CooldownMinutes: 60}
+	e := newAutoEnv(t, anytime(), window)
+	e.clock.Advance(-70 * time.Minute) // 10:50, ten minutes before the window closes
+	now := e.clock.Now()
+
+	e.h.checkAutoPatch(context.Background(), "dev-1", &models.FullTelemetryData{Updates: &models.UpdateInfo{PendingUpdates: 2}})
+
+	cmds := osUpdateCommands(e.repo)
+	if assert.Len(t, cmds, 1, "now=%s must be inside 08:00-11:00", now) {
+		assert.True(t, cmds[0].ExpiresAt.Equal(now.Add(10*time.Minute)),
+			"[AC-030] expires_at must be the window end (T+10m), got %s", cmds[0].ExpiresAt)
+	}
+}
+
+func TestMaintenanceWindowEnd(t *testing.T) {
+	day := func(h, m int) time.Time { return time.Date(2026, 10, 17, h, m, 0, 0, time.UTC) }
+	cases := []struct {
+		name string
+		w    models.MaintenanceWindow
+		now  time.Time
+		want time.Time
+	}{
+		{"same-day window", models.MaintenanceWindow{Mode: "window", StartTime: "09:00", EndTime: "17:00"}, day(10, 0), day(17, 0)},
+		{"overnight, before midnight", models.MaintenanceWindow{Mode: "window", StartTime: "23:00", EndTime: "05:00"}, day(23, 30), day(5, 0).AddDate(0, 0, 1)},
+		{"overnight, after midnight", models.MaintenanceWindow{Mode: "window", StartTime: "23:00", EndTime: "05:00"}, day(2, 0), day(5, 0)},
+		{"anytime has no end", models.MaintenanceWindow{Mode: "anytime"}, day(10, 0), time.Time{}},
+		{"disabled has no end", models.MaintenanceWindow{Mode: "disabled"}, day(10, 0), time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.True(t, maintenanceWindowEnd(tc.w, tc.now).Equal(tc.want))
+		})
+	}
+}
+
+func TestCL_AC072_AutoUpdateConflictSkipLogsNoBackoff(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	e := newAutoEnv(t, anytime(), anytime())
+	pol := e.policy(t, "alpha", false, nil)
+	now := e.clock.Now()
+	e.repo.Commands["manual"] = &models.Command{
+		ID: "manual", DeviceID: "dev-1", Action: "docker_update", Params: map[string]interface{}{"container": "alpha"},
+		Status: "queued", CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour), ExecDeadlineS: 2100,
+		Origin: models.OriginUser, TargetKeys: []string{"docker:container:alpha"},
+	}
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", makeTelemetryWithUpdates("alpha"))
+
+	assert.Len(t, e.dockerUpdates(), 1, "[AC-072] no new row on a target conflict")
+	assert.Contains(t, buf.String(), "auto-dispatch conflict skip", "[AC-072] a log entry is written")
+	assert.Contains(t, buf.String(), "existing_command_id=manual")
+	assert.Zero(t, pol.ConsecutiveFailures, "[AC-072] a conflict must not count toward the backoff")
+}
+
+func TestCheckAutoUpdates_StaggerOnlyConsumedByRealDispatch(t *testing.T) {
+	e := newAutoEnv(t, models.MaintenanceWindow{Mode: "anytime", CooldownMinutes: 60, StaggerSeconds: 600}, anytime())
+	e.policy(t, "alpha", false, nil)
+	e.policy(t, "bravo", false, nil)
+	now := e.clock.Now()
+	e.repo.Commands["manual"] = &models.Command{
+		ID: "manual", DeviceID: "dev-1", Action: "docker_update", Params: map[string]interface{}{"container": "alpha"},
+		Status: "running", CreatedAt: now.Add(-time.Hour), UpdatedAt: now, ExpiresAt: now.Add(time.Hour), ExecDeadlineS: 2100,
+		Origin: models.OriginUser, TargetKeys: []string{"docker:container:alpha"},
+	}
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", makeTelemetryWithUpdates("alpha", "bravo"))
+
+	assert.Len(t, e.dockerUpdates(), 2, "alpha's conflict is skipped and must not use up the stagger slot, so bravo dispatches")
+}

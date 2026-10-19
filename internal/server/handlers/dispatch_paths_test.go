@@ -106,7 +106,7 @@ func TestCL_AC075_AllDispatchPathsUniform(t *testing.T) {
 			assert.Contains(t, []int{http.StatusCreated, http.StatusConflict}, rec.Code)
 		}},
 		{"dispatchAutoUpdate", "docker_update", true, func(e *pathEnv) {
-			e.h.dispatchAutoUpdate(ctx, "dev-1", &models.AutoUpdatePolicy{ID: 7, DeviceID: "dev-1", Target: "web"}, map[string]interface{}{"container": "web"})
+			e.h.dispatchAutoUpdate(ctx, "dev-1", &models.AutoUpdatePolicy{ID: 7, DeviceID: "dev-1", Target: "web"}, time.Time{}, map[string]interface{}{"container": "web"})
 		}},
 		{"checkAutoPatch", "os_update", true, func(e *pathEnv) {
 			e.h.checkAutoPatch(ctx, "dev-1", &models.FullTelemetryData{Updates: &models.UpdateInfo{PendingUpdates: 3}})
@@ -193,7 +193,7 @@ func TestCL_AC075_ManualConflictIs409WithExistingID(t *testing.T) {
 
 func TestAutoDispatch_CarriesOriginAndPolicy(t *testing.T) {
 	e := newPathEnv(t, false)
-	e.h.dispatchAutoUpdate(context.Background(), "dev-1", &models.AutoUpdatePolicy{ID: 7, DeviceID: "dev-1", Target: "web"}, map[string]interface{}{"container": "web"})
+	e.h.dispatchAutoUpdate(context.Background(), "dev-1", &models.AutoUpdatePolicy{ID: 7, DeviceID: "dev-1", Target: "web"}, time.Time{}, map[string]interface{}{"container": "web"})
 	e.h.checkAutoPatch(context.Background(), "dev-1", &models.FullTelemetryData{Updates: &models.UpdateInfo{PendingUpdates: 1}})
 
 	upd := e.commandsOf("docker_update")

@@ -182,15 +182,15 @@ func (h *Handlers) loadAutomationConfig(ctx context.Context) models.AutomationCo
 	return cfg
 }
 
-// inMaintenanceWindow checks if the current UTC time falls within the maintenance window.
-func inMaintenanceWindow(w models.MaintenanceWindow) bool {
+// inMaintenanceWindow checks if now (UTC) falls within the maintenance window.
+func inMaintenanceWindow(w models.MaintenanceWindow, now time.Time) bool {
 	switch w.Mode {
 	case "disabled":
 		return false
 	case "anytime":
 		return true
 	case "window":
-		now := time.Now().UTC()
+		now = now.UTC()
 		if !frequencyAllowsDay(w, now) {
 			return false
 		}
@@ -306,13 +306,13 @@ func validTimeStr(s string) bool {
 // sent to this device recently (within 10 minutes). This prevents "check for
 // updates" from silently triggering an auto-update — the user should see the
 // result first and decide whether to update manually.
-func (h *Handlers) checkAutoUpdatesSuppressed(ctx context.Context, deviceID string) bool {
+func (h *Handlers) checkAutoUpdatesSuppressed(ctx context.Context, deviceID string, now time.Time) bool {
 	cmds, err := h.commandRepo.ListByDevice(ctx, deviceID, 10)
 	if err != nil {
 		return false
 	}
 	for _, cmd := range cmds {
-		if cmd.Action == "docker_check_updates" && time.Since(cmd.CreatedAt) < 10*time.Minute {
+		if cmd.Action == "docker_check_updates" && now.Sub(cmd.CreatedAt) < 10*time.Minute {
 			return true
 		}
 	}
@@ -331,25 +331,27 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 	if h.autoUpdateRepo == nil || h.commandRepo == nil || data.Docker == nil {
 		return
 	}
+	now := h.clock()
 
 	// Suppress auto-updates when a manual "check for updates" was recently issued.
 	// The user expects to see the result and decide — not have it auto-applied.
-	if h.checkAutoUpdatesSuppressed(ctx, deviceID) {
+	if h.checkAutoUpdatesSuppressed(ctx, deviceID, now) {
 		return
 	}
 
 	// Check maintenance window
 	cfg := h.loadAutomationConfig(ctx)
-	if !inMaintenanceWindow(cfg.DockerUpdate) {
+	if !inMaintenanceWindow(cfg.DockerUpdate, now) {
 		return
 	}
 	cooldown := time.Duration(cfg.DockerUpdate.CooldownMinutes) * time.Minute
+	windowEnd := maintenanceWindowEnd(cfg.DockerUpdate, now)
 	stagger := time.Duration(cfg.DockerUpdate.StaggerSeconds) * time.Second
 
 	// Stagger gate: if the last docker_update for this device was within the
 	// stagger window, skip the entire pass.
 	if stagger > 0 {
-		if last := h.lastDockerUpdateAt(ctx, deviceID); !last.IsZero() && time.Since(last) < stagger {
+		if last := h.lastDockerUpdateAt(ctx, deviceID); !last.IsZero() && now.Sub(last) < stagger {
 			return
 		}
 	}
@@ -384,12 +386,12 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 		if project != "" && workDir != "" {
 			if pol, ok := policyMap[project]; ok && pol.IsStack && !triggeredStacks[project] {
-				if !recentlyTriggered(pol, cooldown) {
-					h.dispatchAutoUpdate(ctx, deviceID, pol, map[string]interface{}{
+				if !recentlyTriggered(pol, cooldown, now) && !pol.InBackoff(now) {
+					dispatched := h.dispatchAutoUpdate(ctx, deviceID, pol, windowEnd, map[string]interface{}{
 						"compose_work_dir": workDir,
 					})
 					triggeredStacks[project] = true
-					if stagger > 0 {
+					if dispatched && stagger > 0 {
 						return
 					}
 				}
@@ -397,14 +399,17 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 			}
 		}
 
-		// Check for container-level policy
+		// Check for container-level policy. The name is the stable identity
+		// (container IDs change on every recreate); the current ID is sent as
+		// well because legacy agents resolve by ID only (FR-001, D-008).
 		name := c.Name
 		if pol, ok := policyMap[name]; ok && !pol.IsStack {
-			if !recentlyTriggered(pol, cooldown) {
-				h.dispatchAutoUpdate(ctx, deviceID, pol, map[string]interface{}{
-					"container": name,
+			if !recentlyTriggered(pol, cooldown, now) && !pol.InBackoff(now) {
+				dispatched := h.dispatchAutoUpdate(ctx, deviceID, pol, windowEnd, map[string]interface{}{
+					"container":    name,
+					"container_id": c.ID,
 				})
-				if stagger > 0 {
+				if dispatched && stagger > 0 {
 					return
 				}
 			}
@@ -430,29 +435,52 @@ func (h *Handlers) lastDockerUpdateAt(ctx context.Context, deviceID string) time
 }
 
 // recentlyTriggered returns true if the policy was triggered within the cooldown period.
-func recentlyTriggered(p *models.AutoUpdatePolicy, cooldown time.Duration) bool {
-	return p.LastTriggeredAt != nil && time.Since(*p.LastTriggeredAt) < cooldown
+func recentlyTriggered(p *models.AutoUpdatePolicy, cooldown time.Duration, now time.Time) bool {
+	return p.LastTriggeredAt != nil && now.Sub(*p.LastTriggeredAt) < cooldown
 }
 
 // dispatchAutoUpdate creates a docker_update command through the command
-// service. The cooldown is no longer started here: the service records the
-// policy outcome when the command reaches a terminal state (AD-007).
-func (h *Handlers) dispatchAutoUpdate(ctx context.Context, deviceID string, pol *models.AutoUpdatePolicy, params map[string]interface{}) {
+// service and reports whether one was created. The cooldown is not started
+// here: the service records the policy outcome when the command reaches a
+// terminal state (AD-007). A target conflict skips the dispatch and is logged;
+// it does not count toward the backoff (FR-061). windowEnd caps expires_at for a
+// window-mode maintenance window (FR-025).
+func (h *Handlers) dispatchAutoUpdate(ctx context.Context, deviceID string, pol *models.AutoUpdatePolicy, windowEnd time.Time, params map[string]interface{}) bool {
 	policyID := pol.ID
 	res, err := h.cmdSvc().Dispatch(ctx, commands.DispatchRequest{
 		DeviceID: deviceID, Action: models.ActionDockerUpdate, Params: params,
-		Origin: models.OriginAutoUpdate, PolicyID: &policyID,
+		Origin: models.OriginAutoUpdate, PolicyID: &policyID, WindowEnd: windowEnd,
 	})
 	if err != nil {
 		slog.Error("auto-update: dispatch command", "device_id", deviceID, "target", pol.Target, "error", err.Error())
-		return
+		return false
 	}
 	if res.Conflict != nil {
 		slog.Info("auto-dispatch conflict skip", "device_id", deviceID, "origin", models.OriginAutoUpdate,
 			"target", pol.Target, "existing_command_id", res.Conflict.ID, "target_key", res.ConflictKey)
-		return
+		return false
 	}
 	slog.Info("auto-update triggered", "device", deviceID, "target", pol.Target, "is_stack", pol.IsStack)
+	return true
+}
+
+// maintenanceWindowEnd returns the end of the window now falls in, or the zero
+// time when the mode is not "window" (anytime has no end). It is only
+// meaningful while inMaintenanceWindow(w, now) holds. An overnight window that
+// started before midnight ends on the next calendar day.
+func maintenanceWindowEnd(w models.MaintenanceWindow, now time.Time) time.Time {
+	if w.Mode != "window" {
+		return time.Time{}
+	}
+	now = now.UTC()
+	startMin := parseTimeStr(w.StartTime)
+	endMin := parseTimeStr(w.EndTime)
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	end := midnight.Add(time.Duration(endMin) * time.Minute)
+	if startMin > endMin && now.Hour()*60+now.Minute() >= startMin {
+		end = end.AddDate(0, 0, 1)
+	}
+	return end
 }
 
 // SetAutoPatch handles PUT /api/v1/devices/{id}/auto-patch.
@@ -479,6 +507,7 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 	if h.commandRepo == nil || data.Updates == nil || data.Updates.PendingUpdates == 0 {
 		return
 	}
+	now := h.clock()
 
 	autoPatch, err := h.devices.GetAutoPatch(ctx, deviceID)
 	if err != nil || !autoPatch {
@@ -487,7 +516,7 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 
 	// Check maintenance window
 	cfg := h.loadAutomationConfig(ctx)
-	if !inMaintenanceWindow(cfg.OSPatch) {
+	if !inMaintenanceWindow(cfg.OSPatch, now) {
 		return
 	}
 	cooldown := time.Duration(cfg.OSPatch.CooldownMinutes) * time.Minute
@@ -498,7 +527,7 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		return
 	}
 	for _, cmd := range cmds {
-		if cmd.Action == "os_update" && time.Since(cmd.CreatedAt) < cooldown {
+		if cmd.Action == "os_update" && now.Sub(cmd.CreatedAt) < cooldown {
 			return // Already sent recently
 		}
 	}
@@ -514,6 +543,7 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 
 	res, err := h.cmdSvc().Dispatch(ctx, commands.DispatchRequest{
 		DeviceID: deviceID, Action: models.ActionOSUpdate, Params: params, Origin: models.OriginAutoPatch,
+		WindowEnd: maintenanceWindowEnd(cfg.OSPatch, now),
 	})
 	if err != nil {
 		slog.Error("auto-patch: dispatch command", "device_id", deviceID, "error", err.Error())
