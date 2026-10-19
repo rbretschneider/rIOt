@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
@@ -250,3 +251,75 @@ func TestQA_AC011_WorkDirOnlyFormAcceptsEitherSpellingOfASymlinkedDir(t *testing
 
 // helper so the compile fails loudly if the fixture API changes
 var _ = os.ModeDir
+
+// Covers AC-019 and the QA-D2 security ruling (condition 1). When the writable
+// source above the unreadable one is itself unreadable, only the lexical
+// ancestor test can see it: the resolved-prefix test skips unresolved sources.
+// A container that mounts the outer source as root could replace the inner path
+// component with a symlink, so the inner source must not be accepted through
+// its prefix. Added by QA Engineer.
+func TestQA_AC019_FallbackRefusedWhenTheSourceAboveIsAlsoUnreadable(t *testing.T) {
+	x := newTrustFx(t)
+	_, outer := x.sandboxSource() // /home/sandbox/data, EACCES
+	inner := filepath.Join(outer, "sub")
+	x.fs.evalErr[filepath.Clean(inner)] = syscall.EACCES
+	x.writer("inner", bindRW(inner, "/inner"))
+
+	te := x.refuse(ruleContainerWritable)
+
+	assert.Contains(t, te.Error(), "above it", "[AC-019] the unreadable ancestor source blocks the fallback")
+}
+
+// Covers AC-020 and QA-D3. The implementation report names
+// TestComposeTrust_AC020_BOMPrefixedEnvIsParsed, but no such test was committed;
+// this one exercises the BOM handling. Added by QA Engineer.
+func TestQA_AC020_BOMPrefixedEnvIsParsed(t *testing.T) {
+	x := newTrustFx(t)
+	x.file("base.yml", 0, 0, 0644, "")
+	x.file("extra.yml", 0, 0, 0644, "")
+	x.file(".env", 0, 0, 0644, "\xef\xbb\xbfCOMPOSE_FILE=base.yml:extra.yml\r\nFOO=1\r\n")
+
+	td := x.accept()
+
+	assert.Equal(t, []string{filepath.Join(x.dir, "base.yml"), filepath.Join(x.dir, "extra.yml")}, td.Files(),
+		"[AC-020] a leading byte order mark does not hide COMPOSE_FILE")
+}
+
+// Covers AC-020 and QA-D3. A form the agent cannot read with certainty is still
+// refused when it follows a BOM. Added by QA Engineer.
+func TestQA_AC020_BOMDoesNotWeakenRefusal(t *testing.T) {
+	x := newTrustFx(t)
+	x.file(".env", 0, 0, 0644, "\xef\xbb\xbfCOMPOSE_FILE=$X\n")
+	x.refuse(ruleEnvUnparsed)
+}
+
+// Covers AC-020 and QA-D4. The implementation report names
+// TestComposeTrust_AC020_OnlyExactKeysAreParsed, but no such test was committed.
+// Only COMPOSE_FILE and COMPOSE_PATH_SEPARATOR themselves are candidates; other
+// variables that merely start with those names are ignored, and the exact keys
+// in a form the agent cannot read are still refused. Added by QA Engineer.
+func TestQA_AC020_OnlyExactKeysAreParsed(t *testing.T) {
+	for _, env := range []string{
+		"COMPOSE_FILES_DIR=/data\n",
+		"COMPOSE_FILE_EXTRA=$HOME\n",
+		"export COMPOSE_FILES_DIR=a\n",
+		"COMPOSE_PATH_SEPARATORS=|\n",
+		"COMPOSE_FILEX\n",
+	} {
+		x := newTrustFx(t)
+		x.file(".env", 0, 0, 0644, env)
+		td := x.accept()
+		assert.Equal(t, []string{filepath.Join(x.dir, "compose.yaml")}, td.Files(), "[AC-020] %q is another variable", env)
+	}
+	for _, env := range []string{
+		"COMPOSE_FILE\n",
+		"COMPOSE_FILE =a.yml\n",
+		"export COMPOSE_FILE=a.yml\n",
+		"COMPOSE_PATH_SEPARATOR\n",
+		"  COMPOSE_FILE=$X\n",
+	} {
+		x := newTrustFx(t)
+		x.file(".env", 0, 0, 0644, env)
+		x.refuse(ruleEnvUnparsed)
+	}
+}

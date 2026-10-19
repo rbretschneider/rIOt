@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// QA DEFECT REPRODUCTIONS (AUTOUPD-HARDEN-001). Each test below FAILS on the
-// current implementation on purpose. They are the repro for a defect in
-// docs/qa/AUTOUPD-HARDEN-001-qa-report.md and go green when senior dev fixes it.
-// Added by QA Engineer.
+// QA DEFECT REPRODUCTIONS (AUTOUPD-HARDEN-001). These were written red in QA
+// round 1 as the repro for a defect in docs/qa/AUTOUPD-HARDEN-001-qa-report.md.
+// Senior dev fixed both in QA round 1 fixes, so they now guard against a
+// regression. Added by QA Engineer.
 
 // QA-D1. A stack whose working-dir label is a symlink path ends up with mixed
 // labels after the agent recreates only some services: compose runs at the
