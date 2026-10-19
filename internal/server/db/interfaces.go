@@ -151,12 +151,6 @@ type CommandRepository interface {
 	ListOverdue(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)
 	SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error
 	GetCommandOutput(ctx context.Context, commandID string) ([]models.CommandOutput, error)
-
-	// Transitional: removed once every caller goes through commands.Service.
-	Create(ctx context.Context, cmd *models.Command) error
-	UpdateStatus(ctx context.Context, id, status, resultMsg string) error
-	UpdateCommandResult(ctx context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error
-	ListPending(ctx context.Context, deviceID string) ([]models.Command, error)
 }
 
 // ProbeRepository defines the interface for probe database operations.
@@ -250,9 +244,6 @@ type AutoUpdateRepository interface {
 	// stamps last_failure_at.
 	RecordSuccess(ctx context.Context, id int, at time.Time) error
 	RecordFailure(ctx context.Context, id int, at time.Time) error
-
-	// Transitional: removed with the unguarded dispatch paths.
-	SetLastTriggered(ctx context.Context, id int) error
 }
 
 // DeviceProbeRepository defines the interface for device probe operations.

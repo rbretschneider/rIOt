@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // ListAutoUpdates handles GET /api/v1/devices/{id}/auto-updates.
@@ -434,42 +434,24 @@ func recentlyTriggered(p *models.AutoUpdatePolicy, cooldown time.Duration) bool 
 	return p.LastTriggeredAt != nil && time.Since(*p.LastTriggeredAt) < cooldown
 }
 
-// dispatchAutoUpdate creates a docker_update command and sends it via WS or queues it.
+// dispatchAutoUpdate creates a docker_update command through the command
+// service. The cooldown is no longer started here: the service records the
+// policy outcome when the command reaches a terminal state (AD-007).
 func (h *Handlers) dispatchAutoUpdate(ctx context.Context, deviceID string, pol *models.AutoUpdatePolicy, params map[string]interface{}) {
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   "docker_update",
-		Params:   params,
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(ctx, cmd); err != nil {
-		slog.Error("auto-update: create command", "error", err.Error())
+	policyID := pol.ID
+	res, err := h.cmdSvc().Dispatch(ctx, commands.DispatchRequest{
+		DeviceID: deviceID, Action: models.ActionDockerUpdate, Params: params,
+		Origin: models.OriginAutoUpdate, PolicyID: &policyID,
+	})
+	if err != nil {
+		slog.Error("auto-update: dispatch command", "device_id", deviceID, "target", pol.Target, "error", err.Error())
 		return
 	}
-
-	// Try WS delivery
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
-			h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-update: ws send failed")
-		} else {
-			h.commandRepo.UpdateStatus(ctx, cmd.ID, "sent", "auto-update")
-		}
-	} else {
-		h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-update: agent not connected")
+	if res.Conflict != nil {
+		slog.Info("auto-dispatch conflict skip", "device_id", deviceID, "origin", models.OriginAutoUpdate,
+			"target", pol.Target, "existing_command_id", res.Conflict.ID, "target_key", res.ConflictKey)
+		return
 	}
-
-	h.autoUpdateRepo.SetLastTriggered(ctx, pol.ID)
 	slog.Info("auto-update triggered", "device", deviceID, "target", pol.Target, "is_stack", pol.IsStack)
 }
 
@@ -530,37 +512,17 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		params["include_reboot_class"] = true
 	}
 
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   "os_update",
-		Params:   params,
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(ctx, cmd); err != nil {
-		slog.Error("auto-patch: create command", "error", err.Error())
+	res, err := h.cmdSvc().Dispatch(ctx, commands.DispatchRequest{
+		DeviceID: deviceID, Action: models.ActionOSUpdate, Params: params, Origin: models.OriginAutoPatch,
+	})
+	if err != nil {
+		slog.Error("auto-patch: dispatch command", "device_id", deviceID, "error", err.Error())
 		return
 	}
-
-	// Try WS delivery
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
-			h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-patch: ws send failed")
-		} else {
-			h.commandRepo.UpdateStatus(ctx, cmd.ID, "sent", "auto-patch")
-		}
-	} else {
-		h.commandRepo.UpdateStatus(ctx, cmd.ID, "queued", "auto-patch: agent not connected")
+	if res.Conflict != nil {
+		slog.Info("auto-dispatch conflict skip", "device_id", deviceID, "origin", models.OriginAutoPatch,
+			"existing_command_id", res.Conflict.ID, "target_key", res.ConflictKey)
+		return
 	}
 
 	slog.Info("auto-patch triggered", "device", deviceID, "pending_updates", data.Updates.PendingUpdates)

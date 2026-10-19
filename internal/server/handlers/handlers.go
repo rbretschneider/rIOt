@@ -14,10 +14,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
@@ -59,6 +61,12 @@ type HandlerDeps struct {
 	OIDC                 *oidc.Service
 	ExternalIdentityRepo db.ExternalIdentityRepository
 	SetupComplete        *atomic.Bool
+
+	// CMD-LIFECYCLE-001: Commands is built once in server.Start so it survives a
+	// router rebuild; nil makes handlers.New build a default service over
+	// CommandRepo. Clock is the time source (nil means time.Now).
+	Commands *commands.Service
+	Clock    func() time.Time
 }
 
 type Handlers struct {
@@ -98,10 +106,83 @@ type Handlers struct {
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
 	serverHostID atomic.Value // stores string
+
+	// CMD-LIFECYCLE-001: the command service (built lazily from commandRepo when
+	// not injected), the injectable clock and the agent connection registry
+	// (nil means the shared default).
+	commands *commands.Service
+	cmdOnce  sync.Once
+	now      func() time.Time
+	agents   *agentRegistry
+}
+
+// clock returns the current UTC time from the injected clock.
+func (h *Handlers) clock() time.Time {
+	if h.now != nil {
+		return h.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// cmdSvc returns the command service, building a default one from the
+// Handlers' own collaborators when none was injected (tests construct Handlers
+// directly). Typed nils are never assigned to the service's interfaces.
+func (h *Handlers) cmdSvc() *commands.Service {
+	h.cmdOnce.Do(func() {
+		if h.commands != nil {
+			return
+		}
+		opts := commands.Options{Commands: h.commandRepo, Agents: agentSender{reg: h.registry()}, Now: h.now}
+		if h.autoUpdateRepo != nil {
+			opts.Policies = h.autoUpdateRepo
+		}
+		if h.telemetry != nil {
+			opts.Telemetry = h.telemetry
+		}
+		if h.hub != nil {
+			opts.Broadcaster = h.hub
+		}
+		if h.eventGen != nil {
+			opts.Events = NewCompletionEvents(h.eventGen, h.devices)
+		}
+		h.commands = commands.New(opts)
+	})
+	return h.commands
+}
+
+// completionAdapter gives the command service its hostname-free
+// CompletionEvents view of the event generator.
+type completionAdapter struct {
+	gen     *events.Generator
+	devices db.DeviceRepository
+}
+
+func (a completionAdapter) CommandCompleted(ctx context.Context, deviceID, action, status, message string) {
+	hostname := deviceID
+	if len(hostname) > 8 {
+		hostname = hostname[:8]
+	}
+	if a.devices != nil {
+		if d, err := a.devices.GetByID(ctx, deviceID); err == nil && d != nil {
+			hostname = d.Hostname
+		}
+	}
+	a.gen.CommandCompleted(ctx, deviceID, hostname, action, status, message)
+}
+
+// NewCompletionEvents adapts the event generator for the command service. It
+// returns a nil interface when gen is nil.
+func NewCompletionEvents(gen *events.Generator, devices db.DeviceRepository) commands.CompletionEvents {
+	if gen == nil {
+		return nil
+	}
+	return completionAdapter{gen: gen, devices: devices}
 }
 
 func New(deps HandlerDeps) *Handlers {
 	return &Handlers{
+		commands:          deps.Commands,
+		now:               deps.Clock,
 		devices:           deps.Devices,
 		telemetry:         deps.Telemetry,
 		events:            deps.Events,
@@ -305,17 +386,12 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	// Include pending commands in the heartbeat response for agents without WS
 	resp := map[string]interface{}{"status": "ok"}
 	if h.commandRepo != nil {
-		pending, err := h.commandRepo.ListPending(r.Context(), deviceID)
-		if err == nil && len(pending) > 0 {
-			var payloads []models.CommandPayload
-			for _, cmd := range pending {
-				payloads = append(payloads, models.CommandPayload{
-					CommandID: cmd.ID,
-					Action:    cmd.Action,
-					Params:    cmd.Params,
-				})
-				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "delivered via heartbeat")
-			}
+		// One atomic claim: the response carries only commands this heartbeat
+		// claimed, and never an expired or cancelled one (FR-026, FR-062).
+		payloads, err := h.cmdSvc().ClaimForHeartbeat(r.Context(), deviceID)
+		if err != nil {
+			slog.Error("claim commands for heartbeat", "device_id", deviceID, "error", err.Error())
+		} else if len(payloads) > 0 {
 			resp["pending_commands"] = payloads
 		}
 	}
@@ -531,7 +607,7 @@ func (h *Handlers) ListDevices(w http.ResponseWriter, r *http.Request) {
 	for i, d := range devices {
 		result[i] = deviceWithConn{
 			Device:         d,
-			AgentConnected: IsAgentConnected(d.ID),
+			AgentConnected: h.registry().connected(d.ID),
 			HasAutoUpdate:  hasAny[d.ID],
 		}
 	}
@@ -552,7 +628,7 @@ func (h *Handlers) GetDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"device":           device,
 		"latest_telemetry": latest,
-		"agent_connected":  IsAgentConnected(id),
+		"agent_connected":  h.registry().connected(id),
 	})
 }
 
@@ -708,10 +784,7 @@ func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 
 	// If uninstall requested, try to send uninstall command to connected agent
 	if uninstall {
-		agentConnections.RLock()
-		ac := agentConnections.m[id]
-		agentConnections.RUnlock()
-		if ac != nil {
+		if ac := h.registry().get(id); ac != nil {
 			payload := models.CommandPayload{
 				CommandID: uuid.New().String(),
 				Action:    "agent_uninstall",

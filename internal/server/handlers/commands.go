@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 var validActions = map[string]bool{
@@ -55,48 +55,19 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		delete(req.Params, "include_reboot_class")
 	}
 
-	// Create command record
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   req.Action,
-		Params:   req.Params,
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create command", "error", err.Error())
+	res, err := h.cmdSvc().Dispatch(r.Context(), commands.DispatchRequest{
+		DeviceID: deviceID, Action: req.Action, Params: req.Params,
+	})
+	if err != nil {
+		slog.Error("dispatch command", "device_id", deviceID, "action", req.Action, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Try to send via WS if agent is connected; otherwise queue for heartbeat pickup
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{
-			Type: "command",
-			Data: payloadJSON,
-		}); err != nil {
-			slog.Warn("send command via ws failed, queued for heartbeat", "error", err.Error())
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat delivery")
-			cmd.Status = "queued"
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-			cmd.Status = "sent"
-		}
-	} else {
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected, queued for heartbeat delivery")
-		cmd.Status = "queued"
-		slog.Info("command queued for heartbeat delivery", "id", cmd.ID, "device", deviceID, "action", req.Action)
+	if res.Conflict != nil {
+		writeCommandConflict(w, res.Conflict, res.ConflictKey)
+		return
 	}
+	cmd := res.Command
 
 	// Emit informational event for all commands
 	if device, err := h.devices.GetByID(r.Context(), deviceID); err == nil {
@@ -107,7 +78,21 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, cmd)
 }
 
+// writeCommandConflict answers 409 for a create that hit an in-flight command
+// on the same target (BR-008).
+func writeCommandConflict(w http.ResponseWriter, existing *models.Command, targetKey string) {
+	writeJSON(w, http.StatusConflict, models.CommandConflictResponse{
+		Error:             models.ConflictMessage,
+		Code:              models.CodeConflict,
+		ExistingCommandID: existing.ID,
+		ExistingStatus:    existing.Status,
+		TargetKey:         targetKey,
+	})
+}
+
 // BulkDockerUpdate handles POST /api/v1/devices/{id}/docker/bulk-update.
+// Targets that conflict with an in-flight command are skipped and reported; the
+// rest get one docker_bulk_update. When every target conflicts the answer is 409.
 func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 
@@ -123,45 +108,32 @@ func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a single command for the bulk update
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   "docker_bulk_update",
-		Params:   map[string]interface{}{"container_ids": req.ContainerIDs},
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create bulk update command", "error", err.Error())
+	res, err := h.cmdSvc().DispatchBulkDocker(r.Context(), deviceID, req.ContainerIDs)
+	if err != nil {
+		slog.Error("dispatch bulk update", "device_id", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Try WS delivery
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed")
-			cmd.Status = "queued"
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-			cmd.Status = "sent"
-		}
-	} else {
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected")
-		cmd.Status = "queued"
+	conflicts := res.Conflicts
+	if conflicts == nil {
+		conflicts = []models.BulkConflict{}
 	}
-
-	writeJSON(w, http.StatusCreated, cmd)
+	if res.Command == nil && len(conflicts) == 0 {
+		http.Error(w, `{"error":"container_ids is required"}`, http.StatusBadRequest)
+		return
+	}
+	if res.Command == nil {
+		first := conflicts[0]
+		writeJSON(w, http.StatusConflict, models.CommandConflictResponse{
+			Error:             models.ConflictMessage,
+			Code:              models.CodeConflict,
+			ExistingCommandID: first.ExistingCommandID,
+			TargetKey:         first.TargetKey,
+			Conflicts:         conflicts,
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, models.BulkCommandResponse{Command: *res.Command, Conflicts: conflicts})
 }
 
 // ListDeviceCommands handles GET /api/v1/devices/{id}/commands.

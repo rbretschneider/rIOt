@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 // ListAllDeviceProbes handles GET /api/v1/device-probes.
@@ -184,47 +184,20 @@ func (h *Handlers) RunDeviceProbe(w http.ResponseWriter, r *http.Request) {
 		"timeout_seconds": probe.TimeoutSeconds,
 	}
 
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   "run_device_probe",
-		Params:   params,
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create run_device_probe command", "error", err.Error())
+	res, err := h.cmdSvc().Dispatch(r.Context(), commands.DispatchRequest{
+		DeviceID: deviceID, Action: "run_device_probe", Params: params,
+	})
+	if err != nil {
+		slog.Error("dispatch run_device_probe command", "device_id", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Try to send via WS if agent is connected
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{
-			Type: "command",
-			Data: payloadJSON,
-		}); err != nil {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat delivery")
-			cmd.Status = "queued"
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-			cmd.Status = "sent"
-		}
-	} else {
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected, queued for heartbeat delivery")
-		cmd.Status = "queued"
+	if res.Conflict != nil {
+		writeCommandConflict(w, res.Conflict, res.ConflictKey)
+		return
 	}
 
-	writeJSON(w, http.StatusCreated, cmd)
+	writeJSON(w, http.StatusCreated, res.Command)
 }
 
 // GetDeviceProbeResults handles GET /api/v1/devices/{id}/device-probes/{pid}/results.

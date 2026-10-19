@@ -83,59 +83,6 @@ func scanCommands(rows pgx.Rows) ([]models.Command, error) {
 	return commands, nil
 }
 
-// Create inserts a new command without a conflict check.
-func (r *CommandRepo) Create(ctx context.Context, cmd *models.Command) error {
-	now := time.Now().UTC()
-	cmd.CreatedAt = now
-	cmd.UpdatedAt = now
-	if cmd.ExpiresAt.IsZero() {
-		cmd.ExpiresAt = models.ExpiresAt(cmd.Action, now, time.Time{})
-	}
-	if cmd.ExecDeadlineS == 0 {
-		cmd.ExecDeadlineS = models.ExecDeadlineSeconds(cmd.Action, 1)
-	}
-	paramsJSON, err := json.Marshal(cmd.Params)
-	if err != nil {
-		return err
-	}
-	_, err = r.db.Pool.Exec(ctx,
-		`INSERT INTO commands (id, device_id, action, params, status, result_msg, created_at, updated_at, expires_at, exec_deadline_s)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		cmd.ID, cmd.DeviceID, cmd.Action, paramsJSON, cmd.Status, cmd.ResultMsg, cmd.CreatedAt, cmd.UpdatedAt,
-		cmd.ExpiresAt, cmd.ExecDeadlineS)
-	return err
-}
-
-// UpdateStatus updates the status and result of a command.
-func (r *CommandRepo) UpdateStatus(ctx context.Context, id, status, resultMsg string) error {
-	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE commands SET status=$1, result_msg=$2, updated_at=NOW() WHERE id=$3`,
-		status, resultMsg, id)
-	return err
-}
-
-// UpdateCommandResult updates status, result message, duration, and exit code of a command.
-func (r *CommandRepo) UpdateCommandResult(ctx context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error {
-	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE commands SET status=$1, result_msg=$2, duration_ms=$3, exit_code=$4, updated_at=NOW() WHERE id=$5`,
-		status, resultMsg, durationMs, exitCode, id)
-	return err
-}
-
-// ListPending returns commands with status "pending" or "queued" for a device.
-func (r *CommandRepo) ListPending(ctx context.Context, deviceID string) ([]models.Command, error) {
-	rows, err := r.db.Pool.Query(ctx,
-		`SELECT `+commandColumns+`
-		 FROM commands WHERE device_id=$1 AND status IN (`+queuedStatusList+`)
-		 ORDER BY created_at ASC LIMIT 10`,
-		deviceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanCommands(rows)
-}
-
 // CreateIfNoConflict inserts cmd unless a non-terminal command on the same
 // device already holds one of its target keys (BR-008). The check and the
 // insert run in one transaction under a per-device advisory lock, because a

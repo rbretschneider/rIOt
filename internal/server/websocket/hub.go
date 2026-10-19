@@ -119,8 +119,10 @@ func (h *Hub) BroadcastDockerUpdate(deviceID string, data interface{}) {
 	h.broadcastMsg(WSMessage{Type: "docker_update", DeviceID: deviceID, Data: data})
 }
 
-func (h *Hub) BroadcastCommandResult(deviceID string, commandID string, data interface{}) {
-	h.broadcastMsg(WSMessage{Type: "command_result", DeviceID: deviceID, Data: data})
+// BroadcastCommandUpdate pushes one accepted command transition to the
+// dashboards (FR-079). It replaces the old command_result message.
+func (h *Hub) BroadcastCommandUpdate(u models.CommandUpdate) {
+	h.broadcastMsg(WSMessage{Type: "command_update", DeviceID: u.DeviceID, Data: u})
 }
 
 func (h *Hub) BroadcastProbeResult(probeID int64, data interface{}) {

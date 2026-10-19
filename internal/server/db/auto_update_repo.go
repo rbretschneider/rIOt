@@ -75,10 +75,3 @@ func (r *AutoUpdateRepo) RecordFailure(ctx context.Context, id int, at time.Time
 		 WHERE id=$2`, at, id)
 	return err
 }
-
-func (r *AutoUpdateRepo) SetLastTriggered(ctx context.Context, id int) error {
-	_, err := r.db.Pool.Exec(ctx,
-		`UPDATE auto_update_policies SET last_triggered_at=$1 WHERE id=$2`,
-		time.Now().UTC(), id)
-	return err
-}

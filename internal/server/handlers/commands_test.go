@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -236,7 +237,7 @@ func TestGetCommandOutput_EmptyOutput(t *testing.T) {
 	assert.Empty(t, outputs)
 }
 
-func TestMockCommandRepo_UpdateCommandResult(t *testing.T) {
+func TestMockCommandRepo_TransitionAppliesResult(t *testing.T) {
 	repo := testutil.NewMockCommandRepo()
 	repo.Commands["cmd-1"] = &models.Command{
 		ID: "cmd-1", DeviceID: "dev-1", Action: "os_update", Status: "sent",
@@ -244,14 +245,19 @@ func TestMockCommandRepo_UpdateCommandResult(t *testing.T) {
 
 	dur := int64(5000)
 	ec := 0
-	err := repo.UpdateCommandResult(nil, "cmd-1", "success", "done", &dur, &ec)
+	msg := "done"
+	got, applied, err := repo.Transition(context.Background(), models.CommandTransition{
+		ID: "cmd-1", DeviceID: "dev-1", Actor: models.ActorAgent, To: models.CommandSucceeded,
+		ResultMsg: &msg, DurationMs: &dur, ExitCode: &ec, Now: time.Now(),
+	})
 	require.NoError(t, err)
+	require.True(t, applied, "a legacy sent row accepts a final result like dispatched")
 
-	cmd := repo.Commands["cmd-1"]
-	assert.Equal(t, "success", cmd.Status)
-	assert.Equal(t, "done", cmd.ResultMsg)
-	assert.Equal(t, int64(5000), *cmd.DurationMs)
-	assert.Equal(t, 0, *cmd.ExitCode)
+	assert.Equal(t, "succeeded", got.Status)
+	assert.Equal(t, "done", got.ResultMsg)
+	assert.Equal(t, int64(5000), *got.DurationMs)
+	assert.Equal(t, 0, *got.ExitCode)
+	assert.Equal(t, "succeeded", repo.Commands["cmd-1"].Status, "the stored row is canonical after a transition")
 }
 
 func TestMockCommandRepo_SaveAndGetOutput(t *testing.T) {

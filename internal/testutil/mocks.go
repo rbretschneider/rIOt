@@ -821,6 +821,17 @@ func (m *MockCommandRepo) CallCount(method string) int {
 	return n
 }
 
+// All returns normalized copies of every stored command (test helper; not recorded).
+func (m *MockCommandRepo) All() []models.Command {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]models.Command, 0, len(m.Commands))
+	for _, c := range m.Commands {
+		out = append(out, copyCommand(c))
+	}
+	return out
+}
+
 // Get returns a normalized copy of a stored command (test helper; not recorded).
 func (m *MockCommandRepo) Get(id string) (models.Command, bool) {
 	m.mu.Lock()
@@ -1276,62 +1287,6 @@ func (m *MockCommandRepo) GetCommandOutput(_ context.Context, commandID string) 
 		return nil, nil
 	}
 	return m.Outputs[commandID], nil
-}
-
-// Transitional methods (removed with the unguarded dispatch paths).
-
-func (m *MockCommandRepo) Create(_ context.Context, cmd *models.Command) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.begin("Create"); err != nil {
-		return err
-	}
-	stored := *cmd
-	m.Commands[cmd.ID] = &stored
-	return nil
-}
-
-func (m *MockCommandRepo) UpdateStatus(_ context.Context, id, status, resultMsg string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.begin("UpdateStatus"); err != nil {
-		return err
-	}
-	if cmd, ok := m.Commands[id]; ok {
-		cmd.Status = status
-		cmd.ResultMsg = resultMsg
-	}
-	return nil
-}
-
-func (m *MockCommandRepo) UpdateCommandResult(_ context.Context, id, status, resultMsg string, durationMs *int64, exitCode *int) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.begin("UpdateCommandResult"); err != nil {
-		return err
-	}
-	if cmd, ok := m.Commands[id]; ok {
-		cmd.Status = status
-		cmd.ResultMsg = resultMsg
-		cmd.DurationMs = durationMs
-		cmd.ExitCode = exitCode
-	}
-	return nil
-}
-
-func (m *MockCommandRepo) ListPending(_ context.Context, deviceID string) ([]models.Command, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.begin("ListPending"); err != nil {
-		return nil, err
-	}
-	var result []models.Command
-	for _, cmd := range m.Commands {
-		if cmd.DeviceID == deviceID && (cmd.Status == "pending" || cmd.Status == "queued") {
-			result = append(result, *cmd)
-		}
-	}
-	return result, nil
 }
 
 // --- MockProbeRepo ---
@@ -1930,10 +1885,6 @@ func (m *MockAutoUpdateRepo) RecordFailure(_ context.Context, id int, at time.Ti
 		p.LastFailureAt = &t
 	}
 	return nil
-}
-
-func (m *MockAutoUpdateRepo) SetLastTriggered(_ context.Context, id int) error {
-	return m.Err
 }
 
 // --- MockContainerLogRepo ---
