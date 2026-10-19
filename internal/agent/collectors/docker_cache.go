@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"time"
 )
 
 // FreshnessCachePath returns the OS-specific path for the Docker image
@@ -48,10 +47,12 @@ func (c *DockerCollector) loadFreshnessCache() {
 		return
 	}
 
-	// Prune entries that have exceeded the TTL (FR-014).
+	// Prune entries that have exceeded their TTL (FR-014): 30m, or 5m for a
+	// failed check.
+	now := c.clockNow()
 	pruned := make(map[string]*imageFreshness, len(loaded))
 	for ref, entry := range loaded {
-		if time.Since(entry.CheckedAt) < freshnessCacheTTL {
+		if entry != nil && now.Sub(entry.CheckedAt) < entry.ttl() {
 			pruned[ref] = entry
 		}
 	}
@@ -73,10 +74,11 @@ func (c *DockerCollector) saveFreshnessCache() {
 	}
 
 	// Build a pruned snapshot under read lock.
+	now := c.clockNow()
 	c.cacheMu.RLock()
 	snapshot := make(map[string]*imageFreshness, len(c.digestCache))
 	for ref, entry := range c.digestCache {
-		if time.Since(entry.CheckedAt) < freshnessCacheTTL {
+		if now.Sub(entry.CheckedAt) < entry.ttl() {
 			snapshot[ref] = entry
 		}
 	}

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/system"
 	"github.com/docker/docker/client"
 
@@ -30,9 +32,31 @@ type DockerCollector struct {
 	cacheMu     sync.RWMutex
 	digestCache map[string]*imageFreshness
 	cacheOnce   sync.Once
+
+	// Test seams: the clock and the manifest-list lookup. Nil = real.
+	now             func() time.Time
+	manifestInspect func(ctx context.Context, ref string) ([]byte, error)
+}
+
+// clockNow returns the collector's clock (injectable for the negative-TTL tests).
+func (c *DockerCollector) clockNow() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 const freshnessCacheTTL = 30 * time.Minute
+
+// freshnessFailedTTL is how long a failed registry check is cached (FR-051).
+const freshnessFailedTTL = 5 * time.Minute
+
+// Registry comparison results cached per image reference.
+const (
+	resultNewer  = "newer"  // the registry has a different (newer) image than the local tag
+	resultSame   = "same"   // the registry digest matches the local tag
+	resultFailed = "failed" // the registry check failed
+)
 
 // perCallTimeout is the per-call timeout applied to every individual Docker
 // API call and subprocess invocation (FR-019).
@@ -45,12 +69,22 @@ const (
 	networkModeWorkerLimit = 10
 )
 
-// imageFreshness caches the result of a single image freshness check.
-// Fields are exported so encoding/json can serialize them for disk persistence
-// (AD-004). The struct remains unexported; only its fields are exported.
+// imageFreshness caches the registry comparison for one image reference
+// (AD-016). LocalImageID is the image ID the tag resolved to when the check ran:
+// the entry is only reused while the tag still resolves to it. Fields are
+// exported so encoding/json can serialize them for disk persistence (AD-004).
 type imageFreshness struct {
-	UpdateAvailable *bool     `json:"update_available"`
-	CheckedAt       time.Time `json:"checked_at"`
+	LocalImageID string    `json:"local_image_id"`
+	Result       string    `json:"result"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
+// ttl is how long the entry stays valid: 30m, or 5m for a failed check.
+func (e *imageFreshness) ttl() time.Duration {
+	if e.Result == resultFailed {
+		return freshnessFailedTTL
+	}
+	return freshnessCacheTTL
 }
 
 func (c *DockerCollector) Name() string { return "docker" }
@@ -112,7 +146,7 @@ func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
 
 	// Phase 2: Check for image updates (BR-004)
 	if c.CheckUpdates {
-		c.checkImageUpdates(ctx, cli, info.Containers)
+		c.checkImageUpdates(ctx, sdkFreshness{cli}, info.Containers)
 	}
 
 	// Phase 3: Collect network modes for dependency awareness (BR-004)
@@ -199,6 +233,7 @@ func containerFromAPI(c container.Summary) models.ContainerInfo {
 
 	ci := models.ContainerInfo{
 		ID:       c.ID,
+		ImageID:  c.ImageID,
 		ShortID:  shortID,
 		Name:     name,
 		Image:    c.Image,
@@ -433,105 +468,169 @@ func (c *DockerCollector) InvalidateFreshness(refs ...string) {
 	c.saveFreshnessCache()
 }
 
-// checkImageUpdates queries registries to determine if running container images
-// have newer versions available. Results are cached for 30 minutes in-memory
-// and on disk. Uses a bounded worker pool (FR-005, FR-006). Each individual
-// registry API call has a per-call timeout (FR-007, FR-008, FR-019). A failure
-// for one image does not affect others (FR-018).
-func (c *DockerCollector) checkImageUpdates(ctx context.Context, cli *client.Client, containers []models.ContainerInfo) {
+// freshnessAPI is the part of the Docker client the freshness check uses. Tests
+// supply a fake registry and local image store.
+type freshnessAPI interface {
+	DistributionInspect(ctx context.Context, imageRef, encodedRegistryAuth string) (registry.DistributionInspect, error)
+	ImageInspect(ctx context.Context, imageRef string) (image.InspectResponse, error)
+}
+
+// sdkFreshness adapts *client.Client to freshnessAPI (the SDK's ImageInspect is
+// variadic).
+type sdkFreshness struct{ *client.Client }
+
+func (s sdkFreshness) ImageInspect(ctx context.Context, imageRef string) (image.InspectResponse, error) {
+	return s.Client.ImageInspect(ctx, imageRef)
+}
+
+// isPinnedRef reports whether an image reference is immutable: a bare sha256 ID
+// or a reference containing @sha256: (FR-050).
+func isPinnedRef(ref string) bool {
+	return strings.HasPrefix(ref, "sha256:") || strings.Contains(ref, "@sha256:")
+}
+
+// refVerdict is what one image reference resolved to this cycle: the image ID
+// its tag currently has locally and the cached or fresh registry comparison.
+type refVerdict struct {
+	localID     string
+	result      string // resultNewer, resultSame or resultFailed
+	localFailed bool
+}
+
+// checkImageUpdates computes a freshness verdict per running container (AD-016).
+// Registry lookups are cached per image reference (30m, or 5m when the check
+// failed), so containers on the same tag cost one lookup but can still get
+// different verdicts: the verdict also compares the container's own image ID
+// with the image the tag now resolves to locally. Uses a bounded worker pool
+// (FR-005, FR-006). Each individual API call has a per-call timeout (FR-007,
+// FR-008, FR-019). A failure for one image does not affect others (FR-018).
+func (c *DockerCollector) checkImageUpdates(ctx context.Context, api freshnessAPI, containers []models.ContainerInfo) {
 	// Load the on-disk cache exactly once across all Collect() calls (AD-006).
 	c.cacheOnce.Do(func() { c.loadFreshnessCache() })
 
+	byRef := map[string][]int{}
+	var refs []string
+	for i := range containers {
+		if containers[i].State != "running" || containers[i].Image == "" {
+			continue
+		}
+		ref := containers[i].Image
+		if isPinnedRef(ref) {
+			setPinned(&containers[i])
+			continue
+		}
+		if _, ok := byRef[ref]; !ok {
+			refs = append(refs, ref)
+		}
+		byRef[ref] = append(byRef[ref], i)
+	}
+
+	verdicts := make(map[string]refVerdict, len(refs))
+	var vmu sync.Mutex
 	sem := make(chan struct{}, freshnessWorkerLimit)
 	var wg sync.WaitGroup
-
-	for i := range containers {
-		if containers[i].State != "running" {
-			continue
-		}
-		imageRef := containers[i].Image
-		if imageRef == "" {
-			continue
-		}
-
-		// Check in-memory cache before spawning a goroutine. Cache hits never
-		// consume a semaphore slot (AD-001, section 7.3 note).
-		c.cacheMu.RLock()
-		if c.digestCache != nil {
-			if cached, ok := c.digestCache[imageRef]; ok && time.Since(cached.CheckedAt) < freshnessCacheTTL {
-				containers[i].UpdateAvailable = cached.UpdateAvailable
-				c.cacheMu.RUnlock()
-				continue
-			}
-		}
-		c.cacheMu.RUnlock()
-
+	for _, ref := range refs {
 		wg.Add(1)
-		go func(idx int, ref string) {
+		go func(ref string) {
 			defer wg.Done()
 
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			callCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
-			defer cancel()
-
-			result := c.checkSingleImage(callCtx, cli, ref)
-
-			c.cacheMu.Lock()
-			if c.digestCache == nil {
-				c.digestCache = make(map[string]*imageFreshness)
-			}
-			c.digestCache[ref] = &imageFreshness{
-				UpdateAvailable: result,
-				CheckedAt:       time.Now(),
-			}
-			c.cacheMu.Unlock()
-
-			containers[idx].UpdateAvailable = result
-		}(i, imageRef)
+			v := c.verdictForRef(ctx, api, ref)
+			vmu.Lock()
+			verdicts[ref] = v
+			vmu.Unlock()
+		}(ref)
 	}
-
 	wg.Wait()
+
+	for ref, idxs := range byRef {
+		for _, i := range idxs {
+			applyVerdict(&containers[i], verdicts[ref])
+		}
+	}
 
 	// Persist the updated cache to disk once after the entire phase completes
 	// (AD-003, section 7.6).
 	c.saveFreshnessCache()
 }
 
-// checkSingleImage compares the local image digest with the remote registry digest.
-// Returns nil if the check fails (unknown), *true if update available, *false if up to date.
-func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Client, imageRef string) *bool {
-	// Skip images pinned by digest — they are immutable
-	if strings.Contains(imageRef, "@sha256:") {
-		f := false
-		return &f
+func setPinned(ci *models.ContainerInfo) {
+	f := false
+	ci.UpdateStatus, ci.UpdateReason, ci.UpdateAvailable = models.UpdateStatusPinned, "", &f
+}
+
+// applyVerdict sets UpdateStatus, UpdateReason and the legacy UpdateAvailable
+// consistently: true only for update_available, false for up_to_date, nil for
+// check_failed.
+func applyVerdict(ci *models.ContainerInfo, v refVerdict) {
+	yes, no := true, false
+	ci.UpdateReason = ""
+	switch {
+	case v.localFailed:
+		ci.UpdateStatus, ci.UpdateAvailable = models.UpdateStatusFailed, nil
+	case ci.ImageID != "" && ci.ImageID != v.localID:
+		ci.UpdateStatus, ci.UpdateReason, ci.UpdateAvailable = models.UpdateStatusAvailable, models.UpdateReasonPulledNotRecreated, &yes
+	case v.result == resultNewer:
+		ci.UpdateStatus, ci.UpdateReason, ci.UpdateAvailable = models.UpdateStatusAvailable, models.UpdateReasonRegistryNewer, &yes
+	case v.result == resultSame:
+		ci.UpdateStatus, ci.UpdateAvailable = models.UpdateStatusUpToDate, &no
+	default:
+		ci.UpdateStatus, ci.UpdateAvailable = models.UpdateStatusFailed, nil
+	}
+}
+
+// verdictForRef inspects the tag's local image once and returns the registry
+// comparison, from the cache when it is still valid for this local image.
+func (c *DockerCollector) verdictForRef(ctx context.Context, api freshnessAPI, ref string) refVerdict {
+	localCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+	local, err := api.ImageInspect(localCtx, ref)
+	cancel()
+	if err != nil {
+		slog.Debug("image freshness: local inspect failed", "image", ref, "error", err)
+		return refVerdict{localFailed: true}
 	}
 
+	now := c.clockNow()
+	c.cacheMu.RLock()
+	cached, ok := c.digestCache[ref]
+	c.cacheMu.RUnlock()
+	if ok && cached.LocalImageID == local.ID && now.Sub(cached.CheckedAt) < cached.ttl() {
+		return refVerdict{localID: local.ID, result: cached.Result}
+	}
+
+	regCtx, cancel := context.WithTimeout(ctx, perCallTimeout)
+	result := c.registryResult(regCtx, api, ref, local)
+	cancel()
+
+	c.cacheMu.Lock()
+	if c.digestCache == nil {
+		c.digestCache = make(map[string]*imageFreshness)
+	}
+	c.digestCache[ref] = &imageFreshness{LocalImageID: local.ID, Result: result, CheckedAt: now}
+	c.cacheMu.Unlock()
+	return refVerdict{localID: local.ID, result: result}
+}
+
+// registryResult compares the registry digest for ref with the local image's
+// digests. A failed lookup is resultFailed, never "same" (FR-051).
+func (c *DockerCollector) registryResult(ctx context.Context, api freshnessAPI, ref string, local image.InspectResponse) string {
 	// Query registry for remote digest (empty auth works for public registries)
-	distInfo, err := cli.DistributionInspect(ctx, imageRef, "")
+	distInfo, err := api.DistributionInspect(ctx, ref, "")
 	if err != nil {
-		slog.Debug("image freshness: registry check failed", "image", imageRef, "error", err)
-		return nil // unknown
+		slog.Debug("image freshness: registry check failed", "image", ref, "error", err)
+		return resultFailed
 	}
 	remoteDigest := distInfo.Descriptor.Digest.String()
-
-	// Get local image digests
-	localInfo, _, err := cli.ImageInspectWithRaw(ctx, imageRef)
-	if err != nil {
-		slog.Debug("image freshness: local inspect failed", "image", imageRef, "error", err)
-		return nil
-	}
 
 	// Strategy 1: Direct comparison — RepoDigests contains "repo@sha256:..." strings.
 	// This works when the registry manifest digest matches the pulled image digest
 	// (single-platform images built without provenance attestations).
-	for _, rd := range localInfo.RepoDigests {
+	for _, rd := range local.RepoDigests {
 		if atIdx := strings.LastIndex(rd, "@"); atIdx != -1 {
-			localDigest := rd[atIdx+1:]
-			if localDigest == remoteDigest {
-				f := false
-				return &f // up to date
+			if rd[atIdx+1:] == remoteDigest {
+				return resultSame
 			}
 		}
 	}
@@ -544,31 +643,34 @@ func (c *DockerCollector) checkSingleImage(ctx context.Context, cli *client.Clie
 	if mt == "application/vnd.docker.distribution.manifest.v2+json" ||
 		mt == "application/vnd.oci.image.manifest.v1+json" ||
 		mt == "" {
-		// Single image manifest — direct comparison is authoritative.
-		t := true
-		return &t // update available
+		return resultNewer
 	}
 
 	// Strategy 2: Manifest list fallback — images built with buildx (provenance: true)
 	// wrap the image in an OCI index whose digest differs from the per-platform
 	// image manifest digest stored in RepoDigests.
-	if resolved := c.checkViaManifestInspect(ctx, imageRef, localInfo.RepoDigests); resolved != nil {
+	if resolved := c.checkViaManifestInspect(ctx, ref, local.RepoDigests); resolved != "" {
 		return resolved
 	}
 
 	// Manifest list but couldn't resolve sub-manifests — trust the mismatch.
-	t := true
-	return &t // update available
+	return resultNewer
 }
 
-// checkViaManifestInspect shells out to `docker manifest inspect` to get the
-// full manifest list contents, then checks if any per-platform sub-manifest
-// digest matches a local RepoDigest entry. Returns nil if the command fails
-// or the output can't be parsed (caller should fall back).
-func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef string, repoDigests []string) *bool {
-	out, err := exec.CommandContext(ctx, "docker", "manifest", "inspect", imageRef).Output()
+// checkViaManifestInspect runs `docker manifest inspect` to get the full
+// manifest list contents, then checks if any per-platform sub-manifest digest
+// matches a local RepoDigest entry. It returns "" if the command fails or the
+// output can't be parsed (the caller falls back).
+func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef string, repoDigests []string) string {
+	inspect := c.manifestInspect
+	if inspect == nil {
+		inspect = func(ctx context.Context, ref string) ([]byte, error) {
+			return exec.CommandContext(ctx, "docker", "manifest", "inspect", ref).Output()
+		}
+	}
+	out, err := inspect(ctx, imageRef)
 	if err != nil {
-		return nil
+		return ""
 	}
 
 	var idx struct {
@@ -582,10 +684,10 @@ func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef 
 		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(out, &idx); err != nil {
-		return nil
+		return ""
 	}
 	if len(idx.Manifests) == 0 {
-		return nil
+		return ""
 	}
 
 	// Build set of local digests for fast lookup
@@ -603,11 +705,8 @@ func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef 
 			continue
 		}
 		if localDigests[m.Digest] {
-			f := false
-			return &f // a platform manifest matches local — up to date
+			return resultSame // a platform manifest matches local — up to date
 		}
 	}
-
-	t := true
-	return &t // manifest list exists but no sub-manifest matches — genuine update
+	return resultNewer // manifest list exists but no sub-manifest matches — genuine update
 }
