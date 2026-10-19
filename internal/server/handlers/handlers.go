@@ -104,6 +104,15 @@ type Handlers struct {
 	// re-registration. nil unless mTLS is active (see HandlerDeps.CARepo).
 	caRepo db.CARepository
 
+	// ingestClock is the server receive-time source for telemetry and heartbeat
+	// timestamp clamping (REG-HARDEN-001). nil (the production default) means
+	// time.Now; tests inject a fixed clock so clamp boundaries are
+	// deterministic. Never set outside tests.
+	ingestClock func() time.Time
+	// clampLog debounces the clamp log entries. nil is allowed (every clamp
+	// logs), so struct-literal Handlers in tests need not set it.
+	clampLog *clampLogLimiter
+
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
 	serverHostID atomic.Value // stores string
@@ -137,6 +146,7 @@ func New(deps HandlerDeps) *Handlers {
 		externalIdentityRepo: deps.ExternalIdentityRepo,
 		setupComplete:        deps.SetupComplete,
 		caRepo:               deps.CARepo,
+		clampLog:             newClampLogLimiter(),
 	}
 }
 
@@ -307,8 +317,14 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hb.DeviceID = deviceID
-	if hb.Timestamp.IsZero() {
-		hb.Timestamp = time.Now().UTC()
+	// Clamp, never reject: a timestamp beyond the skew allowance is stored as
+	// the receive time; a zero timestamp defaults to it (REG-HARDEN-001).
+	received := h.ingestNow()
+	sentAt := hb.Timestamp
+	var clamped bool
+	hb.Timestamp, clamped = clampFutureTimestamp(sentAt, received)
+	if clamped {
+		h.noteClamp(deviceID, clampKindHeartbeat, sentAt, received)
 	}
 
 	if err := h.telemetry.StoreHeartbeat(r.Context(), &hb); err != nil {
@@ -373,8 +389,15 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snap.DeviceID = deviceID
-	if snap.Timestamp.IsZero() {
-		snap.Timestamp = time.Now().UTC()
+	// Clamp, never reject (REG-HARDEN-001). This runs before the size check,
+	// StoreSnapshot and the detached post-work goroutine, so container metrics
+	// derived from the snapshot carry the same clamped timestamp.
+	received := h.ingestNow()
+	sentAt := snap.Timestamp
+	var clamped bool
+	snap.Timestamp, clamped = clampFutureTimestamp(sentAt, received)
+	if clamped {
+		h.noteClamp(deviceID, clampKindSnapshot, sentAt, received)
 	}
 
 	// Extract logs BEFORE storing the snapshot so they don't bloat the JSONB blob.
