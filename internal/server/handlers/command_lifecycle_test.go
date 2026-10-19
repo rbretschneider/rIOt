@@ -12,12 +12,16 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// router mounts the command routes exactly as the real router does, minus auth.
+// router mounts the command routes exactly as the real router does. Admin
+// auth is omitted; the report route gets a stand-in for DeviceAuth that
+// authenticates the request as the device named in the URL, so a test that
+// reports as "dev-2" is an authenticated dev-2 agent.
 func (e *lcEnv) router() http.Handler {
 	r := chi.NewRouter()
 	r.Route("/api/v1/devices/{id}", func(r chi.Router) {
@@ -26,10 +30,30 @@ func (e *lcEnv) router() http.Handler {
 		r.Get("/commands/{commandId}", e.h.GetCommand)
 		r.Post("/commands/{commandId}/cancel", e.h.CancelCommand)
 		r.Get("/commands/{commandId}/output", e.h.GetCommandOutput)
-		r.Post("/commands/{commandId}/report", e.h.AgentCommandReport)
+		r.With(testDeviceAuth).Post("/commands/{commandId}/report", e.h.AgentCommandReport)
 		r.Post("/docker/bulk-update", e.h.BulkDockerUpdate)
 	})
 	return r
+}
+
+// testDeviceAuth sets the authenticated device the way middleware.DeviceAuth does.
+func testDeviceAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), middleware.DeviceIDKey, chi.URLParam(r, "id"))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// QA A-1: a report request that never passed through DeviceAuth is rejected
+// rather than trusting the URL device id.
+func TestCL_SEC_ReportWithoutDeviceAuthFailsClosed(t *testing.T) {
+	e := newLCEnv(t)
+	r := chi.NewRouter()
+	r.Post("/api/v1/devices/{id}/commands/{commandId}/report", e.h.AgentCommandReport)
+	req := httptest.NewRequest("POST", "/api/v1/devices/dev-1/commands/"+uid(1)+"/report", strings.NewReader(`{"kind":"ack"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func (e *lcEnv) call(method, path, body string) *httptest.ResponseRecorder {

@@ -247,6 +247,10 @@ func (h *Handlers) CancelCommand(w http.ResponseWriter, r *http.Request) {
 // transition). The device scope of every write is the authenticated device.
 func (h *Handlers) AgentCommandReport(w http.ResponseWriter, r *http.Request) {
 	deviceID := authenticatedDeviceID(r)
+	if deviceID == "" {
+		writeJSON(w, http.StatusUnauthorized, models.ReportResponse{Error: "unauthorized"})
+		return
+	}
 	svc := h.cmdSvc()
 	if !svc.AllowReport(deviceID) {
 		writeJSON(w, http.StatusTooManyRequests, models.ReportResponse{Error: "too many requests", Code: models.CodeRateLimited})
@@ -300,13 +304,14 @@ func (h *Handlers) AgentCommandReport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// authenticatedDeviceID is the device the API key authenticated as; the URL
-// parameter is only a fallback for routes mounted without DeviceAuth (tests).
+// authenticatedDeviceID is the device the API key authenticated as, or "" when
+// the request did not pass through DeviceAuth. It never falls back to the URL
+// {id}: a route mounted without device auth must fail closed, not trust the path.
 func authenticatedDeviceID(r *http.Request) string {
 	if id, ok := r.Context().Value(middleware.DeviceIDKey).(string); ok && id != "" {
 		return id
 	}
-	return chi.URLParam(r, "id")
+	return ""
 }
 
 // GetCommandOutput handles GET /api/v1/devices/{id}/commands/{commandId}/output.
