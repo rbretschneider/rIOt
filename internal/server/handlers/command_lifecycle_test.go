@@ -689,3 +689,86 @@ func TestSendCommand_BodyAndActionValidation(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, e.call("POST", "/api/v1/devices/dev-1/docker/bulk-update", `{"container_ids":[""]}`).Code)
 	assert.Zero(t, e.repo.CallCount("CreateIfNoConflict"))
 }
+
+// ---------------------------------------------------------------------------
+// Agent contract: what the agent's outbox relies on (WP-GO-AGENT)
+// ---------------------------------------------------------------------------
+
+// TestContract_AgentReportResponsesCarryCodeAndEchoID pins the HTTP semantics the
+// agent outbox acts on: a 2xx must echo command_id (otherwise the entry is
+// kept), and every error response of the report route carries a JSON code (a
+// 404 or 405 without one makes the agent assume a legacy server and go WS-only
+// for an hour).
+func TestContract_AgentReportResponsesCarryCodeAndEchoID(t *testing.T) {
+	type tc struct {
+		name     string
+		prepare  func(e *lcEnv)
+		id       string
+		body     string
+		wantCode int
+		wantJSON string // the "code" value, "" for 2xx
+	}
+	okResult := `{"kind":"result","result":{"status":"success","outcome":"succeeded"}}`
+	cases := []tc{
+		{"accepted ack", func(e *lcEnv) { e.seed(uid(1), "dev-1", "fetch_logs", "dispatched", nil) }, uid(1), `{"kind":"ack"}`, 200, ""},
+		{"duplicate result", func(e *lcEnv) { e.seed(uid(1), "dev-1", "fetch_logs", "succeeded", nil) }, uid(1), okResult, 200, ""},
+		{"coalesced progress", func(e *lcEnv) {
+			e.seed(uid(1), "dev-1", "docker_update", "dispatched", nil)
+			e.report("dev-1", uid(1), `{"kind":"progress","state":"running","step":"pull"}`)
+		}, uid(1), `{"kind":"progress","state":"running","step":"pull"}`, 200, ""},
+		{"already terminal", func(e *lcEnv) { e.seed(uid(1), "dev-1", "fetch_logs", "failed", nil) }, uid(1), okResult, 409, "already_terminal"},
+		{"invalid transition", func(e *lcEnv) { e.seed(uid(1), "dev-1", "fetch_logs", "running", nil) }, uid(1), `{"kind":"ack"}`, 409, "invalid_transition"},
+		{"unknown command", func(e *lcEnv) {}, uid(9), `{"kind":"ack"}`, 404, "command_not_found"},
+		{"foreign command", func(e *lcEnv) { e.seed(uid(1), "dev-2", "fetch_logs", "dispatched", nil) }, uid(1), `{"kind":"ack"}`, 404, "command_not_found"},
+		{"malformed id", func(e *lcEnv) {}, "not-a-uuid", `{"kind":"ack"}`, 400, "invalid_report"},
+		{"bad kind", func(e *lcEnv) {}, uid(1), `{"kind":"x"}`, 400, "invalid_report"},
+		{"body too large", func(e *lcEnv) {}, uid(1), `{"kind":"progress","state":"running","message":"` + strings.Repeat("m", 600<<10) + `"}`, 413, "invalid_report"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newLCEnv(t)
+			c.prepare(e)
+
+			rec := e.report("dev-1", c.id, c.body)
+
+			require.Equal(t, c.wantCode, rec.Code, rec.Body.String())
+			var body map[string]interface{}
+			decode(t, rec, &body)
+			if c.wantJSON == "" {
+				assert.Equal(t, c.id, body["command_id"], "a 2xx must echo command_id or the agent keeps the entry")
+				assert.NotEmpty(t, body["result"])
+				return
+			}
+			assert.Equal(t, c.wantJSON, body["code"], "an error response must carry its JSON code")
+		})
+	}
+
+	t.Run("rate limited carries its code", func(t *testing.T) {
+		e := newLCEnv(t)
+		for i := 0; i < commands.ReportBurst; i++ {
+			e.report("dev-1", uid(1), `{"kind":"ack"}`)
+		}
+		rec := e.report("dev-1", uid(1), `{"kind":"ack"}`)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
+		assert.Contains(t, rec.Body.String(), `"code":"rate_limited"`)
+	})
+}
+
+// TestContract_WSReceiptEchoesCommandID: the agent removes the outbox entry
+// whose id the receipt names.
+func TestContract_WSReceiptEchoesCommandID(t *testing.T) {
+	e := newLCEnv(t)
+	e.seed(uid(1), "dev-1", "docker_update", "running", nil)
+
+	e.h.handleAgentMessage(context.Background(), e.conn, wsMsg(t, "command_result", models.CommandResult{
+		CommandID: uid(1), Status: "error", Outcome: models.OutcomeFailed, Step: "recreate", Stderr: "boom", Reason: models.ReasonRolledBack, Message: "rolled back to previous container",
+	}))
+
+	receipts := e.sock.receipts(t)
+	require.Len(t, receipts, 1)
+	assert.Equal(t, uid(1), receipts[0].CommandID)
+	got := e.get(uid(1))
+	assert.Equal(t, "failed", got.Status)
+	assert.Equal(t, "recreate", got.FailureStep)
+	assert.Equal(t, "boom", got.StderrTail)
+}

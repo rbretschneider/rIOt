@@ -897,3 +897,29 @@ func TestCheckAutoUpdates_StaggerOnlyConsumedByRealDispatch(t *testing.T) {
 
 	assert.Len(t, e.dockerUpdates(), 2, "alpha's conflict is skipped and must not use up the stagger slot, so bravo dispatches")
 }
+
+// A stack policy sends compose_work_dir alone, verbatim from the container's
+// working-dir label (an absolute path), never a container name or id (agent
+// contract, AD-014).
+func TestAutoUpdate_StackDispatchSendsComposeWorkDirOnly(t *testing.T) {
+	e := newAutoEnv(t, anytime(), anytime())
+	e.policy(t, "media", true, nil)
+	updateAvail := true
+	data := &models.FullTelemetryData{Docker: &models.DockerInfo{Containers: []models.ContainerInfo{{
+		ID: "id-sonarr", Name: "sonarr", State: "running", UpdateAvailable: &updateAvail,
+		Labels: map[string]string{
+			"com.docker.compose.project":             "media",
+			"com.docker.compose.service":             "sonarr",
+			"com.docker.compose.project.working_dir": "/srv/media",
+		},
+	}}}}
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+
+	cmds := e.dockerUpdates()
+	if assert.Len(t, cmds, 1) {
+		assert.Equal(t, map[string]interface{}{"compose_work_dir": "/srv/media"}, cmds[0].Params,
+			"a stack update carries compose_work_dir alone")
+		assert.Equal(t, []string{"docker:compose:/srv/media"}, cmds[0].TargetKeys)
+	}
+}
