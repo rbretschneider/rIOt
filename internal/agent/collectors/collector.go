@@ -58,7 +58,6 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 	})
 	r.Register(&ContainerLogCollector{
 		SocketPath: opts.SocketPath,
-		TailLines:  50,
 	})
 
 	// authCounter is a shared per-interval counter that LogsCollector
@@ -109,6 +108,28 @@ func (r *Registry) SetSMARTInterval(d time.Duration) {
 	for _, c := range r.ordered {
 		if hw, ok := c.(*HardwareCollector); ok {
 			hw.smartInterval = d
+			return
+		}
+	}
+}
+
+// SetContainerLogLimits sets the per-container bounds of the container_logs
+// collector (GROWTH-001 AD-017). Zero keeps the default for that bound.
+func (r *Registry) SetContainerLogLimits(maxLines, maxBytes, maxLineBytes int) {
+	for _, c := range r.ordered {
+		if cl, ok := c.(*ContainerLogCollector); ok {
+			cl.MaxLines, cl.MaxBytes, cl.MaxLineBytes = maxLines, maxBytes, maxLineBytes
+			return
+		}
+	}
+}
+
+// SetJournalLimits sets the per-pass bounds of the logs (journal) collector
+// (GROWTH-001 AD-017). Zero keeps the default for that bound.
+func (r *Registry) SetJournalLimits(maxEntries, maxLineBytes int) {
+	for _, c := range r.ordered {
+		if lc, ok := c.(*LogsCollector); ok {
+			lc.MaxEntries, lc.MaxLineBytes = maxEntries, maxLineBytes
 			return
 		}
 	}
