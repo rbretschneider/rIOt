@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
@@ -69,34 +70,6 @@ func TestCL_AC032_ShortIDPrefixNeedsTwelveCharacters(t *testing.T) {
 	assert.Equal(t, []string{"long"}, depNames(got), "[AC-032] a 12-character ID prefix identifies the parent, 8 characters do not")
 }
 
-// SEC C-9: composeArgs validates service names, requires an absolute working
-// directory, and puts names after "--".
-func TestCL_SEC011_ComposeArgsHygiene(t *testing.T) {
-	wd := composeDir(t)
-
-	args, err := composeArgs(wd, "", []string{"up", "-d", "--no-deps", "--force-recreate"}, "web-1.a_b")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"compose", "--project-directory=" + wd, "up", "-d", "--no-deps", "--force-recreate", "--", "web-1.a_b"}, args,
-		"[SEC-011] directory is one token, names come after --")
-
-	withFile, err := composeArgs(wd, wd+"/.compose.riot-sanitized.yml", []string{"pull"}, "web")
-	require.NoError(t, err)
-	assert.Contains(t, withFile, "-f="+wd+"/.compose.riot-sanitized.yml", "[SEC-011] the file is one -f= token")
-
-	stack, err := composeArgs(wd, "", []string{"pull"})
-	require.NoError(t, err)
-	assert.NotContains(t, stack, "--", "[SEC-011] no -- when there are no service names")
-
-	for _, bad := range []string{"--file=/x", "-f", "", "a b", "web;rm", "../x", ".hidden", "-d"} {
-		_, err := composeArgs(wd, "", []string{"up"}, bad)
-		assert.Error(t, err, "[SEC-011] service name %q must be rejected", bad)
-	}
-	_, err = composeArgs("relative/dir", "", []string{"up"}, "web")
-	assert.Error(t, err, "[SEC-011] a relative working directory must be rejected")
-	_, err = composeArgs("--project-directory=/x", "", []string{"up"}, "web")
-	assert.Error(t, err, "[SEC-011] a working directory that looks like a flag must be rejected")
-}
-
 // SEC C-9: a stale compose dependent whose service label looks like a flag is
 // never passed to compose; a valid one appears only after "--".
 func TestCL_SEC011_DependentServiceNameValidatedOrSeparated(t *testing.T) {
@@ -144,4 +117,82 @@ func TestCL_SEC011_DependentServiceNameValidatedOrSeparated(t *testing.T) {
 		assert.NotContains(t, argv[:sep], "app", "[SEC-011] the service name never appears before --")
 		assert.Contains(t, argv, "--force-recreate")
 	})
+}
+
+// SEC C-9: composeArgs validates project and service names, requires an
+// absolute working directory, and puts names after "--".
+func TestCL_SEC011_ComposeArgsHygiene(t *testing.T) {
+	wd := composeDir(t)
+	td := testTrusted(wd)
+	cf := filepath.Join(wd, "compose.yaml")
+
+	args, err := composeArgs(td, "stack", "", []string{"up", "-d", "--no-deps", "--force-recreate"}, "web-1.a_b")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"compose", "--project-directory=" + wd, "--project-name=stack", "-f=" + cf,
+		"up", "-d", "--no-deps", "--force-recreate", "--", "web-1.a_b"}, args,
+		"[SEC-011] directory, project and files are single tokens, names come after --")
+
+	stack, err := composeArgs(td, "stack", "", []string{"pull"})
+	require.NoError(t, err)
+	assert.NotContains(t, stack, "--", "[SEC-011] no -- when there are no service names")
+
+	for _, bad := range []string{"--file=/x", "-f", "", "a b", "web;rm", "../x", ".hidden", "-d"} {
+		_, err := composeArgs(td, "stack", "", []string{"up"}, bad)
+		assert.Error(t, err, "[SEC-011] service name %q must be rejected", bad)
+	}
+	for _, bad := range []string{"", "-x", "--project-directory=/x", "A", "a b", "a=b", "a/b"} {
+		_, err := composeArgs(td, bad, "", []string{"up"}, "web")
+		assert.Error(t, err, "[SEC-011] project name %q must be rejected", bad)
+	}
+	_, err = composeArgs(testTrusted("relative/dir"), "stack", "", []string{"up"}, "web")
+	assert.Error(t, err, "[SEC-011] a relative working directory must be rejected")
+}
+
+// AC-012: a zero trustedDir (one that never went through Check) is refused.
+func TestComposeArgs_AC012_ZeroTrustedDirRefused(t *testing.T) {
+	_, err := composeArgs(trustedDir{}, "stack", "", []string{"pull"})
+	require.Error(t, err, "[AC-012] composeArgs cannot be reached without a validated directory")
+	_, err = composeArgs(trustedDir{dir: composeDir(t)}, "stack", "", []string{"pull"})
+	require.Error(t, err, "[AC-012] a directory without validated files is refused too")
+}
+
+// AC-020: the argv carries one -f per validated file, and a sanitized copy
+// replaces the whole set.
+func TestComposeArgs_AC020_ExplicitFTokensAndSanitizedReplaces(t *testing.T) {
+	wd := composeDir(t)
+	base, over := filepath.Join(wd, "compose.yaml"), filepath.Join(wd, "compose.override.yml")
+	td := testTrusted(wd, base, over)
+
+	args, err := composeArgs(td, "stack", "", []string{"pull"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"compose", "--project-directory=" + wd, "--project-name=stack", "-f=" + base, "-f=" + over, "pull"}, args,
+		"[AC-020] every validated file is passed explicitly, in order")
+
+	san := filepath.Join(wd, sanitizedComposeName)
+	withSan, err := composeArgs(td, "stack", san, []string{"pull"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"compose", "--project-directory=" + wd, "--project-name=stack", "-f=" + san, "pull"}, withSan,
+		"[AC-020] the sanitized copy replaces the file set, as before")
+
+	_, err = composeArgs(td, "stack", filepath.Join(t.TempDir(), sanitizedComposeName), []string{"pull"})
+	assert.Error(t, err, "[AC-020] a sanitized copy outside the validated directory is refused")
+}
+
+// AC-026: the compose child gets a pinned Docker endpoint and no COMPOSE_*,
+// DOCKER_HOST or DOCKER_CONTEXT from the agent's own environment.
+func TestComposeEnv_AC026_PinsDockerHostAndDropsComposeVars(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "HOME=/home/riot", "DOCKER_CONFIG=/home/riot/.docker",
+		"COMPOSE_FILE=/evil/compose.yaml", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_PROFILES=x",
+		"DOCKER_HOST=tcp://attacker:2375", "DOCKER_CONTEXT=evil", "NOT_COMPOSE_FILE=1"}
+
+	got := composeEnv(base, "/run/docker.sock", "linux")
+	assert.ElementsMatch(t, []string{"PATH=/usr/bin", "HOME=/home/riot", "DOCKER_CONFIG=/home/riot/.docker", "NOT_COMPOSE_FILE=1",
+		"DOCKER_HOST=unix:///run/docker.sock"}, got, "[AC-026] registry-auth variables stay, steering variables go")
+
+	def := composeEnv(base, "", "linux")
+	assert.Contains(t, def, "DOCKER_HOST=unix://"+defaultDockerSocket, "[AC-026] the default socket is pinned too")
+
+	win := composeEnv([]string{"Compose_File=x", "docker_host=y", "Path=c"}, "", "windows")
+	assert.Equal(t, []string{"Path=c"}, win, "[AC-026] Windows environment names are case-insensitive")
+	assert.Equal(t, []string{"DOCKER_HOST=npipe://" + `\.\pipe\x`}, composeEnv(nil, `\.\pipe\x`, "windows"), "[AC-026] a configured pipe is pinned on Windows")
 }

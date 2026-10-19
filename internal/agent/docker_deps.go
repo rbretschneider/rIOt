@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -156,6 +157,7 @@ func failureReasons(f []restoreFailure) string {
 func (a *Agent) restoreDependents(ctx context.Context, api dockerAPI, deps []depRecord) []restoreFailure {
 	var failed []restoreFailure
 	fail := func(d depRecord, reason string) {
+		reason = models.TruncateHead(reason, 1200)
 		slog.Error("docker_update: dependent not restored", "container", d.Name, "reason", reason)
 		failed = append(failed, restoreFailure{Name: d.Name, Reason: reason})
 	}
@@ -196,7 +198,7 @@ func (a *Agent) restoreDependents(ctx context.Context, api dockerAPI, deps []dep
 				fail(d, fmt.Sprintf("network parent %q no longer matches the updated container", ref))
 				continue
 			}
-			if err := a.recreateComposeDependent(ctx, insp); err != nil {
+			if err := a.recreateComposeDependent(ctx, api, insp); err != nil {
 				fail(d, "recreate through compose: "+err.Error())
 				continue
 			}
@@ -221,16 +223,31 @@ func (a *Agent) restoreDependents(ctx context.Context, api dockerAPI, deps []dep
 
 // recreateComposeDependent rebuilds one compose service whose network reference
 // is stale: `compose up -d --no-deps --force-recreate -- <service>` with the
-// 90s fallback limit (AD-014). The service name and working directory come from
-// container labels and go through composeArgs validation.
-func (a *Agent) recreateComposeDependent(ctx context.Context, insp container.InspectResponse) error {
+// 90s fallback limit (AD-014). The working directory and project come from the
+// dependent's labels, so they pass the same trust check as every other compose
+// invocation, against a fresh daemon snapshot (AUTOUPD-HARDEN-001 AD-002). A
+// refusal is that dependent's restore failure.
+func (a *Agent) recreateComposeDependent(ctx context.Context, api dockerAPI, insp container.InspectResponse) error {
 	workDir := insp.Config.Labels[models.LabelComposeWorkingDir]
+	project := insp.Config.Labels[models.LabelComposeProject]
 	service := insp.Config.Labels[models.LabelComposeService]
-	args, err := composeArgs(workDir, "", []string{"up", "-d", "--no-deps", "--force-recreate"}, service)
+	if project == "" {
+		return errors.New("the dependent has no compose project label")
+	}
+	snap, err := loadDaemonSnapshot(ctx, api)
+	if err != nil {
+		return snapshotRefusal(workDir, err)
+	}
+	td, err := a.composeTrust().Check(snap, trustRequest{Dir: workDir, Project: project, SourceID: insp.ID})
+	if err != nil {
+		slog.Warn("docker_update: dependent compose directory refused", "container", summaryOfInspect(insp), "refusal", err.Error())
+		return err
+	}
+	args, err := composeArgs(td, project, "", []string{"up", "-d", "--no-deps", "--force-recreate"}, service)
 	if err != nil {
 		return err
 	}
-	out, timedOut, err := runLimited(ctx, a.newProc("docker", args...), models.DependentComposeUpLimit, models.ChildGrace, a.clock())
+	out, timedOut, err := runLimited(ctx, a.newProc("docker", a.composeChildEnv(), args...), models.DependentComposeUpLimit, models.ChildGrace, a.clock())
 	if timedOut {
 		return fmt.Errorf("timed out after %s", models.FormatDurationShort(models.DependentComposeUpLimit))
 	}
@@ -238,4 +255,9 @@ func (a *Agent) recreateComposeDependent(ctx context.Context, insp container.Ins
 		return fmt.Errorf("%w: %s", err, truncateOutput(out, 500))
 	}
 	return nil
+}
+
+// summaryOfInspect names an inspected container for a log line, length-capped.
+func summaryOfInspect(insp container.InspectResponse) string {
+	return models.TruncateHead(strings.TrimPrefix(insp.Name, "/"), maxRefusalValueBytes)
 }

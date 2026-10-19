@@ -30,7 +30,7 @@ func TestCL_SEC005_SanitizedFileRefusesPreexistingSymlink(t *testing.T) {
 	link := filepath.Join(dir, sanitizedComposeName)
 	require.NoError(t, os.Symlink(victim, link))
 
-	_, err := sanitizeComposeFile(dir)
+	_, err := sanitizeComposeFile(testTrusted(dir))
 
 	require.Error(t, err, "[SEC-005] a symlink at the target name must fail the step")
 	assert.Contains(t, err.Error(), "refusing to write sanitized compose file")
@@ -99,7 +99,7 @@ func TestCL_SEC005_SanitizedFileRemovedOnEveryExit(t *testing.T) {
 		{name: "pull failure", wantStatus: "error", wantStep: models.StepPull,
 			configure: func(h *dockerHarness) func([]string, *fakeProcess) {
 				return func(args []string, p *fakeProcess) {
-					if contains(args, "pull") && containsPrefix(args, "-f=") {
+					if contains(args, "pull") && isSanitizedF(args) {
 						p.exitErr, p.out = errors.New("exit status 1"), []byte("pull access denied")
 					}
 				}
@@ -136,7 +136,7 @@ func TestCL_SEC005_SanitizedFileRemovedOnEveryExit(t *testing.T) {
 			}
 			h.procs.configure = func(args []string, p *fakeProcess) {
 				switch {
-				case contains(args, "pull") && !containsPrefix(args, "-f="):
+				case contains(args, "pull") && !isSanitizedF(args):
 					// the first pull trips compose's file validation
 					p.exitErr, p.out = errors.New("exit status 1"), []byte(validationFailure)
 					return
@@ -182,7 +182,7 @@ func TestCL_SEC005_SanitizedPathRecordedBeforeCreation(t *testing.T) {
 	path := filepath.Join(dir, sanitizedComposeName)
 	var markerBefore string
 	h.procs.configure = func(args []string, p *fakeProcess) {
-		if contains(args, "pull") && !containsPrefix(args, "-f=") {
+		if contains(args, "pull") && !isSanitizedF(args) {
 			p.exitErr, p.out = errors.New("exit status 1"), []byte(validationFailure)
 			return
 		}
@@ -206,6 +206,7 @@ func TestCL_SEC005_StartupRemovesLeftoverSanitizedFile(t *testing.T) {
 	t.Run("marker-recorded file", func(t *testing.T) {
 		h := newDockerHarness(t)
 		dir := composeDir(t)
+		h.composeService(dir, "web", true, "") // recovery removes the copy only from a directory that passes the trust check
 		path := filepath.Join(dir, sanitizedComposeName)
 		require.NoError(t, os.WriteFile(path, []byte("services: {}\n"), 0600))
 		h.interrupted(models.StepPull, dockerRecord{Key: "compose:" + dir, SanitizedFile: path})

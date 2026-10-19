@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/system"
+	"github.com/docker/docker/api/types/volume"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -30,6 +33,7 @@ type fakeContainer struct {
 	Labels      map[string]string
 	NetworkMode string
 	Config      *container.Config
+	Mounts      []container.MountPoint
 }
 
 // fakeDocker is an in-memory Docker daemon implementing dockerAPI. Every call is
@@ -58,6 +62,15 @@ type fakeDocker struct {
 	// ctxs records, per call, the context error and remaining deadline.
 	ctxInfo map[string]ctxSnapshot
 
+	// dataRoot is what Info reports as the Docker data root; empty means
+	// /var/lib/docker.
+	dataRoot string
+	// volumes holds volumes by name; an unknown one is reported as a plain local
+	// volume under the data root.
+	volumes map[string]volume.Volume
+	// imageLabels maps an image ID to the labels its config defines.
+	imageLabels map[string]map[string]string
+
 	log *eventLog
 }
 
@@ -68,7 +81,10 @@ type ctxSnapshot struct {
 }
 
 func newFakeDocker() *fakeDocker {
-	return &fakeDocker{images: map[string]string{}, pulledID: "sha256:new", ctxInfo: map[string]ctxSnapshot{}}
+	return &fakeDocker{
+		images: map[string]string{}, pulledID: "sha256:new", ctxInfo: map[string]ctxSnapshot{},
+		volumes: map[string]volume.Volume{}, imageLabels: map[string]map[string]string{},
+	}
 }
 
 // add registers a container and returns it.
@@ -201,7 +217,7 @@ func (f *fakeDocker) summary(c *fakeContainer) container.Summary {
 	}
 	s := container.Summary{
 		ID: c.ID, Names: []string{"/" + c.Name}, Image: c.Image, ImageID: c.ImageID,
-		State: state, Labels: c.Labels,
+		State: state, Labels: c.Labels, Mounts: c.Mounts,
 	}
 	s.HostConfig.NetworkMode = c.NetworkMode
 	return s
@@ -382,11 +398,46 @@ func (f *fakeDocker) ImageInspect(ctx context.Context, ref string) (image.Inspec
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	id, ok := f.images[ref]
-	if !ok {
-		return image.InspectResponse{}, errors.New("No such image: " + ref)
+	if id, ok := f.images[ref]; ok {
+		return image.InspectResponse{ID: id}, nil
 	}
-	return image.InspectResponse{ID: id}, nil
+	// An image ID (what the snapshot asks for) resolves to its configured labels.
+	if strings.HasPrefix(ref, "sha256:") {
+		resp := image.InspectResponse{ID: ref}
+		if labels, ok := f.imageLabels[ref]; ok {
+			allocImageConfig(&resp.Config)
+			resp.Config.Labels = labels
+		}
+		return resp, nil
+	}
+	return image.InspectResponse{}, errors.New("No such image: " + ref)
+}
+
+// allocImageConfig sets *pp to a new zero value without naming its type, which
+// lives in a transitive module the agent does not import directly.
+func allocImageConfig[T any](pp **T) { *pp = new(T) }
+
+func (f *fakeDocker) Info(ctx context.Context) (system.Info, error) {
+	if err := f.begin(ctx, "info"); err != nil {
+		return system.Info{}, err
+	}
+	root := f.dataRoot
+	if root == "" {
+		root = "/var/lib/docker"
+	}
+	return system.Info{DockerRootDir: root}, nil
+}
+
+func (f *fakeDocker) VolumeInspect(ctx context.Context, name string) (volume.Volume, error) {
+	if err := f.begin(ctx, "volumeinspect:"+name); err != nil {
+		return volume.Volume{}, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if v, ok := f.volumes[name]; ok {
+		return v, nil
+	}
+	return volume.Volume{Name: name, Driver: "local", Mountpoint: "/var/lib/docker/volumes/" + name + "/_data"}, nil
 }
 
 func (f *fakeDocker) Close() error { return nil }
@@ -400,6 +451,7 @@ func (f *fakeDocker) Close() error { return nil }
 type fakeProcs struct {
 	mu    sync.Mutex
 	argv  [][]string
+	envs  [][]string
 	procs []*fakeProcess
 	// configure shapes each new process by its argv; nil means "succeeds at once".
 	configure func(args []string, p *fakeProcess)
@@ -411,13 +463,14 @@ func newFakeProcs(log *eventLog) *fakeProcs {
 	return &fakeProcs{created: make(chan *fakeProcess, 16), log: log}
 }
 
-func (fp *fakeProcs) factory(name string, args ...string) limitedProcess {
+func (fp *fakeProcs) factory(name string, env []string, args ...string) limitedProcess {
 	p := newFakeProcess()
 	p.log = fp.log
 	p.autoExit = true
 	full := append([]string{name}, args...)
 	fp.mu.Lock()
 	fp.argv = append(fp.argv, full)
+	fp.envs = append(fp.envs, env)
 	fp.procs = append(fp.procs, p)
 	cfg := fp.configure
 	fp.mu.Unlock()
@@ -493,6 +546,8 @@ func newDockerHarness(t *testing.T) *dockerHarness {
 	h.docker.log = lh.log
 	h.a.dockerFactory = func() (dockerAPI, error) { return h.docker, nil }
 	h.a.procFactory = h.procs.factory
+	h.a.trustFS = rootOwnedFS{}
+	h.a.trustPlatform = "linux"
 	h.a.freshness = h.fresh
 	h.a.pause = func(_ context.Context, d time.Duration) bool {
 		lh.log.add("pause")
@@ -535,4 +590,266 @@ func composeLabels(dir, service string) map[string]string {
 		models.LabelComposeService:    service,
 		models.LabelComposeWorkingDir: dir,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Compose trust: filesystem fakes (AUTOUPD-HARDEN-001 AD-004)
+// ---------------------------------------------------------------------------
+
+// fakeNode is one entry of the fake filesystem.
+type fakeNode struct {
+	mode     os.FileMode // includes ModeDir / ModeSymlink / ModeSocket
+	uid, gid uint32
+	acl      bool
+	aclErr   error
+	data     []byte
+	readErr  error
+	target   string // symlink target
+}
+
+// fakeTrustFS is a map-backed trustFS: ownership, modes, ACLs and symlinks are
+// whatever a test says, so no test depends on real Unix ownership.
+type fakeTrustFS struct {
+	mu       sync.Mutex
+	nodes    map[string]*fakeNode
+	euid     int
+	statErr  map[string]error // forced Lstat/Stat error per path
+	evalErr  map[string]error // forced EvalSymlinks error per path
+	aclCalls []string
+}
+
+func newFakeTrustFS() *fakeTrustFS {
+	return &fakeTrustFS{nodes: map[string]*fakeNode{}, euid: 1000, statErr: map[string]error{}, evalErr: map[string]error{}}
+}
+
+func fakeNotExist(op, p string) error {
+	return &fs.PathError{Op: op, Path: p, Err: fs.ErrNotExist}
+}
+
+// dir adds a directory and returns it.
+func (f *fakeTrustFS) dir(p string, uid, gid uint32, perm os.FileMode) *fakeNode {
+	n := &fakeNode{mode: os.ModeDir | perm, uid: uid, gid: gid}
+	f.nodes[filepath.Clean(p)] = n
+	return n
+}
+
+// file adds a regular file and returns it.
+func (f *fakeTrustFS) file(p string, uid, gid uint32, perm os.FileMode, content string) *fakeNode {
+	n := &fakeNode{mode: perm, uid: uid, gid: gid, data: []byte(content)}
+	f.nodes[filepath.Clean(p)] = n
+	return n
+}
+
+// link adds a symlink at p pointing to target.
+func (f *fakeTrustFS) link(p, target string, uid uint32) *fakeNode {
+	n := &fakeNode{mode: os.ModeSymlink | 0777, uid: uid, target: target}
+	f.nodes[filepath.Clean(p)] = n
+	return n
+}
+
+// chain makes p and every ancestor a root-owned 0755 directory, without
+// replacing a node that is already there.
+func (f *fakeTrustFS) chain(p string) {
+	for p = filepath.Clean(p); ; p = filepath.Dir(p) {
+		if _, ok := f.nodes[p]; !ok {
+			f.dir(p, 0, 0, 0755)
+		}
+		if filepath.Dir(p) == p {
+			return
+		}
+	}
+}
+
+func (f *fakeTrustFS) get(p string) *fakeNode { return f.nodes[filepath.Clean(p)] }
+
+func (n *fakeNode) meta() fileMeta {
+	return fileMeta{Mode: n.mode, UID: n.uid, GID: n.gid, HasOwner: true}
+}
+
+func (f *fakeTrustFS) Lstat(p string) (fileMeta, error) {
+	if err, ok := f.statErr[filepath.Clean(p)]; ok {
+		return fileMeta{}, err
+	}
+	n := f.get(p)
+	if n == nil {
+		return fileMeta{}, fakeNotExist("lstat", p)
+	}
+	return n.meta(), nil
+}
+
+func (f *fakeTrustFS) Stat(p string) (fileMeta, error) {
+	if err, ok := f.statErr[filepath.Clean(p)]; ok {
+		return fileMeta{}, err
+	}
+	res, err := f.resolve(p, 0)
+	if err != nil {
+		return fileMeta{}, err
+	}
+	return f.get(res).meta(), nil
+}
+
+func (f *fakeTrustFS) EvalSymlinks(p string) (string, error) {
+	if err, ok := f.evalErr[filepath.Clean(p)]; ok {
+		return "", err
+	}
+	return f.resolve(p, 0)
+}
+
+func (f *fakeTrustFS) resolve(p string, depth int) (string, error) {
+	p = filepath.Clean(p)
+	vol := filepath.VolumeName(p)
+	sep := string(filepath.Separator)
+	var comps []string
+	for _, c := range strings.Split(strings.TrimPrefix(p, vol), sep) {
+		if c != "" {
+			comps = append(comps, c)
+		}
+	}
+	cur := vol + sep
+	for i, c := range comps {
+		next := filepath.Join(cur, c)
+		n := f.nodes[next]
+		if n == nil {
+			return "", fakeNotExist("lstat", next)
+		}
+		if n.mode&os.ModeSymlink != 0 {
+			if depth > 20 {
+				return "", errors.New("too many levels of symbolic links")
+			}
+			t := n.target
+			if !filepath.IsAbs(t) {
+				t = filepath.Join(cur, t)
+			}
+			return f.resolve(filepath.Join(append([]string{t}, comps[i+1:]...)...), depth+1)
+		}
+		cur = next
+	}
+	return cur, nil
+}
+
+func (f *fakeTrustFS) ReadFile(p string, max int64) ([]byte, error) {
+	res, err := f.resolve(p, 0)
+	if err != nil {
+		return nil, err
+	}
+	n := f.get(res)
+	if n.readErr != nil {
+		return nil, n.readErr
+	}
+	if int64(len(n.data)) > max {
+		return nil, errFileTooLarge
+	}
+	return append([]byte(nil), n.data...), nil
+}
+
+func (f *fakeTrustFS) ReadDirNames(p string) ([]string, error) {
+	res, err := f.resolve(p, 0)
+	if err != nil {
+		return nil, err
+	}
+	if !f.get(res).mode.IsDir() {
+		return nil, &fs.PathError{Op: "readdir", Path: p, Err: errors.New("not a directory")}
+	}
+	var names []string
+	for k := range f.nodes {
+		if k != res && filepath.Dir(k) == res {
+			names = append(names, filepath.Base(k))
+		}
+	}
+	return names, nil
+}
+
+func (f *fakeTrustFS) HasAccessACL(p string) (bool, error) {
+	f.mu.Lock()
+	f.aclCalls = append(f.aclCalls, filepath.Clean(p))
+	f.mu.Unlock()
+	n := f.get(p)
+	if n == nil {
+		return false, fakeNotExist("getxattr", p)
+	}
+	if n.aclErr != nil {
+		return false, n.aclErr
+	}
+	return n.acl, nil
+}
+
+func (f *fakeTrustFS) EUID() int { return f.euid }
+
+// rootOwnedFS is the harness filesystem: it reads the real disk but reports
+// every entry as owned by root with ordinary modes, never an ACL, an identity
+// symlink resolution, and a fixed account database. The existing lifecycle
+// tests therefore pass the trust check on any host.
+type rootOwnedFS struct{}
+
+func rootMeta(fi os.FileInfo) fileMeta {
+	m := fileMeta{HasOwner: true}
+	switch {
+	case fi.Mode()&os.ModeSymlink != 0:
+		m.Mode = os.ModeSymlink | 0777
+	case fi.IsDir():
+		m.Mode = os.ModeDir | 0755
+	case fi.Mode().IsRegular():
+		m.Mode = 0644
+	default:
+		m.Mode = fi.Mode()
+	}
+	return m
+}
+
+func (rootOwnedFS) Lstat(p string) (fileMeta, error) {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return fileMeta{}, err
+	}
+	return rootMeta(fi), nil
+}
+
+func (rootOwnedFS) Stat(p string) (fileMeta, error) {
+	if filepath.Clean(p) == filepath.Clean(defaultDockerSocket) {
+		return fileMeta{Mode: os.ModeSocket | 0660, HasOwner: true}, nil
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		return fileMeta{}, err
+	}
+	return rootMeta(fi), nil
+}
+
+func (rootOwnedFS) EvalSymlinks(p string) (string, error) { return filepath.Clean(p), nil }
+
+func (rootOwnedFS) ReadFile(p string, max int64) ([]byte, error) {
+	switch filepath.Clean(p) {
+	case filepath.Clean(accountPasswdPath):
+		return []byte("root:x:0:0:root:/root:/bin/sh\n"), nil
+	case filepath.Clean(accountGroupPath):
+		return []byte("root:x:0:\n"), nil
+	case filepath.Clean(accountNSSwitchPath):
+		return nil, fakeNotExist("open", p)
+	}
+	return osReadFile(p, max)
+}
+
+func (rootOwnedFS) ReadDirNames(p string) ([]string, error) { return nil, fakeNotExist("open", p) }
+
+func (rootOwnedFS) HasAccessACL(string) (bool, error) { return false, nil }
+
+func (rootOwnedFS) EUID() int { return 0 }
+
+// testTrusted builds a trustedDir by hand for tests of code downstream of the
+// check. Production code cannot do this outside compose_trust.go.
+func testTrusted(dir string, files ...string) trustedDir {
+	if len(files) == 0 {
+		files = []string{filepath.Join(dir, "compose.yaml")}
+	}
+	return trustedDir{dir: dir, files: files}
+}
+
+// isSanitizedF reports whether an argv selects the sanitized copy with -f.
+func isSanitizedF(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-f=") && strings.HasSuffix(a, sanitizedComposeName) {
+			return true
+		}
+	}
+	return false
 }

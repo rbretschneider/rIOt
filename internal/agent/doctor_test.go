@@ -3,12 +3,15 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"strconv"
 	"testing"
 	"time"
 
@@ -279,4 +282,124 @@ func TestAC013_ReportUpdatePrivilege_WrongHelperModeWarns(t *testing.T) {
 
 	assert.Contains(t, out, "is not mode 0755")
 	assert.NotContains(t, out, "apply helper present")
+}
+
+// ---------------------------------------------------------------------------
+// AUTOUPD-HARDEN-001: compose trust section
+// ---------------------------------------------------------------------------
+
+func TestDoctor_AC016_ReportComposeTrustRootsAndPerProjectLines(t *testing.T) {
+	x := newTrustFx(t)
+	bad := x.p("opt", "stacks", "bad")
+	x.fs.chain(bad)
+	x.fs.file(filepath.Join(bad, "compose.yaml"), 0, 0, 0644, "")
+	x.fs.get(bad).uid = uidMallory
+	x.addStackContainer("c2", "bad-web-1", "bad", bad)
+	cfg := DockerConfig{ComposeRoots: []string{x.p("opt", "stacks")}}
+	x.ct.roots = cfg.ComposeRoots
+
+	out := captureStdout(func() { reportComposeTrust(cfg, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "Compose roots: "+x.p("opt", "stacks"), "[AC-016] the roots setting is printed")
+	assert.Contains(t, out, `project "app"`, "[AC-016]")
+	assert.Contains(t, out, "is trusted", "[AC-016] a passing project says so")
+	assert.Contains(t, out, `project "bad"`)
+	assert.Contains(t, out, "(owner)", "[AC-016] a failing project names the rule")
+	assert.Contains(t, out, "\033[32m", "pass uses the pass marker")
+	assert.Contains(t, out, "\033[31m", "fail uses the fail marker")
+	assert.Less(t, strings.Index(out, `project "app"`), strings.Index(out, `project "bad"`), "[AC-016] lines are sorted by project")
+
+	unset := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+	assert.Contains(t, unset, "not set", "[AC-016] an unset setting is shown as such")
+}
+
+func TestDoctor_AC016_InvalidRootsFail(t *testing.T) {
+	x := newTrustFx(t)
+	cfg := DockerConfig{ComposeRoots: []string{"relative"}, rootsErr: errors.New("bad")}
+	x.ct.roots, x.ct.rootsErr = cfg.ComposeRoots, cfg.rootsErr
+
+	out := captureStdout(func() { reportComposeTrust(cfg, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "not an absolute path", "[AC-016] an invalid setting is reported as a failure")
+	assert.Contains(t, out, "(compose_roots_invalid)", "[AC-016] and every project line shows the fail-closed rule")
+}
+
+func TestDoctor_AC016_DockerUnreachableWarns(t *testing.T) {
+	x := newTrustFx(t)
+	out := captureStdout(func() {
+		reportComposeTrust(DockerConfig{}, daemonSnapshot{}, errors.New(strings.Repeat("x", 5000)), x.ct)
+	})
+
+	assert.Contains(t, out, "cannot read docker state", "[AC-016]")
+	assert.NotContains(t, out, "is trusted")
+	assert.Less(t, len(out), 2000, "a long daemon error is bounded")
+}
+
+func TestDoctor_AC016_ContainerWritableNamesContainerAndMount(t *testing.T) {
+	x := newTrustFx(t)
+	x.writer("dot-mount", bindRW(x.dir, "/app"))
+
+	out := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "(container_writable)")
+	assert.Contains(t, out, "dot-mount", "[AC-016] the container is named")
+	assert.Contains(t, out, "/app", "[AC-016] and its mount")
+}
+
+func TestDoctor_AC018_ListsExcludedContainers(t *testing.T) {
+	x := newTrustFx(t)
+	x.snap.excluded["c1"] = excludedImageLabel
+	x.addStackContainer("c2", "blind-1", "app", x.dir)
+	x.snap.excluded["c2"] = excludedImageUnread
+
+	out := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, `container "app-web-1" ignored as a compose source: its image defines the compose working-dir label`, "[AC-018]")
+	assert.Contains(t, out, `container "blind-1" ignored as a compose source: its image could not be inspected`)
+	assert.Contains(t, out, "No compose projects found", "excluded containers are not projects")
+}
+
+func TestDoctor_AC021_WindowsExplainsRootsRequirement(t *testing.T) {
+	x := newTrustFx(t)
+	x.ct.goos = "windows"
+
+	out := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "compose updates on Windows require docker.compose_roots (ownership cannot be verified)", "[AC-021]")
+	assert.Contains(t, out, "(windows_requires_roots)", "[AC-021] each project line says why it fails")
+}
+
+// QA-D2 condition 4: the doctor says when it runs with more privilege than the
+// agent, and notes each mount source compared through its readable prefix.
+func TestDoctor_AC019_EuidWarningNamesServiceUser(t *testing.T) {
+	lookup := func(name string) (int, bool) { return 998, name == "riot" }
+
+	out := captureStdout(func() { reportPrivilegeMismatch(0, "riot", lookup) })
+	assert.Contains(t, out, "uid 0", "[AC-019]")
+	assert.Contains(t, out, `user "riot" (uid 998)`, "[AC-019] the service user is named")
+	assert.Contains(t, out, "sudo -u riot riot-agent doctor")
+
+	same := captureStdout(func() { reportPrivilegeMismatch(998, "riot", lookup) })
+	assert.Empty(t, same, "[AC-019] no warning when the doctor runs as the agent user")
+	unknown := captureStdout(func() { reportPrivilegeMismatch(0, "nosuch", lookup) })
+	assert.Empty(t, unknown, "[AC-019] nothing to compare against when the user does not exist")
+}
+
+func TestDoctor_AC019_ServiceUserFromUnitFile(t *testing.T) {
+	unit := func(string) ([]byte, error) { return []byte("[Service]\nUser=agentsvc\nGroup=x\n"), nil }
+	missing := func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	assert.Equal(t, "agentsvc", agentServiceUser(unit), "[AC-019] the unit decides")
+	assert.Equal(t, "riot", agentServiceUser(missing), "[AC-019] the installer default otherwise")
+}
+
+func TestDoctor_AC019_InfoLinePerFallbackSource(t *testing.T) {
+	x := newTrustFx(t)
+	_, src := x.sandboxSource()
+
+	out := captureStdout(func() { reportComposeTrust(DockerConfig{}, x.snap, nil, x.ct) })
+
+	assert.Contains(t, out, "compared through its readable prefix", "[AC-019]")
+	assert.Contains(t, out, `container "sandbox"`)
+	assert.Contains(t, out, strings.Trim(strconv.Quote(src), `"`), "the source is named")
+	assert.Contains(t, out, "is trusted", "and the stack itself passes")
 }

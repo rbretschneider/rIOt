@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -49,6 +50,13 @@ type DockerConfig struct {
 	CollectStats    bool   `yaml:"collect_stats"`    // CPU/mem per container
 	TerminalEnabled bool   `yaml:"terminal_enabled"` // opt-in for remote exec
 	CheckUpdates    *bool  `yaml:"check_updates,omitempty"` // nil = true (default enabled)
+
+	// ComposeRoots limits where compose updates may run (AUTOUPD-HARDEN-001):
+	// absolute directories. Empty means not enforced (required on Windows).
+	ComposeRoots []string `yaml:"compose_roots,omitempty"`
+	// rootsErr is set by normalizeComposeRoots when an entry is invalid. Every
+	// compose check then fails closed while the rest of the agent keeps running.
+	rootsErr error
 }
 
 type ServerConfig struct {
@@ -130,8 +138,24 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return cfg, err
 	}
+	cfg.Docker.normalizeComposeRoots()
 
 	return cfg, nil
+}
+
+// normalizeComposeRoots cleans docker.compose_roots. An entry that is empty or
+// not absolute does not fail the load: it is logged and remembered, and every
+// compose check then refuses, so a typo cannot silently widen where compose runs.
+func (d *DockerConfig) normalizeComposeRoots() {
+	d.rootsErr = nil
+	for i, r := range d.ComposeRoots {
+		if r == "" || !filepath.IsAbs(r) {
+			d.rootsErr = fmt.Errorf("docker.compose_roots entry %d is not an absolute path", i+1)
+			slog.Error("invalid docker.compose_roots entry; compose updates are refused until it is fixed", "entry", i+1)
+			continue
+		}
+		d.ComposeRoots[i] = filepath.Clean(r)
+	}
 }
 
 // writeDefaultConfig creates the config directory and writes a commented
@@ -188,6 +212,7 @@ docker:
   # check_updates: true    # Check registries for newer images (30min cache)
   # terminal_enabled: false  # Allow remote exec into containers
   # socket_path: ""        # Override Docker socket auto-detection
+  # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)
 
 commands:
   allow_reboot: false      # Allow remote reboot commands

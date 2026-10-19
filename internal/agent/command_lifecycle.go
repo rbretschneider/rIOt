@@ -236,7 +236,7 @@ func isDockerMutation(action string) bool {
 
 // markerTarget is the human-readable target recorded in the in-flight marker.
 func markerTarget(p models.CommandPayload) string {
-	for _, k := range []string{"container", "container_id", "compose_work_dir"} {
+	for _, k := range []string{"container", "container_id", "compose_work_dir", "compose_project"} {
 		if v, _ := p.Params[k].(string); v != "" {
 			return v
 		}

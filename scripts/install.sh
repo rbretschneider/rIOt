@@ -389,7 +389,8 @@ if [ "$HAS_DOCKER" = "true" ]; then
 docker:
   enabled: auto
   collect_stats: true
-  terminal_enabled: ${ALLOW_DOCKER_TERMINAL}"
+  terminal_enabled: ${ALLOW_DOCKER_TERMINAL}
+  # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)"
 fi
 
 # ── Handle re-install with bootstrap key ──────────────────────────────

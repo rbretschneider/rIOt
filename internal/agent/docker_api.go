@@ -8,6 +8,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/system"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -24,6 +26,8 @@ type dockerAPI interface {
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.CreateResponse, error)
 	ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error)
 	ImageInspect(ctx context.Context, imageRef string) (image.InspectResponse, error)
+	Info(ctx context.Context) (system.Info, error)
+	VolumeInspect(ctx context.Context, volumeID string) (volume.Volume, error)
 	Close() error
 }
 
@@ -58,11 +62,11 @@ func (a *Agent) newDocker() (dockerAPI, error) {
 
 // newProc builds an unstarted child process: the injected factory in tests, a
 // real exec.Cmd wrapper otherwise.
-func (a *Agent) newProc(name string, args ...string) limitedProcess {
+func (a *Agent) newProc(name string, env []string, args ...string) limitedProcess {
 	if a.procFactory != nil {
-		return a.procFactory(name, args...)
+		return a.procFactory(name, env, args...)
 	}
-	return newExecProcess(name, args...)
+	return newExecProcess(name, env, args...)
 }
 
 // pauseFor waits d unless ctx ends first, and reports whether the full wait

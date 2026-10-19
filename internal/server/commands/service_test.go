@@ -1222,3 +1222,25 @@ func toInterfaces(v interface{}) []interface{} {
 	}
 	return nil
 }
+
+// AUTOUPD-HARDEN-001: an agent refusal of a compose directory is a precheck
+// failure like any other, so it counts toward the policy backoff.
+func TestAUTOUPD_RefusalCountsAsFailureForBackoff(t *testing.T) {
+	h := newHarness(t)
+	polID := h.seedPolicy(0)
+	h.seed(uid(1), "docker_update", "dispatched", func(c *models.Command) {
+		c.PolicyID = &polID
+		c.Params = map[string]interface{}{"compose_project": "media", "compose_work_dir": "/srv/media"}
+	})
+
+	h.report(result(uid(1), models.CommandResult{
+		Status: "error", Step: models.StepPrecheck,
+		Message: `compose directory refused (owner): "/srv/media": "/srv/media" is owned by uid 2000, which has no Docker rights`,
+	}))
+
+	p := h.pol.Policies[devA][0]
+	assert.Equal(t, 1, p.ConsecutiveFailures, "a refusal is counted as a failed run")
+	require.NotNil(t, p.LastFailureAt)
+	assert.True(t, p.InBackoff(h.clock.Now()), "and starts the backoff, so the stack is not retried every telemetry cycle")
+	assert.Nil(t, p.LastTriggeredAt, "a refusal does not start the success cooldown")
+}

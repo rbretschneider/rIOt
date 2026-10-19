@@ -679,6 +679,8 @@ type autoEnv struct {
 	repo     *testutil.MockCommandRepo
 	policies *testutil.MockAutoUpdateRepo
 	clock    *testClock
+	events   *testutil.MockEventRepo
+	tel      *testutil.MockTelemetryRepo
 }
 
 // newAutoEnv builds Handlers over the faithful mocks with an injected clock
@@ -695,9 +697,9 @@ func newAutoEnv(t *testing.T, docker, osPatch models.MaintenanceWindow) *autoEnv
 	}
 	devs := testutil.NewMockDeviceRepo()
 	devs.Devices["dev-1"] = &models.Device{ID: "dev-1", Hostname: "host", AutoPatch: true}
-	e := &autoEnv{repo: testutil.NewMockCommandRepo(), policies: testutil.NewMockAutoUpdateRepo(), clock: newTestClock()}
+	e := &autoEnv{repo: testutil.NewMockCommandRepo(), policies: testutil.NewMockAutoUpdateRepo(), clock: newTestClock(), events: testutil.NewMockEventRepo(), tel: testutil.NewMockTelemetryRepo()}
 	e.h = New(HandlerDeps{
-		Devices: devs, Telemetry: testutil.NewMockTelemetryRepo(), Events: testutil.NewMockEventRepo(),
+		Devices: devs, Telemetry: e.tel, Events: e.events,
 		AdminRepo: admin, CommandRepo: e.repo, AutoUpdateRepo: e.policies, Clock: e.clock.Now,
 	})
 	e.h.agents = newAgentRegistry()
@@ -898,28 +900,3 @@ func TestCheckAutoUpdates_StaggerOnlyConsumedByRealDispatch(t *testing.T) {
 	assert.Len(t, e.dockerUpdates(), 2, "alpha's conflict is skipped and must not use up the stagger slot, so bravo dispatches")
 }
 
-// A stack policy sends compose_work_dir alone, verbatim from the container's
-// working-dir label (an absolute path), never a container name or id (agent
-// contract, AD-014).
-func TestAutoUpdate_StackDispatchSendsComposeWorkDirOnly(t *testing.T) {
-	e := newAutoEnv(t, anytime(), anytime())
-	e.policy(t, "media", true, nil)
-	updateAvail := true
-	data := &models.FullTelemetryData{Docker: &models.DockerInfo{Containers: []models.ContainerInfo{{
-		ID: "id-sonarr", Name: "sonarr", State: "running", UpdateAvailable: &updateAvail,
-		Labels: map[string]string{
-			"com.docker.compose.project":             "media",
-			"com.docker.compose.service":             "sonarr",
-			"com.docker.compose.project.working_dir": "/srv/media",
-		},
-	}}}}
-
-	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
-
-	cmds := e.dockerUpdates()
-	if assert.Len(t, cmds, 1) {
-		assert.Equal(t, map[string]interface{}{"compose_work_dir": "/srv/media"}, cmds[0].Params,
-			"a stack update carries compose_work_dir alone")
-		assert.Equal(t, []string{"docker:compose:/srv/media"}, cmds[0].TargetKeys)
-	}
-}

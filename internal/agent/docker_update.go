@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,18 +22,21 @@ import (
 )
 
 // updateTarget is what a docker_update names: a container by name (preferred,
-// BR-001), by ID (legacy servers), or a whole compose stack by directory.
+// BR-001), by ID (legacy servers), or a whole compose stack by project name
+// (AUTOUPD-HARDEN-001) or, from a legacy server, by directory.
 type updateTarget struct {
 	Name    string
 	ID      string
 	WorkDir string
+	Project string
 }
 
 func targetFromParams(params map[string]interface{}) updateTarget {
 	name, _ := params["container"].(string)
 	id, _ := params["container_id"].(string)
 	wd, _ := params["compose_work_dir"].(string)
-	return updateTarget{Name: strings.TrimPrefix(name, "/"), ID: id, WorkDir: wd}
+	project, _ := params["compose_project"].(string)
+	return updateTarget{Name: strings.TrimPrefix(name, "/"), ID: id, WorkDir: wd, Project: project}
 }
 
 // updateOpts tunes one inner update. A bulk update pre-locks the union of its
@@ -45,8 +50,8 @@ type updateOpts struct {
 // containers use the Docker SDK with rename-aside rollback (AD-014).
 func (a *Agent) dockerUpdate(cr *cmdRun) commandExecResult {
 	t := targetFromParams(cr.payload.Params)
-	if t.Name == "" && t.ID == "" && t.WorkDir == "" {
-		return precheckFailure("container, container_id or compose_work_dir is required")
+	if t.Name == "" && t.ID == "" && t.WorkDir == "" && t.Project == "" {
+		return precheckFailure("container, container_id, compose_project or compose_work_dir is required")
 	}
 	api, err := a.newDocker()
 	if err != nil {
@@ -107,7 +112,7 @@ func (cr *cmdRun) dockerUpdateOne(api dockerAPI, t updateTarget, o updateOpts) (
 
 	// Full-stack update: no container to resolve.
 	if t.Name == "" && t.ID == "" {
-		return cr.updateStack(api, t.WorkDir, o)
+		return cr.updateStack(api, t, o)
 	}
 
 	// The container lock is taken before any Docker call (AD-012). Without a
@@ -152,7 +157,7 @@ func (cr *cmdRun) dockerUpdateOne(api dockerAPI, t updateTarget, o updateOpts) (
 	}
 
 	if isCompose {
-		return cr.composeUpdate(api, composeSpec{WorkDir: workDir, Service: service})
+		return cr.composeUpdate(api, composeSpec{WorkDir: workDir, Project: project, Service: service, SourceID: insp.ID})
 	}
 	return cr.standaloneUpdate(api, insp)
 }
@@ -269,8 +274,10 @@ func (cr *cmdRun) finishDependents(st *depState, res commandExecResult) commandE
 // ---------------------------------------------------------------------------
 
 type composeSpec struct {
-	WorkDir string
-	Service string // empty = the whole stack
+	WorkDir  string // the working-dir label or param, verbatim
+	Project  string // the compose project, pinned with --project-name
+	Service  string // empty = the whole stack
+	SourceID string // the container whose labels named WorkDir; "" for stack updates
 }
 
 func (s composeSpec) label() string {
@@ -282,23 +289,40 @@ func (s composeSpec) label() string {
 
 func (s composeSpec) markerKey() string { return "compose:" + s.WorkDir }
 
-// composeArgs builds the argv of one `docker compose` invocation (SEC C-9): the
-// project directory and the optional sanitized file as single "=" tokens, the
-// sub-command and its flags, then "--" and the service names. Service names are
-// validated against the compose charset, and the working directory must be
-// absolute, so no label value can be read as a flag.
-func composeArgs(workDir, sanitizedFile string, sub []string, services ...string) ([]string, error) {
-	if !filepath.IsAbs(workDir) {
-		return nil, fmt.Errorf("compose working directory %q is not an absolute path", workDir)
+// composeArgs builds the argv of one `docker compose` invocation (SEC C-9). It
+// accepts only a trustedDir, so no invocation can skip the directory check
+// (AUTOUPD-HARDEN-001 AD-001). The tokens are, in order: the resolved project
+// directory, the pinned project name, one -f per validated file (or only the
+// sanitized copy), the sub-command and its flags, then "--" and the service
+// names. Each option is one name=value token and the project and service names
+// are validated against the compose charsets, so no label value can be read as
+// a flag. The explicit -f tokens stop compose from discovering other files,
+// walking up to a parent directory, or honouring COMPOSE_FILE.
+func composeArgs(td trustedDir, project, sanitizedFile string, sub []string, services ...string) ([]string, error) {
+	if !td.valid() {
+		return nil, errors.New("compose directory has not been validated")
+	}
+	if !filepath.IsAbs(td.Path()) {
+		return nil, fmt.Errorf("compose working directory %q is not an absolute path", models.TruncateHead(td.Path(), maxRefusalValueBytes))
+	}
+	if !composeProjectRe.MatchString(project) {
+		return nil, fmt.Errorf("invalid compose project name %q", models.TruncateHead(project, maxRefusalValueBytes))
+	}
+	if sanitizedFile != "" && sanitizedFile != filepath.Join(td.Path(), sanitizedComposeName) {
+		return nil, errors.New("the sanitized compose file is not in the validated directory")
 	}
 	for _, s := range services {
 		if !composeServiceRe.MatchString(s) {
-			return nil, fmt.Errorf("invalid compose service name %q", s)
+			return nil, fmt.Errorf("invalid compose service name %q", models.TruncateHead(s, maxRefusalValueBytes))
 		}
 	}
-	args := []string{"compose", "--project-directory=" + workDir}
+	args := []string{"compose", "--project-directory=" + td.Path(), "--project-name=" + project}
 	if sanitizedFile != "" {
 		args = append(args, "-f="+sanitizedFile)
+	} else {
+		for _, f := range td.Files() {
+			args = append(args, "-f="+f)
+		}
 	}
 	args = append(args, sub...)
 	if len(services) > 0 {
@@ -308,50 +332,136 @@ func composeArgs(workDir, sanitizedFile string, sub []string, services ...string
 	return args, nil
 }
 
+// composeEnv builds the environment of a compose child (AD-016): the agent's
+// own, without any COMPOSE_* variable and without DOCKER_HOST or DOCKER_CONTEXT,
+// plus DOCKER_HOST pinned to the socket the trust check examined. DOCKER_CONFIG
+// and HOME stay, because registry credentials need them.
+func composeEnv(base []string, socketPath, goos string) []string {
+	out := make([]string, 0, len(base)+1)
+	for _, kv := range base {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if goos == "windows" {
+			key = strings.ToUpper(key)
+		}
+		if strings.HasPrefix(key, "COMPOSE_") || key == "DOCKER_HOST" || key == "DOCKER_CONTEXT" {
+			continue
+		}
+		out = append(out, kv)
+	}
+	switch {
+	case goos != "windows" && socketPath != "":
+		out = append(out, "DOCKER_HOST=unix://"+socketPath)
+	case goos != "windows":
+		out = append(out, "DOCKER_HOST=unix://"+defaultDockerSocket)
+	case socketPath != "":
+		out = append(out, "DOCKER_HOST=npipe://"+socketPath)
+	}
+	return out
+}
+
+// composeChildEnv is the environment for this agent's compose children.
+func (a *Agent) composeChildEnv() []string {
+	socket := ""
+	if a.config != nil {
+		socket = a.config.Docker.SocketPath
+	}
+	goos := a.trustPlatform
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	return composeEnv(os.Environ(), socket, goos)
+}
+
 // isComposeValidationError checks if compose output indicates a file validation
 // error (e.g. "services.deploy additional properties 'resources' not allowed").
 func isComposeValidationError(output string) bool {
 	return strings.Contains(output, "validating") && strings.Contains(output, "not allowed")
 }
 
-// updateStack validates a full-stack target and updates it.
-func (cr *cmdRun) updateStack(api dockerAPI, workDir string, o updateOpts) (commandExecResult, []string) {
-	if !filepath.IsAbs(workDir) {
-		return precheckFailure(fmt.Sprintf("compose_work_dir %q is not an absolute path", workDir)), nil
+// refusal turns a trust failure into the precheck result and logs it, bounded.
+// A refusal is an ordinary failed run, so the server's auto-update backoff
+// applies to it (CMD-LIFECYCLE-001 AD-007): there is no retry storm.
+func (cr *cmdRun) refusal(err error) commandExecResult {
+	slog.Warn("docker_update: compose directory refused", "command_id", cr.id, "refusal", err.Error())
+	return precheckFailure(err.Error())
+}
+
+// snapshotRefusal is the refusal for a daemon state that cannot be read. The raw
+// daemon error goes to the log only, length-capped.
+func snapshotRefusal(dir string, err error) *composeTrustError {
+	slog.Warn("compose trust: cannot read Docker state", "error", models.TruncateHead(err.Error(), maxRefusalValueBytes))
+	return newTrustError(ruleDaemonUnavailable, dir, "cannot read the Docker state needed to validate the directory")
+}
+
+// checkCompose loads a fresh daemon snapshot and validates the spec's
+// directory. A failure is returned as the precheck result to hand back.
+func (cr *cmdRun) checkCompose(api dockerAPI, spec composeSpec) (snap daemonSnapshot, td trustedDir, refused *commandExecResult) {
+	snap, err := loadDaemonSnapshot(cr.ctx, api)
+	snap = cr.a.composeTrust().bind(snap)
+	if err != nil {
+		res := cr.refusal(snapshotRefusal(spec.WorkDir, err))
+		return snap, td, &res
 	}
-	if !o.lockHeld {
+	td, err = cr.a.composeTrust().Check(snap, trustRequest{Dir: spec.WorkDir, Project: spec.Project, SourceID: spec.SourceID})
+	if err != nil {
+		res := cr.refusal(err)
+		return snap, td, &res
+	}
+	return snap, td, nil
+}
+
+// updateStack resolves a full-stack target and updates it (AD-007). The project
+// name is the authority; a work-dir from the server is only a cross-check, or,
+// from an older server that sends nothing else, the key to find the project.
+func (cr *cmdRun) updateStack(api dockerAPI, t updateTarget, o updateOpts) (commandExecResult, []string) {
+	project, workDir := t.Project, t.WorkDir
+	if project != "" && !composeProjectRe.MatchString(project) {
+		return cr.refusal(newTrustError(ruleInvalidProject, "", "invalid compose project name %q", project)), nil
+	}
+	if workDir != "" && !filepath.IsAbs(workDir) {
+		return cr.refusal(newTrustError(ruleNotAbsolute, workDir, "compose_work_dir is not an absolute path")), nil
+	}
+	if workDir != "" && !o.lockHeld {
 		if key, holder, ok := cr.lock(models.TargetKeyCompose(workDir)); !ok {
 			return conflictResult(key, holder), nil
 		}
 	}
-	// The directory must belong to a real compose project: a forged command
-	// cannot point compose at an arbitrary directory (SEC C-9).
-	pctx, cancel := context.WithTimeout(cr.ctx, models.DockerPrecheckBudget)
-	defer cancel()
-	all, err := api.ContainerList(pctx, container.ListOptions{All: true})
-	if err != nil {
-		return precheckFailure(fmt.Sprintf("list containers: %s", err)), nil
-	}
-	if len(projectContainers(all, workDir, "")) == 0 {
-		return precheckFailure(fmt.Sprintf("no container has compose working directory %q", workDir)), nil
-	}
-	return cr.composeUpdate(api, composeSpec{WorkDir: workDir})
-}
 
-// projectContainers returns the containers of a compose project, optionally
-// narrowed to one service.
-func projectContainers(all []container.Summary, workDir, service string) []container.Summary {
-	var out []container.Summary
-	for _, c := range all {
-		if models.TargetKeyCompose(c.Labels[models.LabelComposeWorkingDir]) != models.TargetKeyCompose(workDir) {
-			continue
-		}
-		if service != "" && c.Labels[models.LabelComposeService] != service {
-			continue
-		}
-		out = append(out, c)
+	snap, err := loadDaemonSnapshot(cr.ctx, api)
+	snap = cr.a.composeTrust().bind(snap)
+	if err != nil {
+		return cr.refusal(snapshotRefusal(workDir, err)), nil
 	}
-	return out
+	switch {
+	case project != "":
+		dir, rerr := snap.resolveProject(project)
+		if rerr != nil {
+			return cr.refusal(rerr), nil
+		}
+		if workDir != "" && snap.key(workDir) != snap.key(dir) {
+			return cr.refusal(newTrustError(ruleWorkDirMismatch, workDir, "compose project %q runs in %q, not in the directory the server named", project, dir)), nil
+		}
+		if workDir == "" && !o.lockHeld {
+			if key, holder, ok := cr.lock(models.TargetKeyCompose(dir)); !ok {
+				return conflictResult(key, holder), nil
+			}
+		}
+		workDir = dir
+	default:
+		projects := snap.projectsForDir(workDir)
+		switch len(projects) {
+		case 0:
+			return cr.refusal(newTrustError(ruleProjectNotFound, workDir, "no container of a trusted compose project has this working directory")), nil
+		case 1:
+			project = projects[0]
+		default:
+			return cr.refusal(newTrustError(ruleAmbiguousProject, workDir, "more than one compose project claims this working directory: %s", quoteAll(projects))), nil
+		}
+	}
+	return cr.composeUpdate(api, composeSpec{WorkDir: workDir, Project: project})
 }
 
 func imageRefs(cs []container.Summary) []string {
@@ -384,18 +494,18 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 	var services []string
 	if spec.Service != "" {
 		if !composeServiceRe.MatchString(spec.Service) {
-			return precheckFailure(fmt.Sprintf("invalid compose service name %q", spec.Service)), nil
+			return precheckFailure(fmt.Sprintf("invalid compose service name %q", models.TruncateHead(spec.Service, maxRefusalValueBytes))), nil
 		}
 		services = []string{spec.Service}
 	}
 
-	pctx, cancel := context.WithTimeout(cr.ctx, models.DockerPrecheckBudget)
-	all, err := api.ContainerList(pctx, container.ListOptions{All: true})
-	cancel()
-	if err != nil {
-		return precheckFailure(fmt.Sprintf("list containers: %s", err)), nil
+	// Check #1: nothing has changed yet, so a refusal is a precheck failure.
+	snap, td, refused := cr.checkCompose(api, spec)
+	if refused != nil {
+		return *refused, nil
 	}
-	scope := projectContainers(all, spec.WorkDir, spec.Service)
+	all := snap.Containers
+	scope := scopeOf(all, snap.excluded, snap.resolve, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
 	refs := imageRefs(scope)
 	wasRunning := map[string]bool{}
 	for _, c := range scope {
@@ -410,26 +520,35 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 		}
 	}
 
-	// Sanitized copy: removed on every exit path, including panics (SEC C-5).
+	// Sanitized copy: removed on every exit path, including panics and a later
+	// refusal (SEC C-5).
 	sanitized := ""
 	defer func() { removeSanitized(sanitized) }()
 
 	// Pull, with the sanitize retry sharing the same 15m budget.
 	cr.Step(models.StepPull)
 	pullStart := a.clock().Now()
-	pullArgs, err := composeArgs(spec.WorkDir, "", []string{"pull"}, services...)
+	pullArgs, err := composeArgs(td, spec.Project, "", []string{"pull"}, services...)
 	if err != nil {
 		return precheckFailure(err.Error()), refs
 	}
 	out, timedOut, err := cr.runCompose(pullArgs, models.ComposePullLimit)
 	if err != nil && !timedOut && isComposeValidationError(string(out)) {
 		slog.Info("docker_update: compose validation failed, retrying with sanitized file",
-			"stack", spec.label(), "error", string(out))
-		path := filepath.Join(spec.WorkDir, sanitizedComposeName)
+			"stack", spec.label(), "error", truncateOutput(out, models.MaxStderrTailBytes))
+		// Check #2: the copy is only written into a directory that still passes.
+		_, td2, refused := cr.checkCompose(api, spec)
+		if refused != nil {
+			return *refused, refs
+		}
+		if !td2.same(td) {
+			return cr.refusal(newTrustError(ruleDirChanged, spec.WorkDir, "the directory or its compose files changed during the update")), refs
+		}
+		path := filepath.Join(td2.Path(), sanitizedComposeName)
 		if merr := cr.markDocker(spec.markerKey(), func(r *dockerRecord) { r.SanitizedFile = path }); merr != nil {
 			return persistenceFailure(models.StepPull, "sanitize compose file", merr), refs
 		}
-		sf, serr := sanitizeComposeFile(spec.WorkDir)
+		sf, serr := sanitizeComposeFile(td2)
 		if serr != nil {
 			return commandExecResult{
 				Status:  models.ResultStatusError,
@@ -439,7 +558,7 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 			}, refs
 		}
 		sanitized = sf
-		retryArgs, aerr := composeArgs(spec.WorkDir, sanitized, []string{"pull"}, services...)
+		retryArgs, aerr := composeArgs(td2, spec.Project, sanitized, []string{"pull"}, services...)
 		if aerr != nil {
 			return precheckFailure(aerr.Error()), refs
 		}
@@ -462,13 +581,22 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 	}
 	pullOut := out
 
+	// Check #3: after the pull, before any container is stopped.
+	_, td3, refused := cr.checkCompose(api, spec)
+	if refused != nil {
+		return *refused, refs
+	}
+	if !td3.same(td) {
+		return cr.refusal(newTrustError(ruleDirChanged, spec.WorkDir, "the directory or its compose files changed during the update")), refs
+	}
+
 	if r := cr.stopDependents(api, st, spec.markerKey(), runningDeps); r != nil {
 		return *r, refs
 	}
 
 	// Recreate.
 	cr.Step(models.StepRecreate)
-	upArgs, err := composeArgs(spec.WorkDir, sanitized, []string{"up", "-d"}, services...)
+	upArgs, err := composeArgs(td3, spec.Project, sanitized, []string{"up", "-d"}, services...)
 	if err != nil {
 		return precheckFailure(err.Error()), refs
 	}
@@ -500,7 +628,7 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 		return commandExecResult{Status: models.ResultStatusError, Step: models.StepVerify,
 			Message: fmt.Sprintf("verification failed: list containers: %s", err)}, refs
 	}
-	postScope := projectContainers(after, spec.WorkDir, spec.Service)
+	postScope := scopeOf(after, nil, snap.resolve, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
 	refs = append(refs, imageRefs(postScope)...)
 	for svc := range wasRunning {
 		ok := false
@@ -543,7 +671,7 @@ func timeoutFailure(step string, limit time.Duration, out []byte) commandExecRes
 // runCompose runs one docker compose invocation under its own limit with the
 // SIGTERM-then-SIGKILL stop (FR-043, FR-044).
 func (cr *cmdRun) runCompose(args []string, limit time.Duration) ([]byte, bool, error) {
-	return runLimited(cr.ctx, cr.a.newProc("docker", args...), limit, models.ChildGrace, cr.a.clock())
+	return runLimited(cr.ctx, cr.a.newProc("docker", cr.a.composeChildEnv(), args...), limit, models.ChildGrace, cr.a.clock())
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +815,7 @@ func (cr *cmdRun) standaloneCore(api dockerAPI, insp container.InspectResponse, 
 	}
 	rb.renamed = true
 
-	newContainer, err := api.ContainerCreate(rctx, insp.Config, insp.HostConfig, networkConfigFrom(insp), name)
+	newContainer, err := api.ContainerCreate(rctx, configWithoutComposeWorkDir(insp.Config), insp.HostConfig, networkConfigFrom(insp), name)
 	if err != nil {
 		return cr.rollback(api, rb, models.StepRecreate, fmt.Sprintf("create failed: %s", err), models.ReasonRolledBack)
 	}
@@ -1018,4 +1146,25 @@ func (a *Agent) clearFreshnessCache() {
 	if fc := a.freshnessCache(); fc != nil {
 		fc.ClearFreshnessCache()
 	}
+}
+
+// configWithoutComposeWorkDir is a copy of cfg whose labels lack the compose
+// working-dir label. The daemon merges image labels into a container's config,
+// so recreating a standalone container from the inspected config would copy an
+// image-defined working-dir label into the replacement's explicit labels, where
+// a later image tag could drop it and the label would pass the provenance rule.
+// A standalone container is not a complete compose triple, so the label has no
+// function on it (AUTOUPD-HARDEN-001 AD-017). The input is not modified.
+func configWithoutComposeWorkDir(cfg *container.Config) *container.Config {
+	if cfg == nil {
+		return nil
+	}
+	cp := *cfg
+	cp.Labels = make(map[string]string, len(cfg.Labels))
+	for k, v := range cfg.Labels {
+		if k != models.LabelComposeWorkingDir {
+			cp.Labels[k] = v
+		}
+	}
+	return &cp
 }
