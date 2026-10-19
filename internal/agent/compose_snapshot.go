@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -31,6 +32,10 @@ type daemonSnapshot struct {
 	// volumeDevices maps a local volume name to the host path of its bind
 	// device, for volumes created with `o: bind`.
 	volumeDevices map[string]string
+	// resolve maps a working-dir label to the key of the real directory it names
+	// (symlinks resolved). nil means lexical: the cleaned label. Set with
+	// composeTrust.bind before labels are compared (QA-D1).
+	resolve func(label string) string
 }
 
 // loadDaemonSnapshot reads the daemon state within DockerPrecheckBudget. An
@@ -143,11 +148,11 @@ func (s daemonSnapshot) containerName(id string) string {
 func (s daemonSnapshot) projectsForDir(dirs ...string) []string {
 	keys := map[string]bool{}
 	for _, d := range dirs {
-		keys[models.TargetKeyCompose(d)] = true
+		keys[snapKey(s.resolve, d)] = true
 	}
 	set := map[string]bool{}
 	for _, c := range s.composeSources() {
-		if keys[models.TargetKeyCompose(c.Labels[models.LabelComposeWorkingDir])] {
+		if keys[s.key(c.Labels[models.LabelComposeWorkingDir])] {
 			set[c.Labels[models.LabelComposeProject]] = true
 		}
 	}
@@ -166,29 +171,28 @@ func (s daemonSnapshot) resolveProject(project string) (string, *composeTrustErr
 	if !composeProjectRe.MatchString(project) {
 		return "", newTrustError(ruleInvalidProject, "", "invalid compose project name %q", project)
 	}
-	dirs := map[string]string{} // target key → label value
+	groups := map[string][]string{} // real-directory key -> labels
 	for _, c := range s.composeSources() {
 		if c.Labels[models.LabelComposeProject] == project {
 			wd := c.Labels[models.LabelComposeWorkingDir]
-			if _, seen := dirs[models.TargetKeyCompose(wd)]; !seen {
-				dirs[models.TargetKeyCompose(wd)] = wd
-			}
+			groups[s.key(wd)] = append(groups[s.key(wd)], wd)
 		}
 	}
-	switch len(dirs) {
-	case 0:
+	if len(groups) == 0 {
 		return "", newTrustError(ruleProjectNotFound, "", "no container of compose project %q has a trusted working directory", project)
-	case 1:
-		for _, wd := range dirs {
-			return wd, nil
-		}
 	}
-	keys := make([]string, 0, len(dirs))
-	for _, wd := range dirs {
-		keys = append(keys, wd)
+	// One real directory may be named by several labels (a symlink and its
+	// target). The smallest label is returned, so the answer is deterministic.
+	labels := make([]string, 0, len(groups))
+	for _, g := range groups {
+		sort.Strings(g)
+		labels = append(labels, g[0])
 	}
-	sort.Strings(keys)
-	return "", newTrustError(ruleAmbiguousProject, "", "compose project %q has containers in more than one working directory: %s", project, quoteAll(keys))
+	sort.Strings(labels)
+	if len(groups) == 1 {
+		return labels[0], nil
+	}
+	return "", newTrustError(ruleAmbiguousProject, "", "compose project %q has containers in more than one working directory: %s", project, quoteAll(labels))
 }
 
 // scopeOf returns the containers of one compose project in a directory,
@@ -196,17 +200,17 @@ func (s daemonSnapshot) resolveProject(project string) (string, *composeTrustErr
 // (the label compose wrote, and the resolved directory it writes after running
 // there). A nil excluded matches every container, which is what the
 // post-update verification wants.
-func scopeOf(all []container.Summary, excluded map[string]string, project string, dirs []string, service string) []container.Summary {
+func scopeOf(all []container.Summary, excluded map[string]string, resolve func(string) string, project string, dirs []string, service string) []container.Summary {
 	keys := map[string]bool{}
 	for _, d := range dirs {
-		keys[models.TargetKeyCompose(d)] = true
+		keys[snapKey(resolve, d)] = true
 	}
 	var out []container.Summary
 	for _, c := range all {
 		if _, bad := excluded[c.ID]; bad {
 			continue
 		}
-		if c.Labels[models.LabelComposeProject] != project || !keys[models.TargetKeyCompose(c.Labels[models.LabelComposeWorkingDir])] {
+		if c.Labels[models.LabelComposeProject] != project || !keys[snapKey(resolve, c.Labels[models.LabelComposeWorkingDir])] {
 			continue
 		}
 		if service != "" && c.Labels[models.LabelComposeService] != service {
@@ -215,4 +219,40 @@ func scopeOf(all []container.Summary, excluded map[string]string, project string
 		out = append(out, c)
 	}
 	return out
+}
+
+// snapKey is the comparison key of a working-dir label: the key of the real
+// directory when a resolver is bound, else of the cleaned label.
+func snapKey(resolve func(string) string, label string) string {
+	if resolve != nil {
+		return resolve(label)
+	}
+	return models.TargetKeyCompose(label)
+}
+
+func (s daemonSnapshot) key(label string) string { return snapKey(s.resolve, label) }
+
+// bind returns the snapshot with working-dir labels compared by the real
+// directory they name. A symlinked stack directory leaves some containers with
+// the link in their label and others, recreated by compose running at the
+// resolved path, with the target; both are one directory. A label that does not
+// resolve (it does not exist, or the agent user cannot traverse it) is compared
+// by its cleaned path, so it still counts as its own directory and can make a
+// project ambiguous, which fails closed.
+func (t *composeTrust) bind(s daemonSnapshot) daemonSnapshot {
+	memo := map[string]string{}
+	s.resolve = func(label string) string {
+		if k, ok := memo[label]; ok {
+			return k
+		}
+		k := models.TargetKeyCompose(filepath.Clean(label))
+		if filepath.IsAbs(label) {
+			if r, err := t.fs.EvalSymlinks(filepath.Clean(label)); err == nil {
+				k = models.TargetKeyCompose(r)
+			}
+		}
+		memo[label] = k
+		return k
+	}
+	return s
 }

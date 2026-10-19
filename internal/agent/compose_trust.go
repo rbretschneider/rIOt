@@ -518,6 +518,7 @@ func (t *composeTrust) Check(snap daemonSnapshot, req trustRequest) (trustedDir,
 }
 
 func (t *composeTrust) check(snap daemonSnapshot, req trustRequest) (trustedDir, *composeTrustError) {
+	snap = t.bind(snap)
 	s := &checkState{
 		t: t, snap: snap, dir: req.Dir,
 		metas: map[string]fileMeta{}, typeOK: map[string]bool{}, leafOK: map[string]bool{}, ancOK: map[string]bool{},

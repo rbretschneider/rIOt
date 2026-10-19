@@ -578,3 +578,72 @@ func TestMarkerTarget_IncludesComposeProject(t *testing.T) {
 	got = markerTarget(models.CommandPayload{Params: map[string]interface{}{"compose_project": "media", "compose_work_dir": "/srv/media"}})
 	assert.Equal(t, "/srv/media", got, "compose_work_dir keeps priority")
 }
+
+// ---------------------------------------------------------------------------
+// QA-D1: labels that resolve to one real directory are one directory
+// ---------------------------------------------------------------------------
+
+func TestUpdateStack_AC009_LinkAndTargetLabelsAreOneDirectory(t *testing.T) {
+	dir := composeDir(t)
+	link := filepath.Join(filepath.Dir(dir), "link-to-stack")
+
+	for name, params := range map[string]map[string]interface{}{
+		"project only":                 projectParams("stack", ""),
+		"server names the link":        projectParams("stack", link),
+		"server names the real target": projectParams("stack", dir),
+		"old server, link":             stackParams(link),
+		"old server, target":           stackParams(dir),
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newDockerHarness(t)
+			fs := h.useFakeTrust(dir)
+			fs.link(link, dir, 0)
+			h.composeService(dir, "a", true, "")
+			h.composeService(link, "b", true, "")
+
+			res := h.run(idA, "docker_update", params)
+
+			assert.Equal(t, "success", res.Status, "[AC-009] %s: %s", name, res.Message)
+			assert.Contains(t, h.procs.invocations()[0], "--project-directory="+dir, "compose runs at the resolved directory")
+		})
+	}
+}
+
+func TestUpdateStack_AC009_TrulyDifferentDirsStayAmbiguous(t *testing.T) {
+	captureLogs(t)
+	h := newDockerHarness(t)
+	dir := composeDir(t)
+	other := composeDir(t)
+	fs := h.useFakeTrust(dir)
+	fs.chain(other)
+	link := filepath.Join(filepath.Dir(dir), "link-to-other")
+	fs.link(link, other, 0)
+	h.composeService(dir, "a", true, "")
+	h.composeService(link, "b", true, "") // resolves to a different directory
+
+	res := h.run(idA, "docker_update", projectParams("stack", ""))
+
+	assert.Contains(t, res.Message, "(ambiguous_project)", "[AC-009] a link to another directory is another directory")
+	h.noCompose(t, "[AC-009]")
+}
+
+func TestComposeCore_AC002_VerifyFindsContainersUnderEitherLabelForm(t *testing.T) {
+	h := newDockerHarness(t)
+	dir := composeDir(t)
+	fs := h.useFakeTrust(dir)
+	link := filepath.Join(filepath.Dir(dir), "link-to-stack")
+	fs.link(link, dir, 0)
+	a := h.composeService(link, "a", true, "")
+	h.composeService(dir, "b", true, "")
+	h.procs.configure = func(args []string, p *fakeProcess) {
+		if contains(args, "up") { // compose, run at the resolved path, relabels what it recreates
+			h.docker.mu.Lock()
+			a.Labels = composeLabels(dir, "a")
+			h.docker.mu.Unlock()
+		}
+	}
+
+	res := h.run(idA, "docker_update", projectParams("stack", ""))
+
+	assert.Equal(t, "success", res.Status, "[AC-002] services under either label form are verified: %s", res.Message)
+}

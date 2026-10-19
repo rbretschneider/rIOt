@@ -399,6 +399,7 @@ func snapshotRefusal(dir string, err error) *composeTrustError {
 // directory. A failure is returned as the precheck result to hand back.
 func (cr *cmdRun) checkCompose(api dockerAPI, spec composeSpec) (snap daemonSnapshot, td trustedDir, refused *commandExecResult) {
 	snap, err := loadDaemonSnapshot(cr.ctx, api)
+	snap = cr.a.composeTrust().bind(snap)
 	if err != nil {
 		res := cr.refusal(snapshotRefusal(spec.WorkDir, err))
 		return snap, td, &res
@@ -429,6 +430,7 @@ func (cr *cmdRun) updateStack(api dockerAPI, t updateTarget, o updateOpts) (comm
 	}
 
 	snap, err := loadDaemonSnapshot(cr.ctx, api)
+	snap = cr.a.composeTrust().bind(snap)
 	if err != nil {
 		return cr.refusal(snapshotRefusal(workDir, err)), nil
 	}
@@ -438,7 +440,7 @@ func (cr *cmdRun) updateStack(api dockerAPI, t updateTarget, o updateOpts) (comm
 		if rerr != nil {
 			return cr.refusal(rerr), nil
 		}
-		if workDir != "" && filepath.Clean(workDir) != filepath.Clean(dir) {
+		if workDir != "" && snap.key(workDir) != snap.key(dir) {
 			return cr.refusal(newTrustError(ruleWorkDirMismatch, workDir, "compose project %q runs in %q, not in the directory the server named", project, dir)), nil
 		}
 		if workDir == "" && !o.lockHeld {
@@ -502,7 +504,7 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 		return *refused, nil
 	}
 	all := snap.Containers
-	scope := scopeOf(all, snap.excluded, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
+	scope := scopeOf(all, snap.excluded, snap.resolve, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
 	refs := imageRefs(scope)
 	wasRunning := map[string]bool{}
 	for _, c := range scope {
@@ -625,7 +627,7 @@ func (cr *cmdRun) composeCore(api dockerAPI, spec composeSpec, st *depState) (co
 		return commandExecResult{Status: models.ResultStatusError, Step: models.StepVerify,
 			Message: fmt.Sprintf("verification failed: list containers: %s", err)}, refs
 	}
-	postScope := scopeOf(after, nil, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
+	postScope := scopeOf(after, nil, snap.resolve, spec.Project, []string{spec.WorkDir, td.Path()}, spec.Service)
 	refs = append(refs, imageRefs(postScope)...)
 	for svc := range wasRunning {
 		ok := false
