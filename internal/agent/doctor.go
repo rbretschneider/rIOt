@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 // collectorDeps maps collector name → required external tools.
@@ -211,6 +213,7 @@ func Doctor(configPath string) {
 		}
 		fmt.Printf("  Stats:        %v\n", cfg.Docker.CollectStats)
 		fmt.Printf("  Terminal:     %v\n", cfg.Docker.TerminalEnabled)
+		checkComposeTrust(cfg)
 	}
 
 	// ── Permissions ──
@@ -526,3 +529,94 @@ func friendlyDuration(seconds int) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
+
+// maxDoctorLine bounds one doctor line that carries a label- or
+// filesystem-derived value.
+const maxDoctorLine = 1100
+
+// checkComposeTrust runs the compose trust check against every compose project
+// directory the local Docker daemon knows (AUTOUPD-HARDEN-001 AD-012). It runs
+// with the doctor's own privileges, usually root; that is harmless because the
+// agent user is trusted through the Docker socket group anyway.
+func checkComposeTrust(cfg *Config) {
+	t := &composeTrust{fs: osTrustFS{}, goos: runtime.GOOS, socket: cfg.Docker.SocketPath, roots: cfg.Docker.ComposeRoots, rootsErr: cfg.Docker.rootsErr}
+	cli, err := newDockerClient(cfg.Docker.SocketPath)
+	if err != nil {
+		reportComposeTrust(cfg.Docker, daemonSnapshot{}, err, t)
+		return
+	}
+	defer cli.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	snap, err := loadDaemonSnapshot(ctx, sdkDocker{cli})
+	reportComposeTrust(cfg.Docker, snap, err, t)
+}
+
+// reportComposeTrust prints the compose roots setting and one pass or fail line
+// per (project, working directory) pair, with the rule that failed. The state it
+// reports on is injected, for tests.
+func reportComposeTrust(cfg DockerConfig, snap daemonSnapshot, snapErr error, t *composeTrust) {
+	line := func(format string, args ...interface{}) string {
+		return models.TruncateHead(fmt.Sprintf(format, args...), maxDoctorLine)
+	}
+	switch {
+	case cfg.rootsErr != nil:
+		fmt.Printf("  Compose roots: %s\n", dim("invalid"))
+		fail("%s", line("docker.compose_roots has an entry that is not an absolute path; every compose update is refused until it is fixed"))
+	case len(cfg.ComposeRoots) == 0:
+		fmt.Printf("  Compose roots: %s\n", dim("not set"))
+	default:
+		fmt.Printf("  Compose roots: %s\n", models.TruncateHead(strings.Join(cfg.ComposeRoots, ", "), maxDoctorLine))
+	}
+	if t.windows() && len(cfg.ComposeRoots) == 0 && cfg.rootsErr == nil {
+		fail("compose updates on Windows require docker.compose_roots (ownership cannot be verified)")
+	}
+	if snapErr != nil {
+		warn("%s", line("cannot read docker state: %s", models.TruncateHead(snapErr.Error(), maxRefusalValueBytes)))
+		return
+	}
+
+	var ignored []string
+	for _, c := range snap.Containers {
+		if reason, bad := snap.excluded[c.ID]; bad {
+			why := "its image defines the compose working-dir label"
+			if reason == excludedImageUnread {
+				why = "its image could not be inspected"
+			}
+			ignored = append(ignored, line("container %q ignored as a compose source: %s", models.TruncateHead(summaryName(c), maxRefusalValueBytes), why))
+		}
+	}
+	sort.Strings(ignored)
+	for _, l := range ignored {
+		warn("%s", l)
+	}
+
+	type pair struct{ project, dir string }
+	seen := map[pair]bool{}
+	var pairs []pair
+	for _, c := range snap.composeSources() {
+		p := pair{c.Labels[models.LabelComposeProject], c.Labels[models.LabelComposeWorkingDir]}
+		if !seen[p] {
+			seen[p] = true
+			pairs = append(pairs, p)
+		}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].project != pairs[j].project {
+			return pairs[i].project < pairs[j].project
+		}
+		return pairs[i].dir < pairs[j].dir
+	})
+	if len(pairs) == 0 {
+		fmt.Println("  No compose projects found")
+		return
+	}
+	for _, p := range pairs {
+		td, err := t.Check(snap, trustRequest{Dir: p.dir, Project: p.project})
+		if err != nil {
+			fail("%s", line("project %q: %s", models.TruncateHead(p.project, maxRefusalValueBytes), err.Error()))
+			continue
+		}
+		pass("%s", line("project %q: %q is trusted (%d compose file(s))", models.TruncateHead(p.project, maxRefusalValueBytes), td.Path(), len(td.Files())))
+	}
+}
