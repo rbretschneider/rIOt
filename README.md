@@ -367,6 +367,37 @@ When Docker is enabled, `doctor` also checks every Compose project directory aga
 
 On Linux, when auto-update is enabled (the default), `doctor` also prints an **Agent Update** section. It runs `sudo -n -l systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` to check that the update sudoers rule exists, and checks that `/usr/local/lib/riot/riot-agent-apply` exists with mode `0755`. If either check fails, re-run the installer to rewrite `/etc/sudoers.d/riot-agent` and install the verifier. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing).
 
+`doctor` also prints a **Collection Limits** section with the values the agent actually uses (after clamping, see [Agent Resource Bounds](#agent-resource-bounds)). On Linux it prints a **Memory Limit** section that reads the installed unit with `systemctl show riot-agent`: `MemoryMax` in bytes (`infinity` is reported as a failure), `OOMPolicy`, `KillMode`, and whether `GOMEMLIMIT` is set. A host that shows a failure there predates the memory limit; re-run the installer (see [Upgrading existing agents](#upgrading-existing-agents)).
+
+### Agent Resource Bounds
+
+An agent never grows without limit, even when the server is unreachable or rejects its data.
+
+**Collection limits.** The six settings in the [Agent Config Reference](#agent-config-reference) are all optional. An integer outside its range is clamped to the nearest end of the range, and a value that is not an integer falls back to the default. The agent logs one warning per adjusted key and starts normally. Beyond those settings, one container-log pass sends at most 5,000 lines and 4 MiB across all containers, and a container's log stream is never scanned past 20,000 lines or 8 MiB. The journal is streamed through a ring of the newest entries and 2 MiB, scanning at most 500,000 lines or 256 MiB per pass. The agent logs how many entries it skipped. A telemetry body over 6 MiB loses its container logs first, then its journal entries.
+
+**Offline buffer.** While the server cannot take telemetry, the agent keeps snapshots in a local SQLite file capped at `agent.buffer_max_mb` and 100 items. When a new snapshot does not fit, the oldest items are dropped first and the agent logs a warning. The file gives freed space back to the disk after a flush. A buffer file from an older agent is converted to this layout once, on the first start. If that conversion fails (for example the disk is full) the agent keeps the file and tries again at the next start. A corrupt buffer file is moved aside together with its `-journal`, `-wal` and `-shm` files (replacing the previous set, so at most one set exists) and the agent starts with an empty buffer.
+
+**How the agent treats the server's answer.** The agent sends buffered snapshots oldest first and removes each one the moment the server has decided its fate:
+
+| Server answer | Result |
+|---|---|
+| 2xx | Delivered. The item is removed and never sent again |
+| 400, 404, 413 and any other 4xx except those below | Permanent. The item is dropped with a warning, so it is never retried forever |
+| 401, 403, 408, 429 | The item is kept. A server that is briefly unable to look up keys can answer 401, so a 401 never costs data |
+| 5xx, or no answer | The item is kept and retried on a later tick |
+
+After a 429, 401 or 403 the agent sends no telemetry (it buffers instead) until the `Retry-After` time has passed, clamped to between 1 second and 1 hour. Without that header it waits 30 seconds, doubling after each further refusal up to 10 minutes. A success resets the wait. Heartbeats are not affected.
+
+**First registration.** Before a new agent asks the server for an identity, it proves it can durably write one: it writes and syncs 4 KiB in both the directory of the device ID file and the directory of `agent.yaml`. If it cannot (for example the disk is full), it logs the error, waits 5 seconds, then 10, 20 and so on up to 10 minutes, and tries again without ever contacting the server. This stops a full disk from creating a new ghost device on every restart. If the identity cannot be written after the server has issued it, the agent logs the path and the error, waits 60 seconds and exits with status 1. A periodic re-registration that returns the same device ID only logs a warning when it cannot save; a different ID that cannot be saved is fatal in the same way.
+
+**Self-update.** A binary download stops at 64 MiB. A larger announced size is refused without being read, and a stream that goes over is cut off. The partial file is deleted and the update is reported as `agent_update_failed`. At start the agent removes its own staged update files (`riot-agent.update`, `.checksums`, `.sig`) once they are older than one hour. The privileged helper does the same for its leftover `.riot-agent.apply.<16 hex characters>` temp files, but only for regular files older than one hour in a directory that is owned by root and not writable by group or others. Existing hosts get the helper sweep after the installer is re-run.
+
+#### Memory limit
+
+The unit written by `install.sh` sets `MemoryMax=50%`, `Environment=GOMEMLIMIT=200MiB` and `OOMPolicy=continue`. `MemoryMax` caps the agent's whole cgroup at half of the host's RAM, `GOMEMLIMIT` makes the Go runtime collect garbage well before that, and `OOMPolicy=continue` keeps systemd from stopping the unit when one process in it is OOM-killed. `MemoryMax=50%` needs systemd 239 or newer and `OOMPolicy` needs systemd 243 or newer; an older systemd ignores a directive it does not know and logs a warning.
+
+> **Known limitation: package upgrades.** The unit uses `KillMode=control-group`, and the `apt` or `dpkg` that the agent starts for an OS patch run inside the agent's cgroup. Two events can therefore interrupt a package upgrade in progress: the agent process dying (systemd stops the whole unit before it restarts it), and the cgroup reaching `MemoryMax`. On a small host the cap is tight: 512 MiB on a 1 GiB board. An interrupted `dpkg` can be repaired with `dpkg --configure -a`, which the agent runs before its next patch when the sudoers rule for it is installed. The planned fix is to run `apt` and `dpkg` in their own transient systemd unit or scope, so neither an agent restart nor the agent's cgroup limit can kill an upgrade in flight; it is tracked with AGENT-PRIV and is not part of this change.
+
 ### Manual Install
 
 1. Download the agent binary for your platform from [Releases](https://github.com/rbretschneider/rIOt/releases):
@@ -503,8 +534,14 @@ New installs via `install.sh` include all rules automatically.
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
 | `agent.auto_update` | `true` | Automatically install agent updates when available. Updates are installed only if the release signature verifies (fail-closed). Set to `false` to disable. Dev builds never auto-update. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing) |
+| `agent.buffer_max_mb` | `50` | Size cap of the offline telemetry buffer in MiB, range 5-500. The buffer also holds at most 100 items. See [Agent Resource Bounds](#agent-resource-bounds) |
 | `collectors.enabled` | all | List of collectors to run |
 | `collectors.smart_interval` | `4h` | Interval between SMART disk health scans (e.g. `1h`, `4h`, `12h`) |
+| `collectors.container_logs.max_lines` | `1000` | Newest log lines kept per container per collection, range 1-1000 |
+| `collectors.container_logs.max_bytes` | `262144` | Log bytes kept per container per collection (newest first), range 1024-262144 |
+| `collectors.container_logs.max_line_bytes` | `4096` | Container-log lines longer than this are cut at a character boundary and end in ` [truncated]`, range 1024-16384 |
+| `collectors.logs.max_entries_per_pass` | `5000` | Newest journal entries sent per collection, range 500-20000 |
+| `collectors.logs.max_line_bytes` | `4096` | Journal messages longer than this are cut the same way, range 1024-16384 |
 | `collectors.webservers.nginx.access_log` | — | Absolute path to the nginx access log file. When set, the `webservers` collector parses the log each interval and includes HTTP status code counts in telemetry. Omit to disable access log monitoring (no default path is assumed). |
 | `docker.enabled` | `auto` | Docker collection mode: `auto` (detect), `true`, `false` |
 | `docker.socket_path` | auto-detect | Override the Docker socket path |
@@ -1028,6 +1065,7 @@ Use the same flags you used for the original install. The re-run:
 2. Changes `/usr/local/bin/riot-agent` from `riot:riot` to `root:root`.
 3. Replaces the two shell-based update sudoers rules with the single fixed rule above.
 4. Rewrites the service unit so `ExecStartPre=-+/usr/local/lib/riot/riot-agent-apply --boot` applies a verified staged update on restart. This replaces the old unverified `cp`.
+5. Adds the memory limit to the unit (`MemoryMax=50%`, `GOMEMLIMIT=200MiB`, `OOMPolicy=continue`; see [Memory limit](#memory-limit)) and installs the verifier that sweeps stale temp files. Both take effect only after this re-run. A new agent binary alone neither limits memory nor sweeps the verifier's temp files.
 
 Until a host is re-run:
 
