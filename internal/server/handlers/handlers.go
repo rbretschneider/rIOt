@@ -59,6 +59,10 @@ type HandlerDeps struct {
 	OIDC                 *oidc.Service
 	ExternalIdentityRepo db.ExternalIdentityRepository
 	SetupComplete        *atomic.Bool
+
+	// REG-HARDEN-001: nil unless mTLS is active; nil => certificate proof
+	// unavailable for device re-registration.
+	CARepo db.CARepository
 }
 
 type Handlers struct {
@@ -95,6 +99,11 @@ type Handlers struct {
 	// timestamps deterministically rather than relying on real-clock timing.
 	oidcClock func() time.Time
 
+	// REG-HARDEN-001: CA repository used to check certificate revocation when
+	// a client certificate is offered as proof of device identity at
+	// re-registration. nil unless mTLS is active (see HandlerDeps.CARepo).
+	caRepo db.CARepository
+
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
 	serverHostID atomic.Value // stores string
@@ -127,6 +136,7 @@ func New(deps HandlerDeps) *Handlers {
 		oidc:                 deps.OIDC,
 		externalIdentityRepo: deps.ExternalIdentityRepo,
 		setupComplete:        deps.SetupComplete,
+		caRepo:               deps.CARepo,
 	}
 }
 

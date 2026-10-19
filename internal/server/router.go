@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/DesyncTheThird/rIOt/internal/server/oidc"
@@ -61,6 +62,16 @@ func (s *Server) setupRouter() *chi.Mux {
 		JWTSecret:    s.JWTSecret,
 	})
 
+	// REG-HARDEN-001: the registration handler may accept a client certificate
+	// as proof of device identity only when mTLS is active. Assign s.CARepo
+	// into the interface only inside the guard: a nil *db.CARepo stored in the
+	// interface would be a non-nil interface (typed-nil), so an inactive-mTLS
+	// router would wrongly look certificate-capable.
+	var regCARepo db.CARepository
+	if s.Config.MTLSEnabled && s.CA != nil {
+		regCARepo = s.CARepo
+	}
+
 	h := handlers.New(handlers.HandlerDeps{
 		Devices:           s.DeviceRepo,
 		Telemetry:         s.TelemetryRepo,
@@ -87,6 +98,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		OIDC:                 oidcSvc,
 		ExternalIdentityRepo: s.ExternalIdentityRepo,
 		SetupComplete:        &s.SetupComplete,
+		CARepo:               regCARepo,
 	})
 
 	// Setup wizard handler
