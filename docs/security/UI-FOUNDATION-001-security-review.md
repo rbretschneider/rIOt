@@ -182,7 +182,7 @@ flight. Per the ADD, a rejection after unmount is swallowed by the mounted-ref
 guard, and only the inline error exists to report it. BR-002 ("each action
 failure is reported to the user exactly once") is then violated.
 **Attack Scenario:**
-Ryan confirms Reboot on `hawaii`, then presses Alt+Left while "Working…" is
+Ryan confirms Reboot on a device, then presses Alt+Left while "Working…" is
 showing. The command request fails. No inline error renders, because the dialog
 is gone, and no toast is raised. Ryan believes the reboot was dispatched.
 **Required Resolution:**

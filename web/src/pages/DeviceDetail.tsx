@@ -33,7 +33,7 @@ export default function DeviceDetail() {
   // directly into the ['device', id] and ['events'] query caches
   const { wsConnected } = useDevices()
   const { isEnabled } = useFeatures()
-  const { data, isLoading, error: deviceError, refetch: refetchDevice } = useQuery({
+  const { data, isPending, error: deviceError, refetch: refetchDevice } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
     refetchInterval: wsConnected ? false : 15_000, // Only poll when WS is down
@@ -188,7 +188,7 @@ export default function DeviceDetail() {
     return isVersionOlder(v, latestVersion)
   }, [data?.device.agent_version, latestVersion])
 
-  if (!data) return <DeviceQueryFallback isLoading={isLoading} error={deviceError} onRetry={() => { void refetchDevice() }} />
+  if (!data) return <DeviceQueryFallback isPending={isPending} error={deviceError} onRetry={() => { void refetchDevice() }} />
 
   const { device, latest_telemetry, agent_connected } = data
   const tel = latest_telemetry?.data

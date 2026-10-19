@@ -176,3 +176,12 @@ None required for the verdict. Recommended before the release tag, in priority o
 1. `web/src/pages/FleetOverview.tsx:72` and `:356`: add a synchronous in-flight guard to the patch-all confirm (same `useRef` pattern as `ConfirmDialog.tsx:70-74`), then change the `it.fails` in `FleetOverview.test.tsx` (`QA-D1`) to `it`.
 2. `web/src/components/DeviceQueryFallback.tsx:19`: do not report "Device not found" for a paused or pending query. Pass `isPending` (or `fetchStatus`) from the three device pages and show the skeleton or an offline error panel. Keep "not found" for a 404 and for a missing route parameter. Then change the `it.fails` in `DeviceDetail.flows.test.tsx` (`QA-D2`) to `it`.
 3. Optional: trim the trailing colon in `HTTP <status>: ` when `statusText` is empty (needs an FRD wording decision for FR-079 and AC-088).
+
+## Post-QA fixes (Clod, 2026-10-18)
+
+Both Medium defects were fixed before the PR. The two `it.fails` tests were changed to `it` and now pass.
+
+- **QA-D1 fixed.** `FleetOverview.tsx` routes the PatchReviewModal confirm through `handlePatchAll`, which uses a synchronous `useRef` in-flight guard (cleared in `onSettled`), matching `ConfirmDialog`. Two activations in one frame dispatch `bulkPatchDevices` once.
+- **QA-D2 fixed.** `DeviceQueryFallback` now takes React Query's `isPending` instead of `isLoading`. `isPending` stays true while a fetch is paused offline, so DeviceDetail, DeviceContainers and ContainerDetailPage show the loading state, never "Device not found". That text is now reserved for a 404, or for a settled query with no data and no error.
+
+After the fixes: `npx tsc --noEmit` exits 0; `npm run test:run` reports 57 files / 1153 tests passed, with no `it.fails` left; `go test ./...` passes (19 packages ok).

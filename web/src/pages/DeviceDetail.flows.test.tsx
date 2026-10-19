@@ -524,16 +524,15 @@ describe('[UIF SEC-003] QA: a Reboot that fails after the page was left is still
 
 // Covers FR-084, FR-085, BR-004: "Device not found" may only be shown for a 404. When the browser is
 // offline TanStack Query PAUSES the fetch: no request is made, no error exists, isLoading is false.
-// DeviceQueryFallback treats "not loading and no error" as "not found", so a user who loses the network
-// and opens a device is told "This device no longer exists". KNOWN DEFECT QA-D2 (also affects
-// DeviceContainers and ContainerDetailPage, which share the component). it.fails keeps the suite green and
-// flips red once the fallback distinguishes a paused query; then change it.fails to it.
+// Regression test for QA-D2: DeviceQueryFallback keys off isPending (true while paused), so an offline
+// user sees the loading state, not "This device no longer exists". DeviceContainers and
+// ContainerDetailPage share the component.
 describe('[UIF AC-095] QA: an offline browser is not "Device not found"', () => {
   afterEach(() => {
     onlineManager.setOnline(true)
   })
 
-  it.fails('shows a loading or load-failure state, not "Device not found", while the fetch is paused offline (QA-D2)', async () => {
+  it('shows a loading or load-failure state, not "Device not found", while the fetch is paused offline (QA-D2)', async () => {
     onlineManager.setOnline(false)
     renderPage()
     await new Promise(resolve => setTimeout(resolve, 50))

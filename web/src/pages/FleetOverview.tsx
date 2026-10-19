@@ -83,7 +83,16 @@ export default function FleetOverview() {
     onError: (e) => {
       toast.error("Couldn't dispatch patches", errorMessage(e))
     },
+    onSettled: () => { patchAllInFlight.current = false },
   })
+  // Synchronous double-submit guard: `isPending` only disables the button after a
+  // re-render, so two clicks in one frame would otherwise patch the fleet twice.
+  const patchAllInFlight = useRef(false)
+  function handlePatchAll() {
+    if (patchAllInFlight.current) return
+    patchAllInFlight.current = true
+    patchAllMutation.mutate()
+  }
 
   async function handleOpenPatchReview() {
     setPatchDetailLoading(true)
@@ -353,7 +362,7 @@ export default function FleetOverview() {
           loading={patchDetailLoading}
           patches={patchDetail}
           pending={patchAllMutation.isPending}
-          onConfirm={() => patchAllMutation.mutate()}
+          onConfirm={handlePatchAll}
           onClose={() => { setShowPatchReview(false); setPatchDetail(null) }}
         />
       )}

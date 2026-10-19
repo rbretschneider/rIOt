@@ -16,7 +16,7 @@ export default function ContainerDetailPage() {
   const navigate = useNavigate()
   const { wsConnected } = useDevices()
   const { isEnabled } = useFeatures()
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isPending, error, refetch } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
     refetchInterval: wsConnected ? false : 15_000,
@@ -45,7 +45,7 @@ export default function ContainerDetailPage() {
     }
   }, [containers, found, cid, id, navigate])
 
-  if (!data) return <DeviceQueryFallback isLoading={isLoading} error={error} onRetry={() => { void refetch() }} />
+  if (!data) return <DeviceQueryFallback isPending={isPending} error={error} onRetry={() => { void refetch() }} />
 
   const { device } = data
   const container = found ?? lastContainer.current

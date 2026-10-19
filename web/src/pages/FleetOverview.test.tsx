@@ -661,16 +661,13 @@ describe('[UIF AC-123] hostname not uppercased', () => {
 })
 
 // Added by QA Engineer
-// Covers AC-078 (patch-all pending control). KNOWN DEFECT QA-D1: PatchReviewModal confirms with
-// patchAllMutation.mutate() and relies on React Query's isPending reaching React to disable the
-// button; unlike ConfirmDialog there is no synchronous in-flight guard, so two activations that are
-// queued before that re-render (a busy main thread, a scripted double click) dispatch a fleet-wide
-// OS patch twice. it.fails keeps the suite green and flips red the moment the guard is added;
-// at that point change it.fails to it.
+// Covers AC-078 (patch-all pending control). Regression test for QA-D1: isPending only disables the
+// button after a re-render, so two activations queued before it (a busy main thread, a scripted
+// double click) must still dispatch the fleet-wide OS patch once, via FleetOverview's in-flight ref.
 describe('[UIF AC-078] QA: patch-all double activation dispatches once', () => {
   usePendingPatches()
 
-  it.fails('two clicks on "Update All Devices" before React re-renders call bulkPatchDevices once (QA-D1)', async () => {
+  it('two clicks on "Update All Devices" before React re-renders call bulkPatchDevices once (QA-D1)', async () => {
     vi.mocked(api.bulkPatchDevices).mockReturnValue(new Promise(() => {}))
     const dialog = await openPatchReview()
     const confirm = within(dialog).getByRole('button', { name: 'Update All Devices' })

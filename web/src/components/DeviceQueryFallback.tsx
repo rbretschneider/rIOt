@@ -3,7 +3,8 @@ import { isNotFound } from '../api/errors'
 import { EmptyState, ErrorPanel, Skeleton } from './ui'
 
 interface Props {
-  isLoading: boolean
+  /** React Query `isPending`: no data yet. Stays true while a fetch is paused offline. */
+  isPending: boolean
   error: unknown
   onRetry: () => void
 }
@@ -11,12 +12,13 @@ interface Props {
 /**
  * What a device page shows when it has no device data. A 404 is "not found";
  * any other failure (including a network error with no status) is a load
- * failure with Retry; otherwise the first fetch is still in flight.
+ * failure with Retry; otherwise the first fetch is in flight or paused offline.
  */
-export default function DeviceQueryFallback({ isLoading, error, onRetry }: Props) {
-  // A 404, or a settled query that produced neither data nor an error (for example a
-  // missing route parameter), both mean there is no such device.
-  if (isNotFound(error) || (!isLoading && !error)) {
+export default function DeviceQueryFallback({ isPending, error, onRetry }: Props) {
+  // A 404, or a settled query that produced neither data nor an error, both mean there
+  // is no such device. `isPending` (not `isLoading`) keeps an offline-paused fetch out
+  // of this branch: React Query reports it as not loading with no error.
+  if (isNotFound(error) || (!isPending && !error)) {
     return (
       <EmptyState
         title="Device not found"
