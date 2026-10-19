@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -14,6 +17,11 @@ import (
 // This prevents harmless boot-time noise (e.g. ACPI BIOS errors) from firing alerts.
 const bootGracePeriod = 10 * time.Minute
 
+// maxTelemetryBodyBytes is the agent-side body guard (GROWTH-001 D-36). The
+// server accepts 25 MiB; staying near a quarter of that keeps a runaway
+// collector from ever producing a body the server must reject.
+const maxTelemetryBodyBytes = 6 << 20
+
 func (a *Agent) sendTelemetry(ctx context.Context) {
 	data := a.collectAll(ctx)
 
@@ -22,19 +30,110 @@ func (a *Agent) sendTelemetry(ctx context.Context) {
 		Timestamp: time.Now().UTC(),
 		Data:      data,
 	}
+	guardTelemetryBody(snap, maxTelemetryBodyBytes)
 
-	if err := a.client.SendTelemetry(ctx, a.config.Agent.DeviceID, snap); err != nil {
-		slog.Warn("telemetry push failed, buffering", "error", err)
-		if a.buffer != nil {
-			a.buffer.Store(snap)
+	err := a.client.SendTelemetry(ctx, a.config.Agent.DeviceID, snap)
+	outcome, status := classifyPush(err)
+	switch outcome {
+	case pushRetry:
+		// 401, 403, 408, 429, 5xx, a transport error or a back-off: keep it.
+		if errors.Is(err, ErrBackoff) {
+			slog.Debug("telemetry push held back, buffering", "error", err)
+		} else {
+			slog.Warn("telemetry push failed, buffering", "error", err)
 		}
+		a.bufferSnapshot(snap)
 		return
+	case pushRejected:
+		// A permanent 4xx will never succeed: buffering it would only make the
+		// next flush fail the same way (GROWTH-001 FR-068).
+		slog.Warn("server rejected telemetry, dropping it", "status", status, "error", err)
 	}
 
-	// Flush buffer on successful connection
+	// The server answered, so deliver what was buffered while it was away.
 	if a.buffer != nil {
 		a.flushBuffer(ctx)
 	}
+}
+
+func (a *Agent) bufferSnapshot(snap *models.TelemetrySnapshot) {
+	if a.buffer == nil {
+		return
+	}
+	if err := a.buffer.Store(snap); err != nil {
+		slog.Warn("could not buffer telemetry, dropping it", "error", err)
+	}
+}
+
+// pushOutcome is what the agent does with a telemetry item after one attempt.
+type pushOutcome int
+
+const (
+	// pushAcked: the server accepted it (2xx).
+	pushAcked pushOutcome = iota
+	// pushRejected: a permanent 4xx; the item can never succeed and is dropped.
+	pushRejected
+	// pushRetry: keep the item and back off.
+	pushRetry
+)
+
+// classifyPush maps a SendTelemetry result to an outcome (GROWTH-001 AD-017).
+// Every 4xx is permanent except 401 and 403 (a database blip on the server can
+// answer 401, and a revoked-then-restored key must not lose data), 408 (a
+// transient timeout) and 429 (rate limited). 5xx and transport errors retry.
+func classifyPush(err error) (outcome pushOutcome, status int) {
+	if err == nil {
+		return pushAcked, http.StatusOK
+	}
+	var se *StatusError
+	if !errors.As(err, &se) {
+		return pushRetry, 0 // transport error or ErrBackoff
+	}
+	switch {
+	case se.StatusCode == http.StatusUnauthorized,
+		se.StatusCode == http.StatusForbidden,
+		se.StatusCode == http.StatusRequestTimeout,
+		se.StatusCode == http.StatusTooManyRequests,
+		se.StatusCode >= 500:
+		return pushRetry, se.StatusCode
+	case se.StatusCode >= 400:
+		return pushRejected, se.StatusCode
+	}
+	return pushRetry, se.StatusCode
+}
+
+// guardTelemetryBody keeps the encoded snapshot within limit bytes by dropping
+// the elastic sections: container logs first, then the journal.
+func guardTelemetryBody(snap *models.TelemetrySnapshot, limit int) {
+	size := encodedSize(snap)
+	if size <= limit {
+		return
+	}
+	if n := len(snap.Data.ContainerLogs); n > 0 {
+		snap.Data.ContainerLogs = nil
+		slog.Warn("telemetry body over the guard, dropped container logs",
+			"dropped_lines", n, "was_bytes", size, "limit_bytes", limit)
+		if size = encodedSize(snap); size <= limit {
+			return
+		}
+	}
+	if n := len(snap.Data.Logs); n > 0 {
+		snap.Data.Logs = nil
+		slog.Warn("telemetry body over the guard, dropped journal entries",
+			"dropped_entries", n, "was_bytes", size, "limit_bytes", limit)
+		if size = encodedSize(snap); size <= limit {
+			return
+		}
+	}
+	slog.Error("telemetry body still over the guard after dropping logs", "bytes", size, "limit_bytes", limit)
+}
+
+func encodedSize(snap *models.TelemetrySnapshot) int {
+	b, err := json.Marshal(snap)
+	if err != nil {
+		return 0
+	}
+	return len(b)
 }
 
 func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
@@ -113,19 +212,51 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 	return data
 }
 
+// flushBuffer sends the buffered snapshots oldest first, one at a time. Each
+// item leaves the buffer as soon as the server has decided its fate: a 2xx
+// removes it (it is never sent again, FR-067) and a permanent 4xx removes it
+// with a Warn (FR-068). Anything else keeps it and stops the flush.
 func (a *Agent) flushBuffer(ctx context.Context) {
-	items, err := a.buffer.GetAll()
-	if err != nil || len(items) == 0 {
-		return
-	}
+	delivered, dropped := 0, 0
+	// The buffer holds at most maxBuffered items and nothing else adds to it
+	// during a flush, so this bound is never the reason the loop ends.
+	for i := 0; i <= maxBuffered; i++ {
+		item, err := a.buffer.Oldest()
+		if err != nil {
+			slog.Warn("could not read the offline buffer", "error", err)
+			break
+		}
+		if item == nil {
+			break
+		}
+		deviceID := item.Snapshot.DeviceID
+		if deviceID == "" {
+			deviceID = a.config.Agent.DeviceID
+		}
 
-	slog.Info("flushing buffered telemetry", "count", len(items))
-	for _, snap := range items {
-		if err := a.client.SendTelemetry(ctx, snap.DeviceID, snap); err != nil {
-			slog.Warn("buffer flush failed, will retry later", "error", err)
-			return
+		err = a.client.SendTelemetry(ctx, deviceID, item.Snapshot)
+		outcome, status := classifyPush(err)
+		if outcome == pushRetry {
+			if errors.Is(err, ErrBackoff) {
+				slog.Debug("buffer flush held back", "error", err)
+			} else {
+				slog.Warn("buffer flush failed, will retry later", "error", err)
+			}
+			break
+		}
+		if outcome == pushRejected {
+			slog.Warn("server rejected a buffered item, dropping it", "status", status, "error", err)
+			dropped++
+		} else {
+			delivered++
+		}
+		if err := a.buffer.Delete(item.ID); err != nil {
+			slog.Error("could not remove a handled item from the offline buffer", "error", err)
+			break
 		}
 	}
-	a.buffer.Clear()
-	slog.Info("buffer flushed successfully")
+	if delivered+dropped > 0 {
+		a.buffer.Compact()
+		slog.Info("buffer flushed", "delivered", delivered, "dropped", dropped, "remaining", a.buffer.Len())
+	}
 }

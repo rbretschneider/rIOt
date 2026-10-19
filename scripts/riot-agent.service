@@ -12,6 +12,13 @@ User=riot
 Group=riot
 SupplementaryGroups=docker systemd-journal
 LimitNOFILE=65536
+# Memory limit (GROWTH-001): MemoryMax caps the whole cgroup, GOMEMLIMIT makes
+# the Go runtime collect garbage before that, and OOMPolicy=continue keeps one
+# OOM-killed process from stopping the unit. The cgroup includes apt/dpkg started
+# by the agent, so a cgroup OOM or an agent restart can interrupt an upgrade.
+MemoryMax=50%
+Environment=GOMEMLIMIT=200MiB
+OOMPolicy=continue
 
 # Security hardening
 ProtectSystem=strict

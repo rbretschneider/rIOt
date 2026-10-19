@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -80,6 +81,14 @@ type Agent struct {
 	trustFS       trustFS
 	trustPlatform string
 
+	// Identity persistence seams (GROWTH-001 AD-018); zero values mean the real
+	// file system and the default ID path.
+	fsys   stateFS
+	idPath string
+	// fatalCh carries an unrecoverable identity error from a background loop to
+	// Run, which exits non-zero.
+	fatalCh chan error
+
 	// Disk I/O tracking for delta computation between heartbeats.
 	// owned by heartbeatLoop only — no concurrent access
 	prevDiskIO     map[string]diskIOSnapshot
@@ -119,6 +128,9 @@ func New(configPath, version string) (*Agent, error) {
 	if cfg.Collector.SMARTInterval > 0 {
 		registry.SetSMARTInterval(time.Duration(cfg.Collector.SMARTInterval) * time.Second)
 	}
+	limits := cfg.Limits()
+	registry.SetContainerLogLimits(limits.ContainerLogMaxLines, limits.ContainerLogMaxBytes, limits.ContainerLogMaxLineBytes)
+	registry.SetJournalLimits(limits.JournalMaxEntries, limits.JournalMaxLineBytes)
 
 	// Reboot-class hold enforcement (PATCH-GATE AD-003): one HoldManager
 	// shared by the updates collector (per-cycle reconcile + telemetry) and
@@ -184,8 +196,12 @@ func (a *Agent) Run() error {
 		a.client = NewHTTPClient(a.config.Server.URL, a.config.Server.APIKey)
 	}
 
+	// Remove staged self-update files an interrupted update left behind
+	// (GROWTH-001 AD-020).
+	sweepStaleStaging(a.newUpdatePipeline().paths, time.Now(), staleStagingAge)
+
 	// Initialize offline buffer
-	buf, err := NewBuffer(BufferPath())
+	buf, err := NewBufferWithLimit(BufferPath(), a.config.Limits().BufferMaxBytes())
 	if err != nil {
 		slog.Warn("failed to init offline buffer, continuing without", "error", err)
 	} else {
@@ -193,8 +209,13 @@ func (a *Agent) Run() error {
 		defer a.buffer.Close()
 	}
 
-	// Register with server
+	// Register with server. An identity that cannot be written is fatal: the
+	// agent must not run under an ID it would forget on restart (FR-057).
+	a.fatalCh = make(chan error, 1)
 	if err := a.register(ctx); err != nil {
+		if errors.Is(err, errIdentityNotPersistable) {
+			return a.exitUnpersistableIdentity(ctx, err)
+		}
 		slog.Error("registration failed, will retry", "error", err)
 	}
 
@@ -299,14 +320,34 @@ func (a *Agent) Run() error {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 
-	<-done
+	var fatal error
+	select {
+	case <-done:
+	case fatal = <-a.fatalCh:
+	}
 	slog.Info("shutting down agent")
 	a.shuttingDown.Store(true)
 	cancel()
 	a.waitForCommands(models.AgentShutdownGrace)
 	wg.Wait()
 	slog.Info("agent stopped")
+	if fatal != nil {
+		return a.exitUnpersistableIdentity(context.Background(), fatal)
+	}
 	return nil
+}
+
+// exitUnpersistableIdentity logs the path and the error, waits identityExitDelay
+// so a restart loop cannot spin, and returns err so the process exits non-zero.
+func (a *Agent) exitUnpersistableIdentity(ctx context.Context, err error) error {
+	var pe *identityPersistError
+	if errors.As(err, &pe) {
+		slog.Error("cannot persist the device identity; exiting", "path", pe.Path, "error", pe.Err)
+	} else {
+		slog.Error("cannot persist the device identity; exiting", "error", err)
+	}
+	a.pauseFor(ctx, identityExitDelay)
+	return err
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {
@@ -370,11 +411,30 @@ func (a *Agent) reregisterLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.register(ctx); err != nil {
-				slog.Warn("periodic re-registration failed", "error", err)
+			if a.reregister(ctx) {
+				return
 			}
 		}
 	}
+}
+
+// reregister is one periodic registration. It reports true when the error is
+// fatal and has been handed to Run: only an ID mismatch that cannot be saved
+// fails hard (GROWTH-001 AD-018). Any other failure is just logged.
+func (a *Agent) reregister(ctx context.Context) (fatal bool) {
+	err := a.register(ctx)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errIdentityNotPersistable) {
+		select {
+		case a.fatalCh <- err:
+		default:
+		}
+		return true
+	}
+	slog.Warn("periodic re-registration failed", "error", err)
+	return false
 }
 
 // detectHTTPS probes the server with a plain HTTP request. If it gets back the
