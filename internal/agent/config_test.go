@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -149,4 +151,137 @@ func TestLoadConfig_AC008_RelativeRootLoadsButSetsRootsErr(t *testing.T) {
 // The sample config documents the new key as a commented example.
 func TestDefaultConfigTemplate_AC008_DocumentsComposeRoots(t *testing.T) {
 	assert.Contains(t, defaultConfigTemplate, "# compose_roots: []", "[AC-008] the generated agent.yaml shows the setting")
+}
+
+// loadYAML writes body to a temp agent.yaml and loads it, returning the config
+// and everything slog emitted while loading.
+func loadYAML(t *testing.T, body string) (*Config, string) {
+	t.Helper()
+	logs := captureLogs(t)
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	cfg, err := LoadConfig(path)
+	require.NoError(t, err, "a bad limit value must never stop the agent loading its config")
+	return cfg, logs.String()
+}
+
+// yamlForKey renders one limit key into a config document.
+func yamlForKey(key, value string) string {
+	switch key {
+	case keyContainerLogMaxLines:
+		return "collectors:\n  container_logs:\n    max_lines: " + value + "\n"
+	case keyContainerLogMaxBytes:
+		return "collectors:\n  container_logs:\n    max_bytes: " + value + "\n"
+	case keyContainerLogMaxLineBytes:
+		return "collectors:\n  container_logs:\n    max_line_bytes: " + value + "\n"
+	case keyLogsMaxEntries:
+		return "collectors:\n  logs:\n    max_entries_per_pass: " + value + "\n"
+	case keyLogsMaxLineBytes:
+		return "collectors:\n  logs:\n    max_line_bytes: " + value + "\n"
+	default:
+		return "agent:\n  buffer_max_mb: " + value + "\n"
+	}
+}
+
+func resolvedFor(l Limits, key string) int64 {
+	switch key {
+	case keyContainerLogMaxLines:
+		return int64(l.ContainerLogMaxLines)
+	case keyContainerLogMaxBytes:
+		return int64(l.ContainerLogMaxBytes)
+	case keyContainerLogMaxLineBytes:
+		return int64(l.ContainerLogMaxLineBytes)
+	case keyLogsMaxEntries:
+		return int64(l.JournalMaxEntries)
+	case keyLogsMaxLineBytes:
+		return int64(l.JournalMaxLineBytes)
+	default:
+		return int64(l.BufferMaxMB)
+	}
+}
+
+func TestGROWTH_AC068_EveryAgentBoundFiniteInRange(t *testing.T) {
+	inputs := []struct {
+		name, yaml string
+		// want classifies the expected outcome: "min", "max" or "default".
+		want string
+	}{
+		{"zero", "0", "min"},
+		{"negative", "-7", "min"},
+		{"huge", "999999999999", "max"},
+		{"overflowing int64", "99999999999999999999999", "max"},
+		{"negative overflow", "-99999999999999999999999", "min"},
+		{"garbage word", "lots", "default"},
+		{"garbage float", "1.5", "default"},
+		{"garbage bool", "true", "default"},
+	}
+	for key, spec := range agentLimitSpecs {
+		for _, in := range inputs {
+			t.Run(key+"/"+in.name, func(t *testing.T) {
+				cfg, logs := loadYAML(t, yamlForKey(key, in.yaml))
+				got := resolvedFor(cfg.Limits(), key)
+
+				want := map[string]int64{"min": spec.min, "max": spec.max, "default": spec.def}[in.want]
+				assert.Equal(t, want, got, "[AC-068] %s=%s must resolve to the %s (%d)", key, in.yaml, in.want, want)
+				assert.GreaterOrEqual(t, got, spec.min, "[AC-068] resolved value below range")
+				assert.LessOrEqual(t, got, spec.max, "[AC-068] resolved value above range")
+				assert.Equal(t, 1, strings.Count(logs, "config limit adjusted"),
+					"[AC-068] exactly one Warn per adjusted key, got logs: %s", logs)
+				assert.Contains(t, logs, key, "[AC-068] the Warn must name the key")
+			})
+		}
+	}
+}
+
+func TestGROWTH_AC068_InRangeAndUnsetValuesDoNotWarn(t *testing.T) {
+	for key, spec := range agentLimitSpecs {
+		t.Run(key, func(t *testing.T) {
+			cfg, logs := loadYAML(t, yamlForKey(key, strconv.FormatInt(spec.min, 10)))
+			assert.Equal(t, spec.min, resolvedFor(cfg.Limits(), key), "[AC-068] the lower bound itself is valid")
+			assert.NotContains(t, logs, "config limit adjusted")
+
+			cfg, logs = loadYAML(t, "agent:\n  poll_interval: 60\n")
+			assert.Equal(t, spec.def, resolvedFor(cfg.Limits(), key), "[AC-068] unset keys use the documented default")
+			assert.NotContains(t, logs, "config limit adjusted")
+		})
+	}
+}
+
+func TestGROWTH_AC068_DefaultsMatchTheDocumentedValues(t *testing.T) {
+	l := DefaultConfig().Limits()
+	assert.Equal(t, 1000, l.ContainerLogMaxLines)
+	assert.Equal(t, 262144, l.ContainerLogMaxBytes)
+	assert.Equal(t, 4096, l.ContainerLogMaxLineBytes)
+	assert.Equal(t, 5000, l.JournalMaxEntries)
+	assert.Equal(t, 4096, l.JournalMaxLineBytes)
+	assert.Equal(t, int64(50<<20), l.BufferMaxBytes())
+}
+
+func TestGROWTH_AC068_SaveKeepsConfiguredLimitsAndOmitsUnset(t *testing.T) {
+	cfg, _ := loadYAML(t, "collectors:\n  container_logs:\n    max_lines: 200\n")
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, cfg.Save(path))
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "max_lines: 200", "a configured limit must survive a Save")
+	assert.NotContains(t, string(data), "max_bytes", "an unset limit must not be written as a bogus value")
+	assert.NotContains(t, string(data), "buffer_max_mb")
+}
+
+func TestGROWTH_SEC016_ConfigSaveIsAtomicAndLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("server:\n  url: old\n"), 0o600))
+
+	cfg := DefaultConfig()
+	cfg.Server.URL = "https://new:7331"
+	require.NoError(t, cfg.Save(path))
+
+	loaded, err := LoadConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "https://new:7331", loaded.Server.URL)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "[SEC-016] a successful atomic save must leave only the config file")
 }
