@@ -52,7 +52,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
 
   const updateStack = () => {
     setSkippedTargets(0)
-    void tracker.track(() => api.sendCommand(deviceId, 'docker_update', { compose_work_dir: stack.workDir }))
+    void tracker.track(() => api.sendCommand(deviceId, 'docker_update', { compose_project: stack.name, compose_work_dir: stack.workDir }))
   }
 
   const updateGroup = (containerIds: string[]) => {

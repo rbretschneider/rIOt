@@ -188,13 +188,24 @@ afterEach(() => {
 })
 
 describe('[AC-108] ComposeStackSection follows a stack update by command id', () => {
+  it('[AC-015] manual stack update sends compose_project and compose_work_dir', async () => {
+    mockSendCommand.mockResolvedValue(makeCommand())
+    renderStack()
+    await flush()
+
+    await confirmStackUpdate()
+
+    expect(mockSendCommand).toHaveBeenCalledTimes(1)
+    expect(mockSendCommand).toHaveBeenCalledWith(DEVICE, 'docker_update', { compose_project: 'media', compose_work_dir: WORK_DIR })
+  })
+
   it('sends the compose work dir and shows each state and step, still tracking after 30s', async () => {
     mockSendCommand.mockResolvedValue(makeCommand())
     renderStack()
     await flush()
 
     await confirmStackUpdate()
-    expect(mockSendCommand).toHaveBeenCalledWith(DEVICE, 'docker_update', { compose_work_dir: WORK_DIR })
+    expect(mockSendCommand).toHaveBeenCalledWith(DEVICE, 'docker_update', { compose_project: 'media', compose_work_dir: WORK_DIR })
     expect(screen.getByTestId('stack-command-status')).toHaveTextContent('Queued')
 
     push(makeUpdate({ status: 'dispatched', step: '', updated_at: ts(2) }))
