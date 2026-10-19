@@ -6,7 +6,14 @@
 **Builds on:** docs/architecture/CMD-LIFECYCLE-001-add.md (AD-004 target keys, AD-012 locks, SEC C-5, SEC C-9)
 **Author:** Architect Agent
 **Date:** 2026-10-19
-**Status:** FINAL (revision 2)
+**Status:** FINAL (revision 2, with the revision 3 addendum below)
+
+> **Revision 3 addendum (after QA round 1).** These decisions supersede the matching text below:
+>
+> - **AD-011, server skip removed.** A stack policy whose project shows more than one working directory in telemetry is no longer skipped, and the `stack_update_skipped` event was dropped. The server dispatches `docker_update` with `compose_project` only. The agent is authoritative: it resolves the labels and refuses with `ambiguous_project` if the directories really differ. That refusal is visible as a failed command with backoff. Old agents get no path and fail closed with their existing "required" precheck. A project-only dispatch holds the compose keys of every working directory the device reports for that project, so a new command is not queued every telemetry cycle. Every mention of the skip in §4, §8 (AC-014) and R-1 is superseded by this paragraph.
+> - **AD-006/AD-007, symlink-equivalent labels (QA-D1).** Working-dir labels are grouped by their symlink-resolved directory. A label that does not exist is grouped by its cleaned path. Labels that resolve to one directory count as one directory for project resolution, the `compose_work_dir` cross-check, update scope and post-update verification.
+> - **AD-014, unreadable mount sources (QA-D2).** The trusted-owner EACCES fallback in the security review's "QA-D2 ruling" replaces the strict "cannot resolve" refusal, under that ruling's five conditions.
+> - **AD-015, `.env` parsing (QA-D3/D4).** A leading UTF-8 BOM is stripped, and only the exact keys `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR` are parsed.
 
 ---
 
