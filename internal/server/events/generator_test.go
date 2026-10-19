@@ -2,8 +2,10 @@ package events
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -274,3 +276,45 @@ func (m *mockAlertRuleRepo) GetByID(context.Context, int64) (*models.AlertRule, 
 func (m *mockAlertRuleRepo) Create(context.Context, *models.AlertRule) error  { return nil }
 func (m *mockAlertRuleRepo) Update(context.Context, *models.AlertRule) error  { return nil }
 func (m *mockAlertRuleRepo) Delete(context.Context, int64) error { return nil }
+
+func TestCL_SEC002_CompletionEventReasonRuneSafe(t *testing.T) {
+	t.Run("a multi-byte rune straddling the 200-byte boundary", func(t *testing.T) {
+		gen, eventRepo, _, _ := setupGenerator(t)
+		// 199 ASCII bytes then a 3-byte rune: the 200-byte cut lands inside it.
+		message := strings.Repeat("a", 199) + "€" + strings.Repeat("b", 50)
+
+		gen.CommandCompleted(context.Background(), "dev-1", "host", "docker_update", "error", message)
+
+		require.Len(t, eventRepo.Events, 1)
+		got := eventRepo.Events[0].Message
+		assert.True(t, utf8.ValidString(got), "[SEC-002] the event message must be valid UTF-8, got %q", got)
+		assert.Contains(t, got, "...", "a truncated reason is marked")
+		assert.NotContains(t, got, "\xe2\x82", "no half rune may survive")
+	})
+
+	t.Run("NUL and invalid UTF-8 in the reason", func(t *testing.T) {
+		gen, eventRepo, _, _ := setupGenerator(t)
+
+		gen.CommandCompleted(context.Background(), "dev-1", "host", "reboot", "error", "bad\x00 bytes \xff\xfe end")
+
+		require.Len(t, eventRepo.Events, 1)
+		got := eventRepo.Events[0].Message
+		assert.NotContains(t, got, "\x00", "[SEC-002] the event message must be NUL-free")
+		assert.True(t, utf8.ValidString(got))
+		assert.Contains(t, got, "bad")
+		assert.Contains(t, got, "end")
+	})
+
+	t.Run("a short ASCII reason is unchanged and success carries no reason", func(t *testing.T) {
+		gen, eventRepo, _, _ := setupGenerator(t)
+
+		gen.CommandCompleted(context.Background(), "dev-1", "host", "reboot", "error", "disk full")
+		gen.CommandCompleted(context.Background(), "dev-1", "host", "reboot", "success", "ignored")
+
+		require.Len(t, eventRepo.Events, 2)
+		assert.Equal(t, "Reboot failed on host: disk full", eventRepo.Events[0].Message)
+		assert.Equal(t, models.SeverityWarning, eventRepo.Events[0].Severity)
+		assert.Equal(t, "Reboot completed on host", eventRepo.Events[1].Message)
+		assert.Equal(t, models.SeverityInfo, eventRepo.Events[1].Severity)
+	})
+}

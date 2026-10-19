@@ -258,9 +258,11 @@ func (g *Generator) CommandCompleted(ctx context.Context, deviceID, hostname, ac
 	if status == "error" {
 		severity = models.SeverityWarning
 		// Include a brief reason — truncate long output
-		reason := message
+		// The text is agent-supplied: make it NUL-free valid UTF-8 first, then cut
+		// on a rune boundary, so the events insert can never fail on it (SEC C-2).
+		reason := models.SanitizeText(message)
 		if len(reason) > 200 {
-			reason = reason[:200] + "..."
+			reason = models.TruncateHead(reason, 200) + "..."
 		}
 		msg = fmt.Sprintf("%s failed on %s: %s", label, hostname, reason)
 	}
