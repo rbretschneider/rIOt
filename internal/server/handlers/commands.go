@@ -2,13 +2,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -137,41 +139,174 @@ func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListDeviceCommands handles GET /api/v1/devices/{id}/commands.
+//
+// Query: limit, offset, action, status (comma-separated canonical or legacy
+// values), active=true (every non-terminal command) and target_key. Request
+// values reach SQL only as bind parameters, and an unknown status value or an
+// over-long target_key is a 400 invalid_filter (SEC C-6).
 func (h *Handlers) ListDeviceCommands(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit == 0 {
 		limit = 50
 	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
 
-	statusParam := r.URL.Query().Get("status")
-	var statuses []string
-	if statusParam != "" {
-		for _, s := range strings.Split(statusParam, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				statuses = append(statuses, s)
-			}
-		}
+	statuses, ok := models.ParseStatusFilter(q.Get("status"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid status filter", Code: models.CodeInvalidFilter})
+		return
 	}
-	action := r.URL.Query().Get("action")
+	targetKey := q.Get("target_key")
+	if len(targetKey) > models.MaxTargetKeyFilterBytes {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid target_key filter", Code: models.CodeInvalidFilter})
+		return
+	}
+	action := q.Get("action")
 
-	var commands []models.Command
+	var list []models.Command
 	var err error
-	if len(statuses) > 0 || action != "" || offset > 0 {
-		commands, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action, "")
-	} else {
-		commands, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
+	switch {
+	case q.Get("active") == "true":
+		list, err = h.commandRepo.ListActive(r.Context(), deviceID, targetKey)
+	case len(statuses) > 0 || action != "" || offset > 0 || targetKey != "":
+		list, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action, targetKey)
+	default:
+		list, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
 	}
 	if err != nil {
+		slog.Error("list commands", "device_id", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to list commands"}`, http.StatusInternalServerError)
 		return
 	}
-	if commands == nil {
-		commands = []models.Command{}
+	if list == nil {
+		list = []models.Command{}
 	}
-	writeJSON(w, http.StatusOK, commands)
+	writeJSON(w, http.StatusOK, list)
+}
+
+// commandNotFound writes the one 404 body used for a missing command, a foreign
+// command and a malformed id alike, so they cannot be told apart.
+func commandNotFound(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotFound, models.ReportResponse{Error: "command not found", Code: models.CodeCommandNotFound})
+}
+
+// GetCommand handles GET /api/v1/devices/{id}/commands/{commandId}.
+func (h *Handlers) GetCommand(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	commandID := chi.URLParam(r, "commandId")
+	if !models.IsCanonicalUUID(commandID) {
+		commandNotFound(w)
+		return
+	}
+	cmd, err := h.commandRepo.GetForDevice(r.Context(), commandID, deviceID)
+	if errors.Is(err, db.ErrCommandNotFound) {
+		commandNotFound(w)
+		return
+	}
+	if err != nil {
+		slog.Error("get command", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to get command"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, cmd)
+}
+
+// CancelCommand handles POST /api/v1/devices/{id}/commands/{commandId}/cancel.
+// Only a queued command can be cancelled (FR-086); cancel and delivery claim are
+// mutually exclusive, so the loser of a race gets 409 (FR-087, FR-088).
+func (h *Handlers) CancelCommand(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	commandID := chi.URLParam(r, "commandId")
+	cmd, outcome, err := h.cmdSvc().Cancel(r.Context(), deviceID, commandID)
+	if err != nil {
+		slog.Error("cancel command", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to cancel command"}`, http.StatusInternalServerError)
+		return
+	}
+	switch outcome {
+	case commands.CancelApplied:
+		writeJSON(w, http.StatusOK, cmd)
+	case commands.CancelNotCancellable:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error:  "command cannot be cancelled after it has been dispatched",
+			Code:   models.CodeNotCancellable,
+			Status: cmd.Status,
+		})
+	default:
+		commandNotFound(w)
+	}
+}
+
+// AgentCommandReport handles POST /api/v1/devices/{id}/commands/{commandId}/report,
+// the agent's HTTP path for ack, progress and result reports (device-key auth).
+//
+// Processing order (SEC C-1): per-device rate limit, path id, body size,
+// decode, body id and kind, then the service (sanitize and guarded
+// transition). The device scope of every write is the authenticated device.
+func (h *Handlers) AgentCommandReport(w http.ResponseWriter, r *http.Request) {
+	deviceID := authenticatedDeviceID(r)
+	svc := h.cmdSvc()
+	if !svc.AllowReport(deviceID) {
+		writeJSON(w, http.StatusTooManyRequests, models.ReportResponse{Error: "too many requests", Code: models.CodeRateLimited})
+		return
+	}
+	commandID := chi.URLParam(r, "commandId")
+	if !models.IsCanonicalUUID(commandID) {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid command id", Code: models.CodeInvalidReport})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, models.MaxReportBodyBytes)
+	var report models.CommandReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, models.ReportResponse{Error: "report too large", Code: models.CodeInvalidReport})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report body", Code: models.CodeInvalidReport})
+		return
+	}
+	if err := commands.ValidateReport(commandID, report); err != nil {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report", Code: models.CodeInvalidReport})
+		return
+	}
+	report.CommandID = commandID
+
+	outcome, err := svc.HandleAgentReport(r.Context(), deviceID, report)
+	switch {
+	case errors.Is(err, commands.ErrMalformedCommandID), errors.Is(err, commands.ErrInvalidReport):
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report", Code: models.CodeInvalidReport})
+		return
+	case err != nil:
+		slog.Error("agent command report", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to process report"}`, http.StatusInternalServerError)
+		return
+	}
+
+	switch outcome.Disposition {
+	case models.ReportAccepted, models.ReportDuplicate, models.ReportCoalesced:
+		writeJSON(w, http.StatusOK, models.ReportResponse{CommandID: commandID, Result: outcome.Disposition, Status: outcome.Status})
+	case models.ReportAlreadyTerminal:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error: "command is already terminal", Code: models.CodeAlreadyTerminal, Status: outcome.Status})
+	case models.ReportInvalidTransition:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error: "transition not allowed from the current state", Code: models.CodeInvalidTransition, Status: outcome.Status})
+	default:
+		commandNotFound(w)
+	}
+}
+
+// authenticatedDeviceID is the device the API key authenticated as; the URL
+// parameter is only a fallback for routes mounted without DeviceAuth (tests).
+func authenticatedDeviceID(r *http.Request) string {
+	if id, ok := r.Context().Value(middleware.DeviceIDKey).(string); ok && id != "" {
+		return id
+	}
+	return chi.URLParam(r, "id")
 }
 
 // GetCommandOutput handles GET /api/v1/devices/{id}/commands/{commandId}/output.

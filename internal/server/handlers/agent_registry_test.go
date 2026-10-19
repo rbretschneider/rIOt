@@ -15,6 +15,8 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/DesyncTheThird/rIOt/internal/testutil"
 	"github.com/go-chi/chi/v5"
 	ws "github.com/gorilla/websocket"
@@ -143,7 +145,10 @@ func newLCEnv(t *testing.T) *lcEnv {
 	})
 	e.conn = &AgentConn{DeviceID: "dev-1", Conn: e.sock}
 	e.reg.replace("dev-1", e.conn)
-	e.h = &Handlers{commandRepo: e.repo, devices: e.devs, commands: e.svc, agents: e.reg, now: e.clock.Now}
+	hub := websocket.NewHub()
+	go hub.Run()
+	gen := events.NewGenerator(testutil.NewMockEventRepo(), hub, testutil.NewMockAlertRuleRepo(), testutil.NewMockDispatcher(), e.repo)
+	e.h = &Handlers{commandRepo: e.repo, devices: e.devs, commands: e.svc, agents: e.reg, now: e.clock.Now, hub: hub, eventGen: gen}
 	return e
 }
 

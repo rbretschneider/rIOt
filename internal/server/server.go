@@ -19,8 +19,10 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/ca"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/logstore"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
@@ -43,6 +45,7 @@ type Server struct {
 	AlertRuleRepo  *db.AlertRuleRepo
 	NotifyRepo     *db.NotifyRepo
 	CommandRepo    *db.CommandRepo
+	Commands       *commands.Service
 	ProbeRepo      *db.ProbeRepo
 	CARepo         *db.CARepo
 	LogRepo        *db.LogRepo
@@ -160,6 +163,20 @@ func (s *Server) Start() error {
 	s.Dispatcher = notify.NewDispatcher(s.NotifyRepo)
 	s.EventGen = events.NewGenerator(s.EventRepo, s.Hub, s.AlertRuleRepo, s.Dispatcher, s.CommandRepo)
 	s.EventGen.StartCleanup(ctx)
+
+	// The command service is built once here (not in setupRouter, which
+	// applyTLSAndRestart calls again) so its limiter, progress gate and log
+	// throttle survive a router rebuild. The sweeper resolves stale commands at
+	// startup and then every minute.
+	s.Commands = commands.New(commands.Options{
+		Commands:    s.CommandRepo,
+		Policies:    s.AutoUpdateRepo,
+		Telemetry:   s.TelemetryRepo,
+		Agents:      handlers.Agents(),
+		Broadcaster: s.Hub,
+		Events:      handlers.NewCompletionEvents(s.EventGen, s.DeviceRepo),
+	})
+	go s.runCommandSweeper(ctx)
 
 	// Initialize probe runner
 	s.ProbeRunner = probes.NewRunner(s.ProbeRepo, s.EventRepo, s.Hub)
@@ -670,4 +687,12 @@ func (s *Server) seedDefaultAlertRules(ctx context.Context) {
 		}
 	}
 	slog.Info("seeded default alert rules", "count", len(defaults))
+}
+
+// runCommandSweeper runs the command sweeper until ctx ends: one pass at
+// startup, then one per commands.SweepInterval.
+func (s *Server) runCommandSweeper(ctx context.Context) {
+	ticker := time.NewTicker(commands.SweepInterval)
+	defer ticker.Stop()
+	s.Commands.RunSweeper(ctx, ticker.C)
 }

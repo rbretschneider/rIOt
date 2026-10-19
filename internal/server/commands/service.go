@@ -467,7 +467,7 @@ func (s *Service) HandleAgentReport(ctx context.Context, deviceID string, report
 			t.ResultMsg = &msg
 		}
 		if t.To == models.CommandRunning && s.gate.coalesce(id, t.To, step, progress, now) {
-			return ReportOutcome{Disposition: models.ReportCoalesced}, nil
+			return ReportOutcome{Disposition: models.ReportCoalesced, Status: string(models.CommandRunning)}, nil
 		}
 	case models.ReportKindResult:
 		if report.Result == nil {

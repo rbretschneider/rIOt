@@ -74,6 +74,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		NotifyRepo:        s.NotifyRepo,
 		Dispatcher:        s.Dispatcher,
 		CommandRepo:       s.CommandRepo,
+		Commands:          s.Commands,
 		ProbeRepo:         s.ProbeRepo,
 		ProbeRunner:       s.ProbeRunner,
 		LogRepo:           s.LogRepo,
@@ -176,10 +177,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.With(adminAuth).Get("/logs", h.GetDeviceLogs)
 		r.With(adminAuth).Delete("/", h.DeleteDevice)
 		r.With(adminAuth).Post("/rotate-key", h.RotateKey)
-		r.With(adminAuth).Post("/commands", h.SendCommand)
-		r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
-		r.With(adminAuth).Get("/commands/{commandId}/output", h.GetCommandOutput)
-		r.With(adminAuth).Post("/docker/bulk-update", h.BulkDockerUpdate)
+		registerCommandRoutes(r, h, deviceAuth, adminAuth)
 		r.With(adminAuth).Put("/auto-patch", h.SetAutoPatch)
 		r.With(adminAuth).Get("/auto-updates", h.ListAutoUpdates)
 		r.With(adminAuth).Put("/auto-updates", h.SetAutoUpdate)
@@ -321,4 +319,19 @@ func (s *Server) serveFrontend(r *chi.Mux) {
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// registerCommandRoutes mounts the command routes under /api/v1/devices/{id}.
+// It is a function of its auth stacks so the auth matrix is testable
+// (TestCL_SEC_RouteAuthMatrix): the admin routes take the JWT cookie, and the
+// agent report route takes the full deviceAuth stack (the API key, plus the
+// client certificate when mTLS is enabled).
+func registerCommandRoutes(r chi.Router, h *handlers.Handlers, deviceAuth []func(http.Handler) http.Handler, adminAuth func(http.Handler) http.Handler) {
+	r.With(adminAuth).Post("/commands", h.SendCommand)
+	r.With(adminAuth).Get("/commands", h.ListDeviceCommands)
+	r.With(adminAuth).Get("/commands/{commandId}", h.GetCommand)
+	r.With(adminAuth).Post("/commands/{commandId}/cancel", h.CancelCommand)
+	r.With(adminAuth).Get("/commands/{commandId}/output", h.GetCommandOutput)
+	r.With(deviceAuth...).Post("/commands/{commandId}/report", h.AgentCommandReport)
+	r.With(adminAuth).Post("/docker/bulk-update", h.BulkDockerUpdate)
 }
