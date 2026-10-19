@@ -4,12 +4,25 @@
 **Reviewer:** Security Researcher Agent
 **Date:** 2026-10-17
 **Verdict:** APPROVED WITH CONDITIONS
+**Updated:** 2026-10-18, re-verified against the shipped code in v2.65.0
 
 One HIGH finding (SEC-POSTURE-004) and six MEDIUM findings. No CRITICAL. The HIGH
-finding has a clear, bounded resolution that does not need the architecture reworked.
-It blocks **Phase 4 (`/metrics`) and the Prometheus scrape job only**, not Phases 0-3.
+finding had a clear, bounded resolution that did not need the architecture reworked.
+It blocked **Phase 4 (`/metrics`) and the Prometheus scrape job only**, not Phases 0-3.
 All MEDIUM findings have bounded resolutions and are listed as numbered conditions at the
 end.
+
+> **Update (v2.65.0).** Three findings are resolved by stories that shipped after this
+> review:
+> - **SEC-POSTURE-004 (HIGH)** by REG-HARDEN-001: re-registration requires proof bound
+>   to the device, and future-dated timestamps are clamped at ingest and excluded on read.
+>   **Phase 4 is no longer blocked by C1.** One small residual stays under C4 (age floor).
+> - **SEC-POSTURE-018 (LOW)** by HARDEN-002: the main listener never serves pprof. This
+>   supersedes ADD AD-021, Phase 0 and C13.
+> - **SEC-POSTURE-019 (LOW, follow-up)** by HARDEN-002: dispatcher errors are scrubbed
+>   before they are logged or stored.
+>
+> Each finding below carries a dated resolution note that names the verified code.
 
 The core design is careful and mostly right: the curated catalog, the poller as the only
 upstream caller, the endpoint allowlist, the aggregate-only queries and the ASN-only label
@@ -104,7 +117,7 @@ UNVERIFIED unless the repo shows it.
 | SEC-POSTURE-001 | MEDIUM | A | `/metrics` moves the per-device weakness map into an unauthenticated store with a wider audience | The operator accepts; docs condition C12 |
 | SEC-POSTURE-002 | LOW | A | External-signal alerts fan out to every channel, including third-party SaaS | Ops item; docs condition C12 |
 | SEC-POSTURE-003 | INFO | A | rIOt reachability beyond the LAN (OQ-006 / D-6) | Ops item |
-| SEC-POSTURE-004 | **HIGH** | B | Device UUIDs exported via `/metrics` combine with pre-existing unauthenticated key minting on re-registration, so telemetry for the VPN host can be forged | **C1 (blocks Phase 4)** plus ops item |
+| SEC-POSTURE-004 | **HIGH** | B | Device UUIDs exported via `/metrics` combine with pre-existing unauthenticated key minting on re-registration, so telemetry for the VPN host can be forged | **Resolved in v2.65.0** (REG-HARDEN-001). Was C1 (blocked Phase 4) |
 | SEC-POSTURE-005 | MEDIUM | B | Non-finite floats (`+Inf` by design, NaN or Inf from upstream) break the Posture JSON and webhook delivery, and NaN evaluates as `ok` | C5 |
 | SEC-POSTURE-006 | LOW | B | SSRF via admin-configured URLs: residual blind SSRF and port-scan oracle | C7 plus ops item |
 | SEC-POSTURE-007 | LOW | B | Untrusted strings from Loki and agents reach the UI, notifications and `/metrics` | C8 |
@@ -118,8 +131,8 @@ UNVERIFIED unless the repo shows it.
 | SEC-POSTURE-015 | MEDIUM | D | CSRF: `SameSite=Lax` is the only defense on the new POST endpoints | C6; follow-up for existing routes |
 | SEC-POSTURE-016 | LOW | D | No audit trail for config changes that reduce detection | C10 |
 | SEC-POSTURE-017 | LOW | D | External-rule cooldown is unbounded below (0 via PUT), so a 60 s notification storm is possible | C11 |
-| SEC-POSTURE-018 | LOW | D | pprof is unauthenticated today and already LAN-reachable. AD-021 fixes it | C13 plus ops item |
-| SEC-POSTURE-019 | LOW | D | Pre-existing: the dispatcher persists `err.Error()`, which embeds webhook URLs and their tokens | Follow-up |
+| SEC-POSTURE-018 | LOW | D | pprof is unauthenticated today and already LAN-reachable. AD-021 fixes it | **Resolved in v2.65.0** (HARDEN-002). C13 superseded |
+| SEC-POSTURE-019 | LOW | D | Pre-existing: the dispatcher persists `err.Error()`, which embeds webhook URLs and their tokens | **Resolved in v2.65.0** (HARDEN-002). Was: Follow-up |
 | SEC-POSTURE-020 | INFO | D | The answered-probe regex matches raw paths, so percent-encoding evades it | Docs condition C12 |
 | SEC-POSTURE-021 | INFO | D | Pseudo-device id, event content, demo fixtures | C12 (demo part) |
 
@@ -196,7 +209,7 @@ the operator alone, through the IdP group binding.
 
 No further code change is required if the operator accepts.
 
-**Blocks:** Phase 4 is gated only through C1 (SEC-POSTURE-004). Otherwise this is a the operator decision plus docs.
+**Blocks:** Nothing in code. The Phase 4 gate through C1 (SEC-POSTURE-004) was lifted in v2.65.0. Otherwise this is an operator decision plus docs.
 
 ---
 
@@ -264,7 +277,31 @@ change the conclusion. It only adds a reason to check.
 ## Section B: Trust and auth path to Prometheus and Loki
 
 #### SEC-POSTURE-004: Device UUIDs exported via `/metrics`, combined with pre-existing unauthenticated key minting on re-registration, allow forged telemetry for the VPN host
-**Severity:** HIGH
+**Status:** **RESOLVED in v2.65.0 (REG-HARDEN-001).** Re-verified against the shipped code on 2026-10-18:
+- **(a) Registration.** `RegisterDevice` (`handlers/handlers.go`) proves the caller before it
+  touches an existing device. `decideReRegistration` (`handlers/register_auth.go`):
+  - Rejects with 403 a key or cert bound to a different device.
+  - Accepts the device's own key, but mints no new key.
+  - Accepts a valid cert for that device, or the registration key only when the device
+    has no API key.
+  - Rejects everything else with 401.
+
+  A device UUID alone no longer yields a credential, so publishing UUIDs on `/metrics`
+  no longer opens this chain.
+- **(b) Recency.**
+  - Ingest clamps any heartbeat or snapshot timestamp more than `db.FutureSkewAllowance`
+    (5 min) ahead of the receive time down to the receive time (`clampFutureTimestamp`).
+  - Every snapshot and heartbeat read excludes rows later than `NOW() + 5 minutes`
+    (`notFutureDatedSQL`, `db/telemetry_repo.go`).
+  - A forged far-future snapshot can no longer pin "latest".
+- **Residual (moved to C4):** a timestamp up to 5 min ahead is still accepted. The posture
+  readers (FleetCache, staleness markers, `riot_device_telemetry_age_seconds`) must floor
+  computed age at 0.
+- **Phase 4 and the scrape job are no longer blocked by this finding.**
+
+The original analysis follows, kept for the record.
+
+**Severity:** HIGH (pre-resolution)
 **Domain:** Authentication / Business-logic integrity
 **Location:** ADD AD-019 and §6.5 (`device_id` label on every per-device family); ADD AD-015 and AD-007 (VPN check and tiles trust the "latest" snapshot); **pre-existing** `internal/server/handlers/handlers.go:155-211` (`RegisterDevice` re-registration branch), `db/device_repo.go:205-210` (`StoreAPIKey` inserts an *additional* key), `handlers.go:341-342` (snapshot timestamp is agent-supplied)
 
@@ -342,7 +379,7 @@ is set and whether mTLS is enabled on the netmon host. The operator must not cha
 checking how existing agents re-register (`internal/agent/register.go` sends the device
 key as `X-rIOt-Key`).
 
-**Blocks:** Phase 4 and the Section 16 scrape-job steps. Phases 0-3 may proceed.
+**Blocks:** Nothing since v2.65.0. Before that it blocked Phase 4 and the Section 16 scrape-job steps.
 
 ---
 
@@ -913,6 +950,20 @@ architect should pick a value that keeps notification volume sane (C11).
 ---
 
 #### SEC-POSTURE-018: pprof is unauthenticated today and already LAN-reachable. AD-021 fixes it
+**Status:** **RESOLVED in v2.65.0 (HARDEN-002), by a different design than AD-021.** Re-verified
+on 2026-10-18:
+- The main router never mounts pprof. It registers explicit 404 handlers for
+  `/debug/pprof` and `/debug/pprof/*` ahead of the SPA catch-all (`router.go`).
+- Profiles are served only by an opt-in listener (`RIOT_PPROF_ADDR`, `pprof.go`). That
+  listener is loopback-only and rejects a port that collides with the main server.
+- AD-021's `RIOT_PPROF_ENABLED` plus admin-auth design, ADD Phase 0 and C13 are therefore
+  **superseded**. Do not implement them. HARDEN-002's own tests and QA report cover the
+  404 behavior.
+- The cross-site GET residual described below no longer applies, because the admin
+  session never reaches a profiling route.
+
+The original analysis follows, kept for the record.
+
 **Severity:** LOW (residual after AD-021. The pre-existing exposure was MEDIUM.)
 **Domain:** Information disclosure / DoS
 **Location:** `router.go:203-205` (pre-existing); ADD AD-021, Phase 0
@@ -942,11 +993,17 @@ architect should pick a value that keeps notification volume sane (C11).
 - **Ops item:** The operator deploys Phase 0 as soon as it is tagged, independent of the netmon
   join, and confirms the 404 per ADD §16 step 1.
 
-**Blocks:** Nothing (the fix is designed in).
+**Blocks:** Nothing (resolved in v2.65.0).
 
 ---
 
 #### SEC-POSTURE-019: Pre-existing: the dispatcher persists `err.Error()`, which embeds webhook URLs and their tokens
+**Status:** **RESOLVED in v2.65.0 (HARDEN-002).** Every send path in `notify/dispatcher.go`
+wraps the backend error in `scrubError` (`notify/secrets.go`, using `ScrubSecrets` and
+`redactURLUserinfo`) before the slog line or `notification_log.error_msg` is written.
+The external-signal worker in this story reuses the dispatcher, so it inherits the
+scrubbing. The original analysis follows.
+
 **Severity:** LOW (pre-existing; amplified by more dispatches)
 **Domain:** Secrets in logs
 **Location:** `notify/dispatcher.go` `Dispatch` (`logEntry.ErrorMsg = err.Error()` and `slog.Error(..., "error", err.Error())`)
@@ -1063,10 +1120,10 @@ paths only (C12). Decoding at ingest is a netmon follow-up.
 
 **APPROVED WITH CONDITIONS.**
 - There are no CRITICAL findings.
-- The single HIGH finding (SEC-POSTURE-004) has a clear resolution. It needs a
-  registration-path property and a recency property, plus a small ADD amendment to
-  §6.5 and AD-007/AD-015. It needs no redesign. It gates **Phase 4 and the scrape job
-  only**.
+- The single HIGH finding (SEC-POSTURE-004) had a clear resolution: a
+  registration-path property and a recency property. Both shipped in v2.65.0
+  (REG-HARDEN-001), so **it no longer gates Phase 4 or the scrape job**. Only the
+  age-floor residual remains, under C4.
 - The six MEDIUM findings are bounded properties for the phase that introduces each
   surface. Four are false-green or fail-open gaps (SEC-POSTURE-005, -012, -013, -014).
   The other two are a CSRF property (SEC-POSTURE-015) and a data-classification
@@ -1078,7 +1135,7 @@ paths only (C12). Decoding at ingest is a netmon follow-up.
 
 ### Conditions for implementation (senior_dev must satisfy; QA must verify)
 
-1. **C1 (SEC-POSTURE-004, HIGH; blocks Phase 4 and the scrape job).**
+1. **C1 (SEC-POSTURE-004, HIGH). SATISFIED in v2.65.0 by REG-HARDEN-001; no longer blocks Phase 4 or the scrape job.** Kept for traceability. (a) is met by `decideReRegistration`. (b) is met by the ingest clamp and the read guard; the remaining age-floor residual is tracked under C4.
    - (a) No value exported on `/metrics`, or otherwise written into netmon, may be
      enough on its own to obtain a credential for a device at any unauthenticated rIOt
      endpoint. The preferred fix: re-registration of an existing device requires proof
@@ -1103,6 +1160,9 @@ paths only (C12). Decoding at ingest is a netmon follow-up.
    - "Cannot verify" is `warn` or `unknown`, never `ok`.
    - Matching is exact as specified in the finding.
    - The edge-case tests listed in the finding are present.
+   - Posture readers floor computed telemetry age at 0. A timestamp up to
+     `db.FutureSkewAllowance` (5 min) ahead is accepted at ingest
+     (SEC-POSTURE-004 residual).
 5. **C5 (SEC-POSTURE-005; Phases 2-3).**
    - Non-finite upstream samples are `invalid_response`.
    - No non-finite value appears in any API response, event or notification payload.
@@ -1147,19 +1207,18 @@ paths only (C12). Decoding at ingest is a netmon follow-up.
     - the manually entered house IP goes stale.
     Demo fixtures contain no real hostname, LAN address or ASN.
     Add a registry-disjointness test for external metric names.
-13. **C13 (SEC-POSTURE-018; QA verification).** With pprof disabled, `/debug/pprof`,
-    `/debug/pprof/`, `/debug/pprof/heap` and `/debug/pprof/profile` all return 404, not
-    `index.html`. With it enabled, each returns 401 without a session and 200 with one.
+13. **C13 (SEC-POSTURE-018). SUPERSEDED in v2.65.0 by HARDEN-002.** The main listener
+    always returns 404 for `/debug/pprof` and `/debug/pprof/*`, and profiling lives only
+    on the opt-in loopback listener. Do not implement AD-021. No POSTURE-001 QA work is
+    required beyond confirming the routes are not reintroduced.
 
 ### Deployment ops items for the operator (deploy time, outside rIOt code; nothing here was executed)
 
-1. **Deploy Phase 0 (pprof gate) as soon as it is tagged.** pprof is LAN-reachable today
-   through `0.0.0.0:7331`, independent of the netmon join. Verify the 404 by digest and
-   with curl (SEC-POSTURE-018).
-2. **Before the join and before any scrape job:** check whether `registration_key` is set
-   and whether mTLS is enabled on the netmon host (SEC-POSTURE-004 interim mitigation). Review
-   agent re-registration behavior before changing either. **Do not add the scrape job
-   until C1 has shipped.**
+1. **DONE (v2.65.0).** The pprof fix shipped as HARDEN-002 rather than Phase 0. The 404
+   on the main port was verified after deployment (SEC-POSTURE-018).
+2. **DONE (v2.65.0).** C1 shipped as REG-HARDEN-001, and agents were verified to
+   reconnect without 401s after deployment. The scrape job is no longer gated on
+   SEC-POSTURE-004.
 3. **Set `RIOT_EXTERNAL_SIGNALS_ALLOWED_HOSTS=prometheus:9090,loki:3100`** on
    riot-server. Required for the netmon host (D-5, SEC-POSTURE-006).
 4. **Confirm 7331 is not router-forwarded and not proxied by a public nginx vhost.**
@@ -1184,12 +1243,10 @@ paths only (C12). Decoding at ingest is a netmon follow-up.
 
 - CSRF property (C6) applied to all existing mutating admin routes, with
   `/devices/{id}/commands` and the bulk fleet routes first (SEC-POSTURE-015).
-- Dispatcher error redaction for webhook URLs and credentials (SEC-POSTURE-019).
 - Read-only authenticating proxy for netmon Prometheus and Loki (SEC-POSTURE-008).
-- If not taken in C1: the systemic re-registration fix (SEC-POSTURE-004).
 
 **Routing:** invoke `senior_dev` with this report alongside the ADD. The architect should
-first fold C1-C5 into the ADD (§6.5 label set, AD-007/AD-015 recency and VPN status
+first fold C2-C5 (and C4's age floor) into the ADD (§6.5 label set, AD-007/AD-015 recency and VPN status
 rules, §6.6 `EmptyMeans` semantics plus the liveness query, AD-018 alertable-unknown,
-AD-013 "no baseline" representation). QA verifies C1-C13. The operator owns the nine deployment ops
-items.
+AD-013 "no baseline" representation). QA verifies C2-C12. C1 and C13 were closed by v2.65.0. The operator owns the remaining deployment ops
+items (3-9; 1 and 2 are done).

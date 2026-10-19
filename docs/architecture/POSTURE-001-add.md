@@ -937,6 +937,13 @@ The Settings UI says so next to the rotate button.
 
 ### AD-021: pprof is disabled by default, admin-gated when enabled, and answers an explicit 404 when off
 
+> **Superseded (2026-10-18, v2.65.0).** HARDEN-002 shipped a different fix for FR-097.
+> The main router never serves pprof and always answers 404 for `/debug/pprof` and
+> `/debug/pprof/*`. Profiling is available only on an opt-in loopback listener
+> (`RIOT_PPROF_ADDR`). AC-058 is satisfied by that shipped behavior. Do **not**
+> implement `RIOT_PPROF_ENABLED` or the admin-gated variant below. Phase 0 is dropped.
+> The text is kept for traceability.
+
 **Decision:** New config `Config.PprofEnabled` from `RIOT_PPROF_ENABLED` (`true`/`1`),
 default false.
 - **Enabled:** `r.Route("/debug/pprof", func(r) { r.Use(adminAuth); r.Mount("/", pprofHandler()) })`.
@@ -1956,6 +1963,10 @@ Applies to the final phase cumulatively. Each phase satisfies the subset in Sect
 
 ## 14. Phased delivery (AD-025)
 
+> **Update (2026-10-18).** Phase 0 is done: HARDEN-002 shipped it in v2.65.0 (see AD-021).
+> UI-FOUNDATION-001 has merged to main, so Phase 1 is unblocked (D-9). With REG-HARDEN-001
+> shipped, Phase 4 no longer waits on security condition C1.
+
 | Phase | Scope | ACs closed | Depends on |
 |-------|-------|-----------|------------|
 | **0: Security gate** (small PR) | AD-021 pprof gating, config flag, router 404s, tests, CHANGELOG breaking note | AC-058 | none. **Must be deployed to the netmon host before Section 16 step 3.** |
@@ -1973,7 +1984,7 @@ network join and **after** Phase 4 for the scrape job.
 
 | # | Decision | Recommendation | Default the code ships with |
 |---|----------|----------------|-----------------------------|
-| D-1 | **pprof becomes opt-in and admin-only** (OQ-007, AD-021). This breaks today's unauthenticated `curl` profiling. pprof is used for memory profiling. | Accept. When profiling, set `RIOT_PPROF_ENABLED=true` temporarily and use the session cookie. | Disabled |
+| D-1 | **Resolved by HARDEN-002 (v2.65.0), loopback listener; see AD-021.** Original: **pprof becomes opt-in and admin-only** (OQ-007, AD-021). This breaks today's unauthenticated `curl` profiling. pprof is used for memory profiling. | Accept. When profiling, set `RIOT_PPROF_ENABLED=true` temporarily and use the session cookie. | Disabled |
 | D-2 | **VPN runtime check reachability** (OQ-004, AD-016). riot-server must reach gluetun's control server (`:8000`, auth mode UNVERIFIED). That requires joining riot-server to the VPN stack's network or another path, which gives riot-server a route into the namespace hosting the VPN-routed application UIs. House IP is manual (dynamic-IP risk). | Ship structural-only on the netmon host for v1. Leave runtime "not configured". Revisit if the operator wants a runtime guarantee. If so, prefer a gluetun API-key-protected control server and a dedicated small network shared only by riot-server and gluetun. | Not configured |
 | D-3 | **netmon Prometheus `--web.enable-lifecycle`.** It becomes reachable from riot-server after the join (and already from every netmon container). | Remove the flag in `<netmon-dir>/docker-compose.yml`, and reload via `docker compose restart prometheus`. This is a deployment change for approval, separate from this story's code. | No change (deployment-side) |
 | D-4 | **Scrape TLS verification.** Pin rIOt's self-signed server cert in Prometheus (`ca_file` + `server_name: <host-lan-ip>`, if that IP SAN exists) vs `insecure_skip_verify` on the internal bridge. | Pin. **Do not regenerate the rIOt TLS cert** to add a SAN, because agents pin its fingerprint (TOFU). Use `insecure_skip_verify` only if the IP SAN is absent. | n/a (netmon config) |
@@ -1981,7 +1992,7 @@ network join and **after** Phase 4 for the scrape job.
 | D-6 | **Confirm rIOt is LAN/VPN-only** (OQ-006, A-016). The repo publishes 7331 on all interfaces. | Confirm. If rIOt is internet-reachable, open a follow-up to gate Threat aggregates. | Assumed LAN-only |
 | D-7 | **Default thresholds** (OQ-012), including the analyst defaults 5xx critical 25 and egress ratios 2/4 and 3, plus the architect refinement of 10-minute baseline refresh (AD-013, 0.2 item 3). | Accept. Tune in Settings after a week. | As in 5.2.1 |
 | D-8 | **VPN-required list is not pre-seeded** (A-011 replaced, 0.2 item 7). | Accept. Use "Suggest from VPN host" to add the exact container names on the VPN host. | Empty |
-| D-9 | **Merge order:** UI-FOUNDATION-001 before the Phase 1 frontend (AD-024). | Accept. Merge UI-FOUNDATION-001 first. | n/a |
+| D-9 | **Merge order:** UI-FOUNDATION-001 before the Phase 1 frontend (AD-024). | **Resolved:** UI-FOUNDATION-001 merged to main (PR #6). | n/a |
 | D-10 | **Nav placement** (OQ-002). | Posture immediately before Security, as in the FRD default. | Before Security |
 
 ---
@@ -1991,7 +2002,7 @@ network join and **after** Phase 4 for the scrape job.
 All of these steps are deployment changes and require the operator's approval (BR-008). Nothing
 is deleted. Read the deployment's compose-location notes first.
 
-1. [ ] **Phase 0 release is running on the netmon host.** Verify by digest (`docker inspect`).
+1. [x] **Done (v2.65.0, HARDEN-002): the main port returns 404 for pprof.** Original step: **Phase 0 release is running on the netmon host.** Verify by digest (`docker inspect`).
    Confirm `curl -sk https://<riot-host>:7331/debug/pprof/` returns **404**.
 2. [ ] **Locate riot-server's compose directory.** If it is not already
    documented, find it with:
