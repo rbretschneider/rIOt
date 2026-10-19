@@ -25,6 +25,8 @@ type DeviceRepository interface {
 	StoreAPIKey(ctx context.Context, plaintextKey, deviceID string) error
 	LookupAPIKey(ctx context.Context, plaintextKey string) (string, error)
 	DeleteAPIKeysByDevice(ctx context.Context, deviceID string) error
+	// HasAPIKey reports whether the device has at least one API key (REG-HARDEN-001).
+	HasAPIKey(ctx context.Context, deviceID string) (bool, error)
 	FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error)
 	UpdateLocation(ctx context.Context, id, location string) error
 	UpdateTags(ctx context.Context, id string, tags []string) error
