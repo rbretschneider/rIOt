@@ -135,7 +135,7 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_DB_URL` | `postgres://riot:riot@localhost:5432/riot?sslmode=disable` | PostgreSQL connection string |
 | `RIOT_PORT` | `7331` | HTTP listen port |
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
-| `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins; also accepted by the [origin check](#origin-check-on-state-changing-requests) on state-changing requests |
+| `RIOT_ALLOWED_ORIGINS` | — | Comma-separated allowed origins, each `scheme://host[:port]` with no trailing slash. Used for CORS and accepted by the [origin check](#origin-check-on-state-changing-requests) on state-changing requests |
 | `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
 | `RIOT_API_KEY` | — | Loaded into the server config at startup, but **not currently enforced by device registration**. Only the registration key saved in **Settings > General** (stored in the database) gates registration. Enforcing this variable is a tracked follow-up. See [Device Registration and Re-registration](#device-registration-and-re-registration) |
 | `RIOT_ADMIN_PASSWORD` | — | Admin password override (bypasses wizard; bcrypt-hashed at startup) |
@@ -298,12 +298,13 @@ Pick one of the two recovery options.
 
 **Option 1: Rotate the key and keep the device.** The device keeps its history and settings.
 
-1. As an admin, rotate the device's key with `POST /api/v1/devices/{id}/rotate-key`. The dashboard has no Rotate key button, so call the admin API. Replace `<server>`, `<password>`, and `<device-id>`:
+1. As an admin, rotate the device's key with `POST /api/v1/devices/{id}/rotate-key`. The dashboard has no Rotate key button, so call the admin API. Both requests send an `Origin` header, which the [origin check](#origin-check-on-state-changing-requests) requires. Behind a reverse proxy, use the public URL and see that section. Replace `<server>`, `<password>`, and `<device-id>`:
 
    ```bash
-   curl -sk -c riot-session.txt -H 'Content-Type: application/json' \
+   curl -sk -c riot-session.txt -H 'Origin: https://<server>:7331' \
+     -H 'Content-Type: application/json' \
      -d '{"password":"<password>"}' https://<server>:7331/api/v1/auth/login
-   curl -sk -b riot-session.txt -X POST \
+   curl -sk -b riot-session.txt -H 'Origin: https://<server>:7331' -X POST \
      https://<server>:7331/api/v1/devices/<device-id>/rotate-key
    rm riot-session.txt
    ```
@@ -1188,17 +1189,33 @@ Read these consequences before you serve rIOt over HTTPS on a hostname:
 
 ### Origin check on state-changing requests
 
-Every `POST`, `PUT`, `PATCH` and `DELETE` that uses the admin session cookie (the dashboard API, `/api/v1/auth/*` and `/api/v1/setup/*`) must come from rIOt's own origin. The check runs before the request body is read, so a refused request changes nothing. It answers `403` with `{"error":"origin_refused"}` unless one of these is true:
+Every `POST`, `PUT`, `PATCH` and `DELETE` that uses the admin session cookie must come from rIOt's own origin. This covers the dashboard API, `/api/v1/auth/*` and `/api/v1/setup/*`. The check runs before the request body is read, so a refused request changes nothing. It answers `403` with `{"error":"origin_refused"}` unless one of these is true:
 
 - `Sec-Fetch-Site` is `same-origin`, or
 - `Origin` equals the origin the request was made to (the scheme and `Host` rIOt sees), or
 - `Origin` is listed in `RIOT_ALLOWED_ORIGINS`.
 
-When the request has a body, its `Content-Type` must be `application/json` (`application/json; charset=utf-8` is accepted). A request without a body needs no `Content-Type`. `GET` requests, the agent endpoints (device key or mTLS) and the WebSocket endpoints are not affected. The dashboard needs no change: browsers send `Origin` or `Sec-Fetch-Site` on these requests.
+When the request has a body, its `Content-Type` must be `application/json` (`application/json; charset=utf-8` is accepted). A request without a body needs no `Content-Type`.
 
-- **Admin scripts.** A script that calls the cookie-authenticated API without browser headers now gets `403`. Send an `Origin` header equal to the URL you call (for example `-H 'Origin: https://riot.example.com'` with `curl`) and, if the request has a body, `-H 'Content-Type: application/json'`.
-- **Behind a TLS-terminating proxy.** The proxy usually rewrites `Host`, so the browser's `Origin` no longer equals what rIOt sees. Browsers still send `Sec-Fetch-Site: same-origin`, which rIOt accepts. Set `RIOT_TRUSTED_PROXIES` as described in [Behind a reverse proxy](#behind-a-reverse-proxy-riot_trusted_proxies) so rIOt trusts the proxy's `X-Forwarded-Proto`, and set `RIOT_ALLOWED_ORIGINS` to the public origin (for example `https://riot.example.com`) if your proxy rewrites or strips `Origin`, or if scripts reach rIOt through it.
-- **Logging.** A refusal is logged at most once per client address per minute, without any header value.
+Not affected: `GET`, `HEAD` and `OPTIONS` requests, the agent endpoints (device key or mTLS) and the WebSocket endpoints. The dashboard needs no change, because browsers send `Origin` or `Sec-Fetch-Site` on these requests.
+
+The check runs before authentication. A cross-origin write without a valid session now gets `403`, where it used to get `401`.
+
+**Admin scripts.** A script that calls the cookie-authenticated API without browser headers gets `403`. Send an `Origin` header equal to the URL you call and, if the request has a body, a JSON content type:
+
+```bash
+curl -sk -H 'Origin: https://riot.example.com' -H 'Content-Type: application/json' \
+  -d '{"password":"<password>"}' https://riot.example.com/api/v1/auth/login
+```
+
+**Behind a TLS-terminating proxy.** The proxy usually rewrites `Host`, so the browser's `Origin` no longer equals what rIOt sees. Browsers still send `Sec-Fetch-Site: same-origin`, which rIOt accepts, so the dashboard keeps working. For everything else:
+
+1. Set `RIOT_TRUSTED_PROXIES` as described in [Behind a reverse proxy](#behind-a-reverse-proxy-riot_trusted_proxies). rIOt then trusts the proxy's `X-Forwarded-Proto` when it rebuilds the request origin.
+2. Set `RIOT_ALLOWED_ORIGINS` to the public origin if the proxy rewrites or strips `Origin`, or if scripts reach rIOt through the proxy.
+
+**`RIOT_ALLOWED_ORIGINS` format.** Entries are comma-separated. Each entry must equal the `Origin` header exactly, ignoring letter case. Write `scheme://host[:port]` with no path and no trailing slash. `https://riot.example.com` matches. `https://riot.example.com/` never matches, because browsers send no trailing slash. Leave out a default port (`:443` for `https`, `:80` for `http`), because browsers omit it from `Origin`.
+
+**Logging.** rIOt logs a refusal at most once per client address per minute. The log line holds the client address and the method, never a header value.
 
 ---
 
