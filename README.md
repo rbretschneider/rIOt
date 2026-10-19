@@ -135,7 +135,7 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_DB_URL` | `postgres://riot:riot@localhost:5432/riot?sslmode=disable` | PostgreSQL connection string |
 | `RIOT_PORT` | `7331` | HTTP listen port |
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
-| `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins |
+| `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins; also accepted by the [origin check](#origin-check-on-state-changing-requests) on state-changing requests |
 | `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
 | `RIOT_API_KEY` | — | Loaded into the server config at startup, but **not currently enforced by device registration**. Only the registration key saved in **Settings > General** (stored in the database) gates registration. Enforcing this variable is a tracked follow-up. See [Device Registration and Re-registration](#device-registration-and-re-registration) |
 | `RIOT_ADMIN_PASSWORD` | — | Admin password override (bypasses wizard; bcrypt-hashed at startup) |
@@ -1186,6 +1186,20 @@ Read these consequences before you serve rIOt over HTTPS on a hostname:
 - **IP-address hosts are exempt.** Browsers ignore HSTS for sites reached by IP address, so `https://192.0.2.10:7331` is not pinned.
 - **Reset it in the browser.** The server cannot withdraw the pin early. Remove the hostname from the browser's HSTS list, or wait for it to expire.
 
+### Origin check on state-changing requests
+
+Every `POST`, `PUT`, `PATCH` and `DELETE` that uses the admin session cookie (the dashboard API, `/api/v1/auth/*` and `/api/v1/setup/*`) must come from rIOt's own origin. The check runs before the request body is read, so a refused request changes nothing. It answers `403` with `{"error":"origin_refused"}` unless one of these is true:
+
+- `Sec-Fetch-Site` is `same-origin`, or
+- `Origin` equals the origin the request was made to (the scheme and `Host` rIOt sees), or
+- `Origin` is listed in `RIOT_ALLOWED_ORIGINS`.
+
+When the request has a body, its `Content-Type` must be `application/json` (`application/json; charset=utf-8` is accepted). A request without a body needs no `Content-Type`. `GET` requests, the agent endpoints (device key or mTLS) and the WebSocket endpoints are not affected. The dashboard needs no change: browsers send `Origin` or `Sec-Fetch-Site` on these requests.
+
+- **Admin scripts.** A script that calls the cookie-authenticated API without browser headers now gets `403`. Send an `Origin` header equal to the URL you call (for example `-H 'Origin: https://riot.example.com'` with `curl`) and, if the request has a body, `-H 'Content-Type: application/json'`.
+- **Behind a TLS-terminating proxy.** The proxy usually rewrites `Host`, so the browser's `Origin` no longer equals what rIOt sees. Browsers still send `Sec-Fetch-Site: same-origin`, which rIOt accepts. Set `RIOT_TRUSTED_PROXIES` as described in [Behind a reverse proxy](#behind-a-reverse-proxy-riot_trusted_proxies) so rIOt trusts the proxy's `X-Forwarded-Proto`, and set `RIOT_ALLOWED_ORIGINS` to the public origin (for example `https://riot.example.com`) if your proxy rewrites or strips `Origin`, or if scripts reach rIOt through it.
+- **Logging.** A refusal is logged at most once per client address per minute, without any header value.
+
 ---
 
 ## DNS Resilience
@@ -1283,7 +1297,7 @@ The reboot ETA tooltip and maintenance-window times always show UTC, whatever th
 
 ## API
 
-All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. When mTLS is enabled, agent endpoints additionally require a valid client certificate (both are checked). Dashboard endpoints require admin authentication (JWT cookie).
+All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` header. When mTLS is enabled, agent endpoints additionally require a valid client certificate (both are checked). Dashboard endpoints require admin authentication (JWT cookie). State-changing dashboard requests must also pass the [origin check](#origin-check-on-state-changing-requests).
 
 ### Public
 
