@@ -120,6 +120,10 @@ type Handlers struct {
 	// clampLog debounces the clamp log entries. nil is allowed (every clamp
 	// logs), so struct-literal Handlers in tests need not set it.
 	clampLog *clampLogLimiter
+	// skipEvents dedupes the stack-skipped warning event (AUTOUPD-HARDEN-001).
+	// nil is allowed (every skip raises one), so struct-literal Handlers in tests
+	// need not set it.
+	skipEvents *skipLimiter
 
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
@@ -255,6 +259,7 @@ func New(deps HandlerDeps) *Handlers {
 		setupComplete:        deps.SetupComplete,
 		caRepo:               deps.CARepo,
 		clampLog:             newClampLogLimiter(),
+		skipEvents:           newSkipLimiter(),
 	}
 	// A nil *websocket.Hub must stay a nil interface (typed-nil trap).
 	if deps.Hub != nil {

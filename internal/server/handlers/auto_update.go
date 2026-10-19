@@ -374,6 +374,10 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 	// Track which stacks we've already triggered (avoid duplicate commands)
 	triggeredStacks := make(map[string]bool)
+	// A project whose containers disagree on the working directory is skipped
+	// (AUTOUPD-HARDEN-001 AD-011). It narrows the old-agent redirect: a new agent
+	// would refuse the stack as ambiguous anyway.
+	workDirsByProject := composeProjectWorkDirs(data.Docker.Containers)
 
 	for _, c := range data.Docker.Containers {
 		if c.UpdateAvailable == nil || !*c.UpdateAvailable {
@@ -386,8 +390,14 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 		if project != "" && workDir != "" {
 			if pol, ok := policyMap[project]; ok && pol.IsStack && !triggeredStacks[project] {
+				if dirs := workDirsByProject[project]; len(dirs) > 1 {
+					triggeredStacks[project] = true
+					h.noteStackSkipped(ctx, deviceID, pol, project, dirs, now, cooldown)
+					continue
+				}
 				if !recentlyTriggered(pol, cooldown, now) && !pol.InBackoff(now) {
 					dispatched := h.dispatchAutoUpdate(ctx, deviceID, pol, windowEnd, map[string]interface{}{
+						"compose_project":  project,
 						"compose_work_dir": workDir,
 					})
 					triggeredStacks[project] = true

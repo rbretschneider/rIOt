@@ -95,3 +95,32 @@ func TestContainerIDParams(t *testing.T) {
 	assert.Equal(t, []string{"a"}, containerIDParams(map[string]interface{}{"container_ids": []interface{}{"a", 5, ""}}))
 	assert.Nil(t, containerIDParams(map[string]interface{}{"container_ids": "nope"}))
 }
+
+// AUTOUPD-HARDEN-001 AC-014: a stack update that names only a project (the form
+// a newer server may send) is keyed by the project's one working directory.
+func TestResolveDockerUpdateKeys_AC014_ProjectOnlyMapsViaTelemetry(t *testing.T) {
+	containers := []models.ContainerInfo{
+		composeContainer("id-app", "app", "stack", "app", "/srv/stack/"),
+		composeContainer("id-db", "db", "stack", "db", "/srv/stack"), // same directory, no trailing slash
+		composeContainer("id-other", "other", "elsewhere", "o", "/srv/elsewhere"),
+	}
+	got := resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack"}, containers)
+	assert.Equal(t, []string{"docker:compose:/srv/stack"}, got, "[AC-014] the unique working directory of the project")
+}
+
+func TestResolveDockerUpdateKeys_AC014_ProjectOnlyAmbiguousHasNoKey(t *testing.T) {
+	containers := []models.ContainerInfo{
+		composeContainer("id-a", "a", "stack", "a", "/srv/one"),
+		composeContainer("id-b", "b", "stack", "b", "/srv/two"),
+	}
+	assert.Nil(t, resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack"}, containers),
+		"[AC-014] two directories for one project: no key, the agent lock stays authoritative")
+	assert.Nil(t, resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "unknown"}, containers),
+		"[AC-014] an unknown project has no key")
+}
+
+func TestResolveDockerUpdateKeys_AC014_WorkDirStillWins(t *testing.T) {
+	containers := []models.ContainerInfo{composeContainer("id-a", "a", "stack", "a", "/srv/one")}
+	got := resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack", "compose_work_dir": "/srv/two/"}, containers)
+	assert.Equal(t, []string{"docker:compose:/srv/two"}, got, "[AC-014] a work dir keys the command as before (conflict detection is keyed by work dir)")
+}

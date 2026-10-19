@@ -51,6 +51,23 @@ func resolveDockerUpdateKeys(params map[string]interface{}, containers []models.
 	if wd := stringParam(params, "compose_work_dir"); wd != "" {
 		return []string{models.TargetKeyCompose(wd)}
 	}
+	if project := stringParam(params, "compose_project"); project != "" {
+		// A project-only stack update is keyed by the project's one working
+		// directory in telemetry; with none or several there is no key and the
+		// agent lock stays authoritative (AUTOUPD-HARDEN-001 AD-011).
+		keys := map[string]bool{}
+		for _, c := range containers {
+			if wd := c.Labels[models.LabelComposeWorkingDir]; wd != "" && c.Labels[models.LabelComposeProject] == project {
+				keys[models.TargetKeyCompose(wd)] = true
+			}
+		}
+		if len(keys) != 1 {
+			return nil
+		}
+		for k := range keys {
+			return []string{k}
+		}
+	}
 	name := strings.TrimLeft(stringParam(params, "container"), "/")
 	id := stringParam(params, "container_id")
 	if c := findContainer(containers, name, id); c != nil {
