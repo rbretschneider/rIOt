@@ -374,10 +374,12 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 	// Track which stacks we've already triggered (avoid duplicate commands)
 	triggeredStacks := make(map[string]bool)
-	// A project whose containers disagree on the working directory is skipped
-	// (AUTOUPD-HARDEN-001 AD-011). It narrows the old-agent redirect: a new agent
-	// would refuse the stack as ambiguous anyway.
-	workDirsByProject := composeProjectWorkDirs(data.Docker.Containers)
+	// A project whose containers report more than one working-dir label is
+	// dispatched by project name alone (AUTOUPD-HARDEN-001 AD-011). The server
+	// cannot resolve symlinks, so it cannot tell a link and its target from two
+	// directories; the agent can, and refuses a genuinely ambiguous project
+	// itself, which shows as a failed command with the usual backoff.
+	multiDir := projectsWithSeveralWorkDirs(data.Docker.Containers)
 
 	for _, c := range data.Docker.Containers {
 		if c.UpdateAvailable == nil || !*c.UpdateAvailable {
@@ -390,16 +392,12 @@ func (h *Handlers) checkAutoUpdates(ctx context.Context, deviceID string, data *
 
 		if project != "" && workDir != "" {
 			if pol, ok := policyMap[project]; ok && pol.IsStack && !triggeredStacks[project] {
-				if dirs := workDirsByProject[project]; len(dirs) > 1 {
-					triggeredStacks[project] = true
-					h.noteStackSkipped(ctx, deviceID, pol, project, dirs, now, cooldown)
-					continue
-				}
 				if !recentlyTriggered(pol, cooldown, now) && !pol.InBackoff(now) {
-					dispatched := h.dispatchAutoUpdate(ctx, deviceID, pol, windowEnd, map[string]interface{}{
-						"compose_project":  project,
-						"compose_work_dir": workDir,
-					})
+					params := map[string]interface{}{"compose_project": project, "compose_work_dir": workDir}
+					if multiDir[project] {
+						delete(params, "compose_work_dir")
+					}
+					dispatched := h.dispatchAutoUpdate(ctx, deviceID, pol, windowEnd, params)
 					triggeredStacks[project] = true
 					if dispatched && stagger > 0 {
 						return
@@ -566,4 +564,30 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 	}
 
 	slog.Info("auto-patch triggered", "device", deviceID, "pending_updates", data.Updates.PendingUpdates)
+}
+
+// projectsWithSeveralWorkDirs reports the compose projects whose containers
+// carry more than one distinct working-dir label (compared by target key, so a
+// trailing slash is not a second directory). Two labels may still be one real
+// directory reached through a symlink, which only the agent can resolve.
+func projectsWithSeveralWorkDirs(containers []models.ContainerInfo) map[string]bool {
+	dirs := map[string]map[string]bool{}
+	for _, c := range containers {
+		project := c.Labels[models.LabelComposeProject]
+		wd := c.Labels[models.LabelComposeWorkingDir]
+		if project == "" || wd == "" {
+			continue
+		}
+		if dirs[project] == nil {
+			dirs[project] = map[string]bool{}
+		}
+		dirs[project][models.TargetKeyCompose(wd)] = true
+	}
+	out := map[string]bool{}
+	for project, set := range dirs {
+		if len(set) > 1 {
+			out[project] = true
+		}
+	}
+	return out
 }

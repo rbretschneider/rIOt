@@ -108,19 +108,23 @@ func TestResolveDockerUpdateKeys_AC014_ProjectOnlyMapsViaTelemetry(t *testing.T)
 	assert.Equal(t, []string{"docker:compose:/srv/stack"}, got, "[AC-014] the unique working directory of the project")
 }
 
-func TestResolveDockerUpdateKeys_AC014_ProjectOnlyAmbiguousHasNoKey(t *testing.T) {
-	containers := []models.ContainerInfo{
-		composeContainer("id-a", "a", "stack", "a", "/srv/one"),
-		composeContainer("id-b", "b", "stack", "b", "/srv/two"),
-	}
-	assert.Nil(t, resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack"}, containers),
-		"[AC-014] two directories for one project: no key, the agent lock stays authoritative")
-	assert.Nil(t, resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "unknown"}, containers),
-		"[AC-014] an unknown project has no key")
-}
 
 func TestResolveDockerUpdateKeys_AC014_WorkDirStillWins(t *testing.T) {
 	containers := []models.ContainerInfo{composeContainer("id-a", "a", "stack", "a", "/srv/one")}
 	got := resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack", "compose_work_dir": "/srv/two/"}, containers)
 	assert.Equal(t, []string{"docker:compose:/srv/two"}, got, "[AC-014] a work dir keys the command as before (conflict detection is keyed by work dir)")
+}
+
+// A project whose labels disagree (a symlinked directory after a partial
+// recreate) holds every reported directory key, so a queued duplicate conflicts.
+func TestResolveDockerUpdateKeys_AC014_ProjectOnlyHoldsEveryReportedDir(t *testing.T) {
+	containers := []models.ContainerInfo{
+		composeContainer("id-a", "a", "stack", "a", "/srv/two"),
+		composeContainer("id-b", "b", "stack", "b", "/srv/one/"),
+	}
+	assert.Equal(t, []string{"docker:compose:/srv/one", "docker:compose:/srv/two"},
+		resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack"}, containers),
+		"[AC-014] both keys, sorted, trailing slash removed")
+	assert.Nil(t, resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "unknown"}, containers),
+		"[AC-014] an unknown project has no key")
 }

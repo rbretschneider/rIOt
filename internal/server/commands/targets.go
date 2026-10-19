@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -52,21 +53,26 @@ func resolveDockerUpdateKeys(params map[string]interface{}, containers []models.
 		return []string{models.TargetKeyCompose(wd)}
 	}
 	if project := stringParam(params, "compose_project"); project != "" {
-		// A project-only stack update is keyed by the project's one working
-		// directory in telemetry; with none or several there is no key and the
-		// agent lock stays authoritative (AUTOUPD-HARDEN-001 AD-011).
+		// A project-only stack update holds the keys of every working directory
+		// its containers report in telemetry. Usually that is one; when labels
+		// disagree (a symlinked directory after a partial recreate) it is all of
+		// them, so a queued duplicate is still a conflict. The agent resolves the
+		// real directory and takes its own lock (AUTOUPD-HARDEN-001 AD-011).
 		keys := map[string]bool{}
 		for _, c := range containers {
 			if wd := c.Labels[models.LabelComposeWorkingDir]; wd != "" && c.Labels[models.LabelComposeProject] == project {
 				keys[models.TargetKeyCompose(wd)] = true
 			}
 		}
-		if len(keys) != 1 {
-			return nil
-		}
+		list := make([]string, 0, len(keys))
 		for k := range keys {
-			return []string{k}
+			list = append(list, k)
 		}
+		sort.Strings(list)
+		if len(list) > 0 {
+			return list
+		}
+		return nil
 	}
 	name := strings.TrimLeft(stringParam(params, "container"), "/")
 	id := stringParam(params, "container_id")

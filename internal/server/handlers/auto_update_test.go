@@ -680,6 +680,7 @@ type autoEnv struct {
 	policies *testutil.MockAutoUpdateRepo
 	clock    *testClock
 	events   *testutil.MockEventRepo
+	tel      *testutil.MockTelemetryRepo
 }
 
 // newAutoEnv builds Handlers over the faithful mocks with an injected clock
@@ -696,9 +697,9 @@ func newAutoEnv(t *testing.T, docker, osPatch models.MaintenanceWindow) *autoEnv
 	}
 	devs := testutil.NewMockDeviceRepo()
 	devs.Devices["dev-1"] = &models.Device{ID: "dev-1", Hostname: "host", AutoPatch: true}
-	e := &autoEnv{repo: testutil.NewMockCommandRepo(), policies: testutil.NewMockAutoUpdateRepo(), clock: newTestClock(), events: testutil.NewMockEventRepo()}
+	e := &autoEnv{repo: testutil.NewMockCommandRepo(), policies: testutil.NewMockAutoUpdateRepo(), clock: newTestClock(), events: testutil.NewMockEventRepo(), tel: testutil.NewMockTelemetryRepo()}
 	e.h = New(HandlerDeps{
-		Devices: devs, Telemetry: testutil.NewMockTelemetryRepo(), Events: e.events,
+		Devices: devs, Telemetry: e.tel, Events: e.events,
 		AdminRepo: admin, CommandRepo: e.repo, AutoUpdateRepo: e.policies, Clock: e.clock.Now,
 	})
 	e.h.agents = newAgentRegistry()

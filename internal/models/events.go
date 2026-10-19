@@ -52,9 +52,6 @@ const (
 	EventAuthFailure          EventType = "auth_failure"
 	EventDetectorInitialized  EventType = "detector_initialized"
 	EventRebootRequired       EventType = "reboot_required"
-	// EventStackUpdateSkipped: an auto-update was not dispatched because a compose
-	// stack reports more than one working directory (AUTOUPD-HARDEN-001 AD-011).
-	EventStackUpdateSkipped EventType = "stack_update_skipped"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
