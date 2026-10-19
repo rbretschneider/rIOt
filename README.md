@@ -136,7 +136,7 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
 | `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins |
 | `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
-| `RIOT_API_KEY` | — | Registration key override (if set, agents must present this key to register; also configurable in Settings) |
+| `RIOT_API_KEY` | — | Loaded into the server config at startup, but **not currently enforced by device registration**. Only the registration key saved in **Settings > General** (stored in the database) gates registration. Enforcing this variable is a tracked follow-up. See [Device Registration and Re-registration](#device-registration-and-re-registration) |
 | `RIOT_ADMIN_PASSWORD` | — | Admin password override (bypasses wizard; bcrypt-hashed at startup) |
 | `RIOT_JWT_SECRET` | auto-generated | JWT session secret (auto-generated if omitted; set for stable sessions across restarts) |
 | `RIOT_TLS_ENABLED` | `false` | Enable TLS (`true` or `1`); overrides wizard setting |
@@ -233,7 +233,113 @@ curl ... | sudo bash -s -- https://server:7331 --version 2.3.0
 curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY> --key mykey --fingerprint SHA256:xxxx
 ```
 
-By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration.
+By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration. See [Device Registration and Re-registration](#device-registration-and-re-registration) for the exact rules, including what happens when an agent loses its API key.
+
+### Device Registration and Re-registration
+
+Every agent calls `POST /api/v1/devices/register` when it starts and once every 24 hours afterwards. The request carries a `device_id` when the agent has one. The server treats a device ID as a label, not a secret. Knowing a device's ID never lets a caller change that device's record or obtain a key for it.
+
+#### New devices
+
+A request with no `device_id`, or with a `device_id` the server does not know, creates a new device. The server assigns the device ID and issues the device's first API key. These rules are unchanged by the re-registration rules below.
+
+- If no registration key is set, any caller that can reach the server can register. This is the default.
+- If a registration key is set in **Settings > General**, the request must carry it in the `X-rIOt-Key` header. The agent sends the value of `server.api_key`. A missing or wrong value returns `401`.
+- A device's own API key is never accepted as a registration key for a device ID the server does not know.
+
+The server compares the registration key in constant time.
+
+> **Registration key source.** Device registration enforces only the registration key saved in **Settings > General**, which the server stores in its database. The `RIOT_API_KEY` environment variable is loaded at startup but is not currently checked by device registration, so setting it does not gate registration. Enforcing it is a tracked follow-up.
+
+#### Existing devices
+
+A request that names a device the server already knows must prove the caller is that device. The server applies the first rule below that matches:
+
+| Order | What the request presents | Result |
+|---|---|---|
+| 1 | An API key that belongs to a different device | `403` |
+| 2 | A verified client certificate issued to a different device | `403` |
+| 3 | The device's own API key in `X-rIOt-Key` | Accepted. The record updates. No new key is issued. |
+| 4 | A verified, unrevoked mTLS client certificate issued to this device | Accepted. The record updates and the server issues a new API key. Existing keys stay valid. |
+| 5 | The registration key, and the device has no API key at all | Accepted. The record updates and the server issues the device's first API key. |
+| 6 | Anything else | `401` |
+
+Notes:
+
+- **Own key (rule 3).** This is the normal path for a running agent. It works whether or not a registration key is set. The agent's startup and 24-hour re-registrations use it.
+- **Client certificate (rule 4).** The server trusts only a certificate that the TLS handshake verified against the rIOt CA and that is not revoked. It ignores certificate information in HTTP headers, so a reverse proxy that terminates TLS cannot supply one. If the server cannot read the revocation list, the certificate counts for nothing. The certificate path needs mTLS enabled on the server. It is unavailable in Let's Encrypt (autocert) TLS mode. This is how a device enrolled with mTLS obtains its API key without an operator.
+- **Registration key (rule 5).** This path is for a device that exists but has no API key, such as one created by mTLS enrollment on a server that has a registration key. It works once. After the server issues a key, the registration key no longer works for that device. If the server cannot check whether the device has a key, the request fails with `401`.
+- **Mixed credentials.** Rules 1 and 2 run first. A request that presents another device's key or certificate gets `403` even when it also presents a valid proof for the named device.
+- **No side effects on rejection.** A rejected request changes nothing. The server does not update the record, issue a key, broadcast to dashboards, or raise a device-online event.
+- **No agent configuration change.** Agents already send their own key on every registration request, so existing agents need no change.
+
+#### Rejection responses
+
+Every rejection from the registration endpoint uses one of two fixed bodies. The body never contains a device ID, hostname, key, or reason. It is identical whether or not the named device exists.
+
+| Status | Body | Meaning |
+|---|---|---|
+| `400` | `{"error":"invalid request body"}` | The body is not valid JSON or is larger than 1 MiB. |
+| `401` | `{"error":"unauthorized"}` | No acceptable proof for an existing device, or a missing or wrong registration key for a new device. |
+| `403` | `{"error":"forbidden"}` | The request presented a key or certificate that belongs to a different device. |
+
+The server logs each rejection as one `WARN` line, `device registration rejected`. The line holds the device ID (shown as `[invalid]` when it contains unexpected characters), the client address, a short reason class such as `wrong-device-key`, and the status. It never contains a key. Earlier versions returned the text `invalid registration key`. That text no longer appears.
+
+The endpoint allows 10 requests per minute per client address.
+
+#### Recovering an agent that lost its API key
+
+An agent keeps its API key in `server.api_key` in `/etc/riot/agent.yaml` and its device ID in a separate ID file. If the agent is reinstalled or its config is wiped, it can end up with the ID file but no API key. The server then rejects its registration with `401`, because a device ID alone proves nothing. The agent log shows `registration failed: {"error":"unauthorized"}`, and the device stays offline.
+
+This applies whenever the device already has an API key on the server, with or without a registration key. An agent cannot use the registration key to reclaim a device that already has an API key.
+
+Pick one of the two recovery options.
+
+**Option 1: Rotate the key and keep the device.** The device keeps its history and settings.
+
+1. As an admin, rotate the device's key with `POST /api/v1/devices/{id}/rotate-key`. The dashboard has no Rotate key button, so call the admin API. Replace `<server>`, `<password>`, and `<device-id>`:
+
+   ```bash
+   curl -sk -c riot-session.txt -H 'Content-Type: application/json' \
+     -d '{"password":"<password>"}' https://<server>:7331/api/v1/auth/login
+   curl -sk -b riot-session.txt -X POST \
+     https://<server>:7331/api/v1/devices/<device-id>/rotate-key
+   rm riot-session.txt
+   ```
+
+   The second command returns `{"api_key":"...","device_id":"..."}`. Rotation deletes every existing key for the device and creates the one it returns. Copy the key now. The server stores only a hash and cannot show it again.
+
+2. On the device, set the key in `/etc/riot/agent.yaml`:
+
+   ```yaml
+   server:
+     api_key: "<the key from step 1>"
+   ```
+
+3. Restart the agent: `sudo systemctl restart riot-agent`.
+
+**Option 2: Register as a new device.** Use this when the old device is not worth keeping.
+
+1. On the device, delete the ID file:
+   - Linux and macOS: `sudo rm /etc/riot/id`
+   - Windows: delete `%PROGRAMDATA%\riot\id`
+   - If `/etc/riot/agent.yaml` has an `agent.device_id` value, remove it. The agent reads that value before the ID file.
+2. If the server has a registration key, set it as `server.api_key` in `/etc/riot/agent.yaml`.
+3. Restart the agent: `sudo systemctl restart riot-agent`.
+4. The agent registers as a new device with a new device ID. In the dashboard, delete the old device. It stays listed as offline until you do.
+
+**mTLS-enrolled devices.** A device enrolled with mTLS recovers on its own. Its client certificate proves its identity, and the server issues a fresh API key on its next registration. It needs no operator action unless its certificate has been revoked.
+
+#### Future-dated timestamps
+
+Agents send a timestamp with every heartbeat and telemetry snapshot. The server trusts a timestamp that is in the past or up to 5 minutes ahead of the server clock. A timestamp more than 5 minutes ahead is replaced with the time the server received the request. The data is still stored and the request still succeeds. The server never rejects telemetry because of its timestamp.
+
+This stops an agent with a wrong clock from posting a snapshot dated far in the future, which would otherwise count as the device's latest state until that date.
+
+- Timestamps in the past are stored as sent.
+- The server writes at most one `WARN` log line per device and kind (snapshot or heartbeat) per hour for clamped timestamps. The line reports how many were clamped since the previous line.
+- Every query that reads snapshots or heartbeats also skips stored rows dated more than 5 minutes ahead. Such a row can exist only if an earlier version stored it. The server does not delete or edit it. A device whose only rows are future-dated shows no data until it posts one fresh snapshot.
+- The fleet table never shows a negative relative time. A timestamp ahead of the browser clock shows as `0s ago`.
 
 ### Uninstall
 
@@ -381,7 +487,7 @@ New installs via `install.sh` include all rules automatically.
 | Field | Default | Description |
 |---|---|---|
 | `server.url` | `http://localhost:7331` | rIOt server URL |
-| `server.api_key` | — | Registration key (only needed if the server requires one; per-device key is generated after registration) |
+| `server.api_key` | — | Registration key for a first registration (only needed if the server requires one). After registration the agent replaces it with its own per-device API key. To recover an agent that lost its key, set a rotated key here (see [Recovering an agent that lost its API key](#recovering-an-agent-that-lost-its-api-key)) |
 | `server.tls_verify` | `true` | Verify TLS certificates |
 | `server.server_cert_pin` | — | SHA256 fingerprint for TOFU verification (auto-populated on first connect) |
 | `server.ca_cert_file` | — | Custom CA certificate for TLS verification (auto-populated by TOFU) |
@@ -1184,7 +1290,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/devices/register` | Register a new device |
+| `POST` | `/api/v1/devices/register` | Register a new device, or re-register an existing one. Re-registration requires proof of the device's identity (see [Device Registration and Re-registration](#device-registration-and-re-registration)) |
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
@@ -1210,7 +1316,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/containers/:cid/logs` | Container log history (query: `limit`, `stream`, `since`) |
 | `GET` | `/api/v1/devices/:id/containers/:cname/metrics` | Container metric history (query: `hours`) |
 | `DELETE` | `/api/v1/devices/:id` | Remove a device |
-| `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
+| `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key. Deletes all of the device's keys and returns one new key (`api_key`) once. This is the recovery step for an agent that lost its key |
 | `POST` | `/api/v1/devices/:id/commands` | Send command to agent |
 | `GET` | `/api/v1/devices/:id/commands` | List device command history |
 | `GET` | `/api/v1/devices/:id/commands/:cmdId/output` | Command output detail |

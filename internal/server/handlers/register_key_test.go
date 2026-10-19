@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const invalidRegKeyBody = `{"error":"invalid registration key"}` + "\n"
+// REG-HARDEN-001 replaced the old `{"error":"invalid registration key"}` text
+// with one fixed 401 body for every registration rejection.
+const invalidRegKeyBody = `{"error":"unauthorized"}` + "\n"
 
 // newRegisterTestHandlers builds Handlers able to run RegisterDevice end to end
 // against mocks. regKey == "" leaves registration open.
@@ -80,7 +82,7 @@ func TestHARDEN002_AC042_WrongKeysRejectedIdentically(t *testing.T) {
 			rec := postRegister(h, tc.key)
 
 			assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s must be rejected", tc.name)
-			assert.Equal(t, invalidRegKeyBody, rec.Body.String(), "%s: the 401 body must be byte-identical to the pre-story body", tc.name)
+			assert.Equal(t, invalidRegKeyBody, rec.Body.String(), "%s: the 401 body must be the fixed registration rejection body", tc.name)
 			assert.Empty(t, devRepo.Devices, "%s: nothing may be registered", tc.name)
 		})
 	}

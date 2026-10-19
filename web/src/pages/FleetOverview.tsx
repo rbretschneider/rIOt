@@ -6,6 +6,7 @@ import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
 import { rebootEtaTooltip } from '../utils/rebootEta'
+import { formatAgo } from '../utils/format'
 
 import ConfirmModal from '../components/ConfirmModal'
 import RebootClassBadge from '../components/RebootClassBadge'
@@ -138,15 +139,6 @@ export default function FleetOverview() {
       {children} {sortKey === k ? (sortDir === 'asc' ? '\u2191' : '\u2193') : ''}
     </th>
   )
-
-  function formatAgo(ts?: string) {
-    if (!ts) return 'Never'
-    const diff = Date.now() - new Date(ts).getTime()
-    if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
-    if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`
-    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`
-    return `${Math.floor(diff / 86400_000)}d ago`
-  }
 
   function isAgentOutdated(version?: string) {
     if (!version || !latestVersion || version === 'dev') return false

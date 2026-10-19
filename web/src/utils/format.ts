@@ -24,6 +24,21 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
+/**
+ * Relative age of a timestamp ("30s ago", "5m ago", "3h ago", "2d ago").
+ * A missing timestamp reads "Never". A timestamp later than `now` (an agent
+ * clock ahead of the browser's) is treated as age zero, so the UI never renders
+ * a negative age. `now` is injectable for deterministic tests.
+ */
+export function formatAgo(ts?: string, now: number = Date.now()): string {
+  if (!ts) return 'Never'
+  const diff = Math.max(0, now - new Date(ts).getTime())
+  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`
+  return `${Math.floor(diff / 86400_000)}d ago`
+}
+
 /** Plain integer count, never decimals. */
 export function formatCount(value: number): string {
   if (!Number.isFinite(value)) return '—'

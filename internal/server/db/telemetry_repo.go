@@ -8,6 +8,20 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
+// FutureSkewAllowance is how far ahead of the server clock a snapshot or
+// heartbeat timestamp may be and still be trusted (REG-HARDEN-001 FR-030).
+// Ingest clamps anything later to the receive time; the read queries below
+// exclude any already-stored row later than now + this allowance.
+const FutureSkewAllowance = 5 * time.Minute
+
+// notFutureDatedSQL is the read-side guard spliced into every snapshot and
+// heartbeat read (REG-HARDEN-001 FR-036, FR-037). It keeps a future-dated row
+// from being selected as a device's "latest" or appearing in history. In the
+// DISTINCT ON queries it must sit INSIDE the subquery so a device falls back to
+// its newest valid row instead of disappearing. The interval literal must equal
+// FutureSkewAllowance (checked by a unit test).
+const notFutureDatedSQL = "timestamp <= NOW() + interval '5 minutes'"
+
 // SnapshotSummary is a lightweight projection of a telemetry snapshot
 // containing only the fields needed by fleet and security overview endpoints.
 // This avoids deserializing the full multi-MB JSONB blob per device.
@@ -51,7 +65,8 @@ func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) 
 	var dataJSON []byte
 	err := r.db.Pool.QueryRow(ctx,
 		`SELECT id, device_id, timestamp, data FROM telemetry_snapshots
-		 WHERE device_id=$1 ORDER BY timestamp DESC LIMIT 1`, deviceID,
+		 WHERE device_id=$1 AND `+notFutureDatedSQL+`
+		 ORDER BY timestamp DESC LIMIT 1`, deviceID,
 	).Scan(&snap.ID, &snap.DeviceID, &snap.Timestamp, &dataJSON)
 	if err != nil {
 		return nil, err
@@ -64,7 +79,9 @@ func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) 
 func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.TelemetrySnapshot, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT DISTINCT ON (device_id) id, device_id, timestamp, data
-		 FROM telemetry_snapshots ORDER BY device_id, timestamp DESC`)
+		 FROM telemetry_snapshots
+		 WHERE `+notFutureDatedSQL+`
+		 ORDER BY device_id, timestamp DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +112,7 @@ func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSu
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+notFutureDatedSQL+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest`)
 	if err != nil {
@@ -136,7 +154,8 @@ func (r *TelemetryRepo) GetHistory(ctx context.Context, deviceID string, limit, 
 	}
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id, device_id, timestamp, data FROM telemetry_snapshots
-		 WHERE device_id=$1 ORDER BY timestamp DESC LIMIT $2 OFFSET $3`,
+		 WHERE device_id=$1 AND `+notFutureDatedSQL+`
+		 ORDER BY timestamp DESC LIMIT $2 OFFSET $3`,
 		deviceID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -160,7 +179,8 @@ func (r *TelemetryRepo) GetHistory(ctx context.Context, deviceID string, limit, 
 func (r *TelemetryRepo) GetHeartbeatHistory(ctx context.Context, deviceID string, since time.Time) ([]models.Heartbeat, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT id, device_id, timestamp, data FROM heartbeats
-		 WHERE device_id=$1 AND timestamp >= $2 ORDER BY timestamp ASC`,
+		 WHERE device_id=$1 AND timestamp >= $2 AND `+notFutureDatedSQL+`
+		 ORDER BY timestamp ASC`,
 		deviceID, since)
 	if err != nil {
 		return nil, err
@@ -205,7 +225,7 @@ func (r *TelemetryRepo) GetFleetHeartbeats(ctx context.Context, since time.Time)
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT device_id, timestamp, data
 		 FROM heartbeats
-		 WHERE timestamp >= $1
+		 WHERE timestamp >= $1 AND `+notFutureDatedSQL+`
 		 ORDER BY device_id, timestamp ASC`,
 		since)
 	if err != nil {
@@ -235,6 +255,7 @@ func (r *TelemetryRepo) GetGPUDeviceIDs(ctx context.Context) ([]string, error) {
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+notFutureDatedSQL+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest
 		 WHERE jsonb_array_length(data->'gpu_telemetry'->'gpus') > 0`)
@@ -270,6 +291,7 @@ func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]Fle
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
+			WHERE `+notFutureDatedSQL+`
 			ORDER BY device_id, timestamp DESC
 		 ) latest
 		 WHERE data ? 'docker'`)
