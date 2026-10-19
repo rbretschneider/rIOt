@@ -2,7 +2,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef } from 'react'
 import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
-import type { Device, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
+import { mergeTelemetry } from './telemetryMerge'
+import { applyActiveUpdate, isTerminal, shouldSuppressExited } from '../utils/commandLifecycle'
+import type { Command, CommandUpdate, Device, DeviceDetailResponse, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
 
 export function useDevices() {
   const queryClient = useQueryClient()
@@ -25,8 +27,11 @@ export function useDevices() {
         old?.filter((d) => d.id !== msg.device_id)
       )
     } else if (msg.type === 'heartbeat' && msg.device_id) {
-      // Apply heartbeat data directly — update status + last_heartbeat in-place
+      // Apply heartbeat data directly — update status + last_heartbeat in-place.
+      // last_heartbeat is the server's received_at, never the browser clock; when
+      // the server sends none (pre-lifecycle server) the stored value is kept.
       const hb = msg.data as HeartbeatData
+      const receivedAt = msg.received_at
       queryClient.setQueryData<Device[]>(['devices'], (old) => {
         if (!old) return old
         const idx = old.findIndex((d) => d.id === msg.device_id)
@@ -35,63 +40,71 @@ export function useDevices() {
         updated[idx] = {
           ...updated[idx],
           status: 'online',
-          last_heartbeat: new Date().toISOString(),
+          ...(receivedAt ? { last_heartbeat: receivedAt } : {}),
           ...(hb.agent_version ? { agent_version: hb.agent_version } : {}),
         }
         return updated
       })
       // Also push heartbeat into device detail cache if it's open
-      queryClient.setQueryData(['device', msg.device_id], (old: any) => {
+      queryClient.setQueryData<DeviceDetailResponse>(['device', msg.device_id], (old) => {
         if (!old) return old
         return {
           ...old,
           device: {
             ...old.device,
             status: 'online',
-            last_heartbeat: new Date().toISOString(),
+            ...(receivedAt ? { last_heartbeat: receivedAt } : {}),
             ...(hb.agent_version ? { agent_version: hb.agent_version } : {}),
           },
           latest_heartbeat: hb,
         }
       })
     } else if (msg.type === 'telemetry' && msg.device_id) {
+      const deviceId = msg.device_id
       const telData = msg.data as FullTelemetryData
       const upsOnBattery = telData?.ups?.on_battery === true
 
+      // Push telemetry into device detail cache, merging with existing data.
+      // The server strips heavy fields (processes, hardware, USB, etc.) from
+      // WS broadcasts to save bandwidth, so mergeTelemetry keeps those from the
+      // prior fetch. A push that is not newer than the one already applied is
+      // dropped (FR-067) and timestamps come from the server, not the browser
+      // clock (FR-068).
+      let stale = false
+      queryClient.setQueryData<DeviceDetailResponse>(['device', deviceId], (old) => {
+        const result = mergeTelemetry(old, {
+          deviceId,
+          data: telData,
+          collectedAt: msg.collected_at,
+          receivedAt: msg.received_at,
+        })
+        stale = result.stale
+        return result.detail
+      })
+
       // If UPS is on battery, set fleet list status to warning (yellow dot)
-      if (upsOnBattery) {
+      if (upsOnBattery && !stale) {
         queryClient.setQueryData<Device[]>(['devices'], (old) => {
           if (!old) return old
-          const idx = old.findIndex((d) => d.id === msg.device_id)
+          const idx = old.findIndex((d) => d.id === deviceId)
           if (idx < 0) return old
           const updated = [...old]
           updated[idx] = { ...updated[idx], status: 'warning' }
           return updated
         })
       }
-
-      // Push telemetry into device detail cache, merging with existing data.
-      // The server strips heavy fields (processes, hardware, USB, etc.) from
-      // WS broadcasts to save bandwidth, so we keep those from the prior fetch.
-      queryClient.setQueryData(['device', msg.device_id], (old: any) => {
-        if (!old) return old
-        const existing = old.latest_telemetry?.data as FullTelemetryData | undefined
-        const merged: Record<string, unknown> = { ...existing }
-        for (const [key, value] of Object.entries(telData)) {
-          if (value != null) {
-            merged[key] = value
-          }
-        }
-        return {
-          ...old,
-          device: {
-            ...old.device,
-            ...(upsOnBattery ? { status: 'warning' as const } : {}),
-            last_telemetry: new Date().toISOString(),
-          },
-          latest_telemetry: { device_id: msg.device_id, timestamp: new Date().toISOString(), data: merged },
-        }
-      })
+    } else if (msg.type === 'command_update') {
+      // Keep the device's list of non-terminal commands current so the stop/die
+      // suppression below (FR-094) works on every page that uses this hook, not
+      // only where a command tracker is mounted.
+      const update = msg.data as CommandUpdate | undefined
+      const deviceId = update?.device_id ?? msg.device_id
+      if (update && deviceId) {
+        queryClient.setQueryData<Command[]>(['commands-active', deviceId], (old) => {
+          if (old === undefined && isTerminal(update.status)) return undefined
+          return applyActiveUpdate(old, update)
+        })
+      }
     } else if (msg.type === 'docker_update' && msg.device_id) {
       const evt = msg.data as DockerEvent
       // Significant actions get a targeted state update in the device detail
@@ -112,11 +125,16 @@ export function useDevices() {
         if (newState) {
           // Strip leading '/' that Docker sometimes includes in container_name
           const name = evt.container_name?.replace(/^\//, '')
+          // FR-094: while a tracked update targets this container, a stop/die is
+          // the recreate in progress, not an exit. Leave the state alone; the
+          // "Updating…" label is shown instead and telemetry settles the rest.
+          const activeCommands = queryClient.getQueryData<Command[]>(['commands-active', msg.device_id])
           queryClient.setQueryData(['device', msg.device_id], (old: any) => {
             if (!old?.latest_telemetry?.data?.docker?.containers) return old
             const containers = old.latest_telemetry.data.docker.containers as ContainerInfo[]
             const idx = containers.findIndex((c: ContainerInfo) => c.name === name)
             if (idx < 0) return old
+            if (newState === 'exited' && shouldSuppressExited(activeCommands, containers[idx])) return old
             const updatedContainers = [...containers]
             updatedContainers[idx] = { ...updatedContainers[idx], state: newState }
             return {

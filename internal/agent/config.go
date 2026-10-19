@@ -307,3 +307,30 @@ func FreshnessCachePath() string {
 	}
 	return "/etc/riot/docker-freshness-cache.json"
 }
+
+// OutboxPath returns the path for the durable command-result outbox
+// (CMD-LIFECYCLE-001 AD-010). It lives in the agent-writable state directory.
+func OutboxPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\command-outbox.json"
+	}
+	return "/var/lib/riot/command-outbox.json"
+}
+
+// SeenCommandsPath returns the path for the persisted seen-command-ID store
+// (FR-057).
+func SeenCommandsPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\seen-commands.json"
+	}
+	return "/var/lib/riot/seen-commands.json"
+}
+
+// InflightPath returns the path for the in-flight command markers used for
+// restart recovery (FR-019, SEC C-4).
+func InflightPath() string {
+	if runtime.GOOS == "windows" {
+		return os.Getenv("PROGRAMDATA") + "\\riot\\inflight-commands.json"
+	}
+	return "/var/lib/riot/inflight-commands.json"
+}

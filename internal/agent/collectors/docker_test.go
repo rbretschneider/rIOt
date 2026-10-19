@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -50,7 +51,7 @@ func TestAC003_FreshnessCacheSurvivesRestart(t *testing.T) {
 
 	// Simulate a previous collector run that saved fresh entries.
 	freshEntry := &imageFreshness{
-		UpdateAvailable: boolPtr(false),
+		Result: resultSame,
 		CheckedAt:       time.Now().Add(-5 * time.Minute), // 5 minutes old — within TTL
 	}
 	writeCacheFile(t, path, map[string]*imageFreshness{
@@ -71,11 +72,8 @@ func TestAC003_FreshnessCacheSurvivesRestart(t *testing.T) {
 	if !ok {
 		t.Fatal("[AC-003] expected 'nginx:latest' to be present in loaded cache")
 	}
-	if entry.UpdateAvailable == nil {
-		t.Fatal("[AC-003] expected UpdateAvailable to be non-nil after loading")
-	}
-	if *entry.UpdateAvailable != false {
-		t.Errorf("[AC-003] expected UpdateAvailable=false, got %v", *entry.UpdateAvailable)
+	if entry.Result != resultSame {
+		t.Errorf("[AC-003] expected Result=%q after loading, got %q", resultSame, entry.Result)
 	}
 }
 
@@ -85,7 +83,7 @@ func TestAC003_SaveAndLoadRoundTrip(t *testing.T) {
 	c := &DockerCollector{CachePath: path}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"redis:7": {UpdateAvailable: boolPtr(true), CheckedAt: time.Now()},
+		"redis:7": {Result: resultNewer, CheckedAt: time.Now()},
 	}
 	c.cacheMu.Unlock()
 
@@ -107,8 +105,8 @@ func TestAC003_SaveAndLoadRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("[AC-003] 'redis:7' not found after save+load round-trip")
 	}
-	if entry.UpdateAvailable == nil || *entry.UpdateAvailable != true {
-		t.Errorf("[AC-003] expected UpdateAvailable=true after round-trip, got %v", entry.UpdateAvailable)
+	if entry.Result != resultNewer {
+		t.Errorf("[AC-003] expected Result=%q after round-trip, got %q", resultNewer, entry.Result)
 	}
 }
 
@@ -122,15 +120,15 @@ func TestAC004_ExpiredEntriesDiscardedOnLoad(t *testing.T) {
 	// Write a mix of fresh and stale entries.
 	writeCacheFile(t, path, map[string]*imageFreshness{
 		"nginx:latest": {
-			UpdateAvailable: boolPtr(false),
+			Result: resultSame,
 			CheckedAt:       time.Now().Add(-5 * time.Minute), // fresh
 		},
 		"postgres:16": {
-			UpdateAvailable: boolPtr(true),
+			Result: resultNewer,
 			CheckedAt:       time.Now().Add(-35 * time.Minute), // stale — beyond 30-minute TTL
 		},
 		"redis:7": {
-			UpdateAvailable: boolPtr(false),
+			Result: resultSame,
 			CheckedAt:       time.Now().Add(-31 * time.Minute), // stale — just over TTL
 		},
 	})
@@ -157,7 +155,7 @@ func TestAC004_AllEntriesExpired_EmptyCacheLoaded(t *testing.T) {
 
 	writeCacheFile(t, path, map[string]*imageFreshness{
 		"old:image": {
-			UpdateAvailable: boolPtr(true),
+			Result: resultNewer,
 			CheckedAt:       time.Now().Add(-2 * time.Hour), // long stale
 		},
 	})
@@ -222,7 +220,7 @@ func TestAC009_SaveToNonWritablePathIsNonFatal(t *testing.T) {
 	c := &DockerCollector{CachePath: "/non-existent-root-level/riot/cache.json"}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"test:latest": {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
+		"test:latest": {Result: resultSame, CheckedAt: time.Now()},
 	}
 	c.cacheMu.Unlock()
 
@@ -470,13 +468,13 @@ func TestAC003_ClearFreshnessCacheRemovesDiskFile(t *testing.T) {
 
 	// Write a valid cache file.
 	writeCacheFile(t, path, map[string]*imageFreshness{
-		"nginx:latest": {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
+		"nginx:latest": {Result: resultSame, CheckedAt: time.Now()},
 	})
 
 	c := &DockerCollector{CachePath: path}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"nginx:latest": {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
+		"nginx:latest": {Result: resultSame, CheckedAt: time.Now()},
 	}
 	c.cacheMu.Unlock()
 
@@ -517,8 +515,8 @@ func TestAC004_SavePrunesStaleEntries(t *testing.T) {
 	c := &DockerCollector{CachePath: path}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"fresh:image": {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
-		"stale:image": {UpdateAvailable: boolPtr(true), CheckedAt: time.Now().Add(-2 * time.Hour)},
+		"fresh:image": {Result: resultSame, CheckedAt: time.Now()},
+		"stale:image": {Result: resultNewer, CheckedAt: time.Now().Add(-2 * time.Hour)},
 	}
 	c.cacheMu.Unlock()
 
@@ -577,7 +575,7 @@ func TestAC009_AtomicWriteNoTempFileAfterSuccess(t *testing.T) {
 	c := &DockerCollector{CachePath: path}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"nginx:latest": {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
+		"nginx:latest": {Result: resultSame, CheckedAt: time.Now()},
 	}
 	c.cacheMu.Unlock()
 
@@ -611,7 +609,7 @@ func TestAC003_FreshnessCachePathNonEmpty(t *testing.T) {
 func TestAC003_LoadCalledExactlyOnce(t *testing.T) {
 	path := makeTempCachePath(t)
 	writeCacheFile(t, path, map[string]*imageFreshness{
-		"once:test": {UpdateAvailable: boolPtr(true), CheckedAt: time.Now()},
+		"once:test": {Result: resultNewer, CheckedAt: time.Now()},
 	})
 
 	c := &DockerCollector{CachePath: path}
@@ -680,7 +678,7 @@ func TestAC004_ExactTTLBoundaryIsExpired(t *testing.T) {
 	// case which is deterministic.
 	writeCacheFile(t, path, map[string]*imageFreshness{
 		"boundary:image": {
-			UpdateAvailable: boolPtr(false),
+			Result: resultSame,
 			CheckedAt:       time.Now().Add(-(freshnessCacheTTL + 1*time.Second)),
 		},
 	})
@@ -705,7 +703,7 @@ func TestAC004_OnSecondBeforeTTLBoundaryIsKept(t *testing.T) {
 
 	writeCacheFile(t, path, map[string]*imageFreshness{
 		"fresh:boundary": {
-			UpdateAvailable: boolPtr(true),
+			Result: resultNewer,
 			CheckedAt:       time.Now().Add(-(freshnessCacheTTL - 5*time.Second)),
 		},
 	})
@@ -721,9 +719,9 @@ func TestAC004_OnSecondBeforeTTLBoundaryIsKept(t *testing.T) {
 	}
 }
 
-// [AC-003] checkImageUpdates uses pre-populated in-memory cache to skip registry
-// calls. Verifies that containers with cached (fresh) results get UpdateAvailable
-// set from cache without spawning a goroutine. Covers AC-003.
+// [AC-003] checkImageUpdates uses a pre-populated in-memory cache to skip
+// registry calls: a cached verdict for the same local image is served without
+// touching the registry. Covers AC-003.
 func TestAC003_CachedImageIsServedWithoutRegistryCall(t *testing.T) {
 	// Added by QA Engineer
 	// Covers AC-003
@@ -731,8 +729,9 @@ func TestAC003_CachedImageIsServedWithoutRegistryCall(t *testing.T) {
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
 		"nginx:latest": {
-			UpdateAvailable: boolPtr(false),
-			CheckedAt:       time.Now(),
+			LocalImageID: "sha256:local",
+			Result:       resultSame,
+			CheckedAt:    time.Now(),
 		},
 	}
 	c.cacheMu.Unlock()
@@ -740,21 +739,18 @@ func TestAC003_CachedImageIsServedWithoutRegistryCall(t *testing.T) {
 	c.cacheOnce.Do(func() {})
 
 	containers := []models.ContainerInfo{
-		{ID: "abc123", State: "running", Image: "nginx:latest"},
+		{ID: "abc123", State: "running", Image: "nginx:latest", ImageID: "sha256:local"},
 	}
+	api := newFakeFreshness()
+	api.local["nginx:latest"] = image.InspectResponse{ID: "sha256:local"}
 
-	// We pass nil for the client — if a registry call is made, it will panic.
-	// The test verifies the cache path is taken without touching the Docker client.
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("[AC-003] checkImageUpdates panicked — indicates cache miss and nil client use: %v", r)
-		}
-	}()
+	c.checkImageUpdates(context.Background(), api, containers)
 
-	c.checkImageUpdates(context.Background(), nil, containers)
-
+	if api.registryCalls.Load() != 0 {
+		t.Errorf("[AC-003] a cached verdict must not trigger a registry call, got %d", api.registryCalls.Load())
+	}
 	if containers[0].UpdateAvailable == nil {
-		t.Error("[AC-003] UpdateAvailable should be set from cache, got nil")
+		t.Fatal("[AC-003] UpdateAvailable should be set from cache, got nil")
 	}
 	if *containers[0].UpdateAvailable != false {
 		t.Errorf("[AC-003] UpdateAvailable from cache should be false, got %v", *containers[0].UpdateAvailable)
@@ -772,8 +768,8 @@ func TestAC004_SaveOmitsExpiredEntries(t *testing.T) {
 	c := &DockerCollector{CachePath: path}
 	c.cacheMu.Lock()
 	c.digestCache = map[string]*imageFreshness{
-		"keep:me":   {UpdateAvailable: boolPtr(false), CheckedAt: time.Now()},
-		"drop:me":   {UpdateAvailable: boolPtr(true), CheckedAt: time.Now().Add(-(freshnessCacheTTL + 1*time.Minute))},
+		"keep:me":   {Result: resultSame, CheckedAt: time.Now()},
+		"drop:me":   {Result: resultNewer, CheckedAt: time.Now().Add(-(freshnessCacheTTL + 1*time.Minute))},
 	}
 	c.cacheMu.Unlock()
 

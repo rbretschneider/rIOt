@@ -21,9 +21,9 @@ describe('[UIF AC-127] demo api parity', () => {
     expect(sorted(demoClient.authApi)).toEqual(sorted(realClient.authApi))
   })
 
-  it('exposes the same value exports (api, authApi, ApiError)', () => {
+  it('exposes the same value exports (api, authApi, ApiError, CommandConflictError)', () => {
     expect(sorted(demoClient)).toEqual(sorted(realClient))
-    expect(sorted(realClient)).toEqual(['ApiError', 'api', 'authApi'])
+    expect(sorted(realClient)).toEqual(['ApiError', 'CommandConflictError', 'api', 'authApi'])
   })
 
   it('re-exports the one shared ApiError class', () => {
@@ -149,6 +149,7 @@ describe('[UIF AC-131] demo mutations never fetch', () => {
     acknowledgeEvent: () => [1],
     acknowledgeAllEvents: () => [],
     sendCommand: () => [hostId(), 'reboot', {}],
+    cancelCommand: () => [hostId(), 'cmd-1'],
     createProbe: () => [{ name: 'p' }],
     updateProbe: () => [1, { name: 'p' }],
     deleteProbe: () => [1],

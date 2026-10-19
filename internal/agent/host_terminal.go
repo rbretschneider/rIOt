@@ -10,11 +10,10 @@ import (
 	"os/exec"
 
 	"github.com/creack/pty"
-	"github.com/gorilla/websocket"
 )
 
 // handleHostTerminalStart spawns a local PTY shell for host-level terminal access.
-func (a *Agent) handleHostTerminalStart(ctx context.Context, wsConn *websocket.Conn, msg AgentWSMessage) {
+func (a *Agent) handleHostTerminalStart(ctx context.Context, msg AgentWSMessage) {
 	if !a.config.HostTerminal.Enabled {
 		slog.Warn("host terminal: request denied, host_terminal not enabled")
 		return
@@ -63,11 +62,11 @@ func (a *Agent) handleHostTerminalStart(ctx context.Context, wsConn *websocket.C
 			ptmx.Close()
 			cmd.Wait()
 
-			if a.wsClient != nil {
-				a.wsClient.send(AgentWSMessage{
-					Type:      "terminal_close",
-					SessionID: sessionID,
-				})
+			if err := a.sendWS(AgentWSMessage{
+				Type:      "terminal_close",
+				SessionID: sessionID,
+			}); err != nil {
+				slog.Debug("host terminal: close notification not sent", "session", sessionID, "error", err)
 			}
 		}()
 
@@ -79,13 +78,15 @@ func (a *Agent) handleHostTerminalStart(ctx context.Context, wsConn *websocket.C
 			default:
 			}
 			n, err := ptmx.Read(buf)
-			if n > 0 && a.wsClient != nil {
+			if n > 0 {
 				data, _ := json.Marshal(string(buf[:n]))
-				a.wsClient.send(AgentWSMessage{
+				if err := a.sendWS(AgentWSMessage{
 					Type:      "terminal_output",
 					SessionID: sessionID,
 					Data:      data,
-				})
+				}); err != nil {
+					slog.Debug("host terminal: output not sent", "session", sessionID, "error", err)
+				}
 			}
 			if err != nil {
 				return

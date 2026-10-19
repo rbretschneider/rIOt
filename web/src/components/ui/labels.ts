@@ -10,7 +10,24 @@ import type { BadgeTone } from './Badge'
 export const SEVERITIES = ['info', 'warning', 'critical', 'pass'] as const
 export type Severity = (typeof SEVERITIES)[number]
 
-export const COMMAND_STATUSES = ['pending', 'sent', 'queued', 'success', 'error'] as const
+// The ten canonical lifecycle states (CMD-LIFECYCLE-001), then the four legacy
+// values that rows written before the lifecycle migration can still carry.
+export const COMMAND_STATUSES = [
+  'queued',
+  'dispatched',
+  'acknowledged',
+  'running',
+  'verifying',
+  'succeeded',
+  'failed',
+  'timed_out',
+  'cancelled',
+  'expired',
+  'pending',
+  'sent',
+  'success',
+  'error',
+] as const
 export type CommandStatus = (typeof COMMAND_STATUSES)[number]
 
 // Every action dispatched by internal/agent/commands.go.
@@ -102,9 +119,18 @@ export const LABELS: {
     pass: 'Pass',
   },
   commandStatus: {
+    queued: 'Queued',
+    dispatched: 'Sent to agent',
+    acknowledged: 'Acknowledged',
+    running: 'Running',
+    verifying: 'Verifying',
+    succeeded: 'Succeeded',
+    failed: 'Failed',
+    timed_out: 'Timed out',
+    cancelled: 'Cancelled',
+    expired: 'Expired',
     pending: 'Pending',
     sent: 'Sent',
-    queued: 'Queued',
     success: 'Success',
     error: 'Error',
   },
@@ -210,9 +236,10 @@ export function toneFor(category: LabelCategory, value: string | null | undefine
     if (value === 'pass') return 'success'
   }
   if (category === 'commandStatus') {
-    if (value === 'success') return 'success'
-    if (value === 'error') return 'danger'
-    if (value === 'sent' || value === 'queued') return 'warn'
+    if (value === 'success' || value === 'succeeded') return 'success'
+    if (value === 'error' || value === 'failed' || value === 'timed_out') return 'danger'
+    if (value === 'sent' || value === 'queued' || value === 'dispatched' || value === 'acknowledged') return 'warn'
+    if (value === 'running' || value === 'verifying') return 'info'
   }
   return 'neutral'
 }

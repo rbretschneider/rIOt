@@ -37,6 +37,17 @@ type commandExecResult struct {
 	// reboot-class outcome is carried in Message (FR-026).
 	RebootClassApplied []string
 	RebootPending      bool
+
+	// CMD-LIFECYCLE-001: the failing (or last) step, the closed-enum reason and
+	// the error text a failed result carries. Status stays success/error on the
+	// wire (FR-081).
+	Step   string
+	Reason string
+	Stderr string
+
+	// postResult runs after the result is queued in the outbox (the
+	// reboot-after-patch decision).
+	postResult func()
 }
 
 // runCommand executes an external command, honoring the test runner when set.
@@ -68,34 +79,46 @@ func (a *Agent) runUpgradeCommand(ctx context.Context, name string, args ...stri
 	return cmd.CombinedOutput()
 }
 
-// handleCommand dispatches a remote command from the server.
-func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
-	var payload models.CommandPayload
-	if err := json.Unmarshal(msg.Data, &payload); err != nil {
-		slog.Warn("command: invalid payload", "error", err)
-		return
+// executeAction runs one command's action and returns its outcome. The
+// lifecycle wrapper (submitCommand) has already deduplicated, marked and
+// acknowledged the command; the result goes to the outbox from there.
+func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
+	payload, ctx := cr.payload, cr.ctx
+
+	// Host-scoped actions share one device-level lock (FR-054). agent_update and
+	// agent_uninstall restart or remove the agent and so must never run while a
+	// Docker update holds a lock: the restart would cut the recreate in half
+	// (SEC C-4c).
+	if keys := hostKeyFor(payload.Action); keys != nil {
+		if key, holder, ok := cr.lock(keys...); !ok {
+			return conflictResult(key, holder)
+		}
+		if payload.Action == models.ActionAgentUpdate || payload.Action == models.ActionAgentUninstall {
+			if key, holder, held := a.locks.HeldWithPrefix(models.TargetKeyDockerPrefix); held {
+				return commandExecResult{
+					Status: models.ResultStatusError,
+					Step:   models.StepPrecheck,
+					Reason: models.ReasonConflict,
+					Message: fmt.Sprintf("docker update in progress for %s (command %s); refusing agent restart",
+						lockLabel(key), holder.CmdID),
+				}
+			}
+		}
 	}
 
-	slog.Info("command: received", "id", payload.CommandID, "action", payload.Action)
-
-	startTime := time.Now()
-
 	var status, message string
-	var execOutput string
-	var exitCode *int
-	var osUpdateResult *commandExecResult
 
 	switch payload.Action {
 	case "docker_stop":
-		status, message = a.dockerCommand(ctx, payload, "stop")
+		return a.dockerCommand(cr, "stop")
 	case "docker_restart":
-		status, message = a.dockerCommand(ctx, payload, "restart")
+		return a.dockerCommand(cr, "restart")
 	case "docker_start":
-		status, message = a.dockerCommand(ctx, payload, "start")
+		return a.dockerCommand(cr, "start")
 	case "docker_update":
-		status, message = a.dockerUpdate(ctx, payload)
+		return a.dockerUpdate(cr)
 	case "docker_bulk_update":
-		status, message = a.dockerBulkUpdate(ctx, payload)
+		return a.dockerBulkUpdate(cr)
 	case "docker_check_updates":
 		a.clearFreshnessCache()
 		a.triggerTelemetry()
@@ -106,8 +129,8 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		status, message = a.handleShutdown(payload)
 	case "os_update":
 		r := a.handleOSUpdateWithOutput(ctx, payload)
-		status, message, execOutput, exitCode = r.Status, r.Message, r.Output, r.ExitCode
-		osUpdateResult = &r
+		r.postResult = func() { a.maybeRebootAfterPatch(r) }
+		return r
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(ctx)
 	case "agent_uninstall":
@@ -123,39 +146,7 @@ func (a *Agent) handleCommand(ctx context.Context, msg AgentWSMessage) {
 		message = fmt.Sprintf("unknown action: %s", payload.Action)
 	}
 
-	durationMs := time.Since(startTime).Milliseconds()
-
-	if status == "error" {
-		slog.Warn("command: failed", "id", payload.CommandID, "action", payload.Action, "error", message)
-		// Report command failure as a server event so it appears in the dashboard
-		a.reportUpdateEvent(ctx, models.EventCommandCompleted, models.SeverityWarning,
-			fmt.Sprintf("Command %s failed: %s", payload.Action, message))
-	} else {
-		slog.Info("command: completed", "id", payload.CommandID, "action", payload.Action, "status", status)
-	}
-
-	// Send result back to server
-	result := models.CommandResult{
-		CommandID:  payload.CommandID,
-		Status:     status,
-		Message:    message,
-		ExitCode:   exitCode,
-		DurationMs: &durationMs,
-		Output:     TruncateOutputSmart(execOutput, maxOutputBytes),
-	}
-	resultJSON, _ := json.Marshal(result)
-	if a.wsClient != nil {
-		a.wsClient.send(AgentWSMessage{
-			Type: "command_result",
-			Data: resultJSON,
-		})
-	}
-
-	// Post-result reboot decision for in-window reboot-class runs (AD-008
-	// step 7, mirrors handleTriggerUpdate's report-then-act pattern).
-	if osUpdateResult != nil {
-		a.maybeRebootAfterPatch(*osUpdateResult)
-	}
+	return commandExecResult{Status: status, Message: message}
 }
 
 // maybeRebootAfterPatch acts on an os_update result that applied
@@ -188,33 +179,58 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 }
 
 // dockerCommand runs a docker stop/start/restart on the specified container.
-func (a *Agent) dockerCommand(ctx context.Context, payload models.CommandPayload, action string) (string, string) {
-	containerID, _ := payload.Params["container_id"].(string)
+// It takes no target lock but is refused while an update holds the container or
+// its compose project, so it cannot cut a recreate in half (AD-012).
+func (a *Agent) dockerCommand(cr *cmdRun, action string) commandExecResult {
+	containerID, _ := cr.payload.Params["container_id"].(string)
 	if containerID == "" {
-		return "error", "container_id is required"
+		return commandExecResult{Status: "error", Message: "container_id is required"}
 	}
 
-	cli, err := newDockerClient(a.config.Docker.SocketPath)
+	api, err := a.newDocker()
 	if err != nil {
-		return "error", fmt.Sprintf("docker client: %s", err)
+		return commandExecResult{Status: "error", Message: fmt.Sprintf("docker client: %s", err)}
 	}
-	defer cli.Close()
+	defer api.Close()
+
+	ctx := cr.ctx
+	if insp, ierr := api.ContainerInspect(ctx, containerID); ierr == nil {
+		keys := []string{models.TargetKeyContainer(strings.TrimPrefix(insp.Name, "/"))}
+		if insp.Config != nil {
+			if wd := insp.Config.Labels[models.LabelComposeWorkingDir]; wd != "" {
+				keys = append(keys, models.TargetKeyCompose(wd))
+			}
+		}
+		for _, k := range keys {
+			if h, held := a.locks.Holder(k); held {
+				return conflictResult(k, h)
+			}
+		}
+	}
 
 	timeout := 30 // seconds
 
 	switch action {
 	case "stop":
-		err = cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		err = api.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 	case "restart":
-		err = cli.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+		err = api.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
 	case "start":
-		err = cli.ContainerStart(ctx, containerID, container.StartOptions{})
+		err = api.ContainerStart(ctx, containerID, container.StartOptions{})
 	}
 
 	if err != nil {
-		return "error", fmt.Sprintf("docker %s: %s", action, err)
+		return commandExecResult{Status: "error", Message: fmt.Sprintf("docker %s: %s", action, err)}
 	}
-	return "success", fmt.Sprintf("container %s: %s ok", containerID[:12], action)
+	return commandExecResult{Status: "success", Message: fmt.Sprintf("container %s: %s ok", shortID(containerID), action)}
+}
+
+// shortID is the first 12 characters of a container ID.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // handleReboot triggers a system reboot if allowed by config.

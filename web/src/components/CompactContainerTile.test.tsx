@@ -37,3 +37,52 @@ describe('[AC-022] CompactContainerTile surfaces GPU-dependent containers', () =
     expect(screen.queryByText('GPU')).not.toBeInTheDocument()
   })
 })
+
+// [AC-062] The update-available indicator states why an update is available;
+// check_failed and pinned verdicts never show it.
+describe('[AC-062] CompactContainerTile update indicator', () => {
+  it('titles the indicator "newer image pulled, container not recreated" for pulled_not_recreated', () => {
+    render(<CompactContainerTile
+      container={makeContainer({ update_available: true, update_status: 'update_available', update_reason: 'pulled_not_recreated' })}
+      onClick={() => {}}
+    />)
+    expect(screen.getByTitle('Update available: newer image pulled, container not recreated')).toBeInTheDocument()
+  })
+
+  it('titles the indicator "newer image in registry" for registry_newer', () => {
+    render(<CompactContainerTile
+      container={makeContainer({ update_available: true, update_status: 'update_available', update_reason: 'registry_newer' })}
+      onClick={() => {}}
+    />)
+    expect(screen.getByTitle('Update available: newer image in registry')).toBeInTheDocument()
+  })
+
+  it('shows the plain indicator for an old agent that only reports update_available', () => {
+    render(<CompactContainerTile container={makeContainer({ update_available: true })} onClick={() => {}} />)
+    expect(screen.getByTitle('Update available')).toBeInTheDocument()
+  })
+
+  it('shows no indicator for check_failed', () => {
+    render(<CompactContainerTile
+      container={makeContainer({ update_available: null, update_status: 'check_failed' })}
+      onClick={() => {}}
+    />)
+    expect(screen.queryByTitle(/Update available/)).not.toBeInTheDocument()
+  })
+
+  it('shows no indicator for pinned', () => {
+    render(<CompactContainerTile
+      container={makeContainer({ update_available: false, update_status: 'pinned' })}
+      onClick={() => {}}
+    />)
+    expect(screen.queryByTitle(/Update available/)).not.toBeInTheDocument()
+  })
+
+  it('shows no indicator when up to date', () => {
+    render(<CompactContainerTile
+      container={makeContainer({ update_available: false, update_status: 'up_to_date' })}
+      onClick={() => {}}
+    />)
+    expect(screen.queryByTitle(/Update available/)).not.toBeInTheDocument()
+  })
+})

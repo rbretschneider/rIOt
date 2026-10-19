@@ -1,13 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
-	"github.com/google/uuid"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 )
 
 // PatchStatus handles GET /api/v1/fleet/patch-status.
@@ -98,6 +99,7 @@ func (h *Handlers) AgentVersionSummary(w http.ResponseWriter, r *http.Request) {
 
 // BulkUpdateAgents handles POST /api/v1/fleet/bulk-update.
 // Sends agent_update command to all online devices with a specific version.
+// Devices that already have an in-flight host action are counted in conflicts.
 func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Version string `json:"version"`
@@ -117,63 +119,49 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sent := 0
-	queued := 0
-	skipped := 0
+	var tally dispatchTally
 	for _, d := range devices {
 		if d.Status != models.DeviceStatusOnline {
-			skipped++
+			tally.skipped++
 			continue
 		}
-
-		cmd := &models.Command{
-			ID:       uuid.New().String(),
-			DeviceID: d.ID,
-			Action:   "agent_update",
-			Params:   map[string]interface{}{},
-			Status:   "pending",
-		}
-		if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-			slog.Error("bulk update: create command", "device", d.ID, "error", err.Error())
-			skipped++
-			continue
-		}
-
-		// Try WS first, fall back to heartbeat queue
-		agentConnections.RLock()
-		ac := agentConnections.m[d.ID]
-		agentConnections.RUnlock()
-
-		if ac != nil {
-			payload := models.CommandPayload{
-				CommandID: cmd.ID,
-				Action:    "agent_update",
-				Params:    cmd.Params,
-			}
-			payloadJSON, _ := json.Marshal(payload)
-			if err := ac.Send(agentWSMessage{
-				Type: "command",
-				Data: payloadJSON,
-			}); err != nil {
-				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat")
-				queued++
-			} else {
-				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-				sent++
-			}
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "queued for heartbeat delivery")
-			queued++
-		}
+		tally.dispatch(r.Context(), h, commands.DispatchRequest{
+			DeviceID: d.ID, Action: models.ActionAgentUpdate, Params: map[string]interface{}{},
+		}, "bulk update: dispatch command")
 	}
 
-	slog.Info("bulk agent update", "version", req.Version, "sent", sent, "queued", queued, "skipped", skipped)
+	slog.Info("bulk agent update", "version", req.Version, "sent", tally.sent, "queued", tally.queued,
+		"skipped", tally.skipped, "conflicts", tally.conflicts)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"sent":    sent,
-		"queued":  queued,
-		"skipped": skipped,
-		"total":   len(devices),
+		"sent":      tally.sent,
+		"queued":    tally.queued,
+		"skipped":   tally.skipped,
+		"conflicts": tally.conflicts,
+		"total":     len(devices),
 	})
+}
+
+// dispatchTally counts the outcomes of a fleet-wide dispatch loop.
+type dispatchTally struct {
+	sent, queued, skipped, conflicts int
+}
+
+// dispatch creates one command through the command service and counts it as
+// sent (delivered over the agent WebSocket), queued, a conflict (the device
+// already has an in-flight command on that target) or skipped (error).
+func (t *dispatchTally) dispatch(ctx context.Context, h *Handlers, req commands.DispatchRequest, errMsg string) {
+	res, err := h.cmdSvc().Dispatch(ctx, req)
+	switch {
+	case err != nil:
+		slog.Error(errMsg, "device", req.DeviceID, "error", err.Error())
+		t.skipped++
+	case res.Conflict != nil:
+		t.conflicts++
+	case models.CommandState(res.Command.Status) == models.CommandDispatched:
+		t.sent++
+	default:
+		t.queued++
+	}
 }
 
 // BulkPatchDevices handles POST /api/v1/fleet/bulk-patch.
@@ -209,60 +197,24 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sent := 0
-	queued := 0
-	skipped := 0
+	var tally dispatchTally
 	for _, d := range devices {
 		if !needsPatch[d.ID] || d.Status != models.DeviceStatusOnline {
-			skipped++
+			tally.skipped++
 			continue
 		}
-
-		cmd := &models.Command{
-			ID:       uuid.New().String(),
-			DeviceID: d.ID,
-			Action:   "os_update",
-			Params:   map[string]interface{}{"mode": req.Mode},
-			Status:   "pending",
-		}
-		if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-			slog.Error("bulk patch: create command", "device", d.ID, "error", err.Error())
-			skipped++
-			continue
-		}
-
-		agentConnections.RLock()
-		ac := agentConnections.m[d.ID]
-		agentConnections.RUnlock()
-
-		if ac != nil {
-			payload := models.CommandPayload{
-				CommandID: cmd.ID,
-				Action:    "os_update",
-				Params:    cmd.Params,
-			}
-			payloadJSON, _ := json.Marshal(payload)
-			if err := ac.Send(agentWSMessage{
-				Type: "command",
-				Data: payloadJSON,
-			}); err != nil {
-				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat")
-				queued++
-			} else {
-				h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-				sent++
-			}
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "queued for heartbeat delivery")
-			queued++
-		}
+		tally.dispatch(r.Context(), h, commands.DispatchRequest{
+			DeviceID: d.ID, Action: models.ActionOSUpdate, Params: map[string]interface{}{"mode": req.Mode},
+		}, "bulk patch: dispatch command")
 	}
 
-	slog.Info("bulk patch", "mode", req.Mode, "sent", sent, "queued", queued, "skipped", skipped)
+	slog.Info("bulk patch", "mode", req.Mode, "sent", tally.sent, "queued", tally.queued,
+		"skipped", tally.skipped, "conflicts", tally.conflicts)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"sent":    sent,
-		"queued":  queued,
-		"skipped": skipped,
-		"total":   len(devices),
+		"sent":      tally.sent,
+		"queued":    tally.queued,
+		"skipped":   tally.skipped,
+		"conflicts": tally.conflicts,
+		"total":     len(devices),
 	})
 }

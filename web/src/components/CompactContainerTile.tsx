@@ -1,5 +1,6 @@
 import type { ContainerInfo } from '../types/models'
 import { displayName, formatBytes, formatImageTag, healthDisplay } from '../utils/docker'
+import { updateIndicatorTitle } from '../utils/commandLifecycle'
 
 interface Props {
   container: ContainerInfo
@@ -22,12 +23,14 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
   const isRunning = c.state === 'running'
   const imageTag = formatImageTag(c.image)
   const health = isRunning ? healthDisplay(c.health_status) : null
+  // Null for check_failed and pinned, which are never shown as update available.
+  const updateTitle = updateIndicatorTitle(c)
 
   return (
     <div
       onClick={() => onClick(c)}
       className={`inline-flex flex-col px-2.5 py-1.5 rounded border cursor-pointer transition-colors
-        ${c.update_available ? 'border-l-2 border-l-amber-400 border-y-gray-700/40 border-r-gray-700/40' : 'border-gray-700/40'}
+        ${updateTitle ? 'border-l-2 border-l-amber-400 border-y-gray-700/40 border-r-gray-700/40' : 'border-gray-700/40'}
         ${updating ? 'animate-pulse border-l-2 border-l-blue-400' : ''}
         ${isRunning ? 'bg-gray-800/30 hover:bg-gray-700/30' : 'bg-gray-800/20 opacity-60 hover:opacity-80'}
       `}
@@ -44,7 +47,7 @@ export default function CompactContainerTile({ container: c, onClick, updating, 
           </span>
         )}
         {health && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${health.dotClass}`} title={`Health: ${health.label}`} />}
-        {c.update_available && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title="Update available" />}
+        {updateTitle && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" title={updateTitle} />}
       </div>
       <div className="flex items-center gap-1.5 min-w-0">
         <span className="text-xs font-mono text-gray-600 truncate max-w-[90px]">{imageTag}</span>

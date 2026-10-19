@@ -3,9 +3,11 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // FutureSkewAllowance is how far ahead of the server clock a snapshot or
@@ -57,6 +59,26 @@ func (r *TelemetryRepo) StoreSnapshot(ctx context.Context, snap *models.Telemetr
 		`INSERT INTO telemetry_snapshots (device_id, timestamp, data) VALUES ($1, $2, $3)`,
 		snap.DeviceID, snap.Timestamp, dataJSON)
 	return err
+}
+
+// LatestSnapshotTime returns the timestamp of the device's current telemetry
+// state (the newest snapshot inside notFutureDatedSQL), or ok=false when it has
+// none. The server compares an incoming snapshot against it to keep history in
+// order (CMD-LIFECYCLE-001 FR-069); the shared guard means a future-dated row
+// stored before ingest clamping can never freeze a device's current state.
+func (r *TelemetryRepo) LatestSnapshotTime(ctx context.Context, deviceID string) (time.Time, bool, error) {
+	var ts time.Time
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT timestamp FROM telemetry_snapshots
+		 WHERE device_id=$1 AND `+notFutureDatedSQL+`
+		 ORDER BY timestamp DESC LIMIT 1`, deviceID).Scan(&ts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return ts, true, nil
 }
 
 // GetLatestSnapshot returns the most recent telemetry for a device.

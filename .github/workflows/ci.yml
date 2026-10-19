@@ -4,9 +4,31 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test-go:
     runs-on: ubuntu-latest
+    # Throwaway PostgreSQL for the PG-gated repository and migration tests
+    # (CMD-LIFECYCLE-001). The credentials are literal test values, not secrets;
+    # the tests refuse to run unless the database name contains "test".
+    services:
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_USER: riot_test
+          POSTGRES_PASSWORD: riot_test
+          POSTGRES_DB: riot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riot_test -d riot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RIOT_TEST_PG_URL: postgres://riot_test:riot_test@localhost:5432/riot_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

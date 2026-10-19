@@ -4,7 +4,8 @@ import { api } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { Command, WSMessage } from '../types/models'
 import { formatDuration } from '../utils/format'
-import { Badge, COMMAND_STATUSES, Modal, Timestamp, enumLabel } from './ui'
+import { isAllowedStatusFilter, normalizeStatus, STATUS_FILTER_OPTIONS } from '../utils/commandLifecycle'
+import { Badge, Modal, Timestamp, enumLabel } from './ui'
 
 const PAGE_SIZE = 20
 
@@ -23,15 +24,21 @@ export default function ActivityLog({ deviceId }: Props) {
     queryKey: ['device-commands', deviceId, limit, statusFilter, actionFilter],
     queryFn: () => api.getDeviceCommands(deviceId, {
       limit,
-      status: statusFilter || undefined,
+      // Only allowlisted canonical values reach the server, which answers
+      // anything else with 400 invalid_filter.
+      status: isAllowedStatusFilter(statusFilter) ? statusFilter : undefined,
       action: actionFilter || undefined,
     }),
     enabled: !!deviceId,
   })
 
-  // Real-time: invalidate commands when a command_result arrives for this device
+  // Real-time: refresh the history when a command changes state for this device.
+  // command_update is the lifecycle push; command_result is what a
+  // pre-lifecycle server still sends.
   const handleWS = useCallback((msg: WSMessage) => {
-    if (msg.type === 'command_result' && msg.device_id === deviceId) {
+    if (msg.type !== 'command_update' && msg.type !== 'command_result') return
+    const target = msg.device_id ?? (msg.data as { device_id?: string } | undefined)?.device_id
+    if (target === deviceId) {
       queryClient.invalidateQueries({ queryKey: ['device-commands', deviceId] })
     }
   }, [deviceId, queryClient])
@@ -52,8 +59,8 @@ export default function ActivityLog({ deviceId }: Props) {
           className="px-2 py-1 text-xs bg-gray-800 border border-gray-700 rounded-md text-gray-300 focus:outline-none focus:border-gray-500"
         >
           <option value="">All statuses</option>
-          {COMMAND_STATUSES.map(st => (
-            <option key={st} value={st}>{enumLabel('commandStatus', st)}</option>
+          {STATUS_FILTER_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
         <select
@@ -96,7 +103,7 @@ export default function ActivityLog({ deviceId }: Props) {
                     </td>
                     <td className="py-1.5 pr-3 text-gray-200">{enumLabel('commandAction', cmd.action)}</td>
                     <td className="py-1.5 pr-3">
-                      <Badge category="commandStatus" value={cmd.status} className="text-[10px] px-1.5" />
+                      <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
                     </td>
                     <td className="py-1.5 pr-3 text-gray-400 max-w-xs truncate hidden sm:table-cell">
                       {cmd.result_msg || '-'}
@@ -146,7 +153,7 @@ function CommandDetailModal({ cmd, deviceId, onClose }: {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
               <p className="text-gray-500 mb-0.5">Status</p>
-              <Badge category="commandStatus" value={cmd.status} className="text-[10px] px-1.5" />
+              <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
             </div>
             <div>
               <p className="text-gray-500 mb-0.5">Timestamp</p>

@@ -2,14 +2,16 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 var validActions = map[string]bool{
@@ -55,48 +57,19 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		delete(req.Params, "include_reboot_class")
 	}
 
-	// Create command record
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   req.Action,
-		Params:   req.Params,
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create command", "error", err.Error())
+	res, err := h.cmdSvc().Dispatch(r.Context(), commands.DispatchRequest{
+		DeviceID: deviceID, Action: req.Action, Params: req.Params,
+	})
+	if err != nil {
+		slog.Error("dispatch command", "device_id", deviceID, "action", req.Action, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Try to send via WS if agent is connected; otherwise queue for heartbeat pickup
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{
-			Type: "command",
-			Data: payloadJSON,
-		}); err != nil {
-			slog.Warn("send command via ws failed, queued for heartbeat", "error", err.Error())
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed, queued for heartbeat delivery")
-			cmd.Status = "queued"
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-			cmd.Status = "sent"
-		}
-	} else {
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected, queued for heartbeat delivery")
-		cmd.Status = "queued"
-		slog.Info("command queued for heartbeat delivery", "id", cmd.ID, "device", deviceID, "action", req.Action)
+	if res.Conflict != nil {
+		writeCommandConflict(w, res.Conflict, res.ConflictKey)
+		return
 	}
+	cmd := res.Command
 
 	// Emit informational event for all commands
 	if device, err := h.devices.GetByID(r.Context(), deviceID); err == nil {
@@ -107,7 +80,21 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, cmd)
 }
 
+// writeCommandConflict answers 409 for a create that hit an in-flight command
+// on the same target (BR-008).
+func writeCommandConflict(w http.ResponseWriter, existing *models.Command, targetKey string) {
+	writeJSON(w, http.StatusConflict, models.CommandConflictResponse{
+		Error:             models.ConflictMessage,
+		Code:              models.CodeConflict,
+		ExistingCommandID: existing.ID,
+		ExistingStatus:    existing.Status,
+		TargetKey:         targetKey,
+	})
+}
+
 // BulkDockerUpdate handles POST /api/v1/devices/{id}/docker/bulk-update.
+// Targets that conflict with an in-flight command are skipped and reported; the
+// rest get one docker_bulk_update. When every target conflicts the answer is 409.
 func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 
@@ -123,83 +110,208 @@ func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a single command for the bulk update
-	cmd := &models.Command{
-		ID:       uuid.New().String(),
-		DeviceID: deviceID,
-		Action:   "docker_bulk_update",
-		Params:   map[string]interface{}{"container_ids": req.ContainerIDs},
-		Status:   "pending",
-	}
-	if err := h.commandRepo.Create(r.Context(), cmd); err != nil {
-		slog.Error("create bulk update command", "error", err.Error())
+	res, err := h.cmdSvc().DispatchBulkDocker(r.Context(), deviceID, req.ContainerIDs)
+	if err != nil {
+		slog.Error("dispatch bulk update", "device_id", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
 	}
-
-	// Try WS delivery
-	agentConnections.RLock()
-	ac := agentConnections.m[deviceID]
-	agentConnections.RUnlock()
-
-	if ac != nil {
-		payload := models.CommandPayload{
-			CommandID: cmd.ID,
-			Action:    cmd.Action,
-			Params:    cmd.Params,
-		}
-		payloadJSON, _ := json.Marshal(payload)
-		if err := ac.Send(agentWSMessage{Type: "command", Data: payloadJSON}); err != nil {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "ws send failed")
-			cmd.Status = "queued"
-		} else {
-			h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "sent", "")
-			cmd.Status = "sent"
-		}
-	} else {
-		h.commandRepo.UpdateStatus(r.Context(), cmd.ID, "queued", "agent not connected")
-		cmd.Status = "queued"
+	conflicts := res.Conflicts
+	if conflicts == nil {
+		conflicts = []models.BulkConflict{}
 	}
-
-	writeJSON(w, http.StatusCreated, cmd)
+	if res.Command == nil && len(conflicts) == 0 {
+		http.Error(w, `{"error":"container_ids is required"}`, http.StatusBadRequest)
+		return
+	}
+	if res.Command == nil {
+		first := conflicts[0]
+		writeJSON(w, http.StatusConflict, models.CommandConflictResponse{
+			Error:             models.ConflictMessage,
+			Code:              models.CodeConflict,
+			ExistingCommandID: first.ExistingCommandID,
+			TargetKey:         first.TargetKey,
+			Conflicts:         conflicts,
+		})
+		return
+	}
+	writeJSON(w, http.StatusCreated, models.BulkCommandResponse{Command: *res.Command, Conflicts: conflicts})
 }
 
 // ListDeviceCommands handles GET /api/v1/devices/{id}/commands.
+//
+// Query: limit, offset, action, status (comma-separated canonical or legacy
+// values), active=true (every non-terminal command) and target_key. Request
+// values reach SQL only as bind parameters, and an unknown status value or an
+// over-long target_key is a 400 invalid_filter (SEC C-6).
 func (h *Handlers) ListDeviceCommands(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit == 0 {
 		limit = 50
 	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
 
-	statusParam := r.URL.Query().Get("status")
-	var statuses []string
-	if statusParam != "" {
-		for _, s := range strings.Split(statusParam, ",") {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				statuses = append(statuses, s)
-			}
-		}
+	statuses, ok := models.ParseStatusFilter(q.Get("status"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid status filter", Code: models.CodeInvalidFilter})
+		return
 	}
-	action := r.URL.Query().Get("action")
+	targetKey := q.Get("target_key")
+	if len(targetKey) > models.MaxTargetKeyFilterBytes {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid target_key filter", Code: models.CodeInvalidFilter})
+		return
+	}
+	action := q.Get("action")
 
-	var commands []models.Command
+	var list []models.Command
 	var err error
-	if len(statuses) > 0 || action != "" || offset > 0 {
-		commands, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action)
-	} else {
-		commands, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
+	switch {
+	case q.Get("active") == "true":
+		list, err = h.commandRepo.ListActive(r.Context(), deviceID, targetKey)
+	case len(statuses) > 0 || action != "" || offset > 0 || targetKey != "":
+		list, err = h.commandRepo.ListByDeviceFiltered(r.Context(), deviceID, limit, offset, statuses, action, targetKey)
+	default:
+		list, err = h.commandRepo.ListByDevice(r.Context(), deviceID, limit)
 	}
 	if err != nil {
+		slog.Error("list commands", "device_id", deviceID, "error", err.Error())
 		http.Error(w, `{"error":"failed to list commands"}`, http.StatusInternalServerError)
 		return
 	}
-	if commands == nil {
-		commands = []models.Command{}
+	if list == nil {
+		list = []models.Command{}
 	}
-	writeJSON(w, http.StatusOK, commands)
+	writeJSON(w, http.StatusOK, list)
+}
+
+// commandNotFound writes the one 404 body used for a missing command, a foreign
+// command and a malformed id alike, so they cannot be told apart.
+func commandNotFound(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotFound, models.ReportResponse{Error: "command not found", Code: models.CodeCommandNotFound})
+}
+
+// GetCommand handles GET /api/v1/devices/{id}/commands/{commandId}.
+func (h *Handlers) GetCommand(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	commandID := chi.URLParam(r, "commandId")
+	if !models.IsCanonicalUUID(commandID) {
+		commandNotFound(w)
+		return
+	}
+	cmd, err := h.commandRepo.GetForDevice(r.Context(), commandID, deviceID)
+	if errors.Is(err, db.ErrCommandNotFound) {
+		commandNotFound(w)
+		return
+	}
+	if err != nil {
+		slog.Error("get command", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to get command"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, cmd)
+}
+
+// CancelCommand handles POST /api/v1/devices/{id}/commands/{commandId}/cancel.
+// Only a queued command can be cancelled (FR-086); cancel and delivery claim are
+// mutually exclusive, so the loser of a race gets 409 (FR-087, FR-088).
+func (h *Handlers) CancelCommand(w http.ResponseWriter, r *http.Request) {
+	deviceID := chi.URLParam(r, "id")
+	commandID := chi.URLParam(r, "commandId")
+	cmd, outcome, err := h.cmdSvc().Cancel(r.Context(), deviceID, commandID)
+	if err != nil {
+		slog.Error("cancel command", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to cancel command"}`, http.StatusInternalServerError)
+		return
+	}
+	switch outcome {
+	case commands.CancelApplied:
+		writeJSON(w, http.StatusOK, cmd)
+	case commands.CancelNotCancellable:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error:  "command cannot be cancelled after it has been dispatched",
+			Code:   models.CodeNotCancellable,
+			Status: cmd.Status,
+		})
+	default:
+		commandNotFound(w)
+	}
+}
+
+// AgentCommandReport handles POST /api/v1/devices/{id}/commands/{commandId}/report,
+// the agent's HTTP path for ack, progress and result reports (device-key auth).
+//
+// Processing order (SEC C-1): per-device rate limit, path id, body size,
+// decode, body id and kind, then the service (sanitize and guarded
+// transition). The device scope of every write is the authenticated device.
+func (h *Handlers) AgentCommandReport(w http.ResponseWriter, r *http.Request) {
+	deviceID := authenticatedDeviceID(r)
+	if deviceID == "" {
+		writeJSON(w, http.StatusUnauthorized, models.ReportResponse{Error: "unauthorized"})
+		return
+	}
+	svc := h.cmdSvc()
+	if !svc.AllowReport(deviceID) {
+		writeJSON(w, http.StatusTooManyRequests, models.ReportResponse{Error: "too many requests", Code: models.CodeRateLimited})
+		return
+	}
+	commandID := chi.URLParam(r, "commandId")
+	if !models.IsCanonicalUUID(commandID) {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid command id", Code: models.CodeInvalidReport})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, models.MaxReportBodyBytes)
+	var report models.CommandReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, models.ReportResponse{Error: "report too large", Code: models.CodeInvalidReport})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report body", Code: models.CodeInvalidReport})
+		return
+	}
+	if err := commands.ValidateReport(commandID, report); err != nil {
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report", Code: models.CodeInvalidReport})
+		return
+	}
+	report.CommandID = commandID
+
+	outcome, err := svc.HandleAgentReport(r.Context(), deviceID, report)
+	switch {
+	case errors.Is(err, commands.ErrMalformedCommandID), errors.Is(err, commands.ErrInvalidReport):
+		writeJSON(w, http.StatusBadRequest, models.ReportResponse{Error: "invalid report", Code: models.CodeInvalidReport})
+		return
+	case err != nil:
+		slog.Error("agent command report", "device_id", deviceID, "command_id", commandID, "error", err.Error())
+		http.Error(w, `{"error":"failed to process report"}`, http.StatusInternalServerError)
+		return
+	}
+
+	switch outcome.Disposition {
+	case models.ReportAccepted, models.ReportDuplicate, models.ReportCoalesced:
+		writeJSON(w, http.StatusOK, models.ReportResponse{CommandID: commandID, Result: outcome.Disposition, Status: outcome.Status})
+	case models.ReportAlreadyTerminal:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error: "command is already terminal", Code: models.CodeAlreadyTerminal, Status: outcome.Status})
+	case models.ReportInvalidTransition:
+		writeJSON(w, http.StatusConflict, models.ReportResponse{
+			Error: "transition not allowed from the current state", Code: models.CodeInvalidTransition, Status: outcome.Status})
+	default:
+		commandNotFound(w)
+	}
+}
+
+// authenticatedDeviceID is the device the API key authenticated as, or "" when
+// the request did not pass through DeviceAuth. It never falls back to the URL
+// {id}: a route mounted without device auth must fail closed, not trust the path.
+func authenticatedDeviceID(r *http.Request) string {
+	if id, ok := r.Context().Value(middleware.DeviceIDKey).(string); ok && id != "" {
+		return id
+	}
+	return ""
 }
 
 // GetCommandOutput handles GET /api/v1/devices/{id}/commands/{commandId}/output.

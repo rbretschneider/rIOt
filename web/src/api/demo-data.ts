@@ -732,7 +732,13 @@ export function getCommands(): Command[] {
   return [
     {
       id: uuid('cmd-1'), device_id: getDevices()[0].id, action: 'container.restart', params: { container: 'watchtower' },
-      status: 'success', result_msg: 'Container restarted successfully', duration_ms: 1230, exit_code: 0, created_at: ago(2 * HOUR), updated_at: ago(2 * HOUR),
+      status: 'succeeded', result_msg: 'Container restarted successfully', duration_ms: 1230, exit_code: 0, created_at: ago(2 * HOUR), updated_at: ago(2 * HOUR),
+      origin: 'user', step: '', progress: null, failure_step: '', target_keys: [], target_key: '',
+    },
+    {
+      id: uuid('cmd-2'), device_id: getDevices()[0].id, action: 'docker_update', params: { container: 'nginx' },
+      status: 'failed', result_msg: 'rolled back to previous container', duration_ms: 48000, exit_code: null, created_at: ago(5 * HOUR), updated_at: ago(5 * HOUR),
+      origin: 'auto_update', step: 'verify', progress: null, failure_step: 'verify', target_keys: ['docker:container:nginx'], target_key: 'docker:container:nginx',
     },
   ]
 }

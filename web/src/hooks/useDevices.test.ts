@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import React from 'react'
@@ -513,5 +513,323 @@ describe('[AC-003] Telemetry WS message updates device detail cache via setQuery
     expect(container.cpu_percent, 'cpu_percent should be updated from telemetry push').toBe(12.5)
     expect(container.mem_usage, 'mem_usage should be updated from telemetry push').toBe(75_000_000)
     expect(container.status, 'status should be updated from telemetry push').toBe('Up 3 hours')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CMD-LIFECYCLE-001 (FR-067, FR-068): live telemetry ordering and server time
+// ---------------------------------------------------------------------------
+
+describe('[AC-082] last-seen is the server received_at, not the browser clock', () => {
+  const fleetDevice = {
+    id: 'dev-1', short_id: 'dev1', hostname: 'host-1', arch: 'amd64', status: 'offline' as const,
+    last_heartbeat: '2026-10-17T09:00:00Z',
+    location: '', tags: [], docker_available: true, docker_container_count: 0,
+    docker_auto_update_container_count: 0, auto_patch: false, has_auto_update: false,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('stores received_at as last_telemetry and collected_at as the snapshot timestamp when the browser clock is +1h', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-17T11:00:30Z'))
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'telemetry',
+        device_id: 'dev-1',
+        collected_at: '2026-10-17T10:00:20Z',
+        received_at: '2026-10-17T10:00:30Z',
+        data: { docker: { available: true, containers: [{ ...baseContainer, cpu_percent: 9 }] } },
+      })
+    })
+
+    const updated = qc.getQueryData<{ device: { last_telemetry?: string }; latest_telemetry: { timestamp: string } }>(['device', 'dev-1'])
+    expect(updated!.device.last_telemetry, 'last-seen must be received_at').toBe('2026-10-17T10:00:30Z')
+    expect(updated!.latest_telemetry.timestamp, 'snapshot time must be collected_at').toBe('2026-10-17T10:00:20Z')
+  })
+
+  it('stores heartbeat received_at as last_heartbeat in the fleet list and device detail when the browser clock is +1h', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-17T11:00:30Z'))
+    const qc = makeQC()
+    qc.setQueryData(['devices'], [fleetDevice])
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'heartbeat', device_id: 'dev-1', received_at: '2026-10-17T10:00:30Z', data: { agent_version: '2.65.0' } })
+    })
+
+    const fleet = qc.getQueryData<typeof fleetDevice[]>(['devices'])!
+    expect(fleet[0].last_heartbeat).toBe('2026-10-17T10:00:30Z')
+    expect(fleet[0].status).toBe('online')
+    const detail = qc.getQueryData<{ device: { last_heartbeat?: string } }>(['device', 'dev-1'])!
+    expect(detail.device.last_heartbeat).toBe('2026-10-17T10:00:30Z')
+  })
+
+  it('leaves last_heartbeat unchanged when the server sends no received_at', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2030-01-01T00:00:00Z'))
+    const qc = makeQC()
+    qc.setQueryData(['devices'], [fleetDevice])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'heartbeat', device_id: 'dev-1', data: {} })
+    })
+
+    expect(qc.getQueryData<typeof fleetDevice[]>(['devices'])![0].last_heartbeat, 'the browser clock must never be used').toBe('2026-10-17T09:00:00Z')
+  })
+})
+
+describe('[AC-080] [AC-081] stale live telemetry is dropped', () => {
+  function push(handler: (msg: WSMessage) => void, collectedAt: string, cpu: number) {
+    handler({
+      type: 'telemetry',
+      device_id: 'dev-1',
+      collected_at: collectedAt,
+      received_at: '2026-10-17T10:05:00Z',
+      data: { docker: { available: true, containers: [{ ...baseContainer, cpu_percent: cpu }] } },
+    })
+  }
+
+  it('keeps the newer snapshot when an older buffered one arrives afterwards', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { push(wsState.handler!, '2026-10-17T10:00:30Z', 30) })
+    act(() => { push(wsState.handler!, '2026-10-17T10:00:10Z', 10) })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail & { latest_telemetry: { timestamp: string } }>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].cpu_percent, 'older snapshot must not overwrite the newer one').toBe(30)
+    expect(updated.latest_telemetry.timestamp).toBe('2026-10-17T10:00:30Z')
+  })
+
+  it('discards a message with the same collected_at as the one already applied', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { push(wsState.handler!, '2026-10-17T10:00:30Z', 30) })
+    act(() => { push(wsState.handler!, '2026-10-17T10:00:30Z', 99) })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].cpu_percent).toBe(30)
+  })
+
+  it('does not set the fleet-list warning status from a stale on-battery snapshot', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    qc.setQueryData(['devices'], [{ id: 'dev-1', status: 'online' }])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { push(wsState.handler!, '2026-10-17T10:00:30Z', 30) })
+    act(() => {
+      wsState.handler!({
+        type: 'telemetry',
+        device_id: 'dev-1',
+        collected_at: '2026-10-17T10:00:10Z',
+        received_at: '2026-10-17T10:05:00Z',
+        data: { ups: { on_battery: true } },
+      })
+    })
+
+    expect(qc.getQueryData<{ status: string }[]>(['devices'])![0].status).toBe('online')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CMD-LIFECYCLE-001 (FR-094): stop/die is not "exited" while a tracked update runs
+// ---------------------------------------------------------------------------
+
+describe('[AC-112] stop and die during a tracked update are not shown as exited', () => {
+  function commandUpdate(status: string, targetKeys: string[] = ['docker:container:my-app'], id = 'cmd-1', updatedAt = '2026-10-17T10:00:00Z'): WSMessage {
+    return {
+      type: 'command_update',
+      device_id: 'dev-1',
+      data: {
+        command_id: id,
+        device_id: 'dev-1',
+        action: 'docker_update',
+        target_key: targetKeys[0],
+        target_keys: targetKeys,
+        status,
+        step: 'recreate',
+        progress: null,
+        message: '',
+        failure_step: '',
+        origin: 'user',
+        updated_at: updatedAt,
+      },
+    }
+  }
+
+  function dockerEvent(action: string): WSMessage {
+    return {
+      type: 'docker_update',
+      device_id: 'dev-1',
+      data: { container_id: 'abc123full', container_name: 'my-app', action },
+    }
+  }
+
+  function stateOf(qc: QueryClient): string {
+    const detail = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    return detail.latest_telemetry.data.docker.containers[0].state
+  }
+
+  it.each(['stop', 'die'])('keeps the container running on %s while a command_update says the update is running', (action) => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(dockerEvent(action)) })
+
+    expect(stateOf(qc), `${action} during a tracked update must not show exited`).toBe('running')
+  })
+
+  it('suppresses from the cached active commands, as fetched on mount', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    qc.setQueryData(['commands-active', 'dev-1'], [{
+      id: 'cmd-1', device_id: 'dev-1', action: 'docker_update', params: {}, status: 'running', result_msg: '',
+      duration_ms: null, exit_code: null, created_at: '2026-10-17T10:00:00Z', updated_at: '2026-10-17T10:00:00Z',
+      target_keys: ['docker:container:my-app'],
+    }])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(dockerEvent('die')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('suppresses for a compose container when the whole stack is being updated', () => {
+    const qc = makeQC()
+    const composeContainer = {
+      ...baseContainer,
+      labels: {
+        'com.docker.compose.project': 'media',
+        'com.docker.compose.service': 'app',
+        'com.docker.compose.project.working_dir': '/srv/media',
+      },
+    }
+    qc.setQueryData(['device', 'dev-1'], {
+      ...baseDeviceDetail,
+      latest_telemetry: { ...baseDeviceDetail.latest_telemetry, data: { docker: { available: true, containers: [composeContainer] } } },
+    })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running', ['docker:compose:/srv/media'])) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('shows exited again once the update command reaches a terminal state', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(commandUpdate('failed')) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc), 'a finished update must not keep suppressing').toBe('exited')
+    expect(qc.getQueryData(['commands-active', 'dev-1'])).toEqual([])
+  })
+
+  it('does not suppress a stop for a different container being updated', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running', ['docker:container:other'])) })
+    act(() => { wsState.handler!(dockerEvent('stop')) })
+
+    expect(stateOf(qc)).toBe('exited')
+  })
+
+  it('still lets start report running while the update is tracked', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], {
+      ...baseDeviceDetail,
+      latest_telemetry: { ...baseDeviceDetail.latest_telemetry, data: { docker: { available: true, containers: [{ ...baseContainer, state: 'created' }] } } },
+    })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('running')) })
+    act(() => { wsState.handler!(dockerEvent('start')) })
+
+    expect(stateOf(qc)).toBe('running')
+  })
+
+  it('ignores a stale command_update that would move the command backward', () => {
+    const qc = makeQC()
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('verifying', ['docker:container:my-app'], 'cmd-1', '2026-10-17T10:00:09Z')) })
+    act(() => { wsState.handler!(commandUpdate('running')) }) // updated_at 10:00:00Z is older
+
+    const list = qc.getQueryData<{ status: string }[]>(['commands-active', 'dev-1'])!
+    expect(list).toHaveLength(1)
+    expect(list[0].status, 'an older update must not move the command backward').toBe('verifying')
+  })
+
+  it('does not create an empty active list from a terminal update for an unknown command', () => {
+    const qc = makeQC()
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => { wsState.handler!(commandUpdate('succeeded')) })
+
+    expect(qc.getQueryData(['commands-active', 'dev-1'])).toBeUndefined()
+  })
+})
+
+describe('[AC-113] with no tracked command a stop event still shows exited', () => {
+  it('maps stop to exited exactly as before', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'docker_update',
+        device_id: 'dev-1',
+        data: { container_id: 'abc123full', container_name: 'my-app', action: 'stop' },
+      })
+    })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].state).toBe('exited')
+  })
+
+  it('maps die to exited when the only tracked command is an operator stop, not an update', () => {
+    const qc = makeQC()
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    qc.setQueryData(['commands-active', 'dev-1'], [{
+      id: 'cmd-2', device_id: 'dev-1', action: 'docker_stop', params: {}, status: 'running', result_msg: '',
+      duration_ms: null, exit_code: null, created_at: '2026-10-17T10:00:00Z', updated_at: '2026-10-17T10:00:00Z',
+      target_keys: ['docker:container:my-app'],
+    }])
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'docker_update',
+        device_id: 'dev-1',
+        data: { container_id: 'abc123full', container_name: 'my-app', action: 'die' },
+      })
+    })
+
+    const updated = qc.getQueryData<typeof baseDeviceDetail>(['device', 'dev-1'])!
+    expect(updated.latest_telemetry.data.docker.containers[0].state).toBe('exited')
   })
 })

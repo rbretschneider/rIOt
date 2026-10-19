@@ -44,12 +44,13 @@ func clampFutureTimestamp(ts, now time.Time) (time.Time, bool) {
 }
 
 // ingestNow is the server receive time for telemetry and heartbeats. Tests set
-// ingestClock; nil (the production default) means time.Now.
+// ingestClock, or the handler-wide clock (h.now); with neither (the production
+// default) it is time.Now.
 func (h *Handlers) ingestNow() time.Time {
 	if h.ingestClock != nil {
 		return h.ingestClock().UTC()
 	}
-	return time.Now().UTC()
+	return h.clock()
 }
 
 // noteClamp records that a timestamp was clamped. The log entry is debounced to
