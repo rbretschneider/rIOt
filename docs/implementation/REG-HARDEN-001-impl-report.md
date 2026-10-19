@@ -73,7 +73,7 @@ Not touched, as the ADD requires: `server.go`, `middleware/*`, `enroll.go`, the 
 | C4 certificate identity property | Identity only from `r.TLS.VerifiedChains[0][0]`; no header other than `X-rIOt-Key` is read; a `ListRevokedSerials` error gives no identity; `MTLSDeviceAuth` is not used. AC-011 subtests present: revoked, empty CN, `PeerCertificates` without `VerifiedChains`, nil `TLS`, nil `caRepo` with a verified chain, plus a forwarded-certificate-header test |
 | C5 `CARepo` wiring | `router.go` assigns `s.CARepo` into a `db.CARepository` variable only inside `if s.Config.MTLSEnabled && s.CA != nil`. `setupRouter` remains the single `handlers.New` site (so the `applyTLSAndRestart` rebuild is covered). Code-review item for QA |
 | C6 HARDEN-002 merge discipline | `registrationKeyMatches` is not declared (grep: only a comment mentions it). `regKeyEqual` carries a `TODO(merge)` comment to collapse into HARDEN-002's helper. The merge steps are for whoever lands second |
-| C7 complete decision table | `TestDecideReRegistration_AC003_AC012_DecisionTable` has 29 rows: V-01 to V-11, both PO-1 mixed rows, RK plus keycheck error, and extra precedence rows. Each row asserts `Path`, `MintKey` and `RejectClass` |
+| C7 complete decision table | `TestDecideReRegistration_AC003_AC012_DecisionTable` has 28 rows: V-01 to V-11, both PO-1 mixed rows, RK plus keycheck error, and extra precedence rows. Each row asserts `Path`, `MintKey` and `RejectClass` |
 | C8, C9 | Documentation and QA items, not implemented here |
 
 ### Grep checks (ADD Definition of Done)
