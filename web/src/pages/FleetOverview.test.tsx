@@ -1,9 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import FleetOverview from './FleetOverview'
 import { api } from '../api/client'
+import { useDevices } from '../hooks/useDevices'
+import { ToastProvider } from '../components/ui'
 
 vi.mock('../api/client', () => ({
   api: {
@@ -22,6 +25,9 @@ vi.mock('../api/client', () => ({
     ]),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),
     getPatchStatus: vi.fn().mockResolvedValue([]),
+    getAgentVersions: vi.fn().mockResolvedValue([]),
+    bulkUpdateAgents: vi.fn(),
+    bulkPatchDevices: vi.fn(),
     getPatchStatusDetail: vi.fn().mockResolvedValue([
       {
         device_id: 'dev-1',
@@ -42,7 +48,7 @@ vi.mock('../api/client', () => ({
 }))
 
 vi.mock('../hooks/useDevices', () => ({
-  useDevices: () => ({
+  useDevices: vi.fn(() => ({
     data: [
       {
         id: 'dev-1',
@@ -58,7 +64,7 @@ vi.mock('../hooks/useDevices', () => ({
     ],
     isLoading: false,
     wsConnected: false,
-  }),
+  })),
 }))
 
 function renderWithProviders() {
@@ -66,7 +72,9 @@ function renderWithProviders() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <FleetOverview />
+        <ToastProvider>
+          <FleetOverview />
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -341,5 +349,334 @@ describe('[AC-007] anytime mode renders cooldown wording in the grid indicator',
 
     const title = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')
     expect(title).toBe('A reboot is required to activate the installed updates.')
+  })
+})
+
+// UI-FOUNDATION-001: dialogs, toasts and honest pending states -------------------
+
+const OUTDATED_VERSIONS = [{ version: '2.0.4', count: 3 }]
+const PATCH_ROW = {
+  device_id: 'dev-1',
+  hostname: 'node-1',
+  pending_updates: 3,
+  security_count: 1,
+  reboot_class_count: 0,
+  reboot_required: false,
+}
+
+function useOutdatedAgents() {
+  beforeEach(() => {
+    vi.mocked(api.getAgentVersions).mockResolvedValue(OUTDATED_VERSIONS)
+    vi.mocked(api.bulkUpdateAgents).mockReset()
+  })
+  afterEach(() => {
+    vi.mocked(api.getAgentVersions).mockResolvedValue([])
+  })
+}
+
+function usePendingPatches() {
+  beforeEach(() => {
+    vi.mocked(api.getPatchStatus).mockResolvedValue([PATCH_ROW] as never)
+    vi.mocked(api.bulkPatchDevices).mockReset()
+  })
+  afterEach(() => {
+    vi.mocked(api.getPatchStatus).mockResolvedValue([])
+  })
+}
+
+async function openUpdateDialog() {
+  renderWithProviders()
+  fireEvent.click(await screen.findByRole('button', { name: /Update Agents \(3\)/ }))
+  return screen.getByRole('dialog', { name: 'Update Agents' })
+}
+
+async function openPatchReview() {
+  renderWithProviders()
+  fireEvent.click(await screen.findByRole('button', { name: /Review Patches/ }))
+  const dialog = await screen.findByRole('dialog', { name: 'Pending OS Patches' })
+  await within(dialog).findByText('node-1')
+  return dialog
+}
+
+const toastRegion = () => screen.getByRole('region', { name: 'Notifications' })
+
+describe('[UIF AC-030] PatchReviewModal is a named dialog', () => {
+  usePendingPatches()
+
+  it('exposes role=dialog named "Pending OS Patches" with aria-modal and a package summary', async () => {
+    const dialog = await openPatchReview()
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAccessibleDescription(/3 packages across 1 device/)
+  })
+
+  it('focuses Cancel, never the fleet-wide confirm (SEC-001)', async () => {
+    const dialog = await openPatchReview()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: 'Update All Devices' })).not.toHaveFocus()
+  })
+
+  it('closes on Escape and carries no ad-hoc z-index', async () => {
+    await openPatchReview()
+    expect(screen.getByTestId('modal-backdrop').className).toContain('z-(--z-modal)')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('[UIF AC-042] bulk update shows Updating… while in flight', () => {
+  useOutdatedAgents()
+
+  it('keeps the dialog open showing "Updating…" until the request settles', async () => {
+    let finish: (v: { sent: number; skipped: number; total: number }) => void = () => {}
+    vi.mocked(api.bulkUpdateAgents).mockReturnValue(new Promise(res => { finish = res }))
+    const dialog = await openUpdateDialog()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+
+    const busy = await within(dialog).findByRole('button', { name: 'Updating…' })
+    expect(busy).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    expect(screen.getByRole('dialog', { name: 'Update Agents' })).toBeInTheDocument()
+
+    await act(async () => finish({ sent: 3, skipped: 0, total: 3 }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('calls the API once per outdated version and never before confirmation', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 3, skipped: 0, total: 3 })
+    const dialog = await openUpdateDialog()
+    expect(api.bulkUpdateAgents).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+    await waitFor(() => expect(api.bulkUpdateAgents).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.bulkUpdateAgents).mock.calls[0][0]).toBe('2.0.4')
+  })
+})
+
+describe('[UIF AC-075] no inline result banners', () => {
+  useOutdatedAgents()
+  usePendingPatches()
+
+  it('shows no "Agent update dispatched" banner in the page body after a bulk update', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 4, skipped: 1, total: 5 })
+    const dialog = await openUpdateDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+    await within(toastRegion()).findByText('Agent update dispatched')
+    const bannerMatches = screen.getAllByText(/Agent update dispatched/)
+    expect(bannerMatches.every(el => toastRegion().contains(el)), 'only the toast may carry this text').toBe(true)
+  })
+
+  it('shows no "Patch commands dispatched" banner in the page body after patch-all', async () => {
+    vi.mocked(api.bulkPatchDevices).mockResolvedValue({ sent: 1, queued: 0, skipped: 0, total: 1 })
+    const dialog = await openPatchReview()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update All Devices' }))
+    await within(toastRegion()).findByText('Patch commands dispatched')
+    const matches = screen.getAllByText(/Patch commands dispatched/)
+    expect(matches.every(el => toastRegion().contains(el))).toBe(true)
+  })
+
+  it('does not use the eight-second banner timers: nothing lingers in the body once the toast is gone', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 1, skipped: 0, total: 1 })
+    const dialog = await openUpdateDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+    await within(toastRegion()).findByText('Agent update dispatched')
+    fireEvent.click(within(toastRegion()).getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByText(/Agent update dispatched/)).toBeNull()
+  })
+})
+
+describe('[UIF AC-076] bulk update success toast counts', () => {
+  useOutdatedAgents()
+
+  it('closes the dialog and toasts "4 sent, 1 skipped (offline)"', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 4, skipped: 1, total: 5 })
+    const dialog = await openUpdateDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+
+    expect(await within(toastRegion()).findByText('4 sent, 1 skipped (offline)')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('omits the skipped count when it is zero', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 3, skipped: 0, total: 3 })
+    const dialog = await openUpdateDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+    expect(await within(toastRegion()).findByText('3 sent')).toBeInTheDocument()
+  })
+
+  it('sums the counts across several outdated versions', async () => {
+    vi.mocked(api.getAgentVersions).mockResolvedValue([
+      { version: '2.0.4', count: 2 },
+      { version: '2.0.3', count: 1 },
+    ])
+    vi.mocked(api.bulkUpdateAgents)
+      .mockResolvedValueOnce({ sent: 2, skipped: 0, total: 2 })
+      .mockResolvedValueOnce({ sent: 0, skipped: 1, total: 1 })
+    renderWithProviders()
+    fireEvent.click(await screen.findByRole('button', { name: /Update Agents \(3\)/ }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Update all' }))
+    expect(await within(toastRegion()).findByText('2 sent, 1 skipped (offline)')).toBeInTheDocument()
+  })
+})
+
+describe('[UIF AC-077] bulk update failure inline', () => {
+  useOutdatedAgents()
+
+  it('keeps the dialog open with the error inline and raises no toast', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockRejectedValue(new Error('HTTP 503: Service Unavailable'))
+    const dialog = await openUpdateDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update all' }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('HTTP 503: Service Unavailable')
+    expect(within(toastRegion()).queryByRole('alert')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Update all' })).toBeEnabled()
+  })
+})
+
+describe('[UIF SEC-001] the gesture that opens the fleet-wide update cannot also confirm it', () => {
+  useOutdatedAgents()
+
+  it('focuses Cancel when the bulk update dialog opens', async () => {
+    const dialog = await openUpdateDialog()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(within(dialog).getByRole('button', { name: 'Update all' })).not.toHaveFocus()
+  })
+
+  it('a held (auto-repeating) Enter on the trigger never dispatches the update', async () => {
+    vi.mocked(api.bulkUpdateAgents).mockResolvedValue({ sent: 3, skipped: 0, total: 3 })
+    renderWithProviders()
+    const trigger = await screen.findByRole('button', { name: /Update Agents \(3\)/ })
+    trigger.focus()
+
+    const user = userEvent.setup()
+    await user.keyboard('{Enter>6/}')
+
+    expect(api.bulkUpdateAgents, 'repeated Enter must never reach the Confirm button').not.toHaveBeenCalled()
+  })
+
+  it('a double click on the trigger never dispatches the update', async () => {
+    renderWithProviders()
+    const trigger = await screen.findByRole('button', { name: /Update Agents \(3\)/ })
+    await userEvent.dblClick(trigger)
+    expect(api.bulkUpdateAgents).not.toHaveBeenCalled()
+  })
+})
+
+describe('[UIF AC-078] patch-all pending control', () => {
+  usePendingPatches()
+
+  it('disables the confirm control and shows "Dispatching…" while in flight', async () => {
+    let finish: (v: { sent: number; queued: number; skipped: number; total: number }) => void = () => {}
+    vi.mocked(api.bulkPatchDevices).mockReturnValue(new Promise(res => { finish = res }))
+    const dialog = await openPatchReview()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update All Devices' }))
+
+    const busy = await within(dialog).findByRole('button', { name: 'Dispatching…' })
+    expect(busy).toBeDisabled()
+    expect(busy).toHaveAttribute('aria-busy', 'true')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    await act(async () => finish({ sent: 1, queued: 0, skipped: 0, total: 1 }))
+  })
+
+  it('ignores Escape while the dispatch is in flight', async () => {
+    let finish: (v: { sent: number; queued: number; skipped: number; total: number }) => void = () => {}
+    vi.mocked(api.bulkPatchDevices).mockReturnValue(new Promise(res => { finish = res }))
+    const dialog = await openPatchReview()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update All Devices' }))
+    await within(dialog).findByRole('button', { name: 'Dispatching…' })
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Pending OS Patches' })).toBeInTheDocument()
+    await act(async () => finish({ sent: 1, queued: 0, skipped: 0, total: 1 }))
+  })
+})
+
+describe('[UIF AC-079] patch-all success toast', () => {
+  usePendingPatches()
+
+  it('closes the modal and toasts the sent, queued, skipped and total counts', async () => {
+    vi.mocked(api.bulkPatchDevices).mockResolvedValue({ sent: 3, queued: 1, skipped: 2, total: 6 })
+    const dialog = await openPatchReview()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update All Devices' }))
+
+    expect(
+      await within(toastRegion()).findByText('3 sent, 1 queued, 2 skipped (6 total)'),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(api.bulkPatchDevices).toHaveBeenCalledWith('full')
+  })
+})
+
+describe('[UIF AC-080] patch-all failure toast, modal stays open', () => {
+  usePendingPatches()
+
+  it('raises a persistent error toast with the message and keeps the modal open', async () => {
+    vi.mocked(api.bulkPatchDevices).mockRejectedValue(new Error('HTTP 500: Internal Server Error'))
+    const dialog = await openPatchReview()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update All Devices' }))
+
+    const alert = await within(toastRegion()).findByRole('alert')
+    expect(alert).toHaveTextContent("Couldn't dispatch patches")
+    expect(alert).toHaveTextContent('HTTP 500: Internal Server Error')
+    expect(screen.getByRole('dialog', { name: 'Pending OS Patches' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Update All Devices' })).toBeEnabled()
+  })
+})
+
+describe('[UIF AC-111] Last Seen is a RelativeTime with the absolute time on hover', () => {
+  it('renders a <time> whose title is the zone-labelled absolute time', async () => {
+    renderWithProviders()
+    await screen.findByText('node-1')
+    const row = screen.getByText('node-1').closest('tr') as HTMLElement
+    const time = row.querySelector('time') as HTMLElement
+    expect(time).not.toBeNull()
+    expect(time.getAttribute('title')).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$/)
+    expect(time.textContent).toMatch(/^(just now|\d+m ago)$/)
+  })
+})
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the hostname link in its reported case with no uppercase class', async () => {
+    vi.mocked(useDevices).mockReturnValueOnce({
+      data: [
+        {
+          id: 'dev-9',
+          hostname: 'Web-01.lan',
+          short_id: 'zzz999',
+          arch: 'amd64',
+          status: 'online',
+          agent_version: '2.0.5',
+          primary_ip: '10.0.0.9',
+          tags: [],
+          last_heartbeat: new Date().toISOString(),
+        },
+      ],
+      isLoading: false,
+      wsConnected: false,
+    } as never)
+    renderWithProviders()
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.textContent).toBe('Web-01.lan')
+    expect(link.className).not.toContain('uppercase')
+  })
+})
+
+// Added by QA Engineer
+// Covers AC-078 (patch-all pending control). Regression test for QA-D1: isPending only disables the
+// button after a re-render, so two activations queued before it (a busy main thread, a scripted
+// double click) must still dispatch the fleet-wide OS patch once, via FleetOverview's in-flight ref.
+describe('[UIF AC-078] QA: patch-all double activation dispatches once', () => {
+  usePendingPatches()
+
+  it('two clicks on "Update All Devices" before React re-renders call bulkPatchDevices once (QA-D1)', async () => {
+    vi.mocked(api.bulkPatchDevices).mockReturnValue(new Promise(() => {}))
+    const dialog = await openPatchReview()
+    const confirm = within(dialog).getByRole('button', { name: 'Update All Devices' })
+
+    await act(async () => {
+      confirm.click()
+      confirm.click()
+    })
+
+    expect(api.bulkPatchDevices).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,3 +1,6 @@
+import { useRef } from 'react'
+import { Button, Modal } from './ui'
+
 interface Props {
   title: string
   message: string
@@ -7,31 +10,32 @@ interface Props {
   onCancel: () => void
 }
 
+/**
+ * Synchronous confirmation (the caller closes it). For actions that need a pending
+ * state and inline errors, use ConfirmDialog instead. Initial focus is Cancel so the
+ * gesture that opened the dialog can never also confirm it.
+ */
 export default function ConfirmModal({ title, message, confirmLabel = 'Confirm', confirmVariant = 'danger', onConfirm, onCancel }: Props) {
+  const cancelRef = useRef<HTMLButtonElement>(null)
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onCancel}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-sm mx-4 p-6" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
-        <p className="text-sm text-gray-400 mb-6">{message}</p>
-        <div className="flex justify-end gap-3">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 text-sm text-gray-400 hover:text-white"
-          >
+    <Modal
+      open
+      size="sm"
+      title={title}
+      description={message}
+      showCloseButton={false}
+      initialFocusRef={cancelRef}
+      onClose={onCancel}
+      footer={
+        <>
+          <Button ref={cancelRef} variant="secondary" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`px-4 py-2 text-sm text-white rounded-md transition-colors ${
-              confirmVariant === 'danger'
-                ? 'bg-red-600 hover:bg-red-500'
-                : 'bg-blue-600 hover:bg-blue-500'
-            }`}
-          >
+          </Button>
+          <Button variant={confirmVariant} onClick={onConfirm}>
             {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </>
+      }
+    />
   )
 }

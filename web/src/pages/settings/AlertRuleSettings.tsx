@@ -5,6 +5,8 @@ import { settingsApi } from '../../api/settings'
 import { api } from '../../api/client'
 import { useFeatures } from '../../hooks/useFeatures'
 import type { AlertRule, AlertTemplate } from '../../types/models'
+import { Badge, Button, ConfirmDialog, Modal, enumLabel } from '../../components/ui'
+import { formatDuration } from '../../utils/format'
 
 const METRICS = [
   { value: 'mem_percent', label: 'Memory %' },
@@ -104,6 +106,7 @@ export default function AlertRuleSettings() {
   const [editing, setEditing] = useState<Partial<AlertRule> | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<AlertRule | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Support deep links like /alert-rules?edit=<id> — when another page (e.g. the
@@ -199,7 +202,7 @@ export default function AlertRuleSettings() {
         emptyMessage="No global alert rules configured. Click &quot;Add Rule&quot; to create one."
         onToggle={rule => toggleMutation.mutate(rule)}
         onEdit={openEdit}
-        onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
+        onDelete={setDeleteTarget}
       />
 
       {/* Granular Alert Rules — scoped to specific devices and/or containers */}
@@ -220,24 +223,45 @@ export default function AlertRuleSettings() {
         emptyMessage="No granular alert rules configured."
         onToggle={rule => toggleMutation.mutate(rule)}
         onEdit={openEdit}
-        onDelete={id => { if (confirm('Delete this rule?')) deleteMutation.mutate(id) }}
+        onDelete={setDeleteTarget}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        variant="danger"
+        title="Delete alert rule"
+        message={`Delete rule "${deleteTarget?.name ?? ''}"? It stops firing and its settings are lost.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Rule deleted"
+        onConfirm={() => deleteMutation.mutateAsync(deleteTarget!.id)}
+        onClose={() => setDeleteTarget(null)}
       />
 
       {/* Edit / Create Modal */}
       {editing && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 pb-4">
-              <h3 className="text-lg font-semibold text-white">
-                {isNew ? 'Create Alert Rule' : 'Edit Alert Rule'}
-              </h3>
-              <button onClick={() => setEditing(null)} className="text-gray-500 hover:text-white transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-            <div className="overflow-y-auto scrollbar-thin px-6">
+        <Modal
+          open
+          size="lg"
+          title={isNew ? 'Create Alert Rule' : 'Edit Alert Rule'}
+          pending={saveMutation.isPending}
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <Button variant="secondary" disabled={saveMutation.isPending} onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                pending={saveMutation.isPending}
+                pendingLabel="Saving..."
+                onClick={() => saveMutation.mutate(editing)}
+              >
+                Save
+              </Button>
+            </>
+          }
+        >
             <div className="space-y-4">
               <Field label="Name">
                 <input
@@ -363,7 +387,7 @@ export default function AlertRuleSettings() {
                     onChange={e => setEditing({ ...editing, severity: e.target.value })}
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                   >
-                    {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {SEVERITIES.map(s => <option key={s} value={s}>{enumLabel('severity', s)}</option>)}
                   </select>
                 </Field>
                 <Field label="Cooldown (seconds)">
@@ -422,24 +446,7 @@ export default function AlertRuleSettings() {
                 Send notifications when triggered
               </label>
             </div>
-            </div>
-            <div className="flex justify-end gap-3 p-6">
-              <button
-                onClick={() => setEditing(null)}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => saveMutation.mutate(editing)}
-                disabled={saveMutation.isPending}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors disabled:opacity-50"
-              >
-                {saveMutation.isPending ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Template Picker Modal */}
@@ -479,7 +486,7 @@ function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle
   emptyMessage: string
   onToggle: (rule: AlertRule) => void
   onEdit: (rule: AlertRule) => void
-  onDelete: (id: number) => void
+  onDelete: (rule: AlertRule) => void
 }) {
   const { data: devices = [] } = useQuery({
     queryKey: ['devices'],
@@ -547,15 +554,9 @@ function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle
                   : `${rule.operator} ${rule.threshold}`}
               </td>
               <td className="px-4 py-3">
-                <span className={`px-2 py-0.5 rounded text-xs ${
-                  rule.severity === 'critical' ? 'bg-red-900/50 text-red-400' :
-                  rule.severity === 'warning' ? 'bg-amber-900/50 text-amber-400' :
-                  'bg-blue-900/50 text-blue-400'
-                }`}>
-                  {rule.severity}
-                </span>
+                <Badge category="severity" value={rule.severity} />
               </td>
-              <td className="px-4 py-3 text-gray-400">{formatCooldown(rule.cooldown_seconds)}</td>
+              <td className="px-4 py-3 text-gray-400">{formatDuration(rule.cooldown_seconds)}</td>
               <td className="px-4 py-3">{rule.notify ? 'Yes' : 'No'}</td>
               {showDevices && (
                 <td className="px-4 py-3 text-xs">
@@ -580,7 +581,7 @@ function RulesTable({ rules, showDevices, showContainers, emptyMessage, onToggle
                     Edit
                   </button>
                   <button
-                    onClick={() => onDelete(rule.id)}
+                    onClick={() => onDelete(rule)}
                     className="px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
                   >
                     Delete
@@ -618,37 +619,25 @@ function TemplatePicker({ onSelect, onClose }: { onSelect: (t: AlertTemplate) =>
   const categories = [...new Set(templates.map(t => t.category))]
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-6 pb-4">
-          <h3 className="text-lg font-semibold text-white">Create from Template</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
+    <Modal open size="lg" title="Create from Template" onClose={onClose} bodyClassName="pb-6">
+      {categories.map(cat => (
+        <div key={cat} className="mb-4">
+          <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>
+          <div className="space-y-2">
+            {templates.filter(t => t.category === cat).map(tpl => (
+              <button
+                key={tpl.id}
+                onClick={() => onSelect(tpl)}
+                className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <div className="text-sm text-white font-medium">{tpl.name}</div>
+                <div className="text-xs text-gray-400 mt-1">{tpl.description}</div>
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="overflow-y-auto scrollbar-thin px-6 pb-6">
-          {categories.map(cat => (
-            <div key={cat} className="mb-4">
-              <h4 className="text-xs font-medium text-gray-400 uppercase mb-2">{cat}</h4>
-              <div className="space-y-2">
-                {templates.filter(t => t.category === cat).map(tpl => (
-                  <button
-                    key={tpl.id}
-                    onClick={() => onSelect(tpl)}
-                    className="w-full text-left px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
-                  >
-                    <div className="text-sm text-white font-medium">{tpl.name}</div>
-                    <div className="text-xs text-gray-400 mt-1">{tpl.description}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
+      ))}
+    </Modal>
   )
 }
 
@@ -752,9 +741,3 @@ function DeviceSelector({ label, value, onChange, placeholder }: {
   )
 }
 
-function formatCooldown(seconds: number): string {
-  if (seconds >= 86400) return `${Math.round(seconds / 86400)}d`
-  if (seconds >= 3600) return `${Math.round(seconds / 3600)}h`
-  if (seconds >= 60) return `${Math.round(seconds / 60)}m`
-  return `${seconds}s`
-}

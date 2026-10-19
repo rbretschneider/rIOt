@@ -382,7 +382,9 @@ func TestCL_SEC003_FutureTimestampClampedToReceivedAt(t *testing.T) {
 			}
 		})
 	}
-	if TelemetryFutureTolerance != 2*time.Minute {
-		t.Errorf("TelemetryFutureTolerance = %v, ADD says 2m", TelemetryFutureTolerance)
+	// 5m, not the ADD's original 2m: unified with REG-HARDEN-001's
+	// FutureSkewAllowance when main was merged, so one tolerance is enforced.
+	if TelemetryFutureTolerance != 5*time.Minute {
+		t.Errorf("TelemetryFutureTolerance = %v, want 5m (REG-HARDEN-001 FutureSkewAllowance)", TelemetryFutureTolerance)
 	}
 }

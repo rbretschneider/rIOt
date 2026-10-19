@@ -1,4 +1,9 @@
 import type { DevicePatchInfo } from '../api/client'
+import { formatUtc } from './format'
+
+// formatUtc moved to utils/format.ts (UI-FOUNDATION-001); re-exported so existing
+// importers and tests keep working. Reboot-ETA strings always stay UTC.
+export { formatUtc } from './format'
 
 // REBOOT-ETA-001: one pure helper maps the patch-status row to the reboot-ETA
 // tooltip, shared by the Fleet Overview grid indicator and the Pending OS
@@ -28,25 +33,6 @@ const STANDING_MANUAL_REBOOT =
 
 const ESTIMATE_CAVEAT =
   "estimate, not a guarantee. Depends on reboot-class gating, the cooldown, and the device's allow_reboot / hold_reboot_class settings."
-
-function pad2(n: number): string {
-  return n < 10 ? `0${n}` : String(n)
-}
-
-/**
- * Formats an ISO instant as an absolute UTC string (YYYY-MM-DD HH:MM UTC).
- * UTC getters only — never converts to local time. Returns null for an
- * unparseable input so callers can fall back honestly instead of rendering a
- * partial or placeholder time.
- */
-export function formatUtc(iso: string): string | null {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return null
-  return (
-    `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ` +
-    `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`
-  )
-}
 
 /** Resolves the reboot-ETA tooltip text; first matching rule wins. */
 export function rebootEtaTooltip(info: RebootEtaInfo): string {

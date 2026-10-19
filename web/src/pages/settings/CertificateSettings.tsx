@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
+import { Timestamp } from '../../components/ui'
 
 interface DeviceCert {
   id: number
@@ -111,7 +112,7 @@ export default function CertificateSettings() {
                   <tr key={cert.serial_number} className="text-gray-300">
                     <td className="py-2 pr-4 font-mono text-xs">{cert.device_id.slice(0, 8)}</td>
                     <td className="py-2 pr-4 font-mono text-xs">{cert.serial_number.slice(0, 16)}...</td>
-                    <td className="py-2 pr-4">{new Date(cert.not_after).toLocaleDateString()}</td>
+                    <td className="py-2 pr-4"><Timestamp value={cert.not_after} precision="minute" /></td>
                     <td className="py-2 pr-4">
                       {cert.revoked ? (
                         <span className="text-red-400">Revoked</span>
@@ -227,8 +228,8 @@ export default function CertificateSettings() {
                         <span className="text-green-400">Active</span>
                       )}
                     </td>
-                    <td className="py-2 pr-4">{new Date(key.expires_at).toLocaleString()}</td>
-                    <td className="py-2 pr-4">{new Date(key.created_at).toLocaleString()}</td>
+                    <td className="py-2 pr-4"><Timestamp value={key.expires_at} /></td>
+                    <td className="py-2 pr-4"><Timestamp value={key.created_at} /></td>
                     <td className="py-2">
                       <button
                         onClick={() => deleteKeyMut.mutate(key.key_hash)}

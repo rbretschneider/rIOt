@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, type ServerErrorAlertConfig } from '../../api/settings'
+import { ConfirmDialog, Timestamp } from '../../components/ui'
 
 export default function LogSettings() {
   const qc = useQueryClient()
   const [level, setLevel] = useState('')
   const [before, setBefore] = useState<string | undefined>()
+  const [confirmClear, setConfirmClear] = useState(false)
   // Persist auto-refresh across navigation so the operator doesn't have to
   // re-enable it every time they flip tabs.
   const [autoRefresh, setAutoRefresh] = useState(() => localStorage.getItem('server-logs-auto-refresh') === 'true')
@@ -74,13 +76,11 @@ export default function LogSettings() {
             <span className="text-xs text-gray-500">Refreshing...</span>
           )}
           <button
-            onClick={() => {
-              if (confirm('Delete all server logs? This cannot be undone.')) clearMutation.mutate()
-            }}
-            disabled={clearMutation.isPending || logs.length === 0}
+            onClick={() => setConfirmClear(true)}
+            disabled={logs.length === 0}
             className="px-3 py-1.5 text-sm text-red-400/80 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded-md transition-colors disabled:opacity-40 disabled:hover:text-red-400/80 disabled:hover:border-red-900/50"
           >
-            {clearMutation.isPending ? 'Clearing...' : 'Clear'}
+            Clear
           </button>
         </div>
       </div>
@@ -102,7 +102,7 @@ export default function LogSettings() {
               {logs.map(log => (
                 <tr key={log.id} className="border-b border-gray-800/50 text-gray-300">
                   <td className="px-4 py-2 text-xs text-gray-500 font-mono whitespace-nowrap">
-                    {new Date(log.timestamp).toLocaleString()}
+                    <Timestamp value={log.timestamp} />
                   </td>
                   <td className="px-4 py-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${levelColors[log.level] || 'bg-gray-800 text-gray-400'}`}>
@@ -131,6 +131,18 @@ export default function LogSettings() {
           </table>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmClear}
+        variant="danger"
+        title="Delete all server logs"
+        message="All stored server logs are permanently deleted. This cannot be undone."
+        confirmLabel="Delete logs"
+        pendingLabel="Deleting…"
+        successToast="Server logs deleted"
+        onConfirm={() => clearMutation.mutateAsync()}
+        onClose={() => setConfirmClear(false)}
+      />
 
       {logs.length >= 100 && (
         <div className="flex justify-center mt-4">

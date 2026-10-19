@@ -24,8 +24,8 @@ func SetupGuard(setupComplete *atomic.Bool) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Allow health check and server cert (TOFU)
-			if path == "/health" || path == "/api/v1/server-cert" {
+			// Allow health/readiness probes and server cert (TOFU)
+			if path == "/health" || path == "/readyz" || path == "/api/v1/server-cert" {
 				next.ServeHTTP(w, r)
 				return
 			}

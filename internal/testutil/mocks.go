@@ -19,6 +19,8 @@ type MockDeviceRepo struct {
 	Devices map[string]*models.Device
 	APIKeys map[string]string // hash → deviceID
 	Err     error
+	// HasAPIKeyErr, when set, makes only HasAPIKey fail (REG-HARDEN-001).
+	HasAPIKeyErr error
 }
 
 func NewMockDeviceRepo() *MockDeviceRepo {
@@ -210,6 +212,25 @@ func (m *MockDeviceRepo) DeleteAPIKeysByDevice(_ context.Context, deviceID strin
 		}
 	}
 	return nil
+}
+
+// HasAPIKey reports whether any stored key is bound to deviceID. It returns
+// m.Err if set, then HasAPIKeyErr, so tests can fail only this call.
+func (m *MockDeviceRepo) HasAPIKey(_ context.Context, deviceID string) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	if m.HasAPIKeyErr != nil {
+		return false, m.HasAPIKeyErr
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, id := range m.APIKeys {
+		if id == deviceID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (m *MockDeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error) {
@@ -690,6 +711,10 @@ type MockNotifyRepo struct {
 	NextChanID   int64
 	NextLogID    int64
 	Err          error
+
+	// UpdateChannelCalls counts UpdateChannel invocations, so tests can assert
+	// that a rejected request wrote nothing.
+	UpdateChannelCalls int
 }
 
 func NewMockNotifyRepo() *MockNotifyRepo {
@@ -739,6 +764,7 @@ func (m *MockNotifyRepo) CreateChannel(_ context.Context, ch *models.Notificatio
 }
 
 func (m *MockNotifyRepo) UpdateChannel(_ context.Context, ch *models.NotificationChannel) error {
+	m.UpdateChannelCalls++
 	if m.Err != nil {
 		return m.Err
 	}

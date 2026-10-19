@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { DeviceProbeWithResult, DeviceProbeResult } from '../types/models'
 import DeviceProbeModal, { emptyDeviceProbe, type DeviceProbeForm } from '../components/DeviceProbeModal'
+import { ConfirmDialog, Timestamp } from '../components/ui'
 
 export default function DeviceProbes() {
   const { id } = useParams<{ id: string }>()
@@ -25,6 +26,7 @@ export default function DeviceProbes() {
   const [editing, setEditing] = useState<DeviceProbeForm | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [viewingResults, setViewingResults] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null)
 
   const { data: probeResults = [] } = useQuery({
     queryKey: ['device-probe-results', id, viewingResults],
@@ -79,7 +81,7 @@ export default function DeviceProbes() {
       {/* Header */}
       <div>
         <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to <span className="uppercase">{device?.hostname ?? id}</span>
+          &larr; Back to <span>{device?.hostname ?? id}</span>
         </Link>
         <div className="flex items-center justify-between mt-2">
           <h1 className="text-2xl font-bold text-white">Device Probes</h1>
@@ -165,7 +167,7 @@ export default function DeviceProbes() {
                     Edit
                   </button>
                   <button
-                    onClick={() => { if (confirm(`Delete probe "${probe.name}"?`)) deleteMutation.mutate(probe.id) }}
+                    onClick={() => setDeleteTarget({ id: probe.id, name: probe.name })}
                     className="px-2 py-1 text-xs text-gray-500 hover:text-red-400 border border-gray-700 hover:border-red-800 rounded transition-colors"
                   >
                     Delete
@@ -211,7 +213,7 @@ export default function DeviceProbes() {
                                 <span className={`inline-block w-2 h-2 rounded-full ${r.success ? 'bg-emerald-400' : 'bg-red-400'}`} />
                               </td>
                               <td className="py-1.5 pr-3 font-mono text-gray-400">{r.latency_ms.toFixed(0)}ms</td>
-                              <td className="py-1.5 pr-3 text-gray-400">{new Date(r.created_at).toLocaleString()}</td>
+                              <td className="py-1.5 pr-3 text-gray-400"><Timestamp value={r.created_at} /></td>
                               <td className="py-1.5 text-red-400 truncate max-w-xs">{r.error_msg || '-'}</td>
                             </tr>
                           ))}
@@ -225,6 +227,18 @@ export default function DeviceProbes() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        variant="danger"
+        title="Delete probe"
+        message={`Delete probe "${deleteTarget?.name ?? ''}"? Its check history is removed with it.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Probe deleted"
+        onConfirm={() => deleteMutation.mutateAsync(deleteTarget!.id)}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       {/* Edit/Create Modal */}
       {editing && (

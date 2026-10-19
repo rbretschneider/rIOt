@@ -23,7 +23,7 @@
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
 - **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update with rollback for standalone containers, container log viewer, and optional remote terminal (exec into running containers from the browser)
-- **Real-time dashboard** — dark-mode React UI with live WebSocket updates
+- **Real-time dashboard** — dark-mode React UI with live WebSocket updates; click the header clock to switch every timestamp between UTC and your browser's local time ([details](#time-display))
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
@@ -34,7 +34,7 @@
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; near-real-time SSH/sudo/console/su authentication failure alerting (Linux; ≤60s latency, journald origin-filtered); include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
-- **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support, delivery logging, and automatic retry queue
+- **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support and delivery logging
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Signed, fail-closed agent auto-update** — agents install new versions automatically, but only after verifying an ed25519 signature on the release checksums against a public key compiled into the agent; anything unsigned or unverifiable is refused and the running version keeps working. The `riot` user holds no arbitrary-root sudo rule (see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing))
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
@@ -137,7 +137,7 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_RETENTION_DAYS` | `30` | Days to keep telemetry snapshots |
 | `RIOT_ALLOWED_ORIGINS` | — | Comma-separated CORS allowed origins |
 | `RIOT_GITHUB_REPO` | `rbretschneider/rIOt` | GitHub `owner/repo` for update checks |
-| `RIOT_API_KEY` | — | Registration key override (if set, agents must present this key to register; also configurable in Settings) |
+| `RIOT_API_KEY` | — | Loaded into the server config at startup, but **not currently enforced by device registration**. Only the registration key saved in **Settings > General** (stored in the database) gates registration. Enforcing this variable is a tracked follow-up. See [Device Registration and Re-registration](#device-registration-and-re-registration) |
 | `RIOT_ADMIN_PASSWORD` | — | Admin password override (bypasses wizard; bcrypt-hashed at startup) |
 | `RIOT_JWT_SECRET` | auto-generated | JWT session secret (auto-generated if omitted; set for stable sessions across restarts) |
 | `RIOT_TLS_ENABLED` | `false` | Enable TLS (`true` or `1`); overrides wizard setting |
@@ -151,7 +151,49 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_OIDC_CLIENT_SECRET` | — | Optional SSO: OAuth client secret — treat as a secret (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_OIDC_BUTTON_LABEL` | `Sign in with SSO` | Optional SSO: text shown on the login screen's SSO button (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_TRUSTED_PROXIES` | — (trust nobody) | Comma-separated CIDRs trusted to supply forwarding headers; set only when rIOt sits behind a reverse proxy (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_PPROF_ADDR` | — (disabled) | Opt-in profiling listener on a literal loopback `ip:port`, for example `127.0.0.1:6060`. The port must differ from `RIOT_PORT`. Anything else is rejected and pprof stays off (see [Profiling (pprof)](#profiling-pprof)) |
 | `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
+
+### Profiling (pprof)
+
+rIOt includes the Go profiler (pprof) for diagnosing memory and CPU problems. It is off by default. The main listener never serves it: `/debug/pprof` and everything under it returns `404` on the port set by `RIOT_PORT` (default `7331`), whether or not profiling is enabled.
+
+To enable profiling, set `RIOT_PPROF_ADDR` to a literal loopback `ip:port`. The server then starts a second listener, separate from the dashboard, that serves only the pprof endpoints.
+
+| Rule | Detail |
+|---|---|
+| Host | A literal IP address: IPv4 in `127.0.0.0/8` (for example `127.0.0.1`) or IPv6 `::1`. Hostnames, including `localhost`, are rejected. |
+| Port | A plain decimal number from `1` to `65535`, with no leading zero. |
+| Port collision | The port must differ from `RIOT_PORT`. On Linux the profiler binds first, and a shared port would stop the main listener from starting. |
+
+If the value breaks any rule, the server logs an `ERROR` that names the reason and starts normally with profiling off. A bind failure (for example the port is already in use) is handled the same way. A successful start logs a `WARN` line with the bound address.
+
+`RIOT_PPROF_ADDR` takes effect only if it reaches the server process. The compose files in this repository list the server's environment explicitly, so add `- RIOT_PPROF_ADDR=127.0.0.1:6060` to the `riot-server` service's `environment:` list.
+
+#### Reaching pprof in Docker
+
+Inside a container, loopback means the container itself. A published port (`-p 6060:6060`) cannot reach a loopback listener, so run the client inside the container with `docker exec`. The image is Alpine-based and includes BusyBox `wget`.
+
+```bash
+# Heap profile, saved to the host
+docker exec riot-server wget -qO- http://127.0.0.1:6060/debug/pprof/heap > heap.pb.gz
+
+# 30-second CPU profile (the request blocks for 30 seconds)
+docker exec riot-server wget -qO- "http://127.0.0.1:6060/debug/pprof/profile?seconds=30" > cpu.pb.gz
+
+# Inspect a saved profile on a machine with Go installed
+go tool pprof heap.pb.gz
+```
+
+Replace `6060` with the port you configured, and `riot-server` with your container name if you changed it.
+
+If you run the server directly on a host (not in a container), use `curl http://127.0.0.1:6060/debug/pprof/heap` from that host.
+
+#### Security notes
+
+- pprof endpoints are unauthenticated. Anyone who can open a connection to the listener can read heap contents, goroutine stacks and command-line arguments, and can start 30-second CPU profiles. Enable it only while you investigate, then unset the variable and restart.
+- Under `network_mode: host`, or when running the binary directly, the listener binds the host's loopback, so every local user on that host can reach it.
+- The listener shuts down together with the server.
 
 ---
 
@@ -192,7 +234,113 @@ curl ... | sudo bash -s -- https://server:7331 --version 2.3.0
 curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY> --key mykey --fingerprint SHA256:xxxx
 ```
 
-By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration.
+By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration. See [Device Registration and Re-registration](#device-registration-and-re-registration) for the exact rules, including what happens when an agent loses its API key.
+
+### Device Registration and Re-registration
+
+Every agent calls `POST /api/v1/devices/register` when it starts and once every 24 hours afterwards. The request carries a `device_id` when the agent has one. The server treats a device ID as a label, not a secret. Knowing a device's ID never lets a caller change that device's record or obtain a key for it.
+
+#### New devices
+
+A request with no `device_id`, or with a `device_id` the server does not know, creates a new device. The server assigns the device ID and issues the device's first API key. These rules are unchanged by the re-registration rules below.
+
+- If no registration key is set, any caller that can reach the server can register. This is the default.
+- If a registration key is set in **Settings > General**, the request must carry it in the `X-rIOt-Key` header. The agent sends the value of `server.api_key`. A missing or wrong value returns `401`.
+- A device's own API key is never accepted as a registration key for a device ID the server does not know.
+
+The server compares the registration key in constant time.
+
+> **Registration key source.** Device registration enforces only the registration key saved in **Settings > General**, which the server stores in its database. The `RIOT_API_KEY` environment variable is loaded at startup but is not currently checked by device registration, so setting it does not gate registration. Enforcing it is a tracked follow-up.
+
+#### Existing devices
+
+A request that names a device the server already knows must prove the caller is that device. The server applies the first rule below that matches:
+
+| Order | What the request presents | Result |
+|---|---|---|
+| 1 | An API key that belongs to a different device | `403` |
+| 2 | A verified client certificate issued to a different device | `403` |
+| 3 | The device's own API key in `X-rIOt-Key` | Accepted. The record updates. No new key is issued. |
+| 4 | A verified, unrevoked mTLS client certificate issued to this device | Accepted. The record updates and the server issues a new API key. Existing keys stay valid. |
+| 5 | The registration key, and the device has no API key at all | Accepted. The record updates and the server issues the device's first API key. |
+| 6 | Anything else | `401` |
+
+Notes:
+
+- **Own key (rule 3).** This is the normal path for a running agent. It works whether or not a registration key is set. The agent's startup and 24-hour re-registrations use it.
+- **Client certificate (rule 4).** The server trusts only a certificate that the TLS handshake verified against the rIOt CA and that is not revoked. It ignores certificate information in HTTP headers, so a reverse proxy that terminates TLS cannot supply one. If the server cannot read the revocation list, the certificate counts for nothing. The certificate path needs mTLS enabled on the server. It is unavailable in Let's Encrypt (autocert) TLS mode. This is how a device enrolled with mTLS obtains its API key without an operator.
+- **Registration key (rule 5).** This path is for a device that exists but has no API key, such as one created by mTLS enrollment on a server that has a registration key. It works once. After the server issues a key, the registration key no longer works for that device. If the server cannot check whether the device has a key, the request fails with `401`.
+- **Mixed credentials.** Rules 1 and 2 run first. A request that presents another device's key or certificate gets `403` even when it also presents a valid proof for the named device.
+- **No side effects on rejection.** A rejected request changes nothing. The server does not update the record, issue a key, broadcast to dashboards, or raise a device-online event.
+- **No agent configuration change.** Agents already send their own key on every registration request, so existing agents need no change.
+
+#### Rejection responses
+
+Every rejection from the registration endpoint uses one of two fixed bodies. The body never contains a device ID, hostname, key, or reason. It is identical whether or not the named device exists.
+
+| Status | Body | Meaning |
+|---|---|---|
+| `400` | `{"error":"invalid request body"}` | The body is not valid JSON or is larger than 1 MiB. |
+| `401` | `{"error":"unauthorized"}` | No acceptable proof for an existing device, or a missing or wrong registration key for a new device. |
+| `403` | `{"error":"forbidden"}` | The request presented a key or certificate that belongs to a different device. |
+
+The server logs each rejection as one `WARN` line, `device registration rejected`. The line holds the device ID (shown as `[invalid]` when it contains unexpected characters), the client address, a short reason class such as `wrong-device-key`, and the status. It never contains a key. Earlier versions returned the text `invalid registration key`. That text no longer appears.
+
+The endpoint allows 10 requests per minute per client address.
+
+#### Recovering an agent that lost its API key
+
+An agent keeps its API key in `server.api_key` in `/etc/riot/agent.yaml` and its device ID in a separate ID file. If the agent is reinstalled or its config is wiped, it can end up with the ID file but no API key. The server then rejects its registration with `401`, because a device ID alone proves nothing. The agent log shows `registration failed: {"error":"unauthorized"}`, and the device stays offline.
+
+This applies whenever the device already has an API key on the server, with or without a registration key. An agent cannot use the registration key to reclaim a device that already has an API key.
+
+Pick one of the two recovery options.
+
+**Option 1: Rotate the key and keep the device.** The device keeps its history and settings.
+
+1. As an admin, rotate the device's key with `POST /api/v1/devices/{id}/rotate-key`. The dashboard has no Rotate key button, so call the admin API. Replace `<server>`, `<password>`, and `<device-id>`:
+
+   ```bash
+   curl -sk -c riot-session.txt -H 'Content-Type: application/json' \
+     -d '{"password":"<password>"}' https://<server>:7331/api/v1/auth/login
+   curl -sk -b riot-session.txt -X POST \
+     https://<server>:7331/api/v1/devices/<device-id>/rotate-key
+   rm riot-session.txt
+   ```
+
+   The second command returns `{"api_key":"...","device_id":"..."}`. Rotation deletes every existing key for the device and creates the one it returns. Copy the key now. The server stores only a hash and cannot show it again.
+
+2. On the device, set the key in `/etc/riot/agent.yaml`:
+
+   ```yaml
+   server:
+     api_key: "<the key from step 1>"
+   ```
+
+3. Restart the agent: `sudo systemctl restart riot-agent`.
+
+**Option 2: Register as a new device.** Use this when the old device is not worth keeping.
+
+1. On the device, delete the ID file:
+   - Linux and macOS: `sudo rm /etc/riot/id`
+   - Windows: delete `%PROGRAMDATA%\riot\id`
+   - If `/etc/riot/agent.yaml` has an `agent.device_id` value, remove it. The agent reads that value before the ID file.
+2. If the server has a registration key, set it as `server.api_key` in `/etc/riot/agent.yaml`.
+3. Restart the agent: `sudo systemctl restart riot-agent`.
+4. The agent registers as a new device with a new device ID. In the dashboard, delete the old device. It stays listed as offline until you do.
+
+**mTLS-enrolled devices.** A device enrolled with mTLS recovers on its own. Its client certificate proves its identity, and the server issues a fresh API key on its next registration. It needs no operator action unless its certificate has been revoked.
+
+#### Future-dated timestamps
+
+Agents send a timestamp with every heartbeat and telemetry snapshot. The server trusts a timestamp that is in the past or up to 5 minutes ahead of the server clock. A timestamp more than 5 minutes ahead is replaced with the time the server received the request. The data is still stored and the request still succeeds. The server never rejects telemetry because of its timestamp.
+
+This stops an agent with a wrong clock from posting a snapshot dated far in the future, which would otherwise count as the device's latest state until that date.
+
+- Timestamps in the past are stored as sent.
+- The server writes at most one `WARN` log line per device and kind (snapshot or heartbeat) per hour for clamped timestamps. The line reports how many were clamped since the previous line.
+- Every query that reads snapshots or heartbeats also skips stored rows dated more than 5 minutes ahead. Such a row can exist only if an earlier version stored it. The server does not delete or edit it. A device whose only rows are future-dated shows no data until it posts one fresh snapshot.
+- The fleet table never shows a negative relative time. A timestamp ahead of the browser clock shows as `0s ago`.
 
 ### Uninstall
 
@@ -340,7 +488,7 @@ New installs via `install.sh` include all rules automatically.
 | Field | Default | Description |
 |---|---|---|
 | `server.url` | `http://localhost:7331` | rIOt server URL |
-| `server.api_key` | — | Registration key (only needed if the server requires one; per-device key is generated after registration) |
+| `server.api_key` | — | Registration key for a first registration (only needed if the server requires one). After registration the agent replaces it with its own per-device API key. To recover an agent that lost its key, set a rotated key here (see [Recovering an agent that lost its API key](#recovering-an-agent-that-lost-its-api-key)) |
 | `server.tls_verify` | `true` | Verify TLS certificates |
 | `server.server_cert_pin` | — | SHA256 fingerprint for TOFU verification (auto-populated on first connect) |
 | `server.ca_cert_file` | — | Custom CA certificate for TLS verification (auto-populated by TOFU) |
@@ -938,7 +1086,7 @@ rIOt's admin dashboard can optionally accept sign-in through an external OpenID 
 SSO stays completely dormant until all three of `RIOT_OIDC_ISSUER_URL`, `RIOT_OIDC_CLIENT_ID`, and `RIOT_OIDC_CLIENT_SECRET` are set. Follow these steps **in order**:
 
 1. **Create the group binding first.** In your identity provider, create (or choose) a group for rIOt admins and bind the rIOt application to it before doing anything else here.
-2. **Register the application.** If you use authentik with the Hawaii house tooling, run:
+2. **Register the application.** If you use authentik with a script that registers OIDC applications, run it like this:
 
    ```bash
    python register_oidc_app.py riot \
@@ -975,6 +1123,8 @@ Secondarily — and only relevant once the above is handled — leaving it unset
 
 Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment on `:7331` (where rIOt terminates its own TLS) — it already gets `Secure` correctly in that shape and needs no configuration. Never set it to `0.0.0.0/0`; that hands your rate-limit key and audit IP back to whoever can write the header.
 
+For the response headers rIOt sets, including HSTS behind a proxy, see [Security Headers](#security-headers).
+
 ### What SSO does not do
 
 - It does not replace first-run setup — the setup wizard always runs first on a fresh install, and the SSO button never appears (and the endpoints 404) until setup is complete, regardless of whether the `RIOT_OIDC_*` variables are set.
@@ -982,6 +1132,56 @@ Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment
 - It does not add users, roles, or permission tiers. rIOt remains single-admin: every successful SSO login receives the identical `sub: "admin"` session a password login would.
 - It does not persist any token from the identity provider. Only an audit record (issuer, subject, email, first-login and last-login timestamps) is kept for visibility — nothing in the login path reads it to make an access decision.
 - Signing out of rIOt does not sign you out of the identity provider, and signing out of the identity provider does not sign you out of rIOt — there is no single sign-out.
+
+---
+
+## Security Headers
+
+rIOt sets the same security headers on every response: the dashboard, the API, static files, redirects and errors. They need no configuration.
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | See the table below |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Strict-Transport-Security` | `max-age=31536000`, on HTTPS requests only (see [HSTS](#hsts)) |
+
+### Content Security Policy
+
+| Directive | Allows |
+|---|---|
+| `default-src` | `'self'` |
+| `script-src` | `'self'` only. Inline scripts and `eval` are blocked. |
+| `style-src` | `'self'` and inline styles |
+| `img-src`, `font-src` | `'self'` and `data:` |
+| `connect-src` | `'self'`, plus `ws://` and `wss://` on the host the browser used to reach rIOt (for the live dashboard and terminal WebSockets) |
+| `form-action` | `'self'`. A form on a rIOt page can only submit back to rIOt. |
+| `object-src` | `'none'` |
+| `base-uri` | `'self'` |
+| `frame-ancestors` | `'none'` |
+
+The WebSocket sources come from the request's `Host` header. rIOt includes the host only if it contains nothing but letters, digits, `.`, `-`, `:`, `[` and `]` and is at most 262 bytes. Any other value falls back to `connect-src 'self'`.
+
+**The dashboard cannot be embedded in an iframe.** `frame-ancestors 'none'` and `X-Frame-Options: DENY` make browsers refuse to render it inside another page, such as a panel in another dashboard application. Open rIOt in its own tab or window instead.
+
+If the browser console shows a Content Security Policy "Refused to ..." message on a rIOt page, report it as a bug and include the blocked URL.
+
+### HSTS
+
+`Strict-Transport-Security: max-age=31536000` (one year) tells a browser to use HTTPS for the hostname. rIOt sends it under the same rule that sets the `Secure` flag on the session cookie:
+
+- The connection to rIOt is TLS, or
+- The request comes from a proxy listed in `RIOT_TRUSTED_PROXIES` that sends `X-Forwarded-Proto: https`.
+
+rIOt never sends HSTS on plain HTTP, and ignores `X-Forwarded-Proto` from peers that are not trusted proxies. The header has no `includeSubDomains` or `preload`. There is no setting to turn it off.
+
+Read these consequences before you serve rIOt over HTTPS on a hostname:
+
+- **It applies to every port.** Once a browser has seen the header from `https://riot.example.com:7331`, it uses HTTPS for every port on `riot.example.com`. A plain-HTTP service on the same hostname (on another port) stops loading in that browser for up to a year.
+- **There is no click-through.** While the pin is active, the browser blocks the page on any certificate error (expired, self-signed, wrong name) and removes the "proceed anyway" option. Keep the certificate valid, or use a certificate your browsers trust.
+- **IP-address hosts are exempt.** Browsers ignore HSTS for sites reached by IP address, so `https://192.0.2.10:7331` is not pinned.
+- **Reset it in the browser.** The server cannot withdraw the pin early. Remove the hostname from the browser's HSTS list, or wait for it to expire.
 
 ---
 
@@ -993,10 +1193,6 @@ The agent includes a resilient DNS resolver that caches DNS lookups to disk. If 
 - **Disk persistence** — cache survives agent restarts (stored at `/etc/riot/dns-cache.json` or `%PROGRAMDATA%\riot\dns-cache.json`)
 - **Staleness warnings** — logs warnings when cached entries become stale (24h warning, 72h critical)
 - **IP fallback** — on DNS failure, the agent tries cached IPs with the original hostname in the `Host` header and TLS `ServerName`
-
-### Notification Retry Queue
-
-Failed notification deliveries (ntfy, webhook) are queued to disk and retried automatically. The queue persists across server restarts with a configurable maximum size (default: 100 items).
 
 ### Dead Man's Switch
 
@@ -1030,6 +1226,56 @@ Alert delivery is supported via:
 
 Configure channels in **Settings > Notifications**. Each channel can be tested with a one-click test notification. All delivery attempts are logged in **Settings > Notifications > Delivery Log**.
 
+### Secrets are write-only
+
+The API and the dashboard never return a stored notification secret. Wherever a response would contain one, it contains the fixed placeholder `[rIOt-redacted]` instead. An empty value (`""`) means the secret is not set, so a client can tell "configured" from "empty".
+
+| Channel | Redacted values |
+|---------|-----------------|
+| Email (SMTP) | `password` |
+| ntfy | `token`, `topic` |
+| Telegram | `bot_token` |
+| Discord, Slack | `webhook_url` |
+| Pushover | `api_token`, `user_key` |
+| Gotify | `app_token` |
+| Webhook | `url` and the value of every header (header names stay visible) |
+| Any other type | every config value |
+
+Credentials embedded in any other URL value (for example `https://user:pass@host` in `server_url`) are also redacted, and come back as `https://[rIOt-redacted]@host`.
+
+This applies to the list, create and update responses of `/api/v1/settings/notification-channels`.
+
+**Editing a channel.** The editor shows "Configured (unchanged)" under each stored secret.
+
+- Leave the field alone, or erase what you typed, to keep the stored value.
+- Type a new value to replace it.
+- Click **Clear** (available for the ntfy token and the SMTP password) to remove it. The field shows "Will be cleared on save" with an **Undo** link.
+
+**API clients.** On `PUT /api/v1/settings/notification-channels/:id`, a secret that is omitted or sent as `[rIOt-redacted]` keeps its stored value. A new value replaces it, and `""` clears it. For a webhook, the `headers` object you send is the complete set of headers: send `[rIOt-redacted]` as a header's value to keep that header's stored value. Changing a channel's type keeps no old secrets. The placeholder is never stored: on create, or where nothing is stored to keep, it becomes empty. `PUT` to a channel id that does not exist returns `404`.
+
+Because reads no longer return secrets, you cannot copy a channel to another server by reading it and posting it back. The copy has empty secrets. Enter them again.
+
+**Test notifications** use the stored secret. rIOt also removes secrets from the error text of failed sends, so they do not appear in the test-send response, the delivery log or the server log. Delivery log rows written before this change can still contain a leaked secret until the 90-day retention removes them.
+
+**What this does not protect against.**
+
+- Anyone who can edit channels. An administrator can point a stored channel at a destination they control and trigger a test or an alert, and rIOt sends the stored secret there. For example, they can change the host of a URL that carries embedded credentials. Treat channel-edit access as access to the secrets.
+- Secrets at rest. Secrets are still stored unencrypted in the database, and so appear in database dumps and backups.
+
+The protection is against disclosure through API responses, logs, browser caches and screen shares.
+
+---
+
+## Time Display
+
+The dashboard shows every timestamp in UTC by default, in 24-hour form, with the zone always written out (for example `2026-10-17 14:03:22 UTC`). Relative times such as "5m ago" show the exact time when you hover over them.
+
+To switch to your browser's local time, click the clock in the header. Click it again to switch back. The choice applies to every page, including chart axes and chart tooltips, and applies immediately.
+
+The browser stores the choice in `localStorage` under the key `riot-time-zone`. The value `Local` selects local time. Any other value, or a browser that blocks storage, gives UTC. The setting is per browser and is not synced to the server or to other browsers.
+
+The reboot ETA tooltip and maintenance-window times always show UTC, whatever the clock is set to.
+
 ---
 
 ## API
@@ -1040,7 +1286,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Server health check |
+| `GET` | `/health` | Health check. Returns `200` with `"status":"ok"` when the database is reachable, and `503` with `"status":"degraded"` when it is not. Answers within about 2 seconds even if the database hangs |
+| `GET` | `/readyz` | Readiness check. Returns `200` with `"status":"ready"` only when the database is reachable and schema migrations have completed, otherwise `503` with `"status":"not_ready"`. Never blocked by first-run setup |
 | `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `POST` | `/api/v1/auth/change-password` | Change admin password |
@@ -1056,7 +1303,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/devices/register` | Register a new device |
+| `POST` | `/api/v1/devices/register` | Register a new device, or re-register an existing one. Re-registration requires proof of the device's identity (see [Device Registration and Re-registration](#device-registration-and-re-registration)) |
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
@@ -1083,7 +1330,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/containers/:cid/logs` | Container log history (query: `limit`, `stream`, `since`) |
 | `GET` | `/api/v1/devices/:id/containers/:cname/metrics` | Container metric history (query: `hours`) |
 | `DELETE` | `/api/v1/devices/:id` | Remove a device |
-| `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key |
+| `POST` | `/api/v1/devices/:id/rotate-key` | Rotate device API key. Deletes all of the device's keys and returns one new key (`api_key`) once. This is the recovery step for an agent that lost its key |
 | `POST` | `/api/v1/devices/:id/commands` | Send command to agent. Returns `409` when the target already has a command in flight |
 | `GET` | `/api/v1/devices/:id/commands` | List device command history (query: `limit`, `offset`, `action`, `status`, `active`, `target_key`) |
 | `GET` | `/api/v1/devices/:id/commands/:cmdId` | Fetch one command with its state, step, progress, and per-state timestamps |
@@ -1098,7 +1345,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/update/server` | Server update check |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/alert-rules[/:id]` | Alert rule CRUD |
 | `GET` | `/api/v1/settings/alert-templates` | List alert templates |
-| `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD |
+| `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD. Secrets are write-only (see [Notification Channels](#notification-channels)); `PUT` to an unknown id returns `404` |
 | `POST` | `/api/v1/settings/notification-channels/:id/test` | Test notification channel |
 | `GET` | `/api/v1/settings/notifications/log` | Notification delivery log |
 | `GET` | `/api/v1/settings/registration` | Get registration key setting |
@@ -1258,7 +1505,7 @@ A `result` that repeats the outcome of an already-final command returns `200` wi
 | `type` | When | Notes |
 |---|---|---|
 | `command_update` | Once per accepted command state change | Replaces `command_result`. `data` holds `command_id`, `device_id`, `action`, `target_key`, `target_keys`, `status`, `step`, `progress`, `message`, `failure_step`, `origin`, and `updated_at`. Rejected and coalesced reports produce no message. The silent relabelling of pre-upgrade rows produces none either |
-| `telemetry` | Each accepted live snapshot | The envelope gains `collected_at` (the agent's collection time, never more than 2 minutes ahead of `received_at`) and `received_at` (the server's receive time) |
+| `telemetry` | Each accepted live snapshot | The envelope gains `collected_at` (the agent's collection time, never more than 5 minutes ahead of `received_at`, the same allowance as the ingest clamp) and `received_at` (the server's receive time) |
 | `heartbeat` | Each heartbeat | The envelope gains `received_at` |
 
 The dashboard discards a `telemetry` message whose `collected_at` is at or before the latest one it already applied for that device. It reads a device's last-seen time from `received_at`, never from the browser clock. The server stores every snapshot for history but does not replace a device's current state with an older one.
@@ -1322,6 +1569,8 @@ make coverage
 ```
 
 CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+
+Frontend contributors: the shared UI components, design tokens and the rules that tests enforce (no native `confirm()`, no hex colors in primitives, one formatting module) are described in [web/src/components/ui/README.md](web/src/components/ui/README.md).
 
 ---
 
@@ -1894,7 +2143,7 @@ Example (window mode, one device, agent reports `allow_reboot`):
 [
   {
     "device_id": "3f6c1c2e-0000-0000-0000-000000000000",
-    "hostname": "vermont",
+    "hostname": "nas-01",
     "pending_updates": 4,
     "security_count": 1,
     "reboot_class_count": 1,

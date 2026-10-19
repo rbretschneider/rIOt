@@ -1,0 +1,22 @@
+// All toggleable features with their default state (true = visible).
+export const FEATURES = {
+  security_score: { label: 'Security Score', description: 'Security score gauge on device detail' },
+  docker: { label: 'Docker', description: 'Docker column on fleet dashboard and container sections on device detail' },
+  usb: { label: 'USB Devices', description: 'USB device table on device detail' },
+  hardware: { label: 'Hardware Details', description: 'PCI devices, disk drives, serial ports, GPUs on device detail' },
+  web_servers: { label: 'Web Servers', description: 'Web server section on device detail' },
+  ups: { label: 'UPS', description: 'UPS section on device detail' },
+  security: { label: 'Security Details', description: 'Security details section on device detail (firewall, SELinux, etc.)' },
+  network: { label: 'Network', description: 'Network interfaces section on device detail' },
+  disk: { label: 'Filesystems', description: 'Filesystem / disk usage section on device detail' },
+  services: { label: 'Services & Processes', description: 'Services and top processes sections on device detail' },
+  updates: { label: 'Updates', description: 'Pending updates section on device detail' },
+  logs: { label: 'Device Logs', description: 'Device log viewer on device detail' },
+  cron: { label: 'Cron Jobs', description: 'Cron jobs (user crontabs, system crontabs) on device detail' },
+  systemd_timers: { label: 'Systemd Timers', description: 'Systemd timer units on device detail' },
+  device_terminal: { label: 'Device Terminal', description: 'SSH terminal access to devices from the dashboard' },
+  docker_terminal: { label: 'Docker Terminal', description: 'Shell access to running Docker containers from the dashboard' },
+  tags: { label: 'Device Tags', description: 'Tags column on fleet dashboard and tag management on device detail' },
+} as const
+
+export type FeatureKey = keyof typeof FEATURES

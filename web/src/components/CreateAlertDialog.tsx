@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../api/settings'
 import { api } from '../api/client'
 import type { AlertRule } from '../types/models'
+import { enumLabel } from './ui'
 
 interface CreateAlertDialogProps {
   metric: string
@@ -203,7 +204,7 @@ export default function CreateAlertDialog({ metric, targetName, targetState, inc
                 onChange={e => setRule({ ...rule, severity: e.target.value })}
                 className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
               >
-                {SEVERITIES.map(s => <option key={s} value={s}>{s}</option>)}
+                {SEVERITIES.map(s => <option key={s} value={s}>{enumLabel('severity', s)}</option>)}
               </select>
             </div>
             <div>

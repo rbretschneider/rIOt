@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within, act } from '@testing-library/react'
+import { render, screen, waitFor, within, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ActivityLog from './ActivityLog'
@@ -82,10 +82,10 @@ describe('ActivityLog', () => {
     renderWithProviders()
 
     // Action names appear in both dropdown and table, so use findAllByText
-    const osUpdateElements = await screen.findAllByText('OS Update')
+    const osUpdateElements = await screen.findAllByText('OS update')
     expect(osUpdateElements.length).toBeGreaterThanOrEqual(2) // dropdown + table
     expect(screen.getByText('Updated 12 packages')).toBeInTheDocument()
-    const dockerElements = screen.getAllByText('Docker Restart')
+    const dockerElements = screen.getAllByText('Container restart')
     expect(dockerElements.length).toBeGreaterThanOrEqual(1)
   })
 
@@ -100,11 +100,15 @@ describe('ActivityLog', () => {
     mockGetDeviceCommands.mockResolvedValue(mockCommands)
     renderWithProviders()
 
-    // Legacy rows (success, error, pending) are shown with their canonical labels.
-    const table = within(await screen.findByRole('table'))
-    expect(table.getByText('Succeeded').className).toContain('emerald')
-    expect(table.getByText('Failed').className).toContain('red')
-    expect(table.getByText('Queued').className).toContain('gray')
+    // Legacy rows (success, error, pending) are shown with their canonical
+    // labels and tones; the status filter <option>s share these labels, so
+    // pick the badge by its tone attribute.
+    const badge = (label: string) => screen.getAllByText(label).find(el => el.hasAttribute('data-tone'))!
+    await waitFor(() => expect(badge('Succeeded')).toBeDefined())
+
+    expect(badge('Succeeded')).toHaveAttribute('data-tone', 'success')
+    expect(badge('Failed')).toHaveAttribute('data-tone', 'danger')
+    expect(badge('Queued')).toHaveAttribute('data-tone', 'warn')
   })
 
   it('opens a detail modal on row click', async () => {
@@ -186,7 +190,7 @@ describe('ActivityLog', () => {
     renderWithProviders()
 
     // Click the error row
-    const dockerElements = await screen.findAllByText('Docker Restart')
+    const dockerElements = await screen.findAllByText('Container restart')
     const tableDocker = dockerElements.find(el => el.closest('td'))!
     await userEvent.click(tableDocker.closest('tr')!)
 
@@ -229,8 +233,8 @@ describe('ActivityLog', () => {
     const modal = screen.getByRole('dialog')
     expect(modal).toBeInTheDocument()
 
-    // Click the backdrop (the dialog overlay itself)
-    await userEvent.click(modal)
+    // Click the backdrop (the dim overlay around the dialog panel)
+    await userEvent.click(screen.getByTestId('modal-backdrop'))
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
@@ -374,5 +378,69 @@ describe('[SEC] agent failure text renders as text', () => {
     const modal = screen.getByRole('dialog')
     expect(within(modal).getByText(hostile)).toBeInTheDocument()
     expect(modal.querySelector('img')).toBeNull()
+  })
+})
+
+describe('[UIF AC-109] timestamps carry UTC label', () => {
+  it('renders the table timestamp as YYYY-MM-DD HH:mm:ss UTC under the default preference', async () => {
+    mockGetDeviceCommands.mockResolvedValue([mockCommands[0]])
+    renderWithProviders()
+    const stamp = await screen.findByText('2026-03-19 10:00:00 UTC')
+    expect(stamp.tagName).toBe('TIME')
+    expect(stamp).toHaveAttribute('dateTime', '2026-03-19T10:00:00.000Z')
+  })
+
+  it('renders the modal timestamp with the same UTC label', async () => {
+    mockGetDeviceCommands.mockResolvedValue([mockCommands[0]])
+    mockGetCommandOutput.mockResolvedValue([])
+    renderWithProviders()
+    await userEvent.click((await screen.findByText('Updated 12 packages')).closest('tr')!)
+    const modal = screen.getByRole('dialog')
+    expect(within(modal).getByText('2026-03-19 10:00:00 UTC')).toBeInTheDocument()
+  })
+
+  it('never shows a bare locale string', async () => {
+    mockGetDeviceCommands.mockResolvedValue(mockCommands)
+    renderWithProviders()
+    await screen.findAllByText('OS update')
+    for (const el of Array.from(document.querySelectorAll('time'))) {
+      expect(el.textContent).toMatch(/UTC$/)
+    }
+  })
+})
+
+describe('[UIF AC-017] command actions use the shared label map', () => {
+  it('shows mapped labels in the filter, the table and the modal title and never a raw action token', async () => {
+    mockGetDeviceCommands.mockResolvedValue(mockCommands)
+    mockGetCommandOutput.mockResolvedValue([])
+    renderWithProviders()
+    await screen.findAllByText('OS update')
+    expect(screen.queryByText('os_update')).toBeNull()
+    expect(screen.queryByText('docker_restart')).toBeNull()
+
+    await userEvent.click(screen.getAllByText('OS update').find(el => el.closest('td'))!.closest('tr')!)
+    expect(screen.getByRole('dialog', { name: 'OS update' })).toBeInTheDocument()
+  })
+
+  it('humanizes an action the label map does not know', async () => {
+    mockGetDeviceCommands.mockResolvedValue([{ ...mockCommands[0], action: 'brand_new_action' }])
+    renderWithProviders()
+    expect((await screen.findAllByText('Brand new action')).length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('[UIF AC-030] command detail is a named dialog', () => {
+  it('closes on Escape and restores focus to the opening row', async () => {
+    mockGetDeviceCommands.mockResolvedValue([mockCommands[0]])
+    mockGetCommandOutput.mockResolvedValue([])
+    renderWithProviders()
+    const row = (await screen.findByText('Updated 12 packages')).closest('tr')!
+    row.setAttribute('tabindex', '0')
+    row.focus()
+    await userEvent.click(row)
+    expect(screen.getByRole('dialog')).toHaveAttribute('aria-modal', 'true')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(row).toHaveFocus()
   })
 })

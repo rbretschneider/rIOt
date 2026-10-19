@@ -407,3 +407,35 @@ describe('[AC-010] Table sorting', () => {
     expect(secondRowText).toContain('beta')
   })
 })
+
+describe('[UIF AC-123] hostname not uppercased', () => {
+  it('renders the per-device hostname link with its reported case and no uppercase class', async () => {
+    mockGetSecurityDevices.mockResolvedValue([{ ...device1, hostname: 'Web-01.lan' }])
+    renderWithProviders()
+    const link = await screen.findByRole('link', { name: 'Web-01.lan' })
+    expect(link.textContent).toBe('Web-01.lan')
+    expect(link.className).not.toContain('uppercase')
+  })
+})
+
+describe('[UIF AC-125] Per-Device Security header keeps uppercase', () => {
+  it('leaves the section header styling untouched', async () => {
+    renderWithProviders()
+    const header = await screen.findByRole('heading', { name: 'Per-Device Security' })
+    expect(header.className).toContain('uppercase')
+  })
+})
+
+describe('[UIF AC-135] stat cards sit on one row at desktop width', () => {
+  it('uses a flow-column grid from xl and wraps at smaller widths', async () => {
+    mockGetSecurityOverview.mockResolvedValue({ ...baseOverview, total_certs: 3, certs_expiring_soon: 1 })
+    renderWithProviders()
+    const firstCard = await screen.findByText('Failed Logins (24h)')
+    const grid = firstCard.closest('div.grid') as HTMLElement
+    expect(grid).not.toBeNull()
+    for (const cls of ['xl:grid-flow-col', 'xl:auto-cols-fr', 'xl:grid-cols-none', 'sm:grid-cols-3', 'grid-cols-2']) {
+      expect(grid.className, `grid is missing ${cls}`).toContain(cls)
+    }
+    expect(grid.className).not.toContain('sm:grid-cols-4')
+  })
+})

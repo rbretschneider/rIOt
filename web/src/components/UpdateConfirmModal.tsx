@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import type { ContainerInfo } from '../types/models'
 import { displayName } from '../utils/docker'
+import { Button, Modal } from './ui'
 
 interface Props {
   title: string
@@ -10,50 +12,52 @@ interface Props {
 }
 
 export default function UpdateConfirmModal({ title, containers, networkOrder, onConfirm, onCancel }: Props) {
+  const cancelRef = useRef<HTMLButtonElement>(null)
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" onClick={onCancel}>
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-md mx-4 p-6" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-semibold text-white mb-3">{title}</h3>
-
-        <div className="mb-4 space-y-1.5 max-h-60 overflow-y-auto">
-          {containers.map(c => (
-            <div key={c.id} className="flex items-center gap-2 text-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-              <span className="text-white">{displayName(c.riot, c.name)}</span>
-              <span className="text-gray-500 text-xs font-mono truncate">{c.image}</span>
-            </div>
-          ))}
-        </div>
-
-        {networkOrder && (
-          <div className="mb-4 px-3 py-2 bg-blue-900/20 border border-blue-800/30 rounded text-xs text-blue-300 space-y-1">
-            <p className="font-medium">Execution order:</p>
-            <ol className="list-decimal list-inside space-y-0.5 text-blue-400/80">
-              {networkOrder.dependents.length > 0 && (
-                <li>Stop dependents: {networkOrder.dependents.join(', ')}</li>
-              )}
-              <li>Update parent: {networkOrder.parent}</li>
-              {networkOrder.dependents.length > 0 && (
-                <li>Update &amp; restart dependents: {networkOrder.dependents.join(', ')}</li>
-              )}
-            </ol>
-          </div>
-        )}
-
-        <p className="text-xs text-amber-400/70 mb-4">Running services will be briefly interrupted.</p>
-
-        <div className="flex justify-end gap-3">
-          <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-400 hover:text-white">
+    <Modal
+      open
+      size="md"
+      title={title}
+      showCloseButton={false}
+      initialFocusRef={cancelRef}
+      onClose={onCancel}
+      footer={
+        <>
+          <Button ref={cancelRef} variant="secondary" onClick={onCancel}>
             Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="px-4 py-2 text-sm text-white rounded-md bg-amber-600 hover:bg-amber-500 transition-colors"
-          >
+          </Button>
+          <Button variant="primary" onClick={onConfirm}>
             Confirm Update
-          </button>
-        </div>
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-4 max-h-60 space-y-1.5 overflow-y-auto">
+        {containers.map(c => (
+          <div key={c.id} className="flex items-center gap-2 text-sm">
+            <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-warn-fg" />
+            <span className="text-text">{displayName(c.riot, c.name)}</span>
+            <span className="truncate font-mono text-xs text-text-muted">{c.image}</span>
+          </div>
+        ))}
       </div>
-    </div>
+
+      {networkOrder && (
+        <div className="mb-4 space-y-1 rounded border border-info/30 bg-info/10 px-3 py-2 text-xs text-info-fg">
+          <p className="font-medium">Execution order:</p>
+          <ol className="list-inside list-decimal space-y-0.5">
+            {networkOrder.dependents.length > 0 && (
+              <li>Stop dependents: {networkOrder.dependents.join(', ')}</li>
+            )}
+            <li>Update parent: {networkOrder.parent}</li>
+            {networkOrder.dependents.length > 0 && (
+              <li>Update &amp; restart dependents: {networkOrder.dependents.join(', ')}</li>
+            )}
+          </ol>
+        </div>
+      )}
+
+      <p className="text-xs text-warn-fg">Running services will be briefly interrupted.</p>
+    </Modal>
   )
 }

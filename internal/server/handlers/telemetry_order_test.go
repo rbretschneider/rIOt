@@ -49,12 +49,12 @@ func (r *recordingHub) BroadcastHeartbeat(_ string, _ *models.HeartbeatData, rec
 	r.heartbeats = append(r.heartbeats, receivedAt)
 }
 
-func (r *recordingHub) BroadcastDeviceUpdate(*models.Device)         {}
-func (r *recordingHub) BroadcastEvent(*models.Event)                 {}
-func (r *recordingHub) BroadcastDeviceRemoved(string)                {}
-func (r *recordingHub) BroadcastDockerUpdate(string, interface{})    {}
-func (r *recordingHub) BroadcastCommandUpdate(models.CommandUpdate)  {}
-func (r *recordingHub) HandleWS(http.ResponseWriter, *http.Request)  {}
+func (r *recordingHub) BroadcastDeviceUpdate(*models.Device)        {}
+func (r *recordingHub) BroadcastEvent(*models.Event)                {}
+func (r *recordingHub) BroadcastDeviceRemoved(string)               {}
+func (r *recordingHub) BroadcastDockerUpdate(string, interface{})   {}
+func (r *recordingHub) BroadcastCommandUpdate(models.CommandUpdate) {}
+func (r *recordingHub) HandleWS(http.ResponseWriter, *http.Request) {}
 
 func (r *recordingHub) broadcasts() []telemetryBroadcast {
 	r.mu.Lock()
@@ -82,7 +82,7 @@ func newTelEnv(t *testing.T) *telEnv {
 	gen := events.NewGenerator(testutil.NewMockEventRepo(), realHub, testutil.NewMockAlertRuleRepo(), testutil.NewMockDispatcher(), testutil.NewMockCommandRepo())
 	e.h = &Handlers{
 		telemetry: e.tel, devices: devs, hub: e.hub, eventGen: gen, now: e.clock.Now,
-		async: func(fn func()) { fn() },
+		async: func(fn func()) { fn() }, clampLog: newClampLogLimiter(),
 	}
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -166,15 +166,15 @@ func TestCL_SEC003_FutureTimestampClampedToReceivedAt(t *testing.T) {
 
 	require.Len(t, e.tel.Snapshots["dev-1"], 1)
 	assert.True(t, e.tel.Snapshots["dev-1"][0].Timestamp.Equal(e.clock.Now()), "[SEC-003] the stored timestamp is received_at")
-	assert.Contains(t, e.logs.String(), "telemetry timestamp clamped")
+	assert.Contains(t, e.logs.String(), "future-dated timestamp clamped")
 	assert.Contains(t, e.logs.String(), "device_id=dev-1")
 }
 
 func TestCL_SEC003_ClampToleranceBoundary(t *testing.T) {
 	e := newTelEnv(t)
-	e.post(rfc(e.clock.Now().Add(models.TelemetryFutureTolerance))) // exactly +2m is kept
+	e.post(rfc(e.clock.Now().Add(models.TelemetryFutureTolerance))) // exactly at the tolerance is kept
 	assert.True(t, e.tel.Snapshots["dev-1"][0].Timestamp.Equal(e.clock.Now().Add(models.TelemetryFutureTolerance)))
-	assert.NotContains(t, e.logs.String(), "telemetry timestamp clamped")
+	assert.NotContains(t, e.logs.String(), "future-dated timestamp clamped")
 
 	e.clock.Advance(time.Hour)
 	e.post(rfc(e.clock.Now().Add(models.TelemetryFutureTolerance + time.Second)))
@@ -202,20 +202,21 @@ func TestCL_SEC003_BroadcastCollectedAtIsClampedValue(t *testing.T) {
 	require.Len(t, b, 1)
 	assert.True(t, b[0].CollectedAt.Equal(b[0].ReceivedAt), "[SEC-003] the broadcast collected_at must be the clamped value")
 	assert.False(t, b[0].CollectedAt.After(b[0].ReceivedAt.Add(models.TelemetryFutureTolerance)),
-		"collected_at is never more than 2m ahead of received_at")
+		"collected_at is never more than the tolerance ahead of received_at")
 }
 
+// After merging REG-HARDEN-001 the clamp Warn is its debounced noteClamp (one
+// entry per device and kind per clampLogWindow), which is stricter than the
+// story's original 10-per-minute throttle and still satisfies SEC-001.
 func TestTelemetry_ClampLogIsThrottledPerDevice(t *testing.T) {
 	e := newTelEnv(t)
 	for i := 0; i < 30; i++ {
 		e.clock.Advance(time.Second)
 		e.post(rfc(e.clock.Now().Add(time.Hour)))
 	}
-	assert.Equal(t, commandsRejectionLogsPerMinute, strings.Count(e.logs.String(), "telemetry timestamp clamped"),
-		"[SEC-001/003] the clamp Warn is throttled to 10 per device per minute")
+	assert.Equal(t, 1, strings.Count(e.logs.String(), "future-dated timestamp clamped"),
+		"[SEC-001/003] 30 clamps from one device within the window produce one Warn")
 }
-
-const commandsRejectionLogsPerMinute = 10
 
 func TestTelemetry_StaleSkipsCurrentStateWork(t *testing.T) {
 	e := newTelEnv(t)

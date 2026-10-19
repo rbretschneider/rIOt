@@ -1,5 +1,56 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens (UI-FOUNDATION-001). Every color token aliases an existing
+ * Tailwind palette variable, so applying a token never shifts a hue. The
+ * theme/tokens.ts mirror is checked against this block by theme/tokens.test.ts.
+ */
+@theme inline {
+  --color-surface: var(--color-gray-950);
+  --color-raised: var(--color-gray-900);
+  --color-raised-2: var(--color-gray-800);
+  --color-border: var(--color-gray-800);
+  --color-border-strong: var(--color-gray-700);
+  --color-text: var(--color-gray-100);
+  --color-text-muted: var(--color-gray-400);
+  --color-accent: var(--color-blue-600);
+  --color-accent-hover: var(--color-blue-500);
+  --color-link: var(--color-blue-400);
+  --color-success: var(--color-emerald-500);
+  --color-success-fg: var(--color-emerald-400);
+  --color-warn: var(--color-amber-500);
+  --color-warn-fg: var(--color-amber-400);
+  --color-danger: var(--color-red-600);
+  --color-danger-hover: var(--color-red-500);
+  --color-danger-fg: var(--color-red-400);
+  --color-info: var(--color-blue-500);
+  --color-info-fg: var(--color-blue-400);
+}
+
+@theme {
+  --animate-toast-in: toast-in 150ms ease-out;
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Single z-index scale. Primitives consume it as z-(--z-modal) and so on. */
+:root {
+  --z-base: 0;
+  --z-dropdown: 40;
+  --z-modal: 50;
+  --z-tooltip: 70;
+  --z-toast: 80;
+}
+
 /* Ensure all interactive elements show pointer cursor */
 button:not(:disabled),
 a,

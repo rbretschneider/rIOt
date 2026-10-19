@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -34,28 +35,28 @@ import (
 
 // HandlerDeps bundles all dependencies for the Handlers constructor.
 type HandlerDeps struct {
-	Devices           db.DeviceRepository
-	Telemetry         db.TelemetryRepository
-	Events            db.EventRepository
-	Hub               *websocket.Hub
-	EventGen          *events.Generator
-	UpdateChecker     *updates.Checker
-	AdminRepo         db.AdminRepository
-	TerminalRepo      db.TerminalRepository
-	AlertRuleRepo     db.AlertRuleRepository
-	NotifyRepo        db.NotifyRepository
-	Dispatcher        *notify.Dispatcher
-	CommandRepo       db.CommandRepository
-	ProbeRepo         db.ProbeRepository
-	ProbeRunner       *probes.Runner
-	LogRepo           db.LogRepository
-	DeviceLogRepo     db.DeviceLogRepository
-	AutoUpdateRepo       db.AutoUpdateRepository
-	ContainerLogRepo     db.ContainerLogRepository
-	ContainerMetricRepo  db.ContainerMetricRepository
-	DeviceProbeRepo      db.DeviceProbeRepository
-	JWTSecret            []byte
-	AdminPasswordHash string
+	Devices             db.DeviceRepository
+	Telemetry           db.TelemetryRepository
+	Events              db.EventRepository
+	Hub                 *websocket.Hub
+	EventGen            *events.Generator
+	UpdateChecker       *updates.Checker
+	AdminRepo           db.AdminRepository
+	TerminalRepo        db.TerminalRepository
+	AlertRuleRepo       db.AlertRuleRepository
+	NotifyRepo          db.NotifyRepository
+	Dispatcher          *notify.Dispatcher
+	CommandRepo         db.CommandRepository
+	ProbeRepo           db.ProbeRepository
+	ProbeRunner         *probes.Runner
+	LogRepo             db.LogRepository
+	DeviceLogRepo       db.DeviceLogRepository
+	AutoUpdateRepo      db.AutoUpdateRepository
+	ContainerLogRepo    db.ContainerLogRepository
+	ContainerMetricRepo db.ContainerMetricRepository
+	DeviceProbeRepo     db.DeviceProbeRepository
+	JWTSecret           []byte
+	AdminPasswordHash   string
 
 	// OIDC-001
 	OIDC                 *oidc.Service
@@ -67,31 +68,34 @@ type HandlerDeps struct {
 	// CommandRepo. Clock is the time source (nil means time.Now).
 	Commands *commands.Service
 	Clock    func() time.Time
+	// REG-HARDEN-001: nil unless mTLS is active; nil => certificate proof
+	// unavailable for device re-registration.
+	CARepo db.CARepository
 }
 
 type Handlers struct {
-	devices            db.DeviceRepository
-	telemetry          db.TelemetryRepository
-	events             db.EventRepository
-	hub                dashboardHub
-	eventGen           *events.Generator
-	updateChecker      *updates.Checker
-	adminRepo          db.AdminRepository
-	terminalRepo       db.TerminalRepository
-	alertRuleRepo      db.AlertRuleRepository
-	notifyRepo         db.NotifyRepository
-	dispatcher         *notify.Dispatcher
-	commandRepo        db.CommandRepository
-	probeRepo          db.ProbeRepository
-	probeRunner        *probes.Runner
-	logRepo            db.LogRepository
-	deviceLogRepo      db.DeviceLogRepository
+	devices             db.DeviceRepository
+	telemetry           db.TelemetryRepository
+	events              db.EventRepository
+	hub                 dashboardHub
+	eventGen            *events.Generator
+	updateChecker       *updates.Checker
+	adminRepo           db.AdminRepository
+	terminalRepo        db.TerminalRepository
+	alertRuleRepo       db.AlertRuleRepository
+	notifyRepo          db.NotifyRepository
+	dispatcher          *notify.Dispatcher
+	commandRepo         db.CommandRepository
+	probeRepo           db.ProbeRepository
+	probeRunner         *probes.Runner
+	logRepo             db.LogRepository
+	deviceLogRepo       db.DeviceLogRepository
 	autoUpdateRepo      db.AutoUpdateRepository
-	containerLogRepo     db.ContainerLogRepository
-	containerMetricRepo  db.ContainerMetricRepository
-	deviceProbeRepo      db.DeviceProbeRepository
-	jwtSecret            []byte
-	adminPasswordHash  string
+	containerLogRepo    db.ContainerLogRepository
+	containerMetricRepo db.ContainerMetricRepository
+	deviceProbeRepo     db.DeviceProbeRepository
+	jwtSecret           []byte
+	adminPasswordHash   string
 
 	// OIDC-001
 	oidc                 *oidc.Service
@@ -102,6 +106,20 @@ type Handlers struct {
 	// stepped clock so AC-010/AC-011 can assert exact first/last-login
 	// timestamps deterministically rather than relying on real-clock timing.
 	oidcClock func() time.Time
+
+	// REG-HARDEN-001: CA repository used to check certificate revocation when
+	// a client certificate is offered as proof of device identity at
+	// re-registration. nil unless mTLS is active (see HandlerDeps.CARepo).
+	caRepo db.CARepository
+
+	// ingestClock is the server receive-time source for telemetry and heartbeat
+	// timestamp clamping (REG-HARDEN-001). nil (the production default) means
+	// time.Now; tests inject a fixed clock so clamp boundaries are
+	// deterministic. Never set outside tests.
+	ingestClock func() time.Time
+	// clampLog debounces the clamp log entries. nil is allowed (every clamp
+	// logs), so struct-literal Handlers in tests need not set it.
+	clampLog *clampLogLimiter
 
 	// serverHostID tracks which device is hosting the rIOt server.
 	// Detected via Docker container image or loopback connection.
@@ -115,11 +133,8 @@ type Handlers struct {
 	now      func() time.Time
 	agents   *agentRegistry
 
-	// tlog throttles the telemetry-clamp Warn per device; async runs the
-	// detached telemetry post-work (nil means a goroutine).
-	tlogOnce sync.Once
-	tlog     *commands.LogThrottle
-	async    func(func())
+	// async runs the detached telemetry post-work (nil means a goroutine).
+	async func(func())
 }
 
 // dashboardHub is the part of websocket.Hub the handlers use. An interface so
@@ -136,15 +151,6 @@ type dashboardHub interface {
 }
 
 var _ dashboardHub = (*websocket.Hub)(nil)
-
-// telemetryLogs returns the per-device throttle for the telemetry clamp Warn
-// (SEC C-3), created on first use.
-func (h *Handlers) telemetryLogs() *commands.LogThrottle {
-	h.tlogOnce.Do(func() {
-		h.tlog = commands.NewLogThrottle(h.clock, slog.Default())
-	})
-	return h.tlog
-}
 
 // runAsync runs the detached telemetry post-work; tests substitute a
 // synchronous runner.
@@ -221,32 +227,34 @@ func NewCompletionEvents(gen *events.Generator, devices db.DeviceRepository) com
 
 func New(deps HandlerDeps) *Handlers {
 	h := &Handlers{
-		commands:          deps.Commands,
-		now:               deps.Clock,
-		devices:           deps.Devices,
-		telemetry:         deps.Telemetry,
-		events:            deps.Events,
-		eventGen:          deps.EventGen,
-		updateChecker:     deps.UpdateChecker,
-		adminRepo:         deps.AdminRepo,
-		terminalRepo:      deps.TerminalRepo,
-		alertRuleRepo:     deps.AlertRuleRepo,
-		notifyRepo:        deps.NotifyRepo,
-		dispatcher:        deps.Dispatcher,
-		commandRepo:       deps.CommandRepo,
-		probeRepo:         deps.ProbeRepo,
-		probeRunner:       deps.ProbeRunner,
-		logRepo:           deps.LogRepo,
-		deviceLogRepo:     deps.DeviceLogRepo,
-		autoUpdateRepo:      deps.AutoUpdateRepo,
+		commands:             deps.Commands,
+		now:                  deps.Clock,
+		devices:              deps.Devices,
+		telemetry:            deps.Telemetry,
+		events:               deps.Events,
+		eventGen:             deps.EventGen,
+		updateChecker:        deps.UpdateChecker,
+		adminRepo:            deps.AdminRepo,
+		terminalRepo:         deps.TerminalRepo,
+		alertRuleRepo:        deps.AlertRuleRepo,
+		notifyRepo:           deps.NotifyRepo,
+		dispatcher:           deps.Dispatcher,
+		commandRepo:          deps.CommandRepo,
+		probeRepo:            deps.ProbeRepo,
+		probeRunner:          deps.ProbeRunner,
+		logRepo:              deps.LogRepo,
+		deviceLogRepo:        deps.DeviceLogRepo,
+		autoUpdateRepo:       deps.AutoUpdateRepo,
 		containerLogRepo:     deps.ContainerLogRepo,
 		containerMetricRepo:  deps.ContainerMetricRepo,
 		deviceProbeRepo:      deps.DeviceProbeRepo,
 		jwtSecret:            deps.JWTSecret,
-		adminPasswordHash: deps.AdminPasswordHash,
+		adminPasswordHash:    deps.AdminPasswordHash,
 		oidc:                 deps.OIDC,
 		externalIdentityRepo: deps.ExternalIdentityRepo,
 		setupComplete:        deps.SetupComplete,
+		caRepo:               deps.CARepo,
+		clampLog:             newClampLogLimiter(),
 	}
 	// A nil *websocket.Hub must stay a nil interface (typed-nil trap).
 	if deps.Hub != nil {
@@ -262,37 +270,33 @@ func (h *Handlers) isSetupComplete() bool {
 	return h.setupComplete != nil && h.setupComplete.Load()
 }
 
-func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		dbOK := database.Healthy(r.Context())
-		if !dbOK {
-			status = "degraded"
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":   status,
-			"database": dbOK,
-			"time":     time.Now().UTC(),
-		})
-	}
+// registrationKeyMatches compares the presented registration key with the
+// configured one without leaking content or length through timing. Both values
+// are hashed to fixed-length digests first, so ConstantTimeCompare never sees
+// a length mismatch (HARDEN-002 AD-010).
+func registrationKeyMatches(provided, configured string) bool {
+	a, b := sha256.Sum256([]byte(provided)), sha256.Sum256([]byte(configured))
+	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }
 
 func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
-	// Check registration key: if server has one configured, require it
+	// REG-HARDEN-001: the registration key is read once. It is no longer a
+	// blanket gate at the top of the handler: it applies to new-device
+	// registration (below) and, for an existing device, only as path (c) of the
+	// proof decision. A device presenting its own key must re-register whether
+	// or not a registration key is configured.
 	regKey, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")
-	if regKey != "" {
-		apiKey := r.Header.Get("X-rIOt-Key")
-		if apiKey != regKey {
-			http.Error(w, `{"error":"invalid registration key"}`, http.StatusUnauthorized)
-			return
-		}
-	}
 
+	// The body is parsed before any credential is evaluated (the device_id picks
+	// the path), so cap it: an unauthenticated caller must not be able to make
+	// the server decode an unbounded payload.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRegistrationBodyBytes)
 	var reg models.DeviceRegistration
 	if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	presentedKey := r.Header.Get("X-rIOt-Key")
 
 	now := time.Now().UTC()
 	var device *models.Device
@@ -301,6 +305,21 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	if reg.DeviceID != "" {
 		existing, err := h.devices.FindByDeviceUUID(r.Context(), reg.DeviceID)
 		if err == nil && existing != nil {
+			// Prove the caller is this device BEFORE touching anything. Nothing
+			// below this decision (record update, key issue, WebSocket
+			// broadcast, DeviceOnline event) may run for a rejected request.
+			creds := h.collectRegCredentials(r.Context(), r, existing.ID, presentedKey, regKey)
+			dec := decideReRegistration(existing.ID, creds)
+			if dec.Path == regReject401 || dec.Path == regReject403 {
+				status := http.StatusUnauthorized
+				if dec.Path == regReject403 {
+					status = http.StatusForbidden
+				}
+				logRegReject(r, reg.DeviceID, dec.RejectClass, status)
+				writeRegReject(w, status)
+				return
+			}
+
 			wasOnline := existing.Status == models.DeviceStatusOnline
 			// Update existing device
 			existing.Hostname = reg.Hostname
@@ -318,18 +337,18 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			}
 			device = existing
 
-			// If the agent doesn't have an API key (e.g. device was created by
-			// mTLS enrollment which doesn't generate one), issue a new key now.
+			// Issue a new key only when the proof was a certificate or the
+			// registration key (device created by mTLS enrollment has no key).
+			// An agent proving itself with its own key gets none.
 			apiKey := ""
-			agentKey := r.Header.Get("X-rIOt-Key")
-			if agentKey == "" {
+			if dec.MintKey {
 				apiKey = generateAPIKey()
 				if err := h.devices.StoreAPIKey(r.Context(), apiKey, device.ID); err != nil {
 					slog.Error("store API key for enrolled device", "error", err.Error())
 					http.Error(w, `{"error":"failed to store API key"}`, http.StatusInternalServerError)
 					return
 				}
-				slog.Info("generated API key for enrolled device", "device_id", device.ID)
+				slog.Info("generated API key for enrolled device", "device_id", device.ID, "path", regPathName(dec.Path))
 			}
 
 			writeJSON(w, http.StatusOK, models.DeviceRegistrationResponse{
@@ -345,7 +364,15 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// New registration
+	// New registration. When a registration key is configured it is required
+	// (constant-time comparison). A device API key is not a registration key, so
+	// it is never looked up on this path.
+	if regKey != "" && !registrationKeyMatches(presentedKey, regKey) {
+		logRegReject(r, reg.DeviceID, rejectNewDeviceRegKeyMismatch, http.StatusUnauthorized)
+		writeRegReject(w, http.StatusUnauthorized)
+		return
+	}
+
 	deviceID := uuid.New().String()
 	shortID := deviceID[:8]
 	deviceKey := generateAPIKey()
@@ -397,9 +424,14 @@ func (h *Handlers) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hb.DeviceID = deviceID
-	receivedAt := h.clock()
-	if hb.Timestamp.IsZero() {
-		hb.Timestamp = receivedAt
+	// Clamp, never reject: a timestamp beyond the skew allowance is stored as
+	// the receive time; a zero timestamp defaults to it (REG-HARDEN-001).
+	receivedAt := h.ingestNow()
+	sentAt := hb.Timestamp
+	var clamped bool
+	hb.Timestamp, clamped = clampFutureTimestamp(sentAt, receivedAt)
+	if clamped {
+		h.noteClamp(deviceID, clampKindHeartbeat, sentAt, receivedAt)
 	}
 
 	if err := h.telemetry.StoreHeartbeat(r.Context(), &hb); err != nil {
@@ -459,16 +491,19 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snap.DeviceID = deviceID
-	// The timestamp used for ordering, storage and the dashboard broadcast is
-	// bounded by server time (SEC C-3): a missing one is the receive time, and one
-	// more than TelemetryFutureTolerance ahead is replaced by it, so a skewed or
-	// hostile agent clock cannot make every later snapshot look stale.
-	receivedAt := h.clock()
-	boundedAt, clamped := models.BoundTelemetryTimestamp(snap.Timestamp, receivedAt)
-	if clamped && h.telemetryLogs().Allow(deviceID) {
-		slog.Warn("telemetry timestamp clamped", "device_id", deviceID, "skew", snap.Timestamp.Sub(receivedAt).String())
+	// Clamp, never reject (REG-HARDEN-001). This runs before the size check,
+	// StoreSnapshot and the detached post-work goroutine, so container metrics
+	// derived from the snapshot carry the same clamped timestamp. The clamped
+	// value is also what orders snapshots and is broadcast as collected_at
+	// (CMD-LIFECYCLE-001 SEC C-3), so a skewed agent clock cannot make every
+	// later snapshot look stale.
+	receivedAt := h.ingestNow()
+	sentAt := snap.Timestamp
+	var clamped bool
+	snap.Timestamp, clamped = clampFutureTimestamp(sentAt, receivedAt)
+	if clamped {
+		h.noteClamp(deviceID, clampKindSnapshot, sentAt, receivedAt)
 	}
-	snap.Timestamp = boundedAt
 
 	// Extract logs BEFORE storing the snapshot so they don't bloat the JSONB blob.
 	// Logs are stored in their own tables, not in the telemetry snapshot.
@@ -1275,25 +1310,25 @@ func stripHeavyTelemetry(data *models.FullTelemetryData) *models.FullTelemetryDa
 		slimContainers := make([]models.ContainerInfo, len(dockerCopy.Containers))
 		for i, c := range dockerCopy.Containers {
 			slimContainers[i] = models.ContainerInfo{
-				ID:            c.ID,
-				ShortID:       c.ShortID,
-				Name:          c.Name,
-				Image:         c.Image,
-				State:         c.State,
-				Status:        c.Status,
-				Created:       c.Created,
-				CPUPercent:    c.CPUPercent,
-				MemUsage:      c.MemUsage,
-				MemLimit:      c.MemLimit,
-				CPULimit:      c.CPULimit,
-				HealthStatus:  c.HealthStatus,
-				RestartCount:  c.RestartCount,
-				RestartPolicy: c.RestartPolicy,
-				Ports:         c.Ports,
-				NetworkMode:   c.NetworkMode,
-				Labels:        c.Labels,
+				ID:              c.ID,
+				ShortID:         c.ShortID,
+				Name:            c.Name,
+				Image:           c.Image,
+				State:           c.State,
+				Status:          c.Status,
+				Created:         c.Created,
+				CPUPercent:      c.CPUPercent,
+				MemUsage:        c.MemUsage,
+				MemLimit:        c.MemLimit,
+				CPULimit:        c.CPULimit,
+				HealthStatus:    c.HealthStatus,
+				RestartCount:    c.RestartCount,
+				RestartPolicy:   c.RestartPolicy,
+				Ports:           c.Ports,
+				NetworkMode:     c.NetworkMode,
+				Labels:          c.Labels,
 				UpdateAvailable: c.UpdateAvailable,
-				Riot:          c.Riot,
+				Riot:            c.Riot,
 			}
 		}
 		dockerCopy.Containers = slimContainers

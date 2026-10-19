@@ -1,51 +1,16 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { useWebSocket } from '../hooks/useWebSocket'
-import type { Command, CommandOutput, WSMessage } from '../types/models'
-import { isAllowedStatusFilter, normalizeStatus, STATUS_FILTER_OPTIONS, statusChipLabel } from '../utils/commandLifecycle'
+import type { Command, WSMessage } from '../types/models'
+import { formatDuration } from '../utils/format'
+import { isAllowedStatusFilter, normalizeStatus, STATUS_FILTER_OPTIONS } from '../utils/commandLifecycle'
+import { Badge, Modal, Timestamp, enumLabel } from './ui'
 
 const PAGE_SIZE = 20
 
 interface Props {
   deviceId: string
-}
-
-const UPPERCASE_WORDS = new Set(['os', 'io', 'ip', 'id', 'ssh', 'tls', 'dns', 'usb', 'ups', 'cpu', 'ram', 'gpu'])
-
-function formatAction(action: string): string {
-  return action
-    .split('_')
-    .map(w => UPPERCASE_WORDS.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
-
-function formatDuration(ms: number | null): string {
-  if (ms == null) return '-'
-  if (ms < 1000) return `${ms}ms`
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  const rem = s % 60
-  return rem > 0 ? `${m}m ${rem}s` : `${m}m`
-}
-
-// Colour follows the canonical state, so legacy rows (pending, sent, success,
-// error) from before the lifecycle migration look the same as new ones.
-function statusColor(status: string): string {
-  switch (normalizeStatus(status)) {
-    case 'succeeded': return 'bg-emerald-500/20 text-emerald-400'
-    case 'failed': return 'bg-red-500/20 text-red-400'
-    case 'timed_out': return 'bg-orange-500/20 text-orange-400'
-    case 'dispatched':
-    case 'acknowledged': return 'bg-amber-500/20 text-amber-400'
-    case 'running':
-    case 'verifying': return 'bg-blue-500/20 text-blue-400'
-    case 'queued':
-    case 'cancelled':
-    case 'expired':
-    default: return 'bg-gray-500/20 text-gray-400'
-  }
 }
 
 export default function ActivityLog({ deviceId }: Props) {
@@ -105,7 +70,7 @@ export default function ActivityLog({ deviceId }: Props) {
         >
           <option value="">All actions</option>
           {actionOptions.map(a => (
-            <option key={a} value={a}>{formatAction(a)}</option>
+            <option key={a} value={a}>{enumLabel('commandAction', a)}</option>
           ))}
         </select>
       </div>
@@ -134,13 +99,11 @@ export default function ActivityLog({ deviceId }: Props) {
                     className="cursor-pointer hover:bg-gray-800/50 transition-colors"
                   >
                     <td className="py-1.5 pr-3 font-mono text-xs text-gray-400 whitespace-nowrap">
-                      {new Date(cmd.created_at).toLocaleString()}
+                      <Timestamp value={cmd.created_at} />
                     </td>
-                    <td className="py-1.5 pr-3 text-gray-200">{formatAction(cmd.action)}</td>
+                    <td className="py-1.5 pr-3 text-gray-200">{enumLabel('commandAction', cmd.action)}</td>
                     <td className="py-1.5 pr-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColor(cmd.status)}`}>
-                        {statusChipLabel(cmd.status)}
-                      </span>
+                      <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
                     </td>
                     <td className="py-1.5 pr-3 text-gray-400 max-w-xs truncate hidden sm:table-cell">
                       {cmd.result_msg || '-'}
@@ -184,52 +147,21 @@ function CommandDetailModal({ cmd, deviceId, onClose }: {
     queryFn: () => api.getCommandOutput(deviceId, cmd.id),
   })
 
-  // Close on Escape key
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Command details"
-    >
-      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg max-h-[85vh] flex flex-col shadow-xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium text-gray-100">{formatAction(cmd.action)}</h3>
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColor(cmd.status)}`}>
-              {statusChipLabel(cmd.status)}
-            </span>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none px-1"
-            aria-label="Close"
-          >
-            &times;
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="overflow-y-auto scrollbar-thin p-4 space-y-4">
+    <Modal open size="lg" title={enumLabel('commandAction', cmd.action)} onClose={onClose} bodyClassName="space-y-4 py-4">
           {/* Metadata grid */}
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
+              <p className="text-gray-500 mb-0.5">Status</p>
+              <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
+            </div>
+            <div>
               <p className="text-gray-500 mb-0.5">Timestamp</p>
-              <p className="text-gray-300 font-mono">{new Date(cmd.created_at).toLocaleString()}</p>
+              <p className="text-gray-300 font-mono"><Timestamp value={cmd.created_at} /></p>
             </div>
             <div>
               <p className="text-gray-500 mb-0.5">Duration</p>
-              <p className="text-gray-300 font-mono">{formatDuration(cmd.duration_ms)}</p>
+              <p className="text-gray-300 font-mono">{cmd.duration_ms == null ? '-' : formatDuration(cmd.duration_ms / 1000)}</p>
             </div>
             <div>
               <p className="text-gray-500 mb-0.5">Exit Code</p>
@@ -276,8 +208,6 @@ function CommandDetailModal({ cmd, deviceId, onClose }: {
               </pre>
             )}
           </div>
-        </div>
-      </div>
-    </div>
+    </Modal>
   )
 }

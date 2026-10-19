@@ -226,6 +226,19 @@ func (r *DeviceRepo) DeleteAPIKeysByDevice(ctx context.Context, deviceID string)
 	return err
 }
 
+// HasAPIKey reports whether the device has at least one API key. It backs the
+// "keyless device" gate on registration-key re-registration (REG-HARDEN-001).
+func (r *DeviceRepo) HasAPIKey(ctx context.Context, deviceID string) (bool, error) {
+	var exists bool
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM api_keys WHERE device_id=$1)`, deviceID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("has api key: %w", err)
+	}
+	return exists, nil
+}
+
 // FindByDeviceUUID finds a device by its existing UUID (for re-registration).
 func (r *DeviceRepo) FindByDeviceUUID(ctx context.Context, id string) (*models.Device, error) {
 	return r.GetByID(ctx, id)

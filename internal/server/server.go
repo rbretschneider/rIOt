@@ -64,7 +64,11 @@ type Server struct {
 	UpdateChecker  *updates.Checker
 	JWTSecret      []byte
 	SetupComplete  atomic.Bool
+	// MigrationsComplete is set once schema migrations have finished in this
+	// process (or there are none to run). /readyz reports it (HARDEN-002 AD-011).
+	MigrationsComplete atomic.Bool
 	httpServer     *http.Server
+	pprof          *pprofServer
 	listener       net.Listener
 	router         http.Handler
 	done           chan os.Signal
@@ -94,6 +98,7 @@ func (s *Server) Start() error {
 			return fmt.Errorf("migrations: %w", err)
 		}
 	}
+	s.MigrationsComplete.Store(true)
 
 	// Initialize repos
 	s.DeviceRepo = db.NewDeviceRepo(s.DB)
@@ -229,6 +234,10 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// HARDEN-002 AD-002: opt-in loopback-only pprof listener. Returns nil
+	// (and logs) when disabled, rejected or the bind fails; never aborts startup.
+	s.pprof = startPprof(s.Config.PprofAddr, s.Config.Port, slog.Default())
+
 	// Graceful shutdown
 	s.done = make(chan os.Signal, 1)
 	signal.Notify(s.done, os.Interrupt, syscall.SIGTERM)
@@ -269,6 +278,11 @@ func (s *Server) Start() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Stop pprof first, and only log its failure: a slow /profile download must
+	// never stop the main server from shutting down. A nil s.pprof is a no-op.
+	if err := s.pprof.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("pprof shutdown", "error", err.Error())
+	}
 	if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}

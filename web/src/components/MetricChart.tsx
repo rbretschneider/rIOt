@@ -1,6 +1,9 @@
 import { useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import type { Heartbeat } from '../types/models'
+import { chartColors } from '../theme/chartColors'
+import { useTimeFormatters } from '../contexts/TimePreferenceProvider'
+import { formatBytesPerSec } from '../utils/format'
 
 interface Props {
   heartbeats: Heartbeat[]
@@ -13,15 +16,8 @@ interface Props {
   valueTransform?: (v: number) => number
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1099511627776) return `${(bytes / 1099511627776).toFixed(1)} TB/s`
-  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB/s`
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB/s`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB/s`
-  return `${bytes.toFixed(0)} B/s`
-}
-
 export default function MetricChart({ heartbeats, metricKey, label, color, maxY, unit = '%', subtitle, valueTransform }: Props) {
+  const { chartTick, chartTooltip } = useTimeFormatters()
   const data = useMemo(() =>
     heartbeats.map(hb => {
       const raw = Number(hb.data[metricKey]) || 0
@@ -53,7 +49,7 @@ export default function MetricChart({ heartbeats, metricKey, label, color, maxY,
   }
 
   const formatValue = (v: number): string => {
-    if (unit === 'bytes/s') return formatBytes(v)
+    if (unit === 'bytes/s') return formatBytesPerSec(v)
     if (unit === '%') return `${v.toFixed(1)}%`
     return `${v.toFixed(1)}${unit}`
   }
@@ -87,23 +83,20 @@ export default function MetricChart({ heartbeats, metricKey, label, color, maxY,
             dataKey="time"
             type="number"
             domain={['dataMin', 'dataMax']}
-            tickFormatter={ts => {
-              const d = new Date(ts)
-              return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
-            }}
-            tick={{ fill: '#6b7280', fontSize: 10 }}
-            stroke="#374151"
+            tickFormatter={chartTick}
+            tick={{ fill: chartColors.axisText, fontSize: 10 }}
+            stroke={chartColors.axisLine}
           />
           <YAxis
             domain={[0, computedMaxY]}
-            tick={{ fill: '#6b7280', fontSize: 10 }}
-            stroke="#374151"
+            tick={{ fill: chartColors.axisText, fontSize: 10 }}
+            stroke={chartColors.axisLine}
             width={40}
             tickFormatter={formatTick}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: 6, fontSize: 12 }}
-            labelFormatter={ts => new Date(ts).toLocaleString()}
+            contentStyle={{ backgroundColor: chartColors.tooltipBg, border: `1px solid ${chartColors.tooltipBorder}`, borderRadius: 6, fontSize: 12 }}
+            labelFormatter={ts => chartTooltip(Number(ts))}
             formatter={(value: number | undefined) => [formatValue(value ?? 0), label]}
           />
           <Area

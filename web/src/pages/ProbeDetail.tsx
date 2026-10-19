@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { Timestamp } from '../components/ui'
 import ProbeModal, { probeToForm, type ProbeForm } from '../components/ProbeModal'
 
 export default function ProbeDetail() {
@@ -124,7 +125,7 @@ export default function ProbeDetail() {
                     {r.error_msg || '-'}
                   </td>
                   <td className="px-4 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
-                    {new Date(r.created_at).toLocaleString()}
+                    <Timestamp value={r.created_at} />
                   </td>
                 </tr>
               ))}

@@ -7,18 +7,18 @@ import (
 
 // HeartbeatData is the lightweight ping payload.
 type HeartbeatData struct {
-	Uptime              uint64  `json:"uptime"`
-	CPUPercent          float64 `json:"cpu_percent"`
-	MemPercent          float64 `json:"mem_percent"`
-	LoadAvg1m           float64 `json:"load_avg_1m"`
-	DiskRootPercent     float64 `json:"disk_root_percent"`
-	DiskReadBytesPerSec float64 `json:"disk_read_bytes_sec,omitempty"`
+	Uptime               uint64  `json:"uptime"`
+	CPUPercent           float64 `json:"cpu_percent"`
+	MemPercent           float64 `json:"mem_percent"`
+	LoadAvg1m            float64 `json:"load_avg_1m"`
+	DiskRootPercent      float64 `json:"disk_root_percent"`
+	DiskReadBytesPerSec  float64 `json:"disk_read_bytes_sec,omitempty"`
 	DiskWriteBytesPerSec float64 `json:"disk_write_bytes_sec,omitempty"`
-	DiskIOPercent       float64 `json:"disk_io_percent,omitempty"`
-	NetRxBytesPerSec    float64 `json:"net_rx_bytes_sec,omitempty"`
-	NetTxBytesPerSec    float64 `json:"net_tx_bytes_sec,omitempty"`
-	AgentVersion        string  `json:"agent_version,omitempty"`
-	LogErrors           int     `json:"log_errors,omitempty"`
+	DiskIOPercent        float64 `json:"disk_io_percent,omitempty"`
+	NetRxBytesPerSec     float64 `json:"net_rx_bytes_sec,omitempty"`
+	NetTxBytesPerSec     float64 `json:"net_tx_bytes_sec,omitempty"`
+	AgentVersion         string  `json:"agent_version,omitempty"`
+	LogErrors            int     `json:"log_errors,omitempty"`
 }
 
 // Heartbeat wraps a heartbeat with metadata.
@@ -39,25 +39,25 @@ type LogEntry struct {
 
 // FullTelemetryData contains all collected system information.
 type FullTelemetryData struct {
-	System   *SystemInfo   `json:"system,omitempty"`
-	OS       *OSInfo       `json:"os,omitempty"`
-	CPU      *CPUInfo      `json:"cpu,omitempty"`
-	Memory   *MemoryInfo   `json:"memory,omitempty"`
-	Disks    *DiskInfo     `json:"disks,omitempty"`
-	Network  *NetworkInfo  `json:"network,omitempty"`
-	Updates  *UpdateInfo   `json:"updates,omitempty"`
-	Services []ServiceInfo `json:"services,omitempty"`
-	Procs    *ProcessInfo  `json:"processes,omitempty"`
-	Docker   *DockerInfo   `json:"docker,omitempty"`
-	Security   *SecurityInfo  `json:"security,omitempty"`
-	Logs       []LogEntry     `json:"logs,omitempty"`
-	UPS        *UPSInfo       `json:"ups,omitempty"`
-	WebServers *WebServerInfo `json:"web_servers,omitempty"`
-	USB        *USBInfo        `json:"usb,omitempty"`
-	Hardware   *HardwareInfo   `json:"hardware,omitempty"`
-	CronJobs       *CronInfo            `json:"cron_jobs,omitempty"`
-	ContainerLogs  []ContainerLogEntry  `json:"container_logs,omitempty"`
-	GPUTelemetry   *GPUTelemetry        `json:"gpu_telemetry,omitempty"`
+	System        *SystemInfo         `json:"system,omitempty"`
+	OS            *OSInfo             `json:"os,omitempty"`
+	CPU           *CPUInfo            `json:"cpu,omitempty"`
+	Memory        *MemoryInfo         `json:"memory,omitempty"`
+	Disks         *DiskInfo           `json:"disks,omitempty"`
+	Network       *NetworkInfo        `json:"network,omitempty"`
+	Updates       *UpdateInfo         `json:"updates,omitempty"`
+	Services      []ServiceInfo       `json:"services,omitempty"`
+	Procs         *ProcessInfo        `json:"processes,omitempty"`
+	Docker        *DockerInfo         `json:"docker,omitempty"`
+	Security      *SecurityInfo       `json:"security,omitempty"`
+	Logs          []LogEntry          `json:"logs,omitempty"`
+	UPS           *UPSInfo            `json:"ups,omitempty"`
+	WebServers    *WebServerInfo      `json:"web_servers,omitempty"`
+	USB           *USBInfo            `json:"usb,omitempty"`
+	Hardware      *HardwareInfo       `json:"hardware,omitempty"`
+	CronJobs      *CronInfo           `json:"cron_jobs,omitempty"`
+	ContainerLogs []ContainerLogEntry `json:"container_logs,omitempty"`
+	GPUTelemetry  *GPUTelemetry       `json:"gpu_telemetry,omitempty"`
 }
 
 // GPUDeviceMetrics holds runtime metrics for a single NVIDIA GPU.
@@ -108,29 +108,29 @@ type SystemInfo struct {
 
 // OSInfo holds operating system details.
 type OSInfo struct {
-	Name         string `json:"name"`
-	ID           string `json:"id"`
-	Version      string `json:"version"`
-	Codename     string `json:"codename,omitempty"`
-	Kernel       string `json:"kernel"`
-	KernelArch   string `json:"kernel_arch"`
-	InitSystem   string `json:"init_system,omitempty"`
-	BootTime     int64  `json:"boot_time"`
-	Uptime       uint64 `json:"uptime"`
-	Timezone     string `json:"timezone,omitempty"`
-	Locale       string `json:"locale,omitempty"`
+	Name       string `json:"name"`
+	ID         string `json:"id"`
+	Version    string `json:"version"`
+	Codename   string `json:"codename,omitempty"`
+	Kernel     string `json:"kernel"`
+	KernelArch string `json:"kernel_arch"`
+	InitSystem string `json:"init_system,omitempty"`
+	BootTime   int64  `json:"boot_time"`
+	Uptime     uint64 `json:"uptime"`
+	Timezone   string `json:"timezone,omitempty"`
+	Locale     string `json:"locale,omitempty"`
 }
 
 // CPUInfo holds CPU metrics.
 type CPUInfo struct {
-	UsagePercent  float64   `json:"usage_percent"`
-	PerCore       []float64 `json:"per_core,omitempty"`
-	LoadAvg1m     float64   `json:"load_avg_1m"`
-	LoadAvg5m     float64   `json:"load_avg_5m"`
-	LoadAvg15m    float64   `json:"load_avg_15m"`
-	Temperature   *float64  `json:"temperature,omitempty"`
-	FreqCurrent   *float64  `json:"freq_current,omitempty"`
-	FreqMax       *float64  `json:"freq_max,omitempty"`
+	UsagePercent float64   `json:"usage_percent"`
+	PerCore      []float64 `json:"per_core,omitempty"`
+	LoadAvg1m    float64   `json:"load_avg_1m"`
+	LoadAvg5m    float64   `json:"load_avg_5m"`
+	LoadAvg15m   float64   `json:"load_avg_15m"`
+	Temperature  *float64  `json:"temperature,omitempty"`
+	FreqCurrent  *float64  `json:"freq_current,omitempty"`
+	FreqMax      *float64  `json:"freq_max,omitempty"`
 }
 
 // MemoryInfo holds RAM/swap metrics.
@@ -152,11 +152,11 @@ type DiskInfo struct {
 }
 
 type BlockDevice struct {
-	Name        string `json:"name"`
-	Model       string `json:"model,omitempty"`
+	Name        string  `json:"name"`
+	Model       string  `json:"model,omitempty"`
 	SizeGB      float64 `json:"size_gb"`
-	Type        string `json:"type,omitempty"` // HDD, SSD, NVMe, SD
-	SmartStatus string `json:"smart_status,omitempty"`
+	Type        string  `json:"type,omitempty"` // HDD, SSD, NVMe, SD
+	SmartStatus string  `json:"smart_status,omitempty"`
 }
 
 type Filesystem struct {
@@ -255,12 +255,12 @@ type NetworkInterface struct {
 
 // UpdateInfo holds package manager and update details.
 type UpdateInfo struct {
-	PackageManager       string          `json:"package_manager,omitempty"`
-	TotalInstalled       int             `json:"total_installed"`
-	PendingUpdates       int             `json:"pending_updates"`
-	PendingSecurityCount int             `json:"pending_security_count"`
-	PendingKernelUpdate  bool            `json:"pending_kernel_update"`
-	PendingKernelVersion string          `json:"pending_kernel_version,omitempty"`
+	PackageManager       string `json:"package_manager,omitempty"`
+	TotalInstalled       int    `json:"total_installed"`
+	PendingUpdates       int    `json:"pending_updates"`
+	PendingSecurityCount int    `json:"pending_security_count"`
+	PendingKernelUpdate  bool   `json:"pending_kernel_update"`
+	PendingKernelVersion string `json:"pending_kernel_version,omitempty"`
 	// PendingRebootClassCount aggregates pending updates classified gpu_driver
 	// or kernel so truncated Updates lists still surface the signal (PATCH-GATE FR-009).
 	PendingRebootClassCount int `json:"pending_reboot_class_count,omitempty"`
@@ -294,11 +294,11 @@ type PendingUpdate struct {
 
 // ServiceInfo holds systemd service details.
 type ServiceInfo struct {
-	Name      string `json:"name"`
-	State     string `json:"state"`
-	Enabled   bool   `json:"enabled"`
-	PID       int    `json:"pid,omitempty"`
-	MemoryMB  float64 `json:"memory_mb,omitempty"`
+	Name     string  `json:"name"`
+	State    string  `json:"state"`
+	Enabled  bool    `json:"enabled"`
+	PID      int     `json:"pid,omitempty"`
+	MemoryMB float64 `json:"memory_mb,omitempty"`
 }
 
 // ProcessInfo holds top processes.
@@ -334,25 +334,25 @@ type DockerInfo struct {
 
 // ContainerInfo holds rich per-container data.
 type ContainerInfo struct {
-	ID            string            `json:"id"`
-	ShortID       string            `json:"short_id"`
-	Name          string            `json:"name"`
-	Image         string            `json:"image"`
-	State         string            `json:"state"`
-	Status        string            `json:"status"`
-	Created       int64             `json:"created"`
-	Ports         []PortMapping     `json:"ports,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	CPUPercent    float64           `json:"cpu_percent"`
-	MemUsage      int64             `json:"mem_usage"`
-	MemLimit      int64             `json:"mem_limit"`
-	CPULimit      int64             `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
-	RestartPolicy string            `json:"restart_policy,omitempty"`
-	RestartCount  int               `json:"restart_count,omitempty"`
-	Mounts        []MountInfo       `json:"mounts,omitempty"`
-	Networks      []NetworkAttach   `json:"networks,omitempty"`
-	Env           []EnvVar          `json:"env,omitempty"`
-	HealthStatus  string            `json:"health_status,omitempty"`
+	ID              string            `json:"id"`
+	ShortID         string            `json:"short_id"`
+	Name            string            `json:"name"`
+	Image           string            `json:"image"`
+	State           string            `json:"state"`
+	Status          string            `json:"status"`
+	Created         int64             `json:"created"`
+	Ports           []PortMapping     `json:"ports,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	CPUPercent      float64           `json:"cpu_percent"`
+	MemUsage        int64             `json:"mem_usage"`
+	MemLimit        int64             `json:"mem_limit"`
+	CPULimit        int64             `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
+	RestartPolicy   string            `json:"restart_policy,omitempty"`
+	RestartCount    int               `json:"restart_count,omitempty"`
+	Mounts          []MountInfo       `json:"mounts,omitempty"`
+	Networks        []NetworkAttach   `json:"networks,omitempty"`
+	Env             []EnvVar          `json:"env,omitempty"`
+	HealthStatus    string            `json:"health_status,omitempty"`
 	RepoURL         string            `json:"repo_url,omitempty"`
 	Riot            *RiotLabels       `json:"riot,omitempty"`
 	UpdateAvailable *bool             `json:"update_available,omitempty"`
@@ -382,8 +382,10 @@ const (
 
 // TelemetryFutureTolerance is how far ahead of the server's receive time an
 // agent-supplied snapshot timestamp may be before it is replaced by the receive
-// time (SEC C-3). "Latest" telemetry queries ignore rows further ahead.
-const TelemetryFutureTolerance = 2 * time.Minute
+// time (SEC C-3). "Latest" telemetry queries ignore rows further ahead. It must
+// equal db.FutureSkewAllowance, the REG-HARDEN-001 ingest clamp and read guard
+// that enforce it on the server (pinned by a test in internal/server/db).
+const TelemetryFutureTolerance = 5 * time.Minute
 
 // BoundTelemetryTimestamp returns the timestamp used to order, store and
 // broadcast a snapshot as collected_at: a zero timestamp becomes receivedAt
@@ -503,18 +505,18 @@ type USBDevice struct {
 
 // SecurityInfo holds security-related info.
 type SecurityInfo struct {
-	SELinux        string `json:"selinux,omitempty"`
-	AppArmor       string `json:"apparmor,omitempty"`
-	FirewallStatus string `json:"firewall_status,omitempty"`
-	FailedLogins24h int   `json:"failed_logins_24h"`
+	SELinux         string `json:"selinux,omitempty"`
+	AppArmor        string `json:"apparmor,omitempty"`
+	FirewallStatus  string `json:"firewall_status,omitempty"`
+	FailedLogins24h int    `json:"failed_logins_24h"`
 	// FailedLoginsInterval is the count of authentication-failure log
 	// lines observed in journald during the last telemetry interval.
 	// *int so non-Linux agents can omit (nil → absent in JSON).
 	// A value of 0 is explicitly reported on Linux when no failures
 	// were observed or journald was unavailable (fail-open, FR-006).
-	FailedLoginsInterval *int `json:"failed_logins_interval,omitempty"`
-	LoggedInUsers  int    `json:"logged_in_users"`
-	OpenPorts      []int  `json:"open_ports,omitempty"`
+	FailedLoginsInterval *int  `json:"failed_logins_interval,omitempty"`
+	LoggedInUsers        int   `json:"logged_in_users"`
+	OpenPorts            []int `json:"open_ports,omitempty"`
 }
 
 // WebServerInfo holds discovered reverse proxy / web server details.
@@ -588,11 +590,11 @@ type UpstreamServer struct {
 
 // ProxySecurityCfg holds security-related proxy configuration.
 type ProxySecurityCfg struct {
-	RateLimiting    []RateLimitRule    `json:"rate_limiting,omitempty"`
-	AccessControls  []AccessRule       `json:"access_controls,omitempty"`
-	SecurityHeaders map[string]string  `json:"security_headers,omitempty"`
-	AllowedMethods  []string           `json:"allowed_methods,omitempty"`
-	CORSOrigins     []string           `json:"cors_origins,omitempty"`
+	RateLimiting    []RateLimitRule   `json:"rate_limiting,omitempty"`
+	AccessControls  []AccessRule      `json:"access_controls,omitempty"`
+	SecurityHeaders map[string]string `json:"security_headers,omitempty"`
+	AllowedMethods  []string          `json:"allowed_methods,omitempty"`
+	CORSOrigins     []string          `json:"cors_origins,omitempty"`
 }
 
 // RateLimitRule represents a rate limiting configuration.
@@ -647,12 +649,12 @@ type DiskDrive struct {
 	Removable bool    `json:"removable,omitempty"`
 	Scheduler string  `json:"scheduler,omitempty"`
 	// SMART health data (populated via smartctl if available)
-	SmartHealth        string  `json:"smart_health,omitempty"`         // PASSED, FAILED, UNKNOWN
-	SmartTemp          *int    `json:"smart_temp,omitempty"`           // Celsius
-	SmartPowerOnHours  *int64  `json:"smart_power_on_hours,omitempty"`
-	SmartReallocated   *int64  `json:"smart_reallocated,omitempty"`    // Reallocated sector count
-	SmartPendingSector *int64  `json:"smart_pending_sector,omitempty"` // Current pending sector count
-	SmartAvailable     bool    `json:"smart_available"`                // Whether smartctl returned data
+	SmartHealth        string `json:"smart_health,omitempty"` // PASSED, FAILED, UNKNOWN
+	SmartTemp          *int   `json:"smart_temp,omitempty"`   // Celsius
+	SmartPowerOnHours  *int64 `json:"smart_power_on_hours,omitempty"`
+	SmartReallocated   *int64 `json:"smart_reallocated,omitempty"`    // Reallocated sector count
+	SmartPendingSector *int64 `json:"smart_pending_sector,omitempty"` // Current pending sector count
+	SmartAvailable     bool   `json:"smart_available"`                // Whether smartctl returned data
 }
 
 // SerialPort represents a serial port.

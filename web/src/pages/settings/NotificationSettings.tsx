@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import type { NotificationChannel } from '../../types/models'
+import { Button, ConfirmDialog, Modal } from '../../components/ui'
+import SecretInput from '../../components/SecretInput'
+import { isRedacted, isSecretSet } from '../../utils/secrets'
 
 const CHANNEL_TYPES = [
   { value: 'ntfy', label: 'ntfy' },
@@ -86,8 +89,12 @@ export default function NotificationSettings() {
   })
   const [editing, setEditing] = useState<Partial<NotificationChannel> | null>(null)
   const [isNew, setIsNew] = useState(false)
+  // The channel as loaded from the server (secrets are the write-only sentinel).
+  // Used to tell which secrets are already configured.
+  const [original, setOriginal] = useState<NotificationChannel | null>(null)
   const [testResult, setTestResult] = useState<{ id: number; success: boolean; error?: string } | null>(null)
   const [testingId, setTestingId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null)
 
   const saveMutation = useMutation({
     mutationFn: (ch: Partial<NotificationChannel>) =>
@@ -120,6 +127,10 @@ export default function NotificationSettings() {
     },
   })
 
+  // A secret counts as configured only while editing the same channel type it was loaded with.
+  const configured = (key: string) =>
+    !isNew && original?.type === editing?.type && isRedacted(original?.config?.[key])
+
   if (isLoading) {
     return <div className="text-gray-400">Loading...</div>
   }
@@ -129,7 +140,7 @@ export default function NotificationSettings() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-white">Notification Channels</h2>
         <button
-          onClick={() => { setEditing({ ...emptyChannel }); setIsNew(true) }}
+          onClick={() => { setEditing({ ...emptyChannel }); setIsNew(true); setOriginal(null) }}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
         >
           Add Channel
@@ -164,13 +175,13 @@ export default function NotificationSettings() {
                   {testingId === ch.id ? 'Testing...' : 'Test'}
                 </button>
                 <button
-                  onClick={() => { setEditing({ ...ch }); setIsNew(false) }}
+                  onClick={() => { setEditing({ ...ch }); setIsNew(false); setOriginal(ch) }}
                   className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-700 rounded transition-colors"
                 >
                   Edit
                 </button>
                 <button
-                  onClick={() => { if (confirm('Delete this channel?')) deleteMutation.mutate(ch.id) }}
+                  onClick={() => setDeleteTarget({ id: ch.id, name: ch.name })}
                   className="px-2.5 py-1 text-xs text-red-400/70 hover:text-red-400 border border-red-900/50 hover:border-red-700 rounded transition-colors"
                 >
                   Delete
@@ -180,11 +191,11 @@ export default function NotificationSettings() {
             <div className="mt-2 text-xs text-gray-500">
               {ch.type === 'ntfy' && (
                 <>
-                  {((ch.config.server_url as string) || 'https://ntfy.sh').replace(/\/+$/, '')}/{(ch.config.topic as string) || '(no topic)'}
+                  {((ch.config.server_url as string) || 'https://ntfy.sh').replace(/\/+$/, '')}/{isSecretSet(ch.config.topic) ? '(topic hidden)' : '(no topic)'}
                 </>
               )}
               {ch.type === 'webhook' && (
-                <>{(ch.config.url as string) || '(no URL)'}</>
+                <>{isSecretSet(ch.config.url) ? 'URL configured' : '(no URL)'}</>
               )}
               {ch.type === 'smtp' && (
                 <>
@@ -196,13 +207,13 @@ export default function NotificationSettings() {
                 <>Chat ID: {(ch.config.chat_id as string) || '(not set)'}</>
               )}
               {ch.type === 'discord' && (
-                <>{(ch.config.webhook_url as string)?.replace(/^https:\/\/discord\.com\/api\/webhooks\//, '.../')  || '(no webhook URL)'}</>
+                <>{isSecretSet(ch.config.webhook_url) ? 'Webhook URL configured' : '(no webhook URL)'}</>
               )}
               {ch.type === 'slack' && (
-                <>{(ch.config.webhook_url as string)?.replace(/^https:\/\/hooks\.slack\.com\//, '.../')  || '(no webhook URL)'}</>
+                <>{isSecretSet(ch.config.webhook_url) ? 'Webhook URL configured' : '(no webhook URL)'}</>
               )}
               {ch.type === 'pushover' && (
-                <>User: {(ch.config.user_key as string)?.slice(0, 8) || '(not set)'}...</>
+                <>{isSecretSet(ch.config.user_key) ? 'User key configured' : '(not set)'}</>
               )}
               {ch.type === 'gotify' && (
                 <>{(ch.config.server_url as string) || '(no server URL)'}</>
@@ -219,19 +230,28 @@ export default function NotificationSettings() {
 
       {/* Edit / Create Modal */}
       {editing && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 pb-4">
-              <h3 className="text-lg font-semibold text-white">
-                {isNew ? 'Add Notification Channel' : 'Edit Notification Channel'}
-              </h3>
-              <button onClick={() => setEditing(null)} className="text-gray-500 hover:text-white transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-            <div className="overflow-y-auto scrollbar-thin px-6">
+        <Modal
+          open
+          size="lg"
+          title={isNew ? 'Add Notification Channel' : 'Edit Notification Channel'}
+          pending={saveMutation.isPending}
+          onClose={() => setEditing(null)}
+          footer={
+            <>
+              <Button variant="secondary" disabled={saveMutation.isPending} onClick={() => setEditing(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                pending={saveMutation.isPending}
+                pendingLabel="Saving..."
+                onClick={() => saveMutation.mutate(editing)}
+              >
+                Save
+              </Button>
+            </>
+          }
+        >
             <div className="space-y-4">
               <Field label="Name">
                 <input
@@ -264,30 +284,35 @@ export default function NotificationSettings() {
                 <NtfyConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
               {editing.type === 'webhook' && (
                 <WebhookConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
               {editing.type === 'smtp' && (
                 <SmtpConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
               {editing.type === 'telegram' && (
                 <TelegramConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
               {(editing.type === 'discord' || editing.type === 'slack') && (
                 <WebhookURLConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                   label={editing.type === 'discord' ? 'Discord Webhook URL' : 'Slack Webhook URL'}
                   placeholder={editing.type === 'discord' ? 'https://discord.com/api/webhooks/...' : 'https://hooks.slack.com/services/...'}
                   hint={editing.type === 'discord'
@@ -299,34 +324,31 @@ export default function NotificationSettings() {
                 <PushoverConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
               {editing.type === 'gotify' && (
                 <GotifyConfig
                   config={(editing.config || {}) as Record<string, unknown>}
                   onChange={config => setEditing({ ...editing, config })}
+                  configured={configured}
                 />
               )}
             </div>
-            </div>
-            <div className="flex justify-end gap-3 p-6">
-              <button
-                onClick={() => setEditing(null)}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => saveMutation.mutate(editing)}
-                disabled={saveMutation.isPending}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors disabled:opacity-50"
-              >
-                {saveMutation.isPending ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        variant="danger"
+        title="Delete channel"
+        message={`Delete channel "${deleteTarget?.name ?? ''}"? Alert rules can no longer notify through it.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        successToast="Channel deleted"
+        onConfirm={() => deleteMutation.mutateAsync(deleteTarget!.id)}
+        onClose={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
@@ -339,7 +361,7 @@ const DEFAULT_PRIORITY_MAP: Record<string, string> = {
   critical: 'high',
 }
 
-function NtfyConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function NtfyConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   const priority = (config.priority as string) || 'default'
   const priorityMap = (config.priority_map as Record<string, string>) || DEFAULT_PRIORITY_MAP
 
@@ -354,26 +376,29 @@ function NtfyConfig({ config, onChange }: { config: Record<string, unknown>; onC
           value={(config.server_url as string) || ''}
           onChange={e => onChange({ ...config, server_url: e.target.value })}
           placeholder="https://ntfy.sh"
+          autoComplete="off"
+          data-lpignore="true"
           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
         />
       </Field>
-      <Field label="Topic">
-        <input
-          value={(config.topic as string) || ''}
-          onChange={e => onChange({ ...config, topic: e.target.value })}
-          placeholder="riot-alerts"
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-        />
-      </Field>
+      <SecretInput
+        label="Topic"
+        name="topic"
+        value={config.topic}
+        configured={configured('topic')}
+        onChange={v => onChange({ ...config, topic: v })}
+        placeholder="riot-alerts"
+      />
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Auth Token (optional)">
-          <input
-            type="password"
-            value={(config.token as string) || ''}
-            onChange={e => onChange({ ...config, token: e.target.value })}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-          />
-        </Field>
+        <SecretInput
+          label="Auth Token (optional)"
+          name="token"
+          value={config.token}
+          configured={configured('token')}
+          onChange={v => onChange({ ...config, token: v })}
+          masked
+          clearable
+        />
         <Field label="Priority">
           <select
             value={priority}
@@ -410,22 +435,22 @@ function NtfyConfig({ config, onChange }: { config: Record<string, unknown>; onC
   )
 }
 
-function WebhookConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function WebhookConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
-      <Field label="URL">
-        <input
-          value={(config.url as string) || ''}
-          onChange={e => onChange({ ...config, url: e.target.value })}
-          placeholder="https://example.com/webhook"
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-        />
-      </Field>
+      <SecretInput
+        label="URL"
+        name="url"
+        value={config.url}
+        configured={configured('url')}
+        onChange={v => onChange({ ...config, url: v })}
+        placeholder="https://example.com/webhook"
+      />
     </div>
   )
 }
 
-function SmtpConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function SmtpConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
       <div className="grid grid-cols-3 gap-3">
@@ -454,18 +479,21 @@ function SmtpConfig({ config, onChange }: { config: Record<string, unknown>; onC
             value={(config.username as string) || ''}
             onChange={e => onChange({ ...config, username: e.target.value })}
             placeholder="user@example.com"
+            autoComplete="off"
+            data-lpignore="true"
             className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
           />
         </Field>
-        <Field label="Password">
-          <input
-            type="password"
-            value={(config.password as string) || ''}
-            onChange={e => onChange({ ...config, password: e.target.value })}
-            placeholder="App password"
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-          />
-        </Field>
+        <SecretInput
+          label="Password"
+          name="password"
+          value={config.password}
+          configured={configured('password')}
+          onChange={v => onChange({ ...config, password: v })}
+          placeholder="App password"
+          masked
+          clearable
+        />
       </div>
       <Field label="From Address">
         <input
@@ -499,18 +527,18 @@ function SmtpConfig({ config, onChange }: { config: Record<string, unknown>; onC
   )
 }
 
-function TelegramConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function TelegramConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
-      <Field label="Bot Token">
-        <input
-          type="password"
-          value={(config.bot_token as string) || ''}
-          onChange={e => onChange({ ...config, bot_token: e.target.value })}
-          placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-        />
-      </Field>
+      <SecretInput
+        label="Bot Token"
+        name="bot_token"
+        value={config.bot_token}
+        configured={configured('bot_token')}
+        onChange={v => onChange({ ...config, bot_token: v })}
+        placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+        masked
+      />
       <Field label="Chat ID">
         <input
           value={(config.chat_id as string) || ''}
@@ -527,44 +555,44 @@ function TelegramConfig({ config, onChange }: { config: Record<string, unknown>;
   )
 }
 
-function WebhookURLConfig({ config, onChange, label, placeholder, hint }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; label: string; placeholder: string; hint: string }) {
+function WebhookURLConfig({ config, onChange, configured, label, placeholder, hint }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean; label: string; placeholder: string; hint: string }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
-      <Field label={label}>
-        <input
-          value={(config.webhook_url as string) || ''}
-          onChange={e => onChange({ ...config, webhook_url: e.target.value })}
-          placeholder={placeholder}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-        />
-      </Field>
+      <SecretInput
+        label={label}
+        name="webhook_url"
+        value={config.webhook_url}
+        configured={configured('webhook_url')}
+        onChange={v => onChange({ ...config, webhook_url: v })}
+        placeholder={placeholder}
+      />
       <p className="text-xs text-gray-500">{hint}</p>
     </div>
   )
 }
 
-function PushoverConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function PushoverConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="API Token (Application)">
-          <input
-            type="password"
-            value={(config.api_token as string) || ''}
-            onChange={e => onChange({ ...config, api_token: e.target.value })}
-            placeholder="azGDORePK8gMaC0QOYAMyEEuzJnyUI"
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-          />
-        </Field>
-        <Field label="User Key">
-          <input
-            type="password"
-            value={(config.user_key as string) || ''}
-            onChange={e => onChange({ ...config, user_key: e.target.value })}
-            placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
-            className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-          />
-        </Field>
+        <SecretInput
+          label="API Token (Application)"
+          name="api_token"
+          value={config.api_token}
+          configured={configured('api_token')}
+          onChange={v => onChange({ ...config, api_token: v })}
+          placeholder="azGDORePK8gMaC0QOYAMyEEuzJnyUI"
+          masked
+        />
+        <SecretInput
+          label="User Key"
+          name="user_key"
+          value={config.user_key}
+          configured={configured('user_key')}
+          onChange={v => onChange({ ...config, user_key: v })}
+          placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG"
+          masked
+        />
       </div>
       <p className="text-xs text-gray-500">
         Create an application at <a href="https://pushover.net/apps/build" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">pushover.net</a> to get the API token. Your user key is on the Pushover dashboard.
@@ -573,7 +601,7 @@ function PushoverConfig({ config, onChange }: { config: Record<string, unknown>;
   )
 }
 
-function GotifyConfig({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function GotifyConfig({ config, onChange, configured }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void; configured: (key: string) => boolean }) {
   return (
     <div className="space-y-3 p-3 bg-gray-800/50 rounded-lg">
       <Field label="Server URL">
@@ -581,18 +609,20 @@ function GotifyConfig({ config, onChange }: { config: Record<string, unknown>; o
           value={(config.server_url as string) || ''}
           onChange={e => onChange({ ...config, server_url: e.target.value })}
           placeholder="https://gotify.example.com"
+          autoComplete="off"
+          data-lpignore="true"
           className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
         />
       </Field>
-      <Field label="App Token">
-        <input
-          type="password"
-          value={(config.app_token as string) || ''}
-          onChange={e => onChange({ ...config, app_token: e.target.value })}
-          placeholder="AKShieh.F8-kfha"
-          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
-        />
-      </Field>
+      <SecretInput
+        label="App Token"
+        name="app_token"
+        value={config.app_token}
+        configured={configured('app_token')}
+        onChange={v => onChange({ ...config, app_token: v })}
+        placeholder="AKShieh.F8-kfha"
+        masked
+      />
       <p className="text-xs text-gray-500">
         Create an application in Gotify's web UI to get the app token.
       </p>

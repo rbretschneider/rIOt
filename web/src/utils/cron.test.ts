@@ -59,6 +59,22 @@ describe('formatRunDate', () => {
   })
 })
 
+describe('[UIF AC-109] formatRunDate carries a zone label', () => {
+  it('renders a unix-seconds timestamp at minute precision in UTC by default', () => {
+    expect(formatRunDate('1710456000')).toBe('2024-03-14 22:40 UTC')
+  })
+
+  it('renders an ISO date at minute precision in UTC by default', () => {
+    expect(formatRunDate('2024-03-15T06:00:00Z')).toBe('2024-03-15 06:00 UTC')
+  })
+
+  it('renders in the local zone when the Local preference is passed', () => {
+    expect(formatRunDate('2024-03-15T06:00:00Z', '-', { zone: 'Local', localTimeZone: 'America/Los_Angeles' })).toBe(
+      '2024-03-14 23:00 PDT',
+    )
+  })
+})
+
 describe('parseSystemdCalendar', () => {
   it('returns null for empty/undefined', () => {
     expect(parseSystemdCalendar(undefined)).toBeNull()

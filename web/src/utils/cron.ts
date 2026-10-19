@@ -1,3 +1,5 @@
+import { formatTimestamp, type ZoneOpts } from './format'
+
 /**
  * Parse a timestamp value that may be:
  * - A Unix timestamp as a string (seconds since epoch, e.g. "1710456000")
@@ -29,11 +31,15 @@ export function parseTimestamp(value: string | undefined): Date | null {
   return null
 }
 
-/** Format a parsed timestamp for display, or return fallback */
-export function formatRunDate(value: string | undefined, fallback = '-'): string {
+/** Format a parsed timestamp for display (minute precision, zone-labelled), or return fallback */
+export function formatRunDate(
+  value: string | undefined,
+  fallback = '-',
+  opts: ZoneOpts = { zone: 'UTC' },
+): string {
   const d = parseTimestamp(value)
   if (!d) return fallback
-  return d.toLocaleString()
+  return formatTimestamp(d, opts, 'minute')
 }
 
 /**

@@ -3,10 +3,14 @@
  * Vite aliases this module over settings.ts when VITE_DEMO=true.
  */
 import * as demo from './demo-data'
+import type { SettingsClient } from './settings'
+import { FEATURES } from '../hooks/featureCatalog'
+import type { AutomationConfig } from '../types/models'
+import { redactChannelConfig } from '../utils/secrets'
 
 const delay = (ms = 400) => new Promise(r => setTimeout(r, ms))
 
-export const settingsApi = {
+export const settingsApi: SettingsClient = {
   // Alert Rules
   getAlertRules: () => Promise.resolve(demo.getAlertRules()),
   createAlertRule: async (rule: any) => { await delay(); return { id: 99, ...rule, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
@@ -18,8 +22,8 @@ export const settingsApi = {
 
   // Notification Channels
   getNotificationChannels: () => Promise.resolve(demo.getNotificationChannels()),
-  createNotificationChannel: async (ch: any) => { await delay(); return { id: 99, ...ch, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
-  updateNotificationChannel: async (_id: number, ch: any) => { await delay(); return { id: _id, ...ch, updated_at: new Date().toISOString() } },
+  createNotificationChannel: async (ch: any) => { await delay(); return { id: 99, ...ch, config: redactChannelConfig(ch.type, ch.config ?? {}), created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
+  updateNotificationChannel: async (_id: number, ch: any) => { await delay(); return { id: _id, ...ch, config: redactChannelConfig(ch.type, ch.config ?? {}), updated_at: new Date().toISOString() } },
   deleteNotificationChannel: async () => { await delay(); return { status: 'ok' } },
   testNotificationChannel: async () => { await delay(); return { success: true } },
 
@@ -48,6 +52,19 @@ export const settingsApi = {
   // Server logs
   getLogs: () => Promise.resolve(demo.getServerLogs()),
   clearLogs: async () => { await delay(); return { deleted: 0 } },
+
+  // TLS SANs
+  getTLSSANs: () => Promise.resolve({ sans: [] as string[] }),
+  saveTLSSANs: async (sans: string[]) => { await delay(); return { ok: true, sans } },
+  regenerateTLS: async () => { await delay(); return { ok: true, message: 'Demo mode: certificate not regenerated' } },
+
+  // Feature toggles: everything on
+  getFeatureToggles: () => Promise.resolve(Object.fromEntries(Object.keys(FEATURES).map(key => [key, true]))),
+  saveFeatureToggles: async (toggles: Record<string, boolean>) => { await delay(); return toggles },
+
+  // Automation config
+  getAutomationConfig: () => Promise.resolve(demo.getAutomationConfig()),
+  saveAutomationConfig: async (config: AutomationConfig) => { await delay(); return config },
 
   // Server error-rate alert
   getServerErrorAlert: async () => ({

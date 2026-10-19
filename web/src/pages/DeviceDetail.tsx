@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { errorMessage, retryUnlessNotFound } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { isVersionOlder } from '../utils/version'
 import { isPoolFilesystem, formatCapacity } from '../utils/filesystem'
@@ -9,7 +10,11 @@ import StatusBadge from '../components/StatusBadge'
 import GaugeBar from '../components/GaugeBar'
 import BatteryGauge from '../components/BatteryGauge'
 import MetricChart from '../components/MetricChart'
-import ConfirmModal from '../components/ConfirmModal'
+import DeviceQueryFallback from '../components/DeviceQueryFallback'
+import { Badge, Button, ConfirmDialog, Timestamp, enumLabel, useToast } from '../components/ui'
+import { useTimePreference } from '../contexts/TimePreferenceProvider'
+import { chartColors } from '../theme/chartColors'
+import { formatBytes, formatDuration } from '../utils/format'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
 import { rebootEtaTooltip } from '../utils/rebootEta'
@@ -28,11 +33,12 @@ export default function DeviceDetail() {
   // directly into the ['device', id] and ['events'] query caches
   const { wsConnected } = useDevices()
   const { isEnabled } = useFeatures()
-  const { data, isLoading } = useQuery({
+  const { data, isPending, error: deviceError, refetch: refetchDevice } = useQuery({
     queryKey: ['device', id],
     queryFn: () => api.getDevice(id!),
     refetchInterval: wsConnected ? false : 15_000, // Only poll when WS is down
     enabled: !!id,
+    retry: retryUnlessNotFound,
   })
   const { data: events } = useQuery({
     queryKey: ['events'],
@@ -61,7 +67,13 @@ export default function DeviceDetail() {
 
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const toast = useToast()
+  const { zoneOpts } = useTimePreference()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
+  // SEC-002: the delete scope (agent uninstall or record-only) is fixed when the
+  // dialog opens, so the message the operator reads is the request that is sent.
+  const [deleteScope, setDeleteScope] = useState<{ uninstall: boolean } | null>(null)
+  const [agentUpdateSent, setAgentUpdateSent] = useState(false)
   const [alertDialog, setAlertDialog] = useState<{ metric: string; targetName: string; targetState?: string } | null>(null)
   const [downloadState, setDownloadState] = useState<'idle' | 'loading' | 'error'>('idle')
   const [copyState, setCopyState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
@@ -120,21 +132,34 @@ export default function DeviceDetail() {
       setLocationEdit(null)
     },
   })
+  const hostname = data?.device.hostname ?? ''
+  // Commands launched from a ConfirmDialog: the dialog owns pending state and shows failures inline.
   const commandMutation = useMutation({
     mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
       api.sendCommand(id!, action, params || {}),
-    onSuccess: () => { setTimeout(() => commandMutation.reset(), 5000) },
-    onError: () => { setTimeout(() => commandMutation.reset(), 5000) },
+  })
+  // Commands launched outside a dialog (security remediation): report through toasts.
+  const remediationMutation = useMutation({
+    mutationFn: ({ action, params }: { action: string; params?: Record<string, unknown> }) =>
+      api.sendCommand(id!, action, params || {}),
+    onSuccess: (cmd, { action }) => {
+      toast.success(commandSentTitle(action, hostname, cmd.status))
+    },
+    onError: (e) => {
+      toast.error('Command failed', errorMessage(e))
+    },
   })
   const fetchLogsMutation = useMutation({
     mutationFn: (params: { hours: number; priority: number }) =>
       api.sendCommand(id!, 'fetch_logs', params),
     onSuccess: () => {
+      toast.success('Log fetch requested', 'Logs will refresh in a few seconds.')
       // Refetch logs after a short delay to let the agent push them
       setTimeout(() => queryClient.invalidateQueries({ queryKey: ['device-logs', id] }), 3000)
-      setTimeout(() => fetchLogsMutation.reset(), 5000)
     },
-    onError: () => { setTimeout(() => fetchLogsMutation.reset(), 5000) },
+    onError: (e) => {
+      toast.error("Couldn't fetch logs", errorMessage(e))
+    },
   })
   const autoPatchMutation = useMutation({
     mutationFn: (enabled: boolean) => api.setAutoPatch(id!, enabled),
@@ -144,16 +169,17 @@ export default function DeviceDetail() {
     },
   })
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteDevice(id!, data?.device.status === 'online'),
+    mutationFn: (uninstall: boolean) => api.deleteDevice(id!, uninstall),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      navigate('/')
-    },
-    onError: (err) => {
-      console.error('Delete device failed:', err)
-      alert(`Failed to delete device: ${err instanceof Error ? err.message : 'Unknown error'}`)
     },
   })
+
+  useEffect(() => {
+    if (!agentUpdateSent) return
+    const timer = setTimeout(() => setAgentUpdateSent(false), 5000)
+    return () => clearTimeout(timer)
+  }, [agentUpdateSent])
 
   const latestVersion = serverUpdate?.latest_version
   const agentOutdated = useMemo(() => {
@@ -162,8 +188,7 @@ export default function DeviceDetail() {
     return isVersionOlder(v, latestVersion)
   }, [data?.device.agent_version, latestVersion])
 
-  if (isLoading) return <div className="text-gray-500">Loading...</div>
-  if (!data) return <div className="text-gray-500">Device not found</div>
+  if (!data) return <DeviceQueryFallback isPending={isPending} error={deviceError} onRetry={() => { void refetchDevice() }} />
 
   const { device, latest_telemetry, agent_connected } = data
   const tel = latest_telemetry?.data
@@ -219,7 +244,7 @@ export default function DeviceDetail() {
         {/* Left: name, status, summary menu, subtitle, navigation links */}
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-white truncate uppercase">{device.hostname}</h1>
+            <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
             {/* Summary export dropdown */}
             <div className="relative" ref={summaryMenuRef}>
               <button
@@ -328,7 +353,7 @@ export default function DeviceDetail() {
               </>
             )}
           </p>
-          <div className="flex items-center gap-4 mt-2">
+          <nav aria-label="Device sections" className="flex items-center gap-4 mt-2">
             {isEnabled('docker') && tel?.docker?.available && (
               <span className="flex items-center gap-2">
                 <Link
@@ -367,13 +392,7 @@ export default function DeviceDetail() {
                 </span>
               )
             )}
-            <button
-              onClick={() => setConfirmAction('delete')}
-              className="text-sm text-gray-600 hover:text-red-400 transition-colors"
-            >
-              Delete
-            </button>
-          </div>
+          </nav>
         </div>
         {/* Right: security gauge + agent actions */}
         <div className="flex items-center gap-3 flex-shrink-0">
@@ -384,14 +403,14 @@ export default function DeviceDetail() {
             <div className="flex gap-2 items-center">
               <button
                 onClick={() => setConfirmAction('agent_update')}
-                disabled={!agentOutdated || commandMutation.isPending || (commandMutation.isSuccess && commandMutation.variables?.action === 'agent_update')}
+                disabled={!agentOutdated || commandMutation.isPending || agentUpdateSent}
                 className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                   agentOutdated
                     ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
                     : 'text-gray-600 border border-gray-700/50'
                 }`}
               >
-                {commandMutation.isSuccess && commandMutation.variables?.action === 'agent_update' ? 'Update Sent' : 'Update Agent'}
+                {agentUpdateSent ? 'Update Sent' : 'Update Agent'}
               </button>
               {tel?.updates && tel.updates.pending_updates > 0 && (
                 <button
@@ -420,6 +439,12 @@ export default function DeviceDetail() {
               </label>
             </div>
           )}
+          {/* Destructive action: kept apart from the navigation links and the agent actions. */}
+          <div className="border-l border-border pl-3">
+            <Button variant="danger" size="sm" onClick={() => setDeleteScope({ uninstall: device.status === 'online' })}>
+              Delete
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -500,18 +525,6 @@ export default function DeviceDetail() {
         </div>
       )}
 
-      {/* Command feedback */}
-      {commandMutation.isSuccess && (
-        <div className="px-4 py-2 bg-emerald-900/30 border border-emerald-800 rounded text-sm text-emerald-400">
-          Command sent: {commandMutation.data?.action} ({commandMutation.data?.status})
-        </div>
-      )}
-      {commandMutation.isError && (
-        <div className="px-4 py-2 bg-red-900/30 border border-red-800 rounded text-sm text-red-400">
-          {(commandMutation.error as Error).message}
-        </div>
-      )}
-
       {/* Security score modal */}
       {isEnabled('security_score') && showSecurityModal && securityScore && (
         <SecurityScoreModal
@@ -519,51 +532,55 @@ export default function DeviceDetail() {
           hostname={device.hostname}
           onClose={() => setShowSecurityModal(false)}
           canCommand={canCommand}
-          onRunCommand={(action, params) => commandMutation.mutate({ action, params })}
+          onRunCommand={(action, params) => remediationMutation.mutate({ action, params })}
         />
       )}
 
-      {/* Confirm modal */}
-      {confirmAction && confirmAction !== 'delete' && (
-        <ConfirmModal
-          title={
-            confirmAction === 'reboot' ? 'Reboot Device'
-              : confirmAction === 'shutdown' ? 'Shutdown Device'
-              : confirmAction === 'os_update' ? 'Patch Device'
-              : 'Update Agent'
-          }
-          message={
-            confirmAction === 'reboot'
-              ? `Are you sure you want to reboot "${device.hostname}"? This will temporarily take the device offline.`
-              : confirmAction === 'shutdown'
-              ? `Are you sure you want to shut down "${device.hostname}"? The device will go offline and require physical or out-of-band access to turn back on.`
-              : confirmAction === 'os_update'
-              ? `Run OS package updates on "${device.hostname}"? This will upgrade all pending packages.`
-              : `Trigger an agent update check on "${device.hostname}"?`
-          }
-          confirmLabel={confirmAction === 'reboot' ? 'Reboot' : confirmAction === 'shutdown' ? 'Shut Down' : confirmAction === 'os_update' ? 'Patch' : 'Update'}
-          confirmVariant={confirmAction === 'reboot' || confirmAction === 'shutdown' ? 'danger' : 'primary'}
-          onConfirm={() => {
-            const params = confirmAction === 'os_update' ? { mode: 'full' } : {}
-            commandMutation.mutate({ action: confirmAction, params })
-            setConfirmAction(null)
-          }}
-          onCancel={() => setConfirmAction(null)}
-        />
-      )}
-      {confirmAction === 'delete' && (
-        <ConfirmModal
-          title="Delete Device"
-          message={device.status === 'online'
-            ? `Remove "${device.hostname}" from the fleet? The agent will be uninstalled from the device.`
-            : `Remove "${device.hostname}" from the fleet? The device is offline — you may need to manually uninstall the agent.`
-          }
-          confirmLabel="Delete"
-          confirmVariant="danger"
-          onConfirm={() => { deleteMutation.mutate(); setConfirmAction(null) }}
-          onCancel={() => setConfirmAction(null)}
-        />
-      )}
+      {/* Command confirmation: danger for power actions, primary for patch and agent update.
+          Initial focus is Cancel for both (SEC-001), so the opening gesture can't confirm. */}
+      <ConfirmDialog
+        open={confirmAction !== null}
+        variant={confirmAction === 'reboot' || confirmAction === 'shutdown' ? 'danger' : 'primary'}
+        title={
+          confirmAction === 'reboot' ? 'Reboot Device'
+            : confirmAction === 'shutdown' ? 'Shutdown Device'
+            : confirmAction === 'os_update' ? 'Patch Device'
+            : 'Update Agent'
+        }
+        message={
+          confirmAction === 'reboot'
+            ? `Are you sure you want to reboot "${device.hostname}"? This will temporarily take the device offline.`
+            : confirmAction === 'shutdown'
+            ? `Are you sure you want to shut down "${device.hostname}"? The device will go offline and require physical or out-of-band access to turn back on.`
+            : confirmAction === 'os_update'
+            ? `Run OS package updates on "${device.hostname}"? This will upgrade all pending packages.`
+            : `Trigger an agent update check on "${device.hostname}"?`
+        }
+        confirmLabel={confirmAction === 'reboot' ? 'Reboot' : confirmAction === 'shutdown' ? 'Shut Down' : confirmAction === 'os_update' ? 'Patch' : 'Update'}
+        pendingLabel={confirmAction === 'reboot' ? 'Rebooting…' : confirmAction === 'shutdown' ? 'Shutting down…' : confirmAction === 'os_update' ? 'Patching…' : 'Updating…'}
+        onConfirm={() => {
+          const action = confirmAction!
+          return commandMutation.mutateAsync({ action, params: action === 'os_update' ? { mode: 'full' } : {} })
+        }}
+        successToast={cmd => commandSentTitle(confirmAction!, device.hostname, cmd.status)}
+        onSuccess={() => { if (confirmAction === 'agent_update') setAgentUpdateSent(true) }}
+        onClose={() => setConfirmAction(null)}
+      />
+      <ConfirmDialog
+        open={deleteScope !== null}
+        variant="danger"
+        title="Delete Device"
+        message={deleteScope?.uninstall
+          ? `Remove "${device.hostname}" from the fleet? The agent will be uninstalled from the device.`
+          : `Remove "${device.hostname}" from the fleet? The device is offline — you may need to manually uninstall the agent.`
+        }
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        onConfirm={() => deleteMutation.mutateAsync(deleteScope!.uninstall)}
+        successToast={`Device "${device.hostname}" deleted`}
+        onSuccess={() => navigate('/')}
+        onClose={() => setDeleteScope(null)}
+      />
 
       {/* Hardware + OS (side by side) */}
       {(device.hardware_profile || tel?.os) && (
@@ -588,7 +605,7 @@ export default function DeviceDetail() {
                 <InfoItem label="Kernel" value={tel.os.kernel} />
                 <InfoItem label="Arch" value={tel.os.kernel_arch} />
                 <InfoItem label="Timezone" value={tel.os.timezone || '-'} />
-                {tel.os.uptime != null && <InfoItem label="Uptime" value={formatUptime(tel.os.uptime)} />}
+                {tel.os.uptime != null && <InfoItem label="Uptime" value={formatDuration(tel.os.uptime)} />}
               </div>
             </Section>
           )}
@@ -655,7 +672,7 @@ export default function DeviceDetail() {
           </div>
           <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4">
             {tel.ups.battery_runtime != null && (
-              <InfoItem label="Runtime Remaining" value={formatUptime(tel.ups.battery_runtime)} />
+              <InfoItem label="Runtime Remaining" value={formatDuration(tel.ups.battery_runtime)} />
             )}
             {tel.ups.input_voltage != null && (
               <InfoItem label="Input Voltage" value={`${tel.ups.input_voltage.toFixed(1)} V`} />
@@ -698,13 +715,13 @@ export default function DeviceDetail() {
             ))}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <MetricChart heartbeats={heartbeats} metricKey="cpu_percent" label="CPU %" color="#3b82f6" />
-            <MetricChart heartbeats={heartbeats} metricKey="mem_percent" label="Memory %" color="#8b5cf6" />
-            <MetricChart heartbeats={heartbeats} metricKey="disk_io_percent" label="Disk I/O %" color="#f59e0b" subtitle="(all drives)" />
+            <MetricChart heartbeats={heartbeats} metricKey="cpu_percent" label="CPU %" color={chartColors.series.cpu} />
+            <MetricChart heartbeats={heartbeats} metricKey="mem_percent" label="Memory %" color={chartColors.series.mem} />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_io_percent" label="Disk I/O %" color={chartColors.series.diskIo} subtitle="(all drives)" />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            <MetricChart heartbeats={heartbeats} metricKey="disk_read_bytes_sec" label="Disk Read" color="#34d399" unit="bytes/s" subtitle="(all drives)" />
-            <MetricChart heartbeats={heartbeats} metricKey="disk_write_bytes_sec" label="Disk Write" color="#fb923c" unit="bytes/s" subtitle="(all drives)" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_read_bytes_sec" label="Disk Read" color={chartColors.series.diskRead} unit="bytes/s" subtitle="(all drives)" />
+            <MetricChart heartbeats={heartbeats} metricKey="disk_write_bytes_sec" label="Disk Write" color={chartColors.series.diskWrite} unit="bytes/s" subtitle="(all drives)" />
           </div>
         </Section>
       )}
@@ -950,13 +967,7 @@ export default function DeviceDetail() {
                           : `${rule.operator} ${rule.threshold}`}
                       </td>
                       <td className="py-1.5 pr-3">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                          rule.severity === 'critical' ? 'bg-red-500/20 text-red-400'
-                            : rule.severity === 'info' ? 'bg-blue-500/20 text-blue-400'
-                            : 'bg-amber-500/20 text-amber-400'
-                        }`}>
-                          {rule.severity}
-                        </span>
+                        <Badge category="severity" value={rule.severity} className="px-1.5 text-[10px]" />
                       </td>
                     </tr>
                   ))}
@@ -1462,7 +1473,7 @@ export default function DeviceDetail() {
                                     <tr key={i}>
                                       <td className="py-1.5 pr-3 font-mono text-xs" title={cert.sans?.join(', ')}>{cert.subject || '-'}</td>
                                       <td className="py-1.5 pr-3 text-xs text-gray-400">
-                                        {cert.not_after ? new Date(cert.not_after).toLocaleDateString() : '-'}
+                                        {cert.not_after ? <Timestamp value={cert.not_after} precision="minute" /> : '-'}
                                       </td>
                                       <td className={`py-1.5 pr-3 text-xs font-medium ${expiryColor}`}>
                                         {cert.days_left <= 0 ? (
@@ -1586,8 +1597,8 @@ export default function DeviceDetail() {
                             <span className="cursor-help border-b border-dotted border-gray-600">{timer.calendar}</span>
                           </Tooltip>
                         </td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.next_run)}</td>
-                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.last_run)}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.next_run, '-', zoneOpts)}</td>
+                        <td className="py-1.5 pr-4 text-xs text-gray-400">{formatRunDate(timer.last_run, '-', zoneOpts)}</td>
                         <td className="py-1.5 pr-4 font-mono text-xs">{timer.unit}</td>
                         <td className="py-1.5 pr-4">
                           <span className={`inline-block w-2 h-2 rounded-full ${timer.enabled ? 'bg-emerald-400' : 'bg-gray-600'}`} />
@@ -1636,12 +1647,6 @@ export default function DeviceDetail() {
             </button>
           )}
         </div>
-        {fetchLogsMutation.isSuccess && (
-          <p className="text-xs text-emerald-400 mb-2">Logs fetched — refreshing...</p>
-        )}
-        {fetchLogsMutation.isError && (
-          <p className="text-xs text-red-400 mb-2">Failed to fetch logs: {(fetchLogsMutation.error as Error).message}</p>
-        )}
         {deviceLogs && deviceLogs.length > 0 ? (
           <div className="max-h-96 overflow-y-auto scrollbar-thin">
             <table className="w-full text-sm">
@@ -1663,7 +1668,7 @@ export default function DeviceDetail() {
                     : 'text-gray-500'
                   return (
                     <tr key={i} className={rowColor}>
-                      <td className="py-1.5 pr-3 font-mono text-xs whitespace-nowrap opacity-70">{new Date(log.timestamp).toLocaleString()}</td>
+                      <td className="py-1.5 pr-3 font-mono text-xs whitespace-nowrap opacity-70"><Timestamp value={log.timestamp} /></td>
                       <td className="py-1.5 pr-3">
                         <span className="text-xs font-medium">
                           {log.priority <= 2 ? 'CRIT' : log.priority === 3 ? 'ERR' : log.priority === 4 ? 'WARN' : log.priority === 5 ? 'NOTICE' : log.priority === 6 ? 'INFO' : 'DEBUG'}
@@ -1700,7 +1705,7 @@ export default function DeviceDetail() {
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                     e.severity === 'critical' ? 'bg-red-400' : e.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
                   }`} />
-                  <span className="text-gray-400 font-mono text-xs">{new Date(e.created_at).toLocaleString()}</span>
+                  <Timestamp value={e.created_at} className="text-gray-400 font-mono text-xs" />
                   <span className="text-gray-200">{e.message}</span>
                 </div>
               ))}
@@ -1848,18 +1853,7 @@ function NetworkSection({ interfaces, onCreateAlert }: { interfaces: import('../
   )
 }
 
-function formatUptime(seconds: number) {
-  const d = Math.floor(seconds / 86400)
-  const h = Math.floor((seconds % 86400) / 3600)
-  if (d > 0) return `${d}d ${h}h`
-  const m = Math.floor((seconds % 3600) / 60)
-  return `${h}h ${m}m`
+function commandSentTitle(action: string, hostname: string, status: string): string {
+  return `${enumLabel('commandAction', action)} command sent to ${hostname} — ${enumLabel('commandStatus', status)}`
 }
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  if (bytes < 1024 * 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
-  return `${(bytes / 1024 / 1024 / 1024 / 1024).toFixed(1)} TB`
-}

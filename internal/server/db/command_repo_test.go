@@ -192,3 +192,11 @@ func TestListQueriesNeverWriteStatus(t *testing.T) {
 	assert.True(t, strings.HasPrefix(filtered, "SELECT "), "a list query must be a plain SELECT")
 	assert.True(t, strings.HasPrefix(active, "SELECT "), "an active query must be a plain SELECT")
 }
+
+// SEC C-3 after merging REG-HARDEN-001: the dashboard's collected_at bound
+// (models.TelemetryFutureTolerance) and the server's ingest clamp and read guard
+// (FutureSkewAllowance, notFutureDatedSQL) must be one tolerance, or a snapshot
+// could be kept by one and hidden by the other.
+func TestCL_SEC003_TelemetryToleranceMatchesSkewAllowance(t *testing.T) {
+	assert.Equal(t, FutureSkewAllowance, models.TelemetryFutureTolerance)
+}
