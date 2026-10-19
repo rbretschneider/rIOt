@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { eventCategory, type EventCategory } from '../../utils/eventCategory'
 import type { Event } from '../../types/models'
-import { Timestamp, enumLabel } from '../../components/ui'
+import { RelativeTime, enumLabel } from '../../components/ui'
 
 interface Props {
   events: Event[]
@@ -115,9 +115,8 @@ export default function ActivityRiver({ events }: Props) {
                 {severityLabel}
               </span>
               <span className="truncate flex-1">{e.message}</span>
-              <Timestamp
+              <RelativeTime
                 value={e.created_at}
-                precision="time"
                 className="shrink-0 text-gray-500 tabular-nums"
               />
             </div>
