@@ -4,9 +4,9 @@
 **QA Engineer:** QA Agent
 **Date:** 2026-10-19
 **Branch / range:** `autoupd-harden-001`, `3e11148..242407f` on top of main `8873911`
-**Verdict:** FAIL
+**Verdict:** PASS WITH NOTES (round 2, see "Round 2" at the end). Round 1 was FAIL; the sections up to "Round 2" describe round 1.
 
-Two functional defects (QA-D1, QA-D3) break an FRD guarantee and are reproduced by intentionally red tests that QA committed. Everything else in the story held up, including a live end-to-end probe on Linux against a real Docker daemon and compose v5.6.0. Details and the fix list are at the end.
+Round 1: two functional defects (QA-D1, QA-D3) break an FRD guarantee and are reproduced by intentionally red tests that QA committed. Everything else in the story held up, including a live end-to-end probe on Linux against a real Docker daemon and compose v5.6.0. Details and the fix list are at the end.
 
 ---
 
@@ -242,3 +242,118 @@ None that change a security property beyond those the implementation report list
 - **QA-D4:** match `COMPOSE_FILE` and `COMPOSE_PATH_SEPARATOR` as whole keys (the next character must be `=`, whitespace, or end of line) so an unrelated key is not refused. Low impact.
 - **QA-D5:** rate-limit the server skip `Warn` log with the same limiter as the event, and fix the Bounds estimate to count both agent log lines per refusal.
 - README: reword "Path components must be plain directories, not symlinks" to say a symlinked stack directory is resolved first.
+
+---
+
+# Round 2
+
+**Date:** 2026-10-19
+**Inputs:** senior dev's fixes `79e6135`, `c7487ef`, `3edfaf8`, `edfd896`, `626366d` on top of the security ruling `16d9a40`; the "QA round 1 fixes" section of the implementation report; the "QA-D2 ruling" at the end of the security review. Orchestrator decisions taken as given: the server no longer skips a multi-directory stack (it dispatches `compose_project` only and the agent decides; the `stack_update_skipped` event was removed), and a project-only dispatch holding the compose keys of every reported working directory is accepted.
+
+**Verdict: PASS WITH NOTES.** All round 1 defects are fixed and verified live. No blocking findings remain. Notes are at the end.
+
+## Re-run of the suites
+
+| Run | Result |
+|---|---|
+| Windows `go test -count=1 ./...` | 21 packages ok, 0 failing (the two former red repros are green) |
+| `go vet ./...` | clean |
+| `cd web && npm run test:run` | 66 files, 1410 tests passed |
+| `cd web && npx tsc --noEmit` | clean |
+| Linux `golang:1.24`: `go vet`, then `go test -count=1 -race ./internal/agent/... ./internal/server/... ./internal/models/...`, tree exported with `git archive`, LF | **all packages ok as root** |
+| Same agent test binary (`-race`) as non-root uid 1234, `-test.count=2` | **ok; 352 top-level passes in one run, no failures** |
+| After the QA round 2 additions: Linux `-race` for `internal/agent`, `server/handlers`, `server/commands` as root; agent binary as uid 1234 with `-test.count=2` | ok; 356 top-level passes |
+
+No flaky tests.
+
+## Live re-probe on Linux (same method as round 1)
+
+A Linux container with the Docker CLI and compose v5.6.0 mounted the host Docker socket, with a socat proxy exposing a `root:docker` mode 0660 socket. The agent (built without cgo from the fixed tree) and a throwaway driver test (not committed) ran as the docker-group user `riot` against the real daemon and real `docker compose`. All objects used the `qa-autoupd-` prefix.
+
+**QA-D1 (symlinked directory, mixed labels): fixed.** Two-service stack under a symlinked directory, config change to one service:
+
+| Step | Result |
+|---|---|
+| update 1: project plus link path | success; labels afterwards mixed (`a` real directory, `b` link path), exactly the round 1 failing state |
+| update 2: project only | **success** (round 1: `ambiguous_project`) |
+| update 3: project plus link path | success |
+| update 4: project plus target path | success |
+| old-server form, link path | success |
+| old-server form, target path | success |
+| project plus a work dir belonging to another stack | refused `work_dir_mismatch` |
+| a genuine two-directory project, project only | refused `ambiguous_project`, naming both directories, at precheck, nothing touched |
+
+The old-server form with one directory of a genuine two-directory project still proceeds in that directory. That is the round 1 behaviour of AC-011 and is not new.
+
+**QA-D3 (BOM) and QA-D4 (key match): fixed.** A stack whose `.env` is `<BOM>COMPOSE_FILE=custom.yaml` updated and only the service from `custom.yaml` remained (round 1: a second service from `compose.yaml` appeared). A stack whose `.env` held `COMPOSE_FILES_DIR=/data` updated normally (round 1: refused `env_unparsed`).
+
+**QA-D2 (unreadable mount source, security ruling): behaves as ruled.** The agent user could not traverse a root-owned 0750 sandbox directory P, and a container had a read-write bind source below it.
+
+| Scenario | Expected | Observed |
+|---|---|---|
+| P root-owned 0750, source below it | accepted | update **succeeded** (round 1: every update refused) |
+| doctor as the agent user | info line for the source compared through its prefix | `i mount source "<src>" of container "<name>" was compared through its readable prefix "<P>" (the agent user cannot read below it)`, project line passes |
+| doctor as root | euid warning naming the service user | `! the doctor runs as uid 0 but the agent runs as user "riot" (uid 1000): ... run it as that user, for example: sudo -u riot riot-agent doctor` |
+| P owned by an untrusted account | refused | `container_writable ... cannot resolve ...; the last readable directory fails the ownership rules (owner)` |
+| P group-writable by a group with an untrusted member | refused | same message with `(group_writable)` |
+| another container has a read-write source at P (above the unresolved source) | refused | `...; another read-write mount of a container is above it and could redirect it` |
+| symlink loop in the source (ELOOP) | refused | `cannot resolve ...`, no fallback |
+| offending container removed | updates succeed | success |
+
+The ruling's note holds: a home directory owned by an ordinary user still blocks the host, because that user can plant symlinks below it. This is intended and the README says so.
+
+## Mutation spot-check of the new guards
+
+Production mutants were applied to a scratch copy only and reverted.
+
+| Mutant | Result |
+|---|---|
+| fallback allowed for any error, not only permission errors | killed |
+| `typeWalk` of P removed | killed |
+| owner/mode/ACL walk of P removed | killed |
+| resolved-prefix ancestor test removed | killed |
+| compare through the prefix instead of prefix plus remainder | killed |
+| label resolver not applied (QA-D1) | killed (`TestQA_D1_...`, `TestUpdateStack_AC009_LinkAndTargetLabelsAreOneDirectory`) |
+| verification scope without resolver (QA-D1) | killed |
+| BOM trim removed (QA-D3) | killed |
+| exact-key match replaced by a prefix match (QA-D4) | **survived, then killed by a QA test** (below) |
+| lexical-ancestor test removed | **survived, then killed by a QA test** (below) |
+| doctor euid warning disabled; fallback info line disabled | killed |
+| server keeps `compose_work_dir` for multi-directory stacks | killed |
+| server holds only the first reported key | killed |
+| Windows guard of the fallback removed | survived; equivalent, since the trust set is empty on Windows and the owner rule refuses anyway (defence in depth) |
+| `len(rem)==0` guard removed | survived; equivalent, a non-nil error always leaves at least one remaining component |
+
+### Test gaps found and closed in round 2
+
+1. **Two tests named in the implementation report were never committed.** The report lists `TestComposeTrust_AC020_BOMPrefixedEnvIsParsed` and `TestComposeTrust_AC020_OnlyExactKeysAreParsed`. Commit `3edfaf8` changes only `compose_trust.go`, and no test of either name exists. QA-D3 was protected only by QA's own repro, and QA-D4 by nothing (the prefix mutant survived). QA added `TestQA_AC020_BOMPrefixedEnvIsParsed`, `TestQA_AC020_BOMDoesNotWeakenRefusal` and `TestQA_AC020_OnlyExactKeysAreParsed` (five lookalike keys are ignored, five exact-key forms are still refused). The mutant is now killed. The implementation report should be corrected.
+2. **Lexical-ancestor guard not pinned.** The existing "another writable source above" tests are also caught by the resolved-prefix guard, so removing the lexical test survived. The case only the lexical test catches is an ancestor source that is itself unreadable (a container could replace the inner path component with a symlink as root). `TestQA_AC019_FallbackRefusedWhenTheSourceAboveIsAlsoUnreadable` covers it and kills the mutant.
+
+## Bounds accounting
+
+Confirmed against the code and the corrected Bounds section:
+
+- No server event type, limiter, map or log line remains from the skip path: a search finds no `skipLimiter`, `stack_update_skipped` or `noteStackSkipped` in Go, web or README. This closes the unbounded-map point and QA-D5.
+- The agent writes two Warn lines per refusal, as the corrected report says. The recomputed numbers check out: about 3.9 KB per attempt, 8 attempts on the first day (about 31 KB per refused policy), 4 per day at the 6 hour backoff ceiling (about 16 KB), about 160 KB for ten refused policies. The backoff schedule (15, 45, 105, 225, 465, 825, 1185 minutes) was rechecked.
+- The project-only duplicate guard (compose keys of every reported directory) is real and mutation-checked. QA accepts the orchestrator's ruling on it; it adds no new key kind.
+- New in-memory state is the per-snapshot label memo, bounded by the container count and discarded with the snapshot. Temp-file handling was not touched; the live sanitize path was not re-run.
+- The refusal size caps are pinned by the round 1 QA tests, which still pass.
+
+## Tests added by QA in round 2
+
+| File | Tests | Covers |
+|---|---|---|
+| `internal/agent/compose_trust_qa_test.go` | `TestQA_AC019_FallbackRefusedWhenTheSourceAboveIsAlsoUnreadable`, `TestQA_AC020_BOMPrefixedEnvIsParsed`, `TestQA_AC020_BOMDoesNotWeakenRefusal`, `TestQA_AC020_OnlyExactKeysAreParsed` | AC-019 (QA-D2 ruling), AC-020 (QA-D3, QA-D4) |
+| `internal/agent/compose_trust_qa_defects_test.go` | header comment only; both tests are now green regression guards | QA-D1, QA-D3 |
+| `internal/server/handlers/stack_skip_qa_test.go` | removed by senior dev in `79e6135` along with the code it tested | n/a |
+
+## Notes (non-blocking)
+
+- **Implementation report accuracy.** It names two tests that do not exist (above). Correct the report or add tests under those names.
+- **Old agents.** A project-only dispatch to an agent older than this story fails its existing "required" precheck, so a multi-directory stack never updates on an old agent. It fails visibly with the normal backoff, as the orchestrator decided.
+- **Old-server form.** With a work dir naming one directory of a genuine two-directory project, the agent proceeds in that directory (AC-011 as built). Unchanged by this round.
+- **Cleanup.** All `qa-autoupd-*` containers, networks, the cache volume and the image were removed. The pulled base images `golang:1.24`, `docker:cli` and `alpine:3` remain as shared cache. A container named `growth001-pg-test` appeared on the machine during the session; it is not QA's.
+
+## Final verdict
+
+**PASS WITH NOTES.** The round 1 blockers QA-D1 and QA-D3 are fixed and verified on a live daemon. QA-D4, QA-D5 and the QA-D2 security ruling are implemented as specified and verified live. The Linux suites are green as root and non-root. The new guards are mutation-checked, with two gaps closed by QA tests.
