@@ -736,9 +736,11 @@ func TestCL_SEC003_PG_LatestQueriesIgnoreFutureRows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"dev-1"}, gpus)
 
+	// REG-HARDEN-001 excludes future-dated rows from every read, history included.
 	history, err := repo.GetHistory(ctx, "dev-1", 10, 0)
 	require.NoError(t, err)
-	assert.Len(t, history, 2, "history keeps every snapshot")
+	require.Len(t, history, 1, "[SEC-003] history must skip the future row")
+	assert.Equal(t, "real", history[0].Data.Docker.Containers[0].Name)
 
 	exact := now.Add(models.TelemetryFutureTolerance - 5*time.Second)
 	insert("dev-2", exact, "within-tolerance", 1)
