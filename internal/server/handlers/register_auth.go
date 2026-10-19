@@ -249,7 +249,7 @@ func qualifyingCertDeviceID(ctx context.Context, cs *tls.ConnectionState, caRepo
 // Both values are hashed first so ConstantTimeCompare always sees two
 // equal-length inputs.
 //
-// TODO(merge): collapse into HARDEN-002's registrationKeyMatches helper when
+// TODO(HARDEN-002): collapse into HARDEN-002's registrationKeyMatches helper when
 // that branch lands (same semantics). Do not declare a second helper with that
 // name here.
 func regKeyEqual(provided, configured string) bool {
