@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -1063,6 +1064,7 @@ func parseEnvComposeFile(data []byte, windows bool) (files, sep string, err erro
 	if windows {
 		sep = ";"
 	}
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // a UTF-8 byte order mark, which compose also skips
 	seen := map[string]bool{}
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(raw, "\r")
@@ -1099,14 +1101,25 @@ func parseEnvComposeFile(data []byte, windows bool) (files, sep string, err erro
 // two variables the agent models.
 func isEnvCandidate(lt string) bool {
 	for _, key := range []string{"COMPOSE_FILE", "COMPOSE_PATH_SEPARATOR"} {
-		if strings.HasPrefix(lt, key) {
+		if hasEnvKey(lt, key) {
 			return true
 		}
-		if rest, ok := strings.CutPrefix(lt, "export"); ok && rest != lt && len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t') {
-			if strings.HasPrefix(strings.TrimLeft(rest, " \t"), key) {
+		if rest, ok := strings.CutPrefix(lt, "export"); ok && len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t') {
+			if hasEnvKey(strings.TrimLeft(rest, " \t"), key) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// hasEnvKey reports whether s starts with exactly the variable name key: the
+// next character must end the name (end of line, whitespace or "="). A name that
+// merely shares the prefix, such as COMPOSE_FILES_DIR, is another variable.
+func hasEnvKey(s, key string) bool {
+	rest, ok := strings.CutPrefix(s, key)
+	if !ok {
+		return false
+	}
+	return rest == "" || rest[0] == '=' || rest[0] == ' ' || rest[0] == '\t'
 }
