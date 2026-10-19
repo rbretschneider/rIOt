@@ -165,3 +165,12 @@ func RequestScheme(r *http.Request) string {
 	}
 	return "http"
 }
+
+// IsHTTPS reports whether the request arrived over HTTPS, using the same
+// resolved scheme as RequestScheme (trusted X-Forwarded-Proto, else r.TLS).
+// It is the single predicate behind both the session cookie's Secure flag and
+// the Strict-Transport-Security header, so the two can never disagree
+// (HARDEN-002 AD-003).
+func IsHTTPS(r *http.Request) bool {
+	return RequestScheme(r) == "https"
+}

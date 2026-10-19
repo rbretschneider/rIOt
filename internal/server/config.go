@@ -41,6 +41,11 @@ type Config struct {
 	// supply forwarding headers (X-Forwarded-For, X-Real-IP, True-Client-IP,
 	// X-Forwarded-Proto). Empty (the default) trusts nobody (AD-020).
 	TrustedProxies string
+
+	// PprofAddr is the raw (trimmed) RIOT_PPROF_ADDR value. Empty disables the
+	// loopback pprof listener. It is validated by ParsePprofAddr in Start,
+	// after slog is configured, so a rejection can be logged (HARDEN-002 AD-002).
+	PprofAddr string
 }
 
 func LoadConfig() *Config {
@@ -131,6 +136,7 @@ func LoadConfig() *Config {
 	cfg.OIDCClientSecret = strings.TrimSpace(os.Getenv("RIOT_OIDC_CLIENT_SECRET"))
 	cfg.OIDCButtonLabel = strings.TrimSpace(os.Getenv("RIOT_OIDC_BUTTON_LABEL"))
 	cfg.TrustedProxies = strings.TrimSpace(os.Getenv("RIOT_TRUSTED_PROXIES"))
+	cfg.PprofAddr = strings.TrimSpace(os.Getenv("RIOT_PPROF_ADDR"))
 
 	return cfg
 }

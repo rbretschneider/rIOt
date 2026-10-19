@@ -32,7 +32,7 @@ wizard establishes that password; until it completes, `GET /api/v1/auth/check` r
 **Problem.** A shared password cannot be attributed to a person, cannot be revoked for one
 person, and cannot carry MFA. Homelab operators already run an IdP for exactly this reason.
 
-**Why now.** House app standards (`Hawaii\docs\app_standards.md` §4, "OIDC / SSO — baseline
+**Why now.** House app standards (the operator's house app standards §4, "OIDC / SSO — baseline
 support, off until configured") make OIDC a baseline feature of every in-house app, and a
 live reference implementation exists in `photojournal\apps\server\src\auth\oidc\`.
 
@@ -620,7 +620,7 @@ architect should not silently choose differently.
 
 | Dependency | Nature | Status |
 |---|---|---|
-| An authentik instance | Required to exercise AC-006 through AC-018 end to end. Per `app_standards.md` §4, no IdP is deployed on hawaii yet. | **Blocking for live verification only.** Automated ACs must be satisfiable against a stubbed/mock issuer; a live authentik run is a separate verification step. |
+| An authentik instance | Required to exercise AC-006 through AC-018 end to end. Per `app_standards.md` §4, no IdP is deployed yet. | **Blocking for live verification only.** Automated ACs must be satisfiable against a stubbed/mock issuer; a live authentik run is a separate verification step. |
 | `github.com/coreos/go-oidc/v3`, `golang.org/x/oauth2` | New Go dependencies mandated by D-5 and `app_standards.md` §4 rule 3. | New to `go.mod`. |
 | Existing session machinery (`internal/server/handlers` login/JWT path, `riot_session` cookie) | The callback must reuse it verbatim (FR-023). | Present. |
 | First-run setup state (`adminRepo.IsSetupComplete`) | Gates FR-029. | Present. |

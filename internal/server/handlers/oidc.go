@@ -99,7 +99,7 @@ func (h *Handlers) OIDCStart(w http.ResponseWriter, r *http.Request) {
 		Path:     oidc.TransactionCookiePath,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   middleware.RequestScheme(r) == "https",
+		Secure:   middleware.IsHTTPS(r),
 		MaxAge:   oidc.TransactionMaxAgeSeconds,
 	})
 
@@ -116,7 +116,7 @@ func clearTransactionCookie(w http.ResponseWriter, r *http.Request) {
 		Path:     oidc.TransactionCookiePath,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   middleware.RequestScheme(r) == "https",
+		Secure:   middleware.IsHTTPS(r),
 		MaxAge:   -1,
 	})
 }

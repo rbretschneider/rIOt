@@ -6,6 +6,7 @@ import * as demo from './demo-data'
 import type { SettingsClient } from './settings'
 import { FEATURES } from '../hooks/featureCatalog'
 import type { AutomationConfig } from '../types/models'
+import { redactChannelConfig } from '../utils/secrets'
 
 const delay = (ms = 400) => new Promise(r => setTimeout(r, ms))
 
@@ -21,8 +22,8 @@ export const settingsApi: SettingsClient = {
 
   // Notification Channels
   getNotificationChannels: () => Promise.resolve(demo.getNotificationChannels()),
-  createNotificationChannel: async (ch: any) => { await delay(); return { id: 99, ...ch, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
-  updateNotificationChannel: async (_id: number, ch: any) => { await delay(); return { id: _id, ...ch, updated_at: new Date().toISOString() } },
+  createNotificationChannel: async (ch: any) => { await delay(); return { id: 99, ...ch, config: redactChannelConfig(ch.type, ch.config ?? {}), created_at: new Date().toISOString(), updated_at: new Date().toISOString() } },
+  updateNotificationChannel: async (_id: number, ch: any) => { await delay(); return { id: _id, ...ch, config: redactChannelConfig(ch.type, ch.config ?? {}), updated_at: new Date().toISOString() } },
   deleteNotificationChannel: async () => { await delay(); return { status: 'ok' } },
   testNotificationChannel: async () => { await delay(); return { success: true } },
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/notify"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -105,10 +106,13 @@ func (h *Handlers) ListNotificationChannels(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error":"failed to list channels"}`, http.StatusInternalServerError)
 		return
 	}
-	if channels == nil {
-		channels = []models.NotificationChannel{}
+	// HARDEN-002 AD-007: secrets are write-only; every response carries the
+	// redacted copy.
+	redacted := make([]models.NotificationChannel, len(channels))
+	for i, ch := range channels {
+		redacted[i] = notify.RedactChannel(ch)
 	}
-	writeJSON(w, http.StatusOK, channels)
+	writeJSON(w, http.StatusOK, redacted)
 }
 
 // CreateNotificationChannel handles POST /api/v1/settings/notification-channels.
@@ -125,11 +129,13 @@ func (h *Handlers) CreateNotificationChannel(w http.ResponseWriter, r *http.Requ
 	if ch.Config == nil {
 		ch.Config = make(map[string]interface{})
 	}
+	// A submitted sentinel has nothing to keep on create: it is stored as empty.
+	ch.Config = notify.MergeSecrets(nil, ch)
 	if err := h.notifyRepo.CreateChannel(r.Context(), &ch); err != nil {
 		http.Error(w, `{"error":"failed to create channel"}`, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusCreated, ch)
+	writeJSON(w, http.StatusCreated, notify.RedactChannel(ch))
 }
 
 // UpdateNotificationChannel handles PUT /api/v1/settings/notification-channels/{id}.
@@ -144,15 +150,23 @@ func (h *Handlers) UpdateNotificationChannel(w http.ResponseWriter, r *http.Requ
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	// Load the stored channel to resolve write-only secrets against. A missing
+	// channel is a 404 with no write (previously a silent no-op returning 200).
+	stored, err := h.notifyRepo.GetChannel(r.Context(), id)
+	if err != nil || stored == nil {
+		http.Error(w, `{"error":"channel not found"}`, http.StatusNotFound)
+		return
+	}
 	ch.ID = id
 	if ch.Config == nil {
 		ch.Config = make(map[string]interface{})
 	}
+	ch.Config = notify.MergeSecrets(stored, ch)
 	if err := h.notifyRepo.UpdateChannel(r.Context(), &ch); err != nil {
 		http.Error(w, `{"error":"failed to update channel"}`, http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, ch)
+	writeJSON(w, http.StatusOK, notify.RedactChannel(ch))
 }
 
 // DeleteNotificationChannel handles DELETE /api/v1/settings/notification-channels/{id}.

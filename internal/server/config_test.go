@@ -138,6 +138,20 @@ func TestLoadConfig_OIDCVars_WhitespaceOnlyTrimsToEmpty(t *testing.T) {
 	assert.Empty(t, cfg.OIDCClientSecret)
 }
 
+func TestHARDEN002_AC002_LoadConfig_PprofAddrDefaultsEmpty(t *testing.T) {
+	t.Setenv("RIOT_PPROF_ADDR", "")
+	cfg := LoadConfig()
+	assert.Equal(t, "", cfg.PprofAddr, "pprof must be disabled by default")
+}
+
+func TestHARDEN002_AC003_LoadConfig_PprofAddrTrimmedAndNotValidated(t *testing.T) {
+	t.Setenv("RIOT_PPROF_ADDR", "  127.0.0.1:6060\t")
+	assert.Equal(t, "127.0.0.1:6060", LoadConfig().PprofAddr, "value must be trimmed")
+
+	t.Setenv("RIOT_PPROF_ADDR", "0.0.0.0:6060")
+	assert.Equal(t, "0.0.0.0:6060", LoadConfig().PprofAddr, "LoadConfig does no validation; Start rejects and logs")
+}
+
 func TestLoadConfig_TrustedProxies_AbsentIsEmpty(t *testing.T) {
 	cfg := LoadConfig()
 	assert.Empty(t, cfg.TrustedProxies)

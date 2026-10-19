@@ -93,7 +93,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, alert models.Alert) {
 			continue
 		}
 		backend := factory(ch)
-		err := backend.Send(ctx, alert)
+		// HARDEN-002 AD-008: scrub immediately so the log line, ErrorMsg and
+		// every later reader only ever see the scrubbed text.
+		err := scrubError(backend.Send(ctx, alert), ch)
 
 		// Log the notification attempt. Only set FK fields when they reference
 		// persisted rows — a zero ID indicates an in-memory-only alert which
@@ -139,7 +141,7 @@ func (d *Dispatcher) SendToChannel(ctx context.Context, channelID int64, alert m
 		return &UnsupportedChannelError{Type: ch.Type}
 	}
 	backend := factory(*ch)
-	sendErr := backend.Send(ctx, alert)
+	sendErr := scrubError(backend.Send(ctx, alert), *ch)
 
 	logEntry := &models.NotificationLog{
 		ChannelID: &ch.ID,
@@ -172,7 +174,7 @@ func (d *Dispatcher) TestChannel(ctx context.Context, ch models.NotificationChan
 		return &UnsupportedChannelError{Type: ch.Type}
 	}
 	backend := factory(ch)
-	return backend.Send(ctx, models.Alert{
+	return scrubError(backend.Send(ctx, models.Alert{
 		Event: &models.Event{
 			Type:     "test",
 			Severity: models.SeverityInfo,
@@ -180,7 +182,7 @@ func (d *Dispatcher) TestChannel(ctx context.Context, ch models.NotificationChan
 		},
 		DeviceID: "test",
 		Hostname: "test-device",
-	})
+	}), ch)
 }
 
 // UnsupportedChannelError is returned for unknown channel types.

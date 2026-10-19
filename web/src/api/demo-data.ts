@@ -11,6 +11,7 @@ import type {
   FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
 } from '../types/models'
 import type { DevicePatchInfo } from './client'
+import { REDACTED_SECRET } from '../utils/secrets'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -645,7 +646,7 @@ export function getNotificationChannels(): NotificationChannel[] {
   return [
     {
       id: 1, name: 'ntfy Homelab', type: 'ntfy', enabled: true,
-      config: { url: 'https://ntfy.sh', topic: 'homelab-alerts' },
+      config: { server_url: 'https://ntfy.sh', topic: REDACTED_SECRET },
       created_at: ago(60 * DAY), updated_at: ago(60 * DAY),
     },
   ]
