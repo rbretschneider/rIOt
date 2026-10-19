@@ -68,6 +68,17 @@ func TestSEC011_SetupGuard_ExactMatchNotPrefix(t *testing.T) {
 }
 
 // SetupGuard passes every request through once setup is complete.
+// [HARDEN-002][AC-050] /health and /readyz pass the guard while setup is incomplete.
+func TestHARDEN002_AC050_SetupGuard_ReadyzPassesInSetupMode(t *testing.T) {
+	handler := newIncompleteSetupGuard()(passthroughHandler())
+
+	for _, path := range []string{"/health", "/readyz"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		assert.Equal(t, http.StatusOK, rec.Code, "path %s must pass the setup guard", path)
+	}
+}
+
 func TestSetupGuard_CompleteAllowsEverything(t *testing.T) {
 	var complete atomic.Bool
 	complete.Store(true)

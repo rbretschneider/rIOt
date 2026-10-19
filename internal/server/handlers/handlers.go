@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -137,19 +138,13 @@ func (h *Handlers) isSetupComplete() bool {
 	return h.setupComplete != nil && h.setupComplete.Load()
 }
 
-func (h *Handlers) Health(database *db.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		dbOK := database.Healthy(r.Context())
-		if !dbOK {
-			status = "degraded"
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status":   status,
-			"database": dbOK,
-			"time":     time.Now().UTC(),
-		})
-	}
+// registrationKeyMatches compares the presented registration key with the
+// configured one without leaking content or length through timing. Both values
+// are hashed to fixed-length digests first, so ConstantTimeCompare never sees
+// a length mismatch (HARDEN-002 AD-010).
+func registrationKeyMatches(provided, configured string) bool {
+	a, b := sha256.Sum256([]byte(provided)), sha256.Sum256([]byte(configured))
+	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }
 
 func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +152,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	regKey, _ := h.adminRepo.GetConfig(r.Context(), "registration_key")
 	if regKey != "" {
 		apiKey := r.Header.Get("X-rIOt-Key")
-		if apiKey != regKey {
+		if !registrationKeyMatches(apiKey, regKey) {
 			http.Error(w, `{"error":"invalid registration key"}`, http.StatusUnauthorized)
 			return
 		}

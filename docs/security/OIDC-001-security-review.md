@@ -16,8 +16,8 @@ Documents and code read in full: `docs/requirements/OIDC-001-frd.md`,
 `internal/server/handlers/setup.go`, `internal/server/router.go`,
 `internal/server/config.go`, `internal/server/server.go` (setup-state path),
 `internal/server/middleware/{admin_auth,ratelimit,setup,wsorigin,cors,logger}.go`,
-`go.mod`, `web/src/pages/Login.tsx` (form shape), `D:\Repos\Hawaii\docs\app_standards.md` §4,
-`D:\Repos\Hawaii\scripts\register_oidc_app.py`, `D:\Repos\Hawaii\docs\authentik.md`.
+`go.mod`, `web/src/pages/Login.tsx` (form shape), the operator's house app standards §4,
+the operator's `register_oidc_app.py` IdP registration script, the operator's authentik notes.
 
 ---
 
@@ -232,7 +232,7 @@ Two concrete facts make this more than theoretical:
 1. **In authentik, an application with zero policy bindings is accessible to every
    authenticated user.** The insecure configuration is the state you reach by doing nothing.
 2. **The house registration runbook produces exactly that state.**
-   `D:\Repos\Hawaii\scripts\register_oidc_app.py` — the tool `app_standards.md` §4 OIDC rule 10
+   the operator's `register_oidc_app.py` IdP registration script — the tool `app_standards.md` §4 OIDC rule 10
    mandates for registering apps — calls `/providers/oauth2/` and `/core/applications/`
    (lines 103-138) and creates **no `PolicyBinding` at all**. It also selects
    `default-provider-authorization-implicit-consent` (line 109), so an authorized user is
@@ -287,7 +287,7 @@ require an FRD revision. Two changes, both inside this story's existing machiner
    group") performed before the three variables are written to `.env`.* Because
    `register_oidc_app.py` is the sanctioned registration path and creates no binding, this
    must be called out against that script by name. Whether the script itself gains a
-   `--group` flag is a Hawaii-repo concern outside this story, but the gap must be recorded.
+   `--group` flag is an ops-repo concern outside this story, but the gap must be recorded.
 
 **Blocks:** Implementation (for item 1; item 2 is a technical-writer deliverable that QA must
 confirm exists).
@@ -477,7 +477,7 @@ warrants a standing check, not a one-time glance.
 **Severity:** MEDIUM
 **Domain:** Redirect handling / configuration
 **Location:** ADD AD-009 "Security" paragraph; ADD §10 row "`redirect_uri` poisoning";
-FRD D-8, A-3; `D:\Repos\Hawaii\scripts\register_oidc_app.py:119, 152`
+FRD D-8, A-3; `register_oidc_app.py:119, 152` (operator tooling)
 
 **Description.**
 AD-009 accepts that `r.Host` is client-controlled and that a poisoned `Host` yields a
@@ -489,7 +489,7 @@ honour `X-Forwarded-Host` is the right call.
 
 The problem is that the mitigation is an *operator configuration* that the house tooling will
 not produce for this app. `register_oidc_app.py` registers exactly one redirect URI:
-`https://<slug>.rbretschneider.com/api/v1/auth/oidc/callback` (line 152), with
+`https://<slug>.<your-domain>/api/v1/auth/oidc/callback` (line 152), with
 `matching_mode: strict` (line 119). rIOt, per D-8, is reached at `https://<host>:7331` and
 derives its redirect URI from the request. The two will never match. The operator's first
 SSO attempt will fail with an IdP redirect-mismatch error, and the path of least resistance
@@ -781,7 +781,7 @@ conditions follow, all documentation-accuracy or test-coverage items; none block
 `senior_dev` from starting.
 
 Two facts postdate the original report and are incorporated below:
-`D:\Repos\Hawaii\scripts\register_oidc_app.py` has gained `--group`, `--redirect-uri`, and
+the operator's `register_oidc_app.py` IdP registration script has gained `--group`, `--redirect-uri`, and
 `--launch-url`; the ADD's statements that the script creates no binding and lacks a
 redirect-URI override are stale.
 
@@ -824,7 +824,7 @@ resolved before the **technical writer** runs; C4–C6 before QA sign-off.
 `register_oidc_app.py` has gained `--group`, which creates the authentik group if missing,
 creates the `PolicyBinding` (`{"target": app_pk, "group": group_pk, "order": 0, "enabled": True}`),
 and prints a loud `WARNING` when the flag is omitted. §4.5 item 3 currently states the script
-"creates no policy binding" and that a `--group` flag "is a Hawaii-repo task, out of scope" —
+"creates no policy binding" and that a `--group` flag "is an ops-repo task, out of scope" —
 both stale. If the technical writer transcribes it as written, the runbook will send operators
 to the admin UI for work a single flag now does, and will never mention the flag. Replace item
 3 with: pass `--group <group>` on the registration run; the binding is REQUIRED; the script's
@@ -835,7 +835,7 @@ they remain correct.
 **C2 — Correct §4.5 item 5: `--redirect-uri` exists.**
 The script now accepts `--redirect-uri` (and `--launch-url`), and its help text already carries
 rIOt's own shape as the example plus "Always strict-matched; never use regex matching instead."
-§4.5 item 5's "adding that flag is a Hawaii-repo task" is stale. The prohibition on regex and
+§4.5 item 5's "adding that flag is an ops-repo task" is stale. The prohibition on regex and
 wildcard matching, the per-origin enumeration requirement, and the explanation of *why* the
 operator will be tempted are all still correct and must survive the edit.
 
@@ -892,7 +892,7 @@ requirements. Every MEDIUM is either resolved or explicitly and correctly deferr
 reasoning preserved.
 
 The six conditions are documentation accuracy (C1–C4, C6) and one test-coverage gap (C5). None
-of them describes a vulnerability in the design; C1–C3 exist because the Hawaii tooling moved
+of them describes a vulnerability in the design; C1–C3 exist because the ops tooling moved
 after the ADD was written, and shipping a runbook that describes tooling as it was a day ago
 would waste operator time and, in C3's case, walk them into the regex-matching trap the ADD
 correctly identified.

@@ -34,7 +34,7 @@
 - **USB device monitoring** — enumerates all connected USB devices with vendor/product names (resolved via sysfs + usb.ids database), serial numbers, device class, and speed; one-click alert creation to monitor for device disconnection (e.g. Coral TPU, Z-Wave stick, UPS HID)
 - **Advanced alerting** — threshold-based alerts on numeric metrics plus state-based monitoring for services, network interfaces, processes, USB devices, and UPS power events; near-real-time SSH/sudo/console/su authentication failure alerting (Linux; ≤60s latency, journald origin-filtered); include/exclude device scoping on all alert rules; one-click alert creation from device view; pre-built templates
 - **Event acknowledgement** — unread alert badge on the Alerts tab with per-event and bulk acknowledgement
-- **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support, delivery logging, and automatic retry queue
+- **Notification channels** — alert delivery via email (SMTP), Telegram, Discord, Slack, ntfy, Pushover, Gotify, and webhooks, with test-send support and delivery logging
 - **mTLS device authentication** — optional certificate-based device identity with automatic CA management, bootstrap key enrollment, automatic certificate renewal (agents renew when <30 days remain), server TLS regeneration from the dashboard, server-enforced cert + API key auth on all device routes, and zero external tooling
 - **Signed, fail-closed agent auto-update** — agents install new versions automatically, but only after verifying an ed25519 signature on the release checksums against a public key compiled into the agent; anything unsigned or unverifiable is refused and the running version keeps working. The `riot` user holds no arbitrary-root sudo rule (see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing))
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
@@ -150,7 +150,49 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_OIDC_CLIENT_SECRET` | — | Optional SSO: OAuth client secret — treat as a secret (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_OIDC_BUTTON_LABEL` | `Sign in with SSO` | Optional SSO: text shown on the login screen's SSO button (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_TRUSTED_PROXIES` | — (trust nobody) | Comma-separated CIDRs trusted to supply forwarding headers; set only when rIOt sits behind a reverse proxy (see [Single Sign-On](#single-sign-on-oidc)) |
+| `RIOT_PPROF_ADDR` | — (disabled) | Opt-in profiling listener on a literal loopback `ip:port`, for example `127.0.0.1:6060`. The port must differ from `RIOT_PORT`. Anything else is rejected and pprof stays off (see [Profiling (pprof)](#profiling-pprof)) |
 | `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
+
+### Profiling (pprof)
+
+rIOt includes the Go profiler (pprof) for diagnosing memory and CPU problems. It is off by default. The main listener never serves it: `/debug/pprof` and everything under it returns `404` on the port set by `RIOT_PORT` (default `7331`), whether or not profiling is enabled.
+
+To enable profiling, set `RIOT_PPROF_ADDR` to a literal loopback `ip:port`. The server then starts a second listener, separate from the dashboard, that serves only the pprof endpoints.
+
+| Rule | Detail |
+|---|---|
+| Host | A literal IP address: IPv4 in `127.0.0.0/8` (for example `127.0.0.1`) or IPv6 `::1`. Hostnames, including `localhost`, are rejected. |
+| Port | A plain decimal number from `1` to `65535`, with no leading zero. |
+| Port collision | The port must differ from `RIOT_PORT`. On Linux the profiler binds first, and a shared port would stop the main listener from starting. |
+
+If the value breaks any rule, the server logs an `ERROR` that names the reason and starts normally with profiling off. A bind failure (for example the port is already in use) is handled the same way. A successful start logs a `WARN` line with the bound address.
+
+`RIOT_PPROF_ADDR` takes effect only if it reaches the server process. The compose files in this repository list the server's environment explicitly, so add `- RIOT_PPROF_ADDR=127.0.0.1:6060` to the `riot-server` service's `environment:` list.
+
+#### Reaching pprof in Docker
+
+Inside a container, loopback means the container itself. A published port (`-p 6060:6060`) cannot reach a loopback listener, so run the client inside the container with `docker exec`. The image is Alpine-based and includes BusyBox `wget`.
+
+```bash
+# Heap profile, saved to the host
+docker exec riot-server wget -qO- http://127.0.0.1:6060/debug/pprof/heap > heap.pb.gz
+
+# 30-second CPU profile (the request blocks for 30 seconds)
+docker exec riot-server wget -qO- "http://127.0.0.1:6060/debug/pprof/profile?seconds=30" > cpu.pb.gz
+
+# Inspect a saved profile on a machine with Go installed
+go tool pprof heap.pb.gz
+```
+
+Replace `6060` with the port you configured, and `riot-server` with your container name if you changed it.
+
+If you run the server directly on a host (not in a container), use `curl http://127.0.0.1:6060/debug/pprof/heap` from that host.
+
+#### Security notes
+
+- pprof endpoints are unauthenticated. Anyone who can open a connection to the listener can read heap contents, goroutine stacks and command-line arguments, and can start 30-second CPU profiles. Enable it only while you investigate, then unset the variable and restart.
+- Under `network_mode: host`, or when running the binary directly, the listener binds the host's loopback, so every local user on that host can reach it.
+- The listener shuts down together with the server.
 
 ---
 
@@ -937,7 +979,7 @@ rIOt's admin dashboard can optionally accept sign-in through an external OpenID 
 SSO stays completely dormant until all three of `RIOT_OIDC_ISSUER_URL`, `RIOT_OIDC_CLIENT_ID`, and `RIOT_OIDC_CLIENT_SECRET` are set. Follow these steps **in order**:
 
 1. **Create the group binding first.** In your identity provider, create (or choose) a group for rIOt admins and bind the rIOt application to it before doing anything else here.
-2. **Register the application.** If you use authentik with the Hawaii house tooling, run:
+2. **Register the application.** If you use authentik with a script that registers OIDC applications, run it like this:
 
    ```bash
    python register_oidc_app.py riot \
@@ -974,6 +1016,8 @@ Secondarily — and only relevant once the above is handled — leaving it unset
 
 Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment on `:7331` (where rIOt terminates its own TLS) — it already gets `Secure` correctly in that shape and needs no configuration. Never set it to `0.0.0.0/0`; that hands your rate-limit key and audit IP back to whoever can write the header.
 
+For the response headers rIOt sets, including HSTS behind a proxy, see [Security Headers](#security-headers).
+
 ### What SSO does not do
 
 - It does not replace first-run setup — the setup wizard always runs first on a fresh install, and the SSO button never appears (and the endpoints 404) until setup is complete, regardless of whether the `RIOT_OIDC_*` variables are set.
@@ -981,6 +1025,56 @@ Leave `RIOT_TRUSTED_PROXIES` unset for rIOt's default direct-exposure deployment
 - It does not add users, roles, or permission tiers. rIOt remains single-admin: every successful SSO login receives the identical `sub: "admin"` session a password login would.
 - It does not persist any token from the identity provider. Only an audit record (issuer, subject, email, first-login and last-login timestamps) is kept for visibility — nothing in the login path reads it to make an access decision.
 - Signing out of rIOt does not sign you out of the identity provider, and signing out of the identity provider does not sign you out of rIOt — there is no single sign-out.
+
+---
+
+## Security Headers
+
+rIOt sets the same security headers on every response: the dashboard, the API, static files, redirects and errors. They need no configuration.
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | See the table below |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Strict-Transport-Security` | `max-age=31536000`, on HTTPS requests only (see [HSTS](#hsts)) |
+
+### Content Security Policy
+
+| Directive | Allows |
+|---|---|
+| `default-src` | `'self'` |
+| `script-src` | `'self'` only. Inline scripts and `eval` are blocked. |
+| `style-src` | `'self'` and inline styles |
+| `img-src`, `font-src` | `'self'` and `data:` |
+| `connect-src` | `'self'`, plus `ws://` and `wss://` on the host the browser used to reach rIOt (for the live dashboard and terminal WebSockets) |
+| `form-action` | `'self'`. A form on a rIOt page can only submit back to rIOt. |
+| `object-src` | `'none'` |
+| `base-uri` | `'self'` |
+| `frame-ancestors` | `'none'` |
+
+The WebSocket sources come from the request's `Host` header. rIOt includes the host only if it contains nothing but letters, digits, `.`, `-`, `:`, `[` and `]` and is at most 262 bytes. Any other value falls back to `connect-src 'self'`.
+
+**The dashboard cannot be embedded in an iframe.** `frame-ancestors 'none'` and `X-Frame-Options: DENY` make browsers refuse to render it inside another page, such as a panel in another dashboard application. Open rIOt in its own tab or window instead.
+
+If the browser console shows a Content Security Policy "Refused to ..." message on a rIOt page, report it as a bug and include the blocked URL.
+
+### HSTS
+
+`Strict-Transport-Security: max-age=31536000` (one year) tells a browser to use HTTPS for the hostname. rIOt sends it under the same rule that sets the `Secure` flag on the session cookie:
+
+- The connection to rIOt is TLS, or
+- The request comes from a proxy listed in `RIOT_TRUSTED_PROXIES` that sends `X-Forwarded-Proto: https`.
+
+rIOt never sends HSTS on plain HTTP, and ignores `X-Forwarded-Proto` from peers that are not trusted proxies. The header has no `includeSubDomains` or `preload`. There is no setting to turn it off.
+
+Read these consequences before you serve rIOt over HTTPS on a hostname:
+
+- **It applies to every port.** Once a browser has seen the header from `https://riot.example.com:7331`, it uses HTTPS for every port on `riot.example.com`. A plain-HTTP service on the same hostname (on another port) stops loading in that browser for up to a year.
+- **There is no click-through.** While the pin is active, the browser blocks the page on any certificate error (expired, self-signed, wrong name) and removes the "proceed anyway" option. Keep the certificate valid, or use a certificate your browsers trust.
+- **IP-address hosts are exempt.** Browsers ignore HSTS for sites reached by IP address, so `https://192.0.2.10:7331` is not pinned.
+- **Reset it in the browser.** The server cannot withdraw the pin early. Remove the hostname from the browser's HSTS list, or wait for it to expire.
 
 ---
 
@@ -992,10 +1086,6 @@ The agent includes a resilient DNS resolver that caches DNS lookups to disk. If 
 - **Disk persistence** — cache survives agent restarts (stored at `/etc/riot/dns-cache.json` or `%PROGRAMDATA%\riot\dns-cache.json`)
 - **Staleness warnings** — logs warnings when cached entries become stale (24h warning, 72h critical)
 - **IP fallback** — on DNS failure, the agent tries cached IPs with the original hostname in the `Host` header and TLS `ServerName`
-
-### Notification Retry Queue
-
-Failed notification deliveries (ntfy, webhook) are queued to disk and retried automatically. The queue persists across server restarts with a configurable maximum size (default: 100 items).
 
 ### Dead Man's Switch
 
@@ -1029,6 +1119,44 @@ Alert delivery is supported via:
 
 Configure channels in **Settings > Notifications**. Each channel can be tested with a one-click test notification. All delivery attempts are logged in **Settings > Notifications > Delivery Log**.
 
+### Secrets are write-only
+
+The API and the dashboard never return a stored notification secret. Wherever a response would contain one, it contains the fixed placeholder `[rIOt-redacted]` instead. An empty value (`""`) means the secret is not set, so a client can tell "configured" from "empty".
+
+| Channel | Redacted values |
+|---------|-----------------|
+| Email (SMTP) | `password` |
+| ntfy | `token`, `topic` |
+| Telegram | `bot_token` |
+| Discord, Slack | `webhook_url` |
+| Pushover | `api_token`, `user_key` |
+| Gotify | `app_token` |
+| Webhook | `url` and the value of every header (header names stay visible) |
+| Any other type | every config value |
+
+Credentials embedded in any other URL value (for example `https://user:pass@host` in `server_url`) are also redacted, and come back as `https://[rIOt-redacted]@host`.
+
+This applies to the list, create and update responses of `/api/v1/settings/notification-channels`.
+
+**Editing a channel.** The editor shows "Configured (unchanged)" under each stored secret.
+
+- Leave the field alone, or erase what you typed, to keep the stored value.
+- Type a new value to replace it.
+- Click **Clear** (available for the ntfy token and the SMTP password) to remove it. The field shows "Will be cleared on save" with an **Undo** link.
+
+**API clients.** On `PUT /api/v1/settings/notification-channels/:id`, a secret that is omitted or sent as `[rIOt-redacted]` keeps its stored value. A new value replaces it, and `""` clears it. For a webhook, the `headers` object you send is the complete set of headers: send `[rIOt-redacted]` as a header's value to keep that header's stored value. Changing a channel's type keeps no old secrets. The placeholder is never stored: on create, or where nothing is stored to keep, it becomes empty. `PUT` to a channel id that does not exist returns `404`.
+
+Because reads no longer return secrets, you cannot copy a channel to another server by reading it and posting it back. The copy has empty secrets. Enter them again.
+
+**Test notifications** use the stored secret. rIOt also removes secrets from the error text of failed sends, so they do not appear in the test-send response, the delivery log or the server log. Delivery log rows written before this change can still contain a leaked secret until the 90-day retention removes them.
+
+**What this does not protect against.**
+
+- Anyone who can edit channels. An administrator can point a stored channel at a destination they control and trigger a test or an alert, and rIOt sends the stored secret there. For example, they can change the host of a URL that carries embedded credentials. Treat channel-edit access as access to the secrets.
+- Secrets at rest. Secrets are still stored unencrypted in the database, and so appear in database dumps and backups.
+
+The protection is against disclosure through API responses, logs, browser caches and screen shares.
+
 ---
 
 ## API
@@ -1039,7 +1167,8 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Server health check |
+| `GET` | `/health` | Health check. Returns `200` with `"status":"ok"` when the database is reachable, and `503` with `"status":"degraded"` when it is not. Answers within about 2 seconds even if the database hangs |
+| `GET` | `/readyz` | Readiness check. Returns `200` with `"status":"ready"` only when the database is reachable and schema migrations have completed, otherwise `503` with `"status":"not_ready"`. Never blocked by first-run setup |
 | `POST` | `/api/v1/auth/login` | Admin login (returns JWT cookie) |
 | `POST` | `/api/v1/auth/logout` | Clear session cookie |
 | `POST` | `/api/v1/auth/change-password` | Change admin password |
@@ -1093,7 +1222,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/update/server` | Server update check |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/alert-rules[/:id]` | Alert rule CRUD |
 | `GET` | `/api/v1/settings/alert-templates` | List alert templates |
-| `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD |
+| `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD. Secrets are write-only (see [Notification Channels](#notification-channels)); `PUT` to an unknown id returns `404` |
 | `POST` | `/api/v1/settings/notification-channels/:id/test` | Test notification channel |
 | `GET` | `/api/v1/settings/notifications/log` | Notification delivery log |
 | `GET` | `/api/v1/settings/registration` | Get registration key setting |
@@ -1539,7 +1668,7 @@ Example (window mode, one device, agent reports `allow_reboot`):
 [
   {
     "device_id": "3f6c1c2e-0000-0000-0000-000000000000",
-    "hostname": "vermont",
+    "hostname": "nas-01",
     "pending_updates": 4,
     "security_count": 1,
     "reboot_class_count": 1,
