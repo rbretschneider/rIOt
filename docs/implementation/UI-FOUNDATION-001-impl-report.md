@@ -270,8 +270,8 @@ Items 1 to 3 are conflicts the task instructions resolved; the rest need archite
 
 ## Known gaps / not done
 
-- **Visual verification, screenshots (AC-006, 052, 119, 124, 133, 135, 138) and the `after-*.png` files** are Clod's (task instruction). `docs/implementation/UI-FOUNDATION-001-screenshots/` still contains only the `before-*` captures.
-- **AC-134 demo console walkthrough** (Dashboard, Fleet, one DeviceDetail, Security, every Settings tab, no "No queryFn", no unhandled rejection) and the **manual keyboard pass** (ADD DoD) were **not performed**: they need a browser. Type parity plus `demo-parity.test.ts` removes the cause of the "No queryFn" floods, but the walkthrough itself still needs a human.
+- **Visual verification:** done by Clod. See "Visual verification (Clod)" below. The only screenshot not captured is the AC-119 chart-tooltip hover, which unit tests cover.
+- **AC-134 demo console walkthrough:** Clod covered Fleet, Dashboard, Device detail and Security, with no console warnings or errors (see below). The Settings tabs were not visited; QA's `demo-parity.test.ts` checks that all 46 demo readers resolve. The manual keyboard pass from the ADD DoD was not run.
 - Anything in ADD Section 12.7 stays deferred: un-migrated modals (SecurityScoreModal, CreateAlertDialog, DeviceProbeModal, ProbeModal, SetupGuide), `Section.tsx` and the wider gray-class sweep, the ContainerDetail container-command banner (DEV-15), OQ-001 silent failures, probe-type/container-state/firewall labels, `text-[9px|10px|11px]`, orphaned `groupContainers`, body scroll lock, cross-tab preference sync, SEC-004's migration of the two `z-[60]` overlays onto the token scale.
 - `utils/docker.ts` `groupContainers` and its `ContainerGroup` type are now unused.
 
@@ -289,13 +289,13 @@ Clod checked the demo build (`web-demo`, port 5179) at 1440×900 with Playwright
 
 | Screenshot | Before | After | Result |
 |---|---|---|---|
-| Fleet (AC-119) | `before-fleet.png` | `after-fleet.png` | Hostnames render as reported (`backup-server`, not `BACKUP-SERVER`). "Last seen" uses `<RelativeTime>`. |
+| Fleet (AC-006, AC-124) | `before-fleet.png` | `after-fleet.png` | Hostnames render as reported (`backup-server`, not `BACKUP-SERVER`). "Last seen" uses `<RelativeTime>`. |
 | Toast stack (AC-052) | none (8 s inline banner below the table) | `after-toast-stack.png` | Fleet → Update Agents → Update all: a success toast at bottom-right ("Agent update dispatched", sent and skipped counts), with a Dismiss button. |
 | Confirm dialog (SEC-001) | none (native `confirm()`) | `after-confirm-dialog.png` | Device → Delete opens `role="dialog"` "Delete Device", focus starts on **Cancel**, and Escape closes it. |
-| Device detail header (AC-124, AC-133) | `before-device-top.png` | `after-device-detail-header.png` | The hostname keeps its case. The gauge has a "SECURITY SCORE" caption. Delete is a danger button in the right-hand cluster, behind a divider, no longer next to Docker · Probes · Terminal. |
-| Dashboard, demo (AC-135) | `before-dashboard.png` | `after-dashboard-demo.png` | Per-device charts, leaderboard and activity are populated. The "WebSocket disconnected" banner is gone. |
-| Security (AC-138) | `before-security.png` | `after-security.png` | All six stat cards fit one row. See fix 1 below. |
-| Device detail chart tooltip (AC-006) | n/a | not captured | Hover screenshots of recharts tooltips are unreliable in headless Playwright. The zone-labelled tooltip formatter is covered by unit tests (Section 8 mapping). |
+| Device detail header (AC-124, AC-138) | `before-device-top.png` | `after-device-detail-header.png` | The hostname keeps its case. The gauge has a "SECURITY SCORE" caption. Delete is a danger button in the right-hand cluster, behind a divider, no longer next to Docker · Probes · Terminal. |
+| Dashboard, demo (AC-133) | `before-dashboard.png` | `after-dashboard-demo.png` | Per-device charts, leaderboard and activity are populated. The "WebSocket disconnected" banner is gone. |
+| Security (AC-135) | `before-security.png` | `after-security.png` | All six stat cards fit one row. See fix 1 below. |
+| Device detail chart tooltip (AC-119) | n/a | not captured | Hover screenshots of recharts tooltips are unreliable in headless Playwright. The zone-labelled tooltip formatter is covered by unit tests (Section 8 mapping). |
 
 **AC-134 console walkthrough:** Clod visited Fleet, Dashboard, Device detail and Security in demo mode. `browser_console_messages` at warning level returned nothing: no "No queryFn" errors and no React warnings. Before this story, every page logged `[["feature-toggles"]]: No queryFn` and the Dashboard also logged `[["fleet-containers"]]` errors.
 
