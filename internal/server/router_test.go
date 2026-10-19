@@ -328,7 +328,7 @@ func TestHARDEN002_AC010_HeadersOnEveryResponseClass(t *testing.T) {
 		{"b: auth check", func() *httptest.ResponseRecorder { return mw.do("GET", "/api/v1/auth/check", "", nil) }, http.StatusOK, `{"authenticated":false,"needs_setup":false}` + "\n"},
 		{"b: register with a wrong key 401", func() *httptest.ResponseRecorder {
 			return mw.do("POST", "/api/v1/devices/register", `{"hostname":"h"}`, func(r *http.Request) { r.Header.Set("X-rIOt-Key", "wrong") })
-		}, http.StatusUnauthorized, `{"error":"invalid registration key"}` + "\n"},
+		}, http.StatusUnauthorized, `{"error":"unauthorized"}` + "\n"},
 		{"b: device route without a key 401", func() *httptest.ResponseRecorder {
 			return mw.do("POST", "/api/v1/devices/"+harnessDeviceID+"/heartbeat", `{}`, nil)
 		}, http.StatusUnauthorized, `{"error":"missing X-rIOt-Key header"}` + "\n"},

@@ -291,7 +291,7 @@ export default function FleetOverview() {
                       <span className="text-gray-600">-</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-400"><RelativeTime value={d.last_heartbeat} fallback="Never" /></td>
+                  <td className="px-4 py-3 text-sm text-gray-400"><RelativeTime value={d.last_heartbeat} fallback="Never" pastOnly /></td>
                   <td className="px-4 py-3 text-sm text-gray-400 font-mono">{d.primary_ip || '-'}</td>
                   <td className="px-4 py-3 text-sm">
                     <div className="flex items-center gap-2">

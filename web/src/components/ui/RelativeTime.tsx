@@ -6,10 +6,12 @@ export interface RelativeTimeProps {
   value: InstantInput
   fallback?: string
   className?: string
+  /** Clamp a future instant to "just now" (ages such as last-seen; agent clock skew). */
+  pastOnly?: boolean
 }
 
 /** "5m ago" text with the absolute, zone-labelled time in the title. Refreshes every 30 s. */
-export function RelativeTime({ value, fallback = '—', className }: RelativeTimeProps) {
+export function RelativeTime({ value, fallback = '—', className, pastOnly = false }: RelativeTimeProps) {
   const { zoneOpts, now } = useTimePreference()
   useMinuteTick()
   const instant = parseInstant(value)
@@ -20,7 +22,7 @@ export function RelativeTime({ value, fallback = '—', className }: RelativeTim
       title={formatTimestamp(instant, zoneOpts)}
       className={className}
     >
-      {formatRelative(instant, now())}
+      {formatRelative(instant, now(), { pastOnly })}
     </time>
   )
 }

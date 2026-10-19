@@ -14,6 +14,40 @@ import {
   parseInstant,
 } from './format'
 
+// REG-HARDEN-001 AC-035: the fleet table never renders a negative or future age. The
+// Last Seen column uses <RelativeTime pastOnly>, which formats through this clamp.
+describe('[AC-035] formatRelative pastOnly clamps a future last-seen to zero age', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z')
+  const ago = (ms: number) => new Date(now - ms).toISOString()
+
+  it('[AC-035] renders a future timestamp as zero age with no minus sign', () => {
+    const future = new Date(now + 5 * 60_000).toISOString()
+    const text = formatRelative(future, now, { pastOnly: true })
+    expect(text).toBe('just now')
+    expect(text).not.toContain('-')
+    expect(text).not.toMatch(/^in /)
+  })
+
+  it('[AC-035] renders a far-future timestamp (one year ahead) as zero age', () => {
+    const future = new Date(now + 365 * 86400_000).toISOString()
+    expect(formatRelative(future, now, { pastOnly: true })).toBe('just now')
+  })
+
+  it('[AC-035] a timestamp equal to now is zero age', () => {
+    expect(formatRelative(new Date(now).toISOString(), now, { pastOnly: true })).toBe('just now')
+  })
+
+  it('leaves past ages unchanged', () => {
+    expect(formatRelative(ago(5 * 60_000), now, { pastOnly: true })).toBe('5m ago')
+    expect(formatRelative(ago(3 * 3600_000), now, { pastOnly: true })).toBe('3h ago')
+    expect(formatRelative(ago(2 * 86400_000), now, { pastOnly: true })).toBe('2d ago')
+  })
+
+  it('without pastOnly a future instant still reads "in …"', () => {
+    expect(formatRelative(new Date(now + 5 * 60_000).toISOString(), now)).toBe('in 5m')
+  })
+})
+
 describe('formatBytesPerSec', () => {
   it('formats sub-KB as bytes', () => {
     expect(formatBytesPerSec(0)).toBe('0 B/s')

@@ -105,11 +105,15 @@ export function parseInstant(value: InstantInput): Date | null {
 /**
  * Relative time against an injected clock: "just now" within 60 s either way,
  * then "5m ago" / "3h ago" / "2d ago" (floor) or "in 10m" / "in 3h" / "in 2d".
+ * `pastOnly` clamps a future instant to age zero ("just now"). Use it for ages
+ * such as last-seen, where a future value only means an agent clock is ahead of
+ * the browser's, so the UI never renders a negative or future age.
  */
-export function formatRelative(value: InstantInput, nowMs: number): string {
+export function formatRelative(value: InstantInput, nowMs: number, opts: { pastOnly?: boolean } = {}): string {
   const d = parseInstant(value)
   if (!d) return EM_DASH
-  const diffSec = (nowMs - d.getTime()) / 1000
+  const rawSec = (nowMs - d.getTime()) / 1000
+  const diffSec = opts.pastOnly ? Math.max(0, rawSec) : rawSec
   const abs = Math.abs(diffSec)
   if (abs < 60) return 'just now'
   const minutes = Math.floor(abs / 60)
