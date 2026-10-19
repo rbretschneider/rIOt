@@ -43,6 +43,13 @@ const (
 	// reads so a hostile server cannot exhaust memory (SEC-002).
 	maxMetaFileSize int64 = 1 << 20
 
+	// maxDownloadBytes caps a self-update download (GROWTH-001 FR-072). The real
+	// agent is tens of MiB; a longer stream is a fault or an attack.
+	maxDownloadBytes int64 = 64 << 20
+	// staleStagingAge is how old a staged update file must be before the
+	// agent-start sweep removes it.
+	staleStagingAge = time.Hour
+
 	metaFetchTimeout      = 30 * time.Second
 	binaryDownloadTimeout = 5 * time.Minute
 
@@ -239,7 +246,15 @@ func (p *updatePipeline) run(ctx context.Context, downloadURL, checksumURL, sign
 // downloadBinary streams the binary to the staging path and returns its
 // SHA-256. The stream digest is pre-flight only (SEC-006): the verifier
 // re-hashes the bytes it installs.
-func (p *updatePipeline) downloadBinary(ctx context.Context, downloadURL string) (string, error) {
+func (p *updatePipeline) downloadBinary(ctx context.Context, downloadURL string) (sum string, err error) {
+	// Any failure leaves no partial file behind (GROWTH-001 FR-072). This defer
+	// is registered first so it runs after the file handle is closed.
+	defer func() {
+		if err != nil {
+			os.Remove(p.paths.binary)
+		}
+	}()
+
 	// Stage under the riot-owned data dir, not /tmp: PrivateTmp isolates /tmp
 	// and a rename across filesystems would fail.
 	stagingFile, err := os.OpenFile(p.paths.binary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, stagedBinaryMode)
@@ -265,14 +280,45 @@ func (p *updatePipeline) downloadBinary(ctx context.Context, downloadURL string)
 		return "", fmt.Errorf("download failed: status %d", resp.StatusCode)
 	}
 
+	// Refuse an announced oversize body without reading it, and cap an
+	// unannounced (chunked) or lying one: read at most the limit plus one byte,
+	// so "more than the limit arrived" is detectable.
+	if resp.ContentLength > maxDownloadBytes {
+		return "", fmt.Errorf("download too large: the server announced %d bytes, the limit is %d", resp.ContentLength, maxDownloadBytes)
+	}
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(stagingFile, hash), resp.Body); err != nil {
-		return "", fmt.Errorf("write binary: %w", err)
+	n, copyErr := io.Copy(io.MultiWriter(stagingFile, hash), io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if copyErr != nil {
+		return "", fmt.Errorf("write binary: %w", copyErr)
+	}
+	if n > maxDownloadBytes {
+		return "", fmt.Errorf("download too large: more than %d bytes arrived", maxDownloadBytes)
 	}
 	if err := stagingFile.Close(); err != nil {
 		return "", fmt.Errorf("close staging file: %w", err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// sweepStaleStaging removes the agent's own staged update files that are older
+// than maxAge, left behind by an interrupted or abandoned update. Only regular
+// files are removed (a directory or link planted at the path is left alone), and
+// a young file is kept because an update may be in flight (GROWTH-001 FR-073).
+func sweepStaleStaging(paths stagingPaths, now time.Time, maxAge time.Duration) {
+	for _, path := range []string{paths.binary, paths.checksums, paths.signature} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if now.Sub(info.ModTime()) <= maxAge {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			slog.Warn("could not remove a stale update staging file", "path", path, "error", err)
+			continue
+		}
+		slog.Info("removed a stale update staging file", "path", path)
+	}
 }
 
 // fetchSignedChecksums requires BOTH locators (an unsigned or pre-signing
