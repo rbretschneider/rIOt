@@ -261,6 +261,8 @@ func (s *Server) Start() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Stop pprof first, and only log its failure: a slow /profile download must
+	// never stop the main server from shutting down. A nil s.pprof is a no-op.
 	if err := s.pprof.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("pprof shutdown", "error", err.Error())
 	}
