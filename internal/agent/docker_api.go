@@ -8,6 +8,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/system"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
 
@@ -24,6 +26,8 @@ type dockerAPI interface {
 	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, containerName string) (container.CreateResponse, error)
 	ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error)
 	ImageInspect(ctx context.Context, imageRef string) (image.InspectResponse, error)
+	Info(ctx context.Context) (system.Info, error)
+	VolumeInspect(ctx context.Context, volumeID string) (volume.Volume, error)
 	Close() error
 }
 

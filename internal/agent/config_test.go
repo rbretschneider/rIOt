@@ -114,3 +114,39 @@ func TestBufferPath(t *testing.T) {
 		assert.Equal(t, "/var/lib/riot/buffer.db", path)
 	}
 }
+
+// AUTOUPD-HARDEN-001 AC-008: docker.compose_roots entries are stored cleaned.
+func TestLoadConfig_AC008_ComposeRootsParsedAndCleaned(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "stacks")
+	b := filepath.Join(dir, "other")
+	path := filepath.Join(dir, "agent.yaml")
+	// single-quoted YAML strings keep Windows backslashes literal
+	require.NoError(t, os.WriteFile(path, []byte("docker:\n  compose_roots:\n    - '"+a+string(filepath.Separator)+"'\n    - '"+b+string(filepath.Separator)+".'\n"), 0600))
+
+	cfg, err := LoadConfig(path)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{a, b}, cfg.Docker.ComposeRoots, "[AC-008] roots are stored cleaned")
+	assert.NoError(t, cfg.Docker.rootsErr, "[AC-008] valid roots set no error")
+}
+
+// AC-008: an invalid root does not fail the load; it is remembered so every
+// compose check fails closed while the agent keeps running.
+func TestLoadConfig_AC008_RelativeRootLoadsButSetsRootsErr(t *testing.T) {
+	captureLogs(t)
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("docker:\n  compose_roots:\n    - stacks/relative\n    - ''\n"), 0600))
+
+	cfg, err := LoadConfig(path)
+
+	require.NoError(t, err, "[AC-008] the load itself succeeds")
+	assert.Error(t, cfg.Docker.rootsErr, "[AC-008] a relative or empty root is remembered as an error")
+	ct := (&Agent{config: cfg}).composeTrust()
+	assert.Error(t, ct.rootsErr, "[AC-008] and reaches the validator")
+}
+
+// The sample config documents the new key as a commented example.
+func TestDefaultConfigTemplate_AC008_DocumentsComposeRoots(t *testing.T) {
+	assert.Contains(t, defaultConfigTemplate, "# compose_roots: []", "[AC-008] the generated agent.yaml shows the setting")
+}

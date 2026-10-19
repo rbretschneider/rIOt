@@ -75,6 +75,11 @@ type Agent struct {
 	pause         func(ctx context.Context, d time.Duration) bool
 	freshness     freshnessInvalidator
 
+	// AUTOUPD-HARDEN-001 test seams for the compose trust check: nil/empty means
+	// the real filesystem and runtime.GOOS.
+	trustFS       trustFS
+	trustPlatform string
+
 	// Disk I/O tracking for delta computation between heartbeats.
 	// owned by heartbeatLoop only — no concurrent access
 	prevDiskIO     map[string]diskIOSnapshot
