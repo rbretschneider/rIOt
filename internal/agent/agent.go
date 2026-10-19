@@ -128,6 +128,9 @@ func New(configPath, version string) (*Agent, error) {
 	if cfg.Collector.SMARTInterval > 0 {
 		registry.SetSMARTInterval(time.Duration(cfg.Collector.SMARTInterval) * time.Second)
 	}
+	limits := cfg.Limits()
+	registry.SetContainerLogLimits(limits.ContainerLogMaxLines, limits.ContainerLogMaxBytes, limits.ContainerLogMaxLineBytes)
+	registry.SetJournalLimits(limits.JournalMaxEntries, limits.JournalMaxLineBytes)
 
 	// Reboot-class hold enforcement (PATCH-GATE AD-003): one HoldManager
 	// shared by the updates collector (per-cycle reconcile + telemetry) and
