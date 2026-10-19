@@ -47,8 +47,6 @@ type TelemetryRepository interface {
 	GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error)
 	GetHistory(ctx context.Context, deviceID string, limit, offset int) ([]models.TelemetrySnapshot, error)
 	GetHeartbeatHistory(ctx context.Context, deviceID string, since time.Time) ([]models.Heartbeat, error)
-	PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error)
-	PurgeSnapshots(ctx context.Context, olderThan time.Time) (int64, error)
 	// GetFleetHeartbeats returns heartbeats for all devices since the given time,
 	// grouped by device ID. Used by the fleet dashboard endpoint.
 	GetFleetHeartbeats(ctx context.Context, since time.Time) (map[string][]models.Heartbeat, error)
@@ -73,18 +71,39 @@ type FleetContainerProjection struct {
 // FleetContainerProjection, mirroring only the fields the dashboard leaderboard
 // requires.
 type FleetContainerProjectionRow struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Image           string            `json:"image"`
-	State           string            `json:"state"`
-	CPUPercent      float64           `json:"cpu_percent"`
-	MemUsage        int64             `json:"mem_usage"`
-	MemLimit        int64             `json:"mem_limit"`
-	RestartCount    int               `json:"restart_count"`
-	UpdateAvailable *bool             `json:"update_available,omitempty"`
+	ShortID            string               `json:"short_id"`
+	ImageID            string               `json:"image_id,omitempty"`
+	Status             string               `json:"status"`
+	HealthStatus       string               `json:"health_status,omitempty"`
+	StartedAt          string               `json:"started_at,omitempty"`
+	FinishedAt         string               `json:"finished_at,omitempty"`
+	ExitCode           *int                 `json:"exit_code,omitempty"`
+	Ports              []models.PortMapping `json:"ports"`
+	UpdateStatus       string               `json:"update_status,omitempty"`
+	UpdateReason       string               `json:"update_reason,omitempty"`
+	NetworkMode        string               `json:"network_mode,omitempty"`
+	TargetKey          string               `json:"target_key"`
+	StackKey           string               `json:"stack_key,omitempty"`
+	RiotName           string               `json:"riot_name,omitempty"`
+	RiotIcon           string               `json:"riot_icon,omitempty"`
+	RiotGroup          string               `json:"riot_group,omitempty"`
+	RiotTags           []string             `json:"riot_tags,omitempty"`
+	MemLimitConfigured int64                `json:"mem_limit_configured,omitempty"`
+	NetworkParent      string               `json:"network_parent,omitempty"`
+	SelfRole           string               `json:"self_role,omitempty"`
+
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Image           string  `json:"image"`
+	State           string  `json:"state"`
+	CPUPercent      float64 `json:"cpu_percent"`
+	MemUsage        int64   `json:"mem_usage"`
+	MemLimit        int64   `json:"mem_limit"`
+	RestartCount    int     `json:"restart_count"`
+	UpdateAvailable *bool   `json:"update_available,omitempty"`
 	// Labels is retained solely to extract com.docker.compose.project for the
 	// stack column. The handler MUST NOT serialize any other label key (AD-011/AD-012).
-	Labels          map[string]string `json:"labels,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // EventRepository defines the interface for event database operations.
@@ -171,7 +190,6 @@ type ProbeRepository interface {
 	ListResults(ctx context.Context, probeID int64, limit int) ([]models.ProbeResult, error)
 	LatestResult(ctx context.Context, probeID int64) (*models.ProbeResult, error)
 	SuccessRate(ctx context.Context, probeID int64) (float64, int, error)
-	PurgeResults(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // LogRepository defines the interface for server log database operations.
@@ -223,21 +241,18 @@ type CARepository interface {
 type DeviceLogRepository interface {
 	InsertBatch(ctx context.Context, deviceID string, entries []models.LogEntry) error
 	List(ctx context.Context, deviceID string, priority, limit int, exact bool) ([]models.LogEntry, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // ContainerLogRepository defines the interface for container log operations.
 type ContainerLogRepository interface {
 	InsertBatch(ctx context.Context, deviceID string, entries []models.ContainerLogEntry) error
 	List(ctx context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // ContainerMetricRepository defines the interface for container metric operations.
 type ContainerMetricRepository interface {
 	StoreBatch(ctx context.Context, deviceID string, metrics []models.ContainerMetric) error
 	GetHistory(ctx context.Context, deviceID, containerName string, since time.Time) ([]models.ContainerMetric, error)
-	Purge(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
 // AutoUpdateRepository defines the interface for auto-update policy operations.
@@ -280,21 +295,21 @@ type ExternalIdentityRepository interface {
 
 // Compile-time interface conformance checks.
 var (
-	_ DeviceRepository    = (*DeviceRepo)(nil)
-	_ TelemetryRepository = (*TelemetryRepo)(nil)
-	_ EventRepository     = (*EventRepo)(nil)
-	_ AlertRuleRepository = (*AlertRuleRepo)(nil)
-	_ NotifyRepository    = (*NotifyRepo)(nil)
-	_ CommandRepository   = (*CommandRepo)(nil)
-	_ ProbeRepository     = (*ProbeRepo)(nil)
-	_ LogRepository       = (*LogRepo)(nil)
-	_ AdminRepository     = (*AdminRepo)(nil)
-	_ TerminalRepository  = (*TerminalRepo)(nil)
-	_ CARepository        = (*CARepo)(nil)
-	_ DeviceLogRepository = (*DeviceLogRepo)(nil)
-	_ AutoUpdateRepository      = (*AutoUpdateRepo)(nil)
-	_ ContainerLogRepository    = (*ContainerLogRepo)(nil)
-	_ ContainerMetricRepository = (*ContainerMetricRepo)(nil)
-	_ DeviceProbeRepository     = (*DeviceProbeRepo)(nil)
+	_ DeviceRepository           = (*DeviceRepo)(nil)
+	_ TelemetryRepository        = (*TelemetryRepo)(nil)
+	_ EventRepository            = (*EventRepo)(nil)
+	_ AlertRuleRepository        = (*AlertRuleRepo)(nil)
+	_ NotifyRepository           = (*NotifyRepo)(nil)
+	_ CommandRepository          = (*CommandRepo)(nil)
+	_ ProbeRepository            = (*ProbeRepo)(nil)
+	_ LogRepository              = (*LogRepo)(nil)
+	_ AdminRepository            = (*AdminRepo)(nil)
+	_ TerminalRepository         = (*TerminalRepo)(nil)
+	_ CARepository               = (*CARepo)(nil)
+	_ DeviceLogRepository        = (*DeviceLogRepo)(nil)
+	_ AutoUpdateRepository       = (*AutoUpdateRepo)(nil)
+	_ ContainerLogRepository     = (*ContainerLogRepo)(nil)
+	_ ContainerMetricRepository  = (*ContainerMetricRepo)(nil)
+	_ DeviceProbeRepository      = (*DeviceProbeRepo)(nil)
 	_ ExternalIdentityRepository = (*ExternalIdentityRepo)(nil)
 )

@@ -11,7 +11,6 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 )
 
-
 // --- MockDeviceRepo ---
 
 type MockDeviceRepo struct {
@@ -422,14 +421,6 @@ func (m *MockTelemetryRepo) GetHeartbeatHistory(_ context.Context, deviceID stri
 	return m.Heartbeats[deviceID], nil
 }
 
-func (m *MockTelemetryRepo) PurgeHeartbeats(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
-}
-
-func (m *MockTelemetryRepo) PurgeSnapshots(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
-}
-
 // FleetHeartbeats is the fixture map set by tests to control GetFleetHeartbeats output.
 func (m *MockTelemetryRepo) GetFleetHeartbeats(_ context.Context, since time.Time) (map[string][]models.Heartbeat, error) {
 	if m.Err != nil {
@@ -468,7 +459,7 @@ func (m *MockTelemetryRepo) GetGPUDeviceIDs(_ context.Context) ([]string, error)
 // FleetContainerLeaderboardFixture allows tests to set up the fixture data for
 // GetFleetContainerLeaderboard without going through the snapshot store.
 type FleetContainerLeaderboardFixture struct {
-	Rows     []db.FleetContainerProjection
+	Rows                        []db.FleetContainerProjection
 	GetAllLatestSnapshotsCalled bool
 }
 
@@ -521,6 +512,9 @@ type MockEventRepo struct {
 	Events []models.Event
 	NextID int64
 	Err    error
+	// PurgeCalled records whether Purge was invoked (PART-001 AC-015: this
+	// out-of-scope table's DELETE retention must still run).
+	PurgeCalled bool
 }
 
 func NewMockEventRepo() *MockEventRepo {
@@ -574,6 +568,9 @@ func (m *MockEventRepo) ListAll(_ context.Context, limit, offset int) ([]models.
 }
 
 func (m *MockEventRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
+	m.mu.Lock()
+	m.PurgeCalled = true
+	m.mu.Unlock()
 	return 0, m.Err
 }
 
@@ -706,15 +703,19 @@ func (m *MockAlertRuleRepo) Delete(_ context.Context, id int64) error {
 // --- MockNotifyRepo ---
 
 type MockNotifyRepo struct {
-	Channels     []models.NotificationChannel
-	Logs         []models.NotificationLog
-	NextChanID   int64
-	NextLogID    int64
-	Err          error
+	Channels   []models.NotificationChannel
+	Logs       []models.NotificationLog
+	NextChanID int64
+	NextLogID  int64
+	Err        error
 
 	// UpdateChannelCalls counts UpdateChannel invocations, so tests can assert
 	// that a rejected request wrote nothing.
 	UpdateChannelCalls int
+	// PurgeNotificationLogCalled records whether PurgeNotificationLog was
+	// invoked (PART-001 AC-015: this out-of-scope table's DELETE retention
+	// must still run).
+	PurgeNotificationLogCalled bool
 }
 
 func NewMockNotifyRepo() *MockNotifyRepo {
@@ -815,6 +816,7 @@ func (m *MockNotifyRepo) ListNotificationLog(_ context.Context, limit, offset in
 }
 
 func (m *MockNotifyRepo) PurgeNotificationLog(_ context.Context, _ time.Time) (int64, error) {
+	m.PurgeNotificationLogCalled = true
 	return 0, m.Err
 }
 
@@ -1490,10 +1492,6 @@ func (m *MockProbeRepo) SuccessRate(_ context.Context, probeID int64) (float64, 
 	return float64(successes) / float64(total), total, nil
 }
 
-func (m *MockProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
-}
-
 // --- MockAdminRepo ---
 
 type MockAdminRepo struct {
@@ -1648,6 +1646,9 @@ type MockCARepo struct {
 	Certs         []models.DeviceCert
 	BootstrapKeys []models.BootstrapKey
 	Err           error
+	// PurgeStaleBootstrapKeysCalled records whether the purge was invoked
+	// (PART-001 AC-015: this out-of-scope table's retention must still run).
+	PurgeStaleBootstrapKeysCalled bool
 }
 
 func NewMockCARepo() *MockCARepo {
@@ -1800,6 +1801,7 @@ func (m *MockCARepo) DeleteBootstrapKey(_ context.Context, keyHash string) error
 }
 
 func (m *MockCARepo) PurgeStaleBootstrapKeys(_ context.Context) (int64, error) {
+	m.PurgeStaleBootstrapKeysCalled = true
 	if m.Err != nil {
 		return 0, m.Err
 	}
@@ -1850,10 +1852,6 @@ func (m *MockDeviceLogRepo) List(_ context.Context, deviceID string, priority, l
 		result = result[:limit]
 	}
 	return result, nil
-}
-
-func (m *MockDeviceLogRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
 }
 
 // --- MockAutoUpdateRepo ---
@@ -1991,10 +1989,6 @@ func (m *MockContainerLogRepo) List(_ context.Context, deviceID, containerID str
 	return result, nil
 }
 
-func (m *MockContainerLogRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
-}
-
 // --- MockContainerMetricRepo ---
 
 type MockContainerMetricRepo struct {
@@ -2031,10 +2025,6 @@ func (m *MockContainerMetricRepo) GetHistory(_ context.Context, deviceID, contai
 	return result, nil
 }
 
-func (m *MockContainerMetricRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
-	return 0, m.Err
-}
-
 // --- MockDeviceProbeRepo ---
 
 type MockDeviceProbeRepo struct {
@@ -2042,6 +2032,10 @@ type MockDeviceProbeRepo struct {
 	Results []models.DeviceProbeResult
 	NextID  int64
 	Err     error
+	// PurgeResultsCalled records whether PurgeResults was invoked (PART-001
+	// AC-015: device_probe_results is a DIFFERENT table from probe_results
+	// and stays out of scope — its DELETE retention must still run).
+	PurgeResultsCalled bool
 }
 
 func NewMockDeviceProbeRepo() *MockDeviceProbeRepo {
@@ -2191,6 +2185,7 @@ func (m *MockDeviceProbeRepo) SuccessRate(_ context.Context, probeID int64) (flo
 }
 
 func (m *MockDeviceProbeRepo) PurgeResults(_ context.Context, _ time.Time) (int64, error) {
+	m.PurgeResultsCalled = true
 	return 0, m.Err
 }
 
@@ -2388,22 +2383,82 @@ func (f *FakeCompletionEvents) Calls() []FakeCompletion {
 	return out
 }
 
+// --- MockLogRepo ---
+
+// MockLogRepo is a minimal in-memory stand-in for db.LogRepository, used by
+// the PART-001 retention wiring test (AC-015: server logs are an
+// out-of-scope table and must keep their existing DELETE retention).
+type MockLogRepo struct {
+	mu   sync.Mutex
+	Logs []models.ServerLog
+	Err  error
+	// PurgeCalled records whether Purge was invoked.
+	PurgeCalled bool
+}
+
+func NewMockLogRepo() *MockLogRepo {
+	return &MockLogRepo{}
+}
+
+func (m *MockLogRepo) Insert(_ context.Context, entries []models.ServerLog) error {
+	if m.Err != nil {
+		return m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Logs = append(m.Logs, entries...)
+	return nil
+}
+
+func (m *MockLogRepo) List(_ context.Context, level string, limit int, before *time.Time) ([]models.ServerLog, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	return m.Logs, nil
+}
+
+func (m *MockLogRepo) CountSince(_ context.Context, level string, since time.Time) (int, error) {
+	if m.Err != nil {
+		return 0, m.Err
+	}
+	return len(m.Logs), nil
+}
+
+func (m *MockLogRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
+	m.mu.Lock()
+	m.PurgeCalled = true
+	m.mu.Unlock()
+	return 0, m.Err
+}
+
+func (m *MockLogRepo) PurgeAll(_ context.Context) (int64, error) {
+	if m.Err != nil {
+		return 0, m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := int64(len(m.Logs))
+	m.Logs = nil
+	return n, nil
+}
+
 // Compile-time interface conformance checks.
 var (
-	_ db.DeviceRepository    = (*MockDeviceRepo)(nil)
-	_ db.TelemetryRepository = (*MockTelemetryRepo)(nil)
-	_ db.EventRepository     = (*MockEventRepo)(nil)
-	_ db.AlertRuleRepository = (*MockAlertRuleRepo)(nil)
-	_ db.NotifyRepository    = (*MockNotifyRepo)(nil)
-	_ db.CommandRepository   = (*MockCommandRepo)(nil)
-	_ db.ProbeRepository     = (*MockProbeRepo)(nil)
-	_ db.AdminRepository     = (*MockAdminRepo)(nil)
-	_ db.TerminalRepository  = (*MockTerminalRepo)(nil)
-	_ db.CARepository        = (*MockCARepo)(nil)
-	_ db.DeviceLogRepository = (*MockDeviceLogRepo)(nil)
-	_ db.AutoUpdateRepository      = (*MockAutoUpdateRepo)(nil)
-	_ db.ContainerLogRepository    = (*MockContainerLogRepo)(nil)
-	_ db.ContainerMetricRepository = (*MockContainerMetricRepo)(nil)
-	_ db.DeviceProbeRepository     = (*MockDeviceProbeRepo)(nil)
+	_ db.DeviceRepository           = (*MockDeviceRepo)(nil)
+	_ db.TelemetryRepository        = (*MockTelemetryRepo)(nil)
+	_ db.EventRepository            = (*MockEventRepo)(nil)
+	_ db.AlertRuleRepository        = (*MockAlertRuleRepo)(nil)
+	_ db.NotifyRepository           = (*MockNotifyRepo)(nil)
+	_ db.CommandRepository          = (*MockCommandRepo)(nil)
+	_ db.ProbeRepository            = (*MockProbeRepo)(nil)
+	_ db.AdminRepository            = (*MockAdminRepo)(nil)
+	_ db.TerminalRepository         = (*MockTerminalRepo)(nil)
+	_ db.CARepository               = (*MockCARepo)(nil)
+	_ db.LogRepository              = (*MockLogRepo)(nil)
+	_ db.DeviceLogRepository        = (*MockDeviceLogRepo)(nil)
+	_ db.AutoUpdateRepository       = (*MockAutoUpdateRepo)(nil)
+	_ db.ContainerLogRepository     = (*MockContainerLogRepo)(nil)
+	_ db.ContainerMetricRepository  = (*MockContainerMetricRepo)(nil)
+	_ db.DeviceProbeRepository      = (*MockDeviceProbeRepo)(nil)
 	_ db.ExternalIdentityRepository = (*MockExternalIdentityRepo)(nil)
 )

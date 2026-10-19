@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -106,13 +105,4 @@ func (r *DeviceLogRepo) List(ctx context.Context, deviceID string, priority, lim
 		entries = append(entries, e)
 	}
 	return entries, nil
-}
-
-func (r *DeviceLogRepo) Purge(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx,
-		`DELETE FROM device_logs WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
 }

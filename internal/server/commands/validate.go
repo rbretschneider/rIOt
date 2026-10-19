@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/redact"
 )
 
 // Errors returned by ValidateReport and Service.HandleAgentReport for a report
@@ -69,6 +70,8 @@ func sanitizeReport(r models.CommandReport) models.CommandReport {
 	out := r
 	out.Step = models.SanitizeStep(r.Step)
 	out.Message = models.TruncateHead(models.SanitizeText(r.Message), models.MaxProgressMessageBytes)
+	out.Message, _ = redact.MaskLine(out.Message)
+	out.Message = models.TruncateHead(out.Message, models.MaxProgressMessageBytes)
 	if r.Result != nil {
 		res := *r.Result
 		res.Step = models.SanitizeStep(res.Step)
@@ -76,6 +79,44 @@ func sanitizeReport(r models.CommandReport) models.CommandReport {
 		res.Message = models.TruncateTail(models.SanitizeText(res.Message), models.MaxResultMsgBytes)
 		res.Stderr = models.TruncateTail(models.SanitizeText(res.Stderr), models.MaxStderrTailBytes)
 		res.Output = models.TruncateHeadTail(models.SanitizeText(res.Output), models.MaxReportOutputBytes)
+		res.Message, _ = redact.MaskText(res.Message, "<masked>")
+		res.Stderr, _ = redact.MaskText(res.Stderr, "<masked>")
+		res.Output, _ = redact.MaskText(res.Output, "<masked>")
+		res.Message = models.TruncateTail(res.Message, models.MaxResultMsgBytes)
+		res.Stderr = models.TruncateTail(res.Stderr, models.MaxStderrTailBytes)
+		res.Output = models.TruncateHeadTail(res.Output, models.MaxReportOutputBytes)
+		res.Steps = append([]models.DockerCommandStep(nil), res.Steps...)
+		if len(res.Steps) > 32 {
+			res.Steps = res.Steps[:32]
+		}
+		stepBudget := 64 << 10
+		for i := range res.Steps {
+			st := &res.Steps[i]
+			st.Name = models.SanitizeStep(st.Name)
+			st.Output, _ = redact.MaskText(models.TruncateHeadTail(models.SanitizeText(st.Output), 32768), "<masked>")
+			st.Output = models.TruncateHeadTail(st.Output, 32768)
+			if len(st.Output) > stepBudget {
+				st.Output = models.TruncateHeadTail(st.Output, stepBudget)
+				st.Truncated = true
+			}
+			stepBudget -= len(st.Output)
+			st.Seq = i + 1
+			st.Outcome = models.TruncateHead(models.SanitizeText(st.Outcome), 32)
+		}
+		res.TargetResults = append([]models.DockerTargetResult(nil), res.TargetResults...)
+		if len(res.TargetResults) > 100 {
+			res.TargetResults = res.TargetResults[:100]
+		}
+		for i := range res.TargetResults {
+			tr := &res.TargetResults[i]
+			tr.Container = models.TruncateHead(models.SanitizeText(tr.Container), 128)
+			tr.Message, _ = redact.MaskLine(models.TruncateHead(models.SanitizeText(tr.Message), 1024))
+			tr.Message = models.TruncateHead(tr.Message, 1024)
+			tr.Step = models.SanitizeStep(tr.Step)
+			if tr.Outcome != "succeeded" && tr.Outcome != "failed" && tr.Outcome != "skipped" && tr.Outcome != "summary" {
+				tr.Outcome = "failed"
+			}
+		}
 		out.Result = &res
 	}
 	return out

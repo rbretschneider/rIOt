@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/redact"
 )
 
 // restartedMessage is the failure text of a command that was executing when the
@@ -231,7 +233,7 @@ func (a *Agent) failBeforeStart(id, action, reason, message string) {
 }
 
 func isDockerMutation(action string) bool {
-	return action == models.ActionDockerUpdate || action == models.ActionDockerBulkUpdate
+	return strings.HasPrefix(action, "docker_stack_") || action == "docker_remove_items" || action == models.ActionDockerUpdate || action == models.ActionDockerBulkUpdate
 }
 
 // markerTarget is the human-readable target recorded in the in-flight marker.
@@ -342,6 +344,7 @@ type cmdRun struct {
 	step  string
 	state models.CommandState
 	held  []string
+	steps []models.DockerCommandStep
 }
 
 func (a *Agent) newCmdRun(payload models.CommandPayload) *cmdRun {
@@ -366,6 +369,19 @@ func (cr *cmdRun) Verifying(step string) { cr.setStep(step, models.CommandVerify
 
 func (cr *cmdRun) setStep(step string, state models.CommandState) {
 	cr.mu.Lock()
+	if cr.step != step && len(cr.steps) < 64 {
+		now := cr.a.clock().Now()
+		if len(cr.steps) > 0 {
+			last := &cr.steps[len(cr.steps)-1]
+			if last.FinishedAt == nil {
+				last.FinishedAt = &now
+				if last.Outcome == "" {
+					last.Outcome = "succeeded"
+				}
+			}
+		}
+		cr.steps = append(cr.steps, models.DockerCommandStep{Seq: len(cr.steps) + 1, Name: step, StartedAt: now})
+	}
 	cr.step, cr.state = step, state
 	cr.mu.Unlock()
 	if err := cr.a.inflight.SetStep(cr.id, step); err != nil {
@@ -388,7 +404,7 @@ func (cr *cmdRun) Percent(p int) {
 // notifier, so it still goes out when the operation's own context has expired
 // (FR-046).
 func (cr *cmdRun) Event(target, image, action string) {
-	evt := &models.DockerEvent{ContainerName: target, Action: action, Image: image}
+	evt := &models.DockerEvent{ContainerName: target, Action: action, Image: image, CommandID: cr.id}
 	cr.a.notifyEvent(func(ctx context.Context) {
 		if err := cr.a.tr.SendDockerEvent(ctx, evt); err != nil {
 			slog.Warn("failed to send docker lifecycle event", "action", action, "container", target, "error", err)
@@ -475,6 +491,23 @@ func (a *Agent) runAction(cr *cmdRun) (res commandExecResult) {
 
 // completeCommand turns an action result into the wire result and queues it.
 func (a *Agent) completeCommand(cr *cmdRun, res commandExecResult) {
+	res.Message, _ = redact.MaskText(res.Message, "<redacted>")
+	res.Output, _ = redact.MaskText(res.Output, "<redacted>")
+	res.Stderr, _ = redact.MaskText(res.Stderr, "<redacted>")
+	cr.mu.Lock()
+	steps := append([]models.DockerCommandStep(nil), cr.steps...)
+	cr.mu.Unlock()
+	if len(steps) > 0 {
+		now := a.clock().Now()
+		last := &steps[len(steps)-1]
+		last.FinishedAt = &now
+		if last.Outcome == "" {
+			last.Outcome = "succeeded"
+		}
+		if res.Status == models.ResultStatusError {
+			last.Outcome = "failed"
+		}
+	}
 	durationMs := a.clock().Now().Sub(cr.start).Milliseconds()
 
 	step := res.Step
@@ -486,7 +519,8 @@ func (a *Agent) completeCommand(cr *cmdRun, res commandExecResult) {
 		outcome = models.OutcomeFailed
 	}
 	result := models.CommandResult{
-		CommandID:  cr.id,
+		CommandID: cr.id,
+		Steps:     steps, TargetResults: res.TargetResults,
 		Status:     res.Status,
 		Message:    models.TruncateTail(models.SanitizeText(res.Message), models.MaxResultMsgBytes),
 		ExitCode:   res.ExitCode,
@@ -736,5 +770,22 @@ func (n *notifier) Flush(ctx context.Context) {
 	select {
 	case <-done:
 	case <-ctx.Done():
+	}
+}
+
+func (cr *cmdRun) recordStepOutput(output []byte, failed bool) {
+	safe, _ := redact.MaskText(models.SanitizeText(string(output)), "<redacted>")
+	truncated := len(safe) > 16<<10
+	safe = TruncateOutputSmart(safe, 16<<10)
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+	if len(cr.steps) == 0 {
+		return
+	}
+	last := &cr.steps[len(cr.steps)-1]
+	last.Output = safe
+	last.Truncated = truncated
+	if failed {
+		last.Outcome = "failed"
 	}
 }

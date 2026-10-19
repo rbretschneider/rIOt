@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"io/fs"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"runtime/debug"
 
 	"github.com/DesyncTheThird/rIOt/internal/server"
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
 )
 
 //go:embed all:migrations
@@ -19,6 +21,17 @@ var migrationsFS embed.FS
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "db-fingerprint" || os.Args[1] == "migrate") {
+		mFS, err := fs.Sub(migrationsFS, "migrations")
+		if err != nil {
+			os.Exit(1)
+		}
+		url := os.Getenv("RIOT_DB_URL")
+		if url == "" {
+			url = "postgres://riot:riot@localhost:5432/riot?sslmode=disable"
+		}
+		os.Exit(db.Maintenance(context.Background(), os.Args[1], url, mFS, os.Stdout))
+	}
 	// Set a soft memory limit so Go's GC can batch collections efficiently.
 	// Default 2 GiB — appropriate for telemetry workloads with dozens of devices
 	// and 48+ containers. A too-low limit causes GC thrashing (90%+ CPU in

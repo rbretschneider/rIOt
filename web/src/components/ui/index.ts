@@ -1,4 +1,7 @@
 export { focusRing } from './focusRing'
+export { Tabs,type ResourceTab } from './Tabs'
+export { DropdownMenu,type MenuItem } from './DropdownMenu'
+export { Popover } from './Popover'
 export { Button, Spinner, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
 export { Card, type CardProps } from './Card'
 export { Badge, type BadgeTone } from './Badge'

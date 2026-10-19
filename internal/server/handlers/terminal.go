@@ -13,6 +13,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/ingest"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/go-chi/chi/v5"
 	ws "github.com/gorilla/websocket"
@@ -44,6 +45,9 @@ type AgentConn struct {
 func (ac *AgentConn) Send(msg agentWSMessage) error {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
+	if c, ok := ac.Conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		c.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	}
 	return ac.Conn.WriteJSON(msg)
 }
 
@@ -193,11 +197,14 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 	reg := h.registry()
 	ac := &AgentConn{DeviceID: deviceID, Conn: conn}
 	reg.replace(deviceID, ac)
+	h.dockerAgentConnected(deviceID)
 
 	slog.Info("agent ws connected", "device", deviceID)
 
 	defer func() {
-		reg.unregister(deviceID, ac)
+		if reg.unregister(deviceID, ac) {
+			h.dockerAgentGone(deviceID)
+		}
 		conn.Close()
 		slog.Info("agent ws disconnected", "device", deviceID)
 	}()
@@ -228,6 +235,8 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	frameLimits := ingest.New()
+	var overSince, lastOver time.Time
 	// Read messages from agent and relay terminal output to browsers
 	for {
 		_, msgBytes, err := conn.ReadMessage()
@@ -235,6 +244,21 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		now := time.Now()
+		if !frameLimits.AllowFrame(deviceID, now) {
+			if overSince.IsZero() {
+				overSince = now
+			}
+			lastOver = now
+			if now.Sub(overSince) >= 3*time.Second {
+				conn.WriteControl(ws.CloseMessage, ws.FormatCloseMessage(ws.ClosePolicyViolation, "frame rate exceeded"), now.Add(time.Second))
+				return
+			}
+			continue
+		}
+		if now.Sub(lastOver) > time.Second {
+			overSince = time.Time{}
+		}
 		var msg agentWSMessage
 		if err := json.Unmarshal(msgBytes, &msg); err != nil {
 			continue
@@ -249,6 +273,8 @@ func (h *Handlers) HandleAgentWS(w http.ResponseWriter, r *http.Request) {
 // ignored.
 func (h *Handlers) handleAgentMessage(ctx context.Context, ac *AgentConn, msg agentWSMessage) {
 	switch msg.Type {
+	case "docker_read_result", "logs_data", "logs_event":
+		h.handleDockerAgentMessage(ac, msg)
 	case "terminal_output":
 		terminalBrowserConns.RLock()
 		sess, ok := terminalBrowserConns.m[msg.SessionID]
@@ -358,6 +384,12 @@ func (h *Handlers) HandleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	release, allowed := h.allowTerminal(deviceID)
+	if !allowed {
+		dockerError(w, 429, "rate_limited")
+		return
+	}
+	defer release()
 	conn, err := terminalUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("terminal ws upgrade failed", "error", err.Error())

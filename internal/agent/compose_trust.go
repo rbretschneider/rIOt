@@ -110,6 +110,7 @@ func (t trustedDir) same(o trustedDir) bool {
 
 // trustRequest names what to check.
 type trustRequest struct {
+	Files    []string
 	Dir      string // label or param value, verbatim
 	Project  string // project passed to --project-name; "" only in recovery (derive the unique one)
 	SourceID string // container whose labels named Dir; "" for stack updates
@@ -207,11 +208,12 @@ func osReadDirNames(path string) ([]string, error) {
 
 // composeTrust validates compose project directories.
 type composeTrust struct {
-	fs       trustFS
-	goos     string
-	socket   string
-	roots    []string
-	rootsErr error
+	trustedRoots []string
+	fs           trustFS
+	goos         string
+	socket       string
+	roots        []string
+	rootsErr     error
 }
 
 // composeTrust builds the validator from the agent's seams and configuration.
@@ -220,7 +222,7 @@ func (a *Agent) composeTrust() *composeTrust {
 	if a.config != nil {
 		dc = a.config.Docker
 	}
-	t := &composeTrust{fs: a.trustFS, goos: a.trustPlatform, socket: dc.SocketPath, roots: dc.ComposeRoots, rootsErr: dc.rootsErr}
+	t := &composeTrust{fs: a.trustFS, goos: a.trustPlatform, socket: dc.SocketPath, roots: dc.ComposeRoots, trustedRoots: dc.ComposeTrustedRoots, rootsErr: dc.rootsErr}
 	if t.fs == nil {
 		t.fs = osTrustFS{}
 	}
@@ -488,11 +490,12 @@ func (t *composeTrust) trustSet() trustSet {
 
 // checkState is the scratch state of one Check.
 type checkState struct {
-	t     *composeTrust
-	snap  daemonSnapshot
-	dir   string // the request's directory, verbatim, for messages
-	trust trustSet
-	metas map[string]fileMeta
+	includeManagers bool
+	t               *composeTrust
+	snap            daemonSnapshot
+	dir             string // the request's directory, verbatim, for messages
+	trust           trustSet
+	metas           map[string]fileMeta
 	typeOK,
 	leafOK,
 	ancOK map[string]bool
@@ -561,6 +564,27 @@ func (t *composeTrust) check(snap daemonSnapshot, req trustRequest) (trustedDir,
 		}
 	}
 	files, e := s.checkFiles(r)
+	if len(req.Files) > 0 {
+		if len(req.Files) > 10 {
+			return trustedDir{}, s.refuse(ruleNoComposeFile, "more than ten compose files")
+		}
+		if e != nil && e.Rule != ruleNoComposeFile {
+			return trustedDir{}, e
+		}
+		files = nil
+		e = nil
+		for _, entry := range req.Files {
+			ext := strings.ToLower(filepath.Ext(entry))
+			if ext != ".yml" && ext != ".yaml" && ext != ".json" {
+				return trustedDir{}, s.refuse(ruleNotRegular, "unsupported compose extension")
+			}
+			resolved, ce := s.checkComposeFileEntry(r, entry)
+			if ce != nil {
+				return trustedDir{}, ce
+			}
+			files = append(files, resolved)
+		}
+	}
 	if e != nil {
 		return trustedDir{}, e
 	}
@@ -805,7 +829,7 @@ func (s *checkState) writableSources() []writableSource {
 	s.wrDone = true
 	dataRoots := s.dataRoots()
 	for _, c := range s.snap.Containers {
-		if s.exemptFromWritable(c) {
+		if !s.includeManagers && s.exemptFromWritable(c) {
 			continue
 		}
 		name := summaryName(c)
@@ -971,6 +995,9 @@ func (s *checkState) checkPlacement(p string) *composeTrustError {
 		if within(root, p, fold) {
 			return s.refuse(ruleDockerDataRoot, "%q is under the Docker data root %q", p, root)
 		}
+	}
+	if s.t.trustedPath(p) {
+		return nil
 	}
 	for _, w := range s.writableSources() {
 		if w.unresolved {

@@ -88,5 +88,5 @@ func TestTelemetryRepo_AC034_NoRowRewrite(t *testing.T) {
 	src := strings.ToUpper(string(raw))
 	assert.NotContains(t, src, "UPDATE TELEMETRY_SNAPSHOTS", "no UPDATE of snapshot rows")
 	assert.NotContains(t, src, "UPDATE HEARTBEATS", "no UPDATE of heartbeat rows")
-	assert.Equal(t, 2, strings.Count(src, "DELETE FROM"), "only the two existing retention purges may delete")
+	assert.Equal(t, 0, strings.Count(src, "DELETE FROM"), "PART-001 replaces row deletion with whole-partition retention")
 }

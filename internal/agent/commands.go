@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/docker/docker/api/types/container"
 )
@@ -26,11 +27,12 @@ const truncateHeadTailBytes = 64 * 1024
 
 // commandExecResult holds the outcome of an executed command including timing and output.
 type commandExecResult struct {
-	Status     string
-	Message    string
-	ExitCode   *int
-	DurationMs *int64
-	Output     string
+	TargetResults []models.DockerTargetResult
+	Status        string
+	Message       string
+	ExitCode      *int
+	DurationMs    *int64
+	Output        string
 
 	// PATCH-GATE (AD-008): internal-only fields for the post-result reboot
 	// decision. The wire-format models.CommandResult is unchanged — the
@@ -91,6 +93,9 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	// (SEC C-4c).
 	if keys := hostKeyFor(payload.Action); keys != nil {
 		if key, holder, ok := cr.lock(keys...); !ok {
+			if (payload.Action == models.ActionAgentUpdate || payload.Action == models.ActionAgentUninstall) && strings.HasPrefix(key, models.TargetKeyDockerPrefix) {
+				return commandExecResult{Status: models.ResultStatusError, Step: models.StepPrecheck, Reason: models.ReasonConflict, Message: fmt.Sprintf("docker update in progress for %s (command %s); refusing agent restart", lockLabel(key), holder.CmdID)}
+			}
 			return conflictResult(key, holder)
 		}
 		if payload.Action == models.ActionAgentUpdate || payload.Action == models.ActionAgentUninstall {
@@ -109,6 +114,23 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	var status, message string
 
 	switch payload.Action {
+	case "docker_stack_pull", "docker_stack_redeploy", "docker_stack_restart", "docker_stack_down", "docker_stack_up":
+		return a.dockerStackAction(cr)
+	case "docker_inventory_refresh":
+		if a.registry != nil {
+			for _, c := range a.registry.Collectors() {
+				if inventory, ok := c.(*collectors.DockerInventoryCollector); ok {
+					if err := inventory.ForceRefresh(cr.ctx); err != nil {
+						return precheckFailure(err.Error())
+					}
+					a.triggerTelemetry()
+					return commandExecResult{Status: "success", Message: "inventory refresh requested"}
+				}
+			}
+		}
+		return precheckFailure("docker_inventory collector is not enabled")
+	case "docker_remove_items":
+		return a.dockerRemoveItems(cr)
 	case "docker_stop":
 		return a.dockerCommand(cr, "stop")
 	case "docker_restart":
@@ -120,7 +142,13 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	case "docker_bulk_update":
 		return a.dockerBulkUpdate(cr)
 	case "docker_check_updates":
-		a.clearFreshnessCache()
+		if _, hasIDs := payload.Params["container_ids"]; hasIDs || payload.Params["compose_project"] != nil {
+			if err := a.clearScopedFreshness(ctx, payload.Params); err != nil {
+				return precheckFailure(err.Error())
+			}
+		} else {
+			a.clearFreshnessCache()
+		}
 		a.triggerTelemetry()
 		status, message = "success", "image freshness cache cleared, telemetry push triggered"
 	case "reboot":
@@ -184,6 +212,9 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 func (a *Agent) dockerCommand(cr *cmdRun, action string) commandExecResult {
 	containerID, _ := cr.payload.Params["container_id"].(string)
 	if containerID == "" {
+		containerID, _ = cr.payload.Params["container"].(string)
+	}
+	if containerID == "" {
 		return commandExecResult{Status: "error", Message: "container_id is required"}
 	}
 
@@ -193,6 +224,9 @@ func (a *Agent) dockerCommand(cr *cmdRun, action string) commandExecResult {
 	}
 	defer api.Close()
 
+	if h, held := a.locks.Holder(models.TargetKeyHost); held && h.CmdID != cr.id {
+		return conflictResult(models.TargetKeyHost, h)
+	}
 	ctx := cr.ctx
 	if insp, ierr := api.ContainerInspect(ctx, containerID); ierr == nil {
 		keys := []string{models.TargetKeyContainer(strings.TrimPrefix(insp.Name, "/"))}
@@ -201,10 +235,8 @@ func (a *Agent) dockerCommand(cr *cmdRun, action string) commandExecResult {
 				keys = append(keys, models.TargetKeyCompose(wd))
 			}
 		}
-		for _, k := range keys {
-			if h, held := a.locks.Holder(k); held {
-				return conflictResult(k, h)
-			}
+		if key, holder, ok := cr.lock(keys...); !ok {
+			return conflictResult(key, holder)
 		}
 	}
 

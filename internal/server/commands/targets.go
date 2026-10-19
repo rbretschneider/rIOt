@@ -33,6 +33,15 @@ func (s *Service) containers(ctx context.Context, deviceID string) []models.Cont
 // The agent computes the same keys with the same models helpers.
 func (s *Service) ResolveTargetKeys(ctx context.Context, deviceID, action string, params map[string]interface{}) []string {
 	switch action {
+	case "docker_remove_items", "docker_inventory_refresh":
+		return []string{"docker:host"}
+	case "docker_start", "docker_stop", "docker_restart":
+		if c := findContainer(s.containers(ctx, deviceID), stringParam(params, "container"), stringParam(params, "container_id")); c != nil {
+			return []string{models.TargetKeyContainer(strings.TrimLeft(c.Name, "/"))}
+		}
+		return []string{models.TargetKeyContainer(stringParam(params, "container"))}
+	case "docker_stack_pull", "docker_stack_redeploy", "docker_stack_restart", "docker_stack_down", "docker_stack_up":
+		return resolveDockerUpdateKeys(params, s.containers(ctx, deviceID))
 	case models.ActionDockerUpdate:
 		return resolveDockerUpdateKeys(params, s.containers(ctx, deviceID))
 	case models.ActionDockerBulkUpdate:
@@ -50,7 +59,14 @@ func (s *Service) ResolveTargetKeys(ctx context.Context, deviceID, action string
 // resolveDockerUpdateKeys is the pure part of ResolveTargetKeys for docker_update.
 func resolveDockerUpdateKeys(params map[string]interface{}, containers []models.ContainerInfo) []string {
 	if wd := stringParam(params, "compose_work_dir"); wd != "" {
-		return []string{models.TargetKeyCompose(wd)}
+		keys := []string{models.TargetKeyCompose(wd)}
+		project := stringParam(params, "compose_project")
+		for _, c := range containers {
+			if c.Labels[models.LabelComposeWorkingDir] == wd && (project == "" || c.Labels[models.LabelComposeProject] == project) {
+				keys = append(keys, models.TargetKeyContainer(strings.TrimLeft(c.Name, "/")))
+			}
+		}
+		return models.NormalizeTargetKeys(keys...)
 	}
 	if project := stringParam(params, "compose_project"); project != "" {
 		// A project-only stack update holds the keys of every working directory
@@ -77,7 +93,11 @@ func resolveDockerUpdateKeys(params map[string]interface{}, containers []models.
 	name := strings.TrimLeft(stringParam(params, "container"), "/")
 	id := stringParam(params, "container_id")
 	if c := findContainer(containers, name, id); c != nil {
-		return []string{models.TargetKeyForContainer(*c)}
+		keys := []string{models.TargetKeyForContainer(*c)}
+		if c.Labels[models.LabelComposeWorkingDir] != "" {
+			keys = append(keys, models.TargetKeyContainer(strings.TrimLeft(c.Name, "/")))
+		}
+		return models.NormalizeTargetKeys(keys...)
 	}
 	switch {
 	case name != "":

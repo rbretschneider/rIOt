@@ -12,22 +12,31 @@ import (
 )
 
 type Config struct {
-	Port              int
-	DBUrl             string
-	RegistrationKey   string // optional key to gate device registration (empty = open)
-	RetentionDays     int
-	GitHubRepo        string
-	AdminPasswordHash string
-	JWTSecret         string
-	AllowedOrigins    []string
-	TLSEnabled        bool
-	TLSMode           string // "self-signed", "letsencrypt", "manual", or ""
-	TLSDomain         string // Let's Encrypt autocert domain
-	TLSCertDir        string // autocert cache directory
-	TLSCertFile       string // manual TLS cert file
-	TLSKeyFile        string // manual TLS key file
-	MTLSEnabled       bool   // enable mTLS device authentication
-	SetupComplete     bool   // whether initial setup wizard has been completed
+	Port                      int
+	DBUrl                     string
+	RegistrationKey           string // optional key to gate device registration (empty = open)
+	RetentionDays             int
+	ContainerLogRetentionDays int
+	ContainerLogMaxGB         int
+	CommandResultsMaxGB       int
+	DBFSProbePath             string
+	DBMaxGB                   int
+	DBFreeLowGB               int
+	DBFreeEmergencyGB         int
+	MaxDevices                int
+	RegistrationsPerDay       int
+	GitHubRepo                string
+	AdminPasswordHash         string
+	JWTSecret                 string
+	AllowedOrigins            []string
+	TLSEnabled                bool
+	TLSMode                   string // "self-signed", "letsencrypt", "manual", or ""
+	TLSDomain                 string // Let's Encrypt autocert domain
+	TLSCertDir                string // autocert cache directory
+	TLSCertFile               string // manual TLS cert file
+	TLSKeyFile                string // manual TLS key file
+	MTLSEnabled               bool   // enable mTLS device authentication
+	SetupComplete             bool   // whether initial setup wizard has been completed
 
 	// OIDC-001: optional "Sign in with SSO" support. Dormant unless
 	// OIDCIssuerURL, OIDCClientID, and OIDCClientSecret are all non-empty
@@ -50,10 +59,15 @@ type Config struct {
 
 func LoadConfig() *Config {
 	cfg := &Config{
-		Port:          7331,
-		DBUrl:         "postgres://riot:riot@localhost:5432/riot?sslmode=disable",
-		RetentionDays: 30,
-		GitHubRepo:    "rbretschneider/rIOt",
+		Port:                      7331,
+		DBUrl:                     "postgres://riot:riot@localhost:5432/riot?sslmode=disable",
+		RetentionDays:             30,
+		ContainerLogRetentionDays: 7,
+		ContainerLogMaxGB:         16,
+		CommandResultsMaxGB:       4,
+		MaxDevices:                500,
+		RegistrationsPerDay:       100,
+		GitHubRepo:                "rbretschneider/rIOt",
 	}
 
 	if v := os.Getenv("RIOT_PORT"); v != "" {
@@ -72,6 +86,15 @@ func LoadConfig() *Config {
 			cfg.RetentionDays = d
 		}
 	}
+	cfg.ContainerLogRetentionDays = parseContainerLogRetention(os.Getenv("RIOT_CONTAINER_LOG_RETENTION_DAYS"))
+	cfg.ContainerLogMaxGB = positiveEnv("RIOT_CONTAINER_LOG_MAX_GB", 16)
+	cfg.CommandResultsMaxGB = positiveEnv("RIOT_COMMAND_RESULTS_MAX_GB", 4)
+	cfg.DBFSProbePath = os.Getenv("RIOT_DB_FS_PROBE_PATH")
+	cfg.DBMaxGB = positiveEnv("RIOT_DB_MAX_GB", 0)
+	cfg.DBFreeLowGB = positiveEnv("RIOT_DB_FREE_LOW_GB", 0)
+	cfg.DBFreeEmergencyGB = positiveEnv("RIOT_DB_FREE_EMERGENCY_GB", 0)
+	cfg.MaxDevices = positiveEnv("RIOT_MAX_DEVICES", 500)
+	cfg.RegistrationsPerDay = positiveEnv("RIOT_REGISTRATIONS_PER_DAY", 100)
 	if v := os.Getenv("RIOT_GITHUB_REPO"); v != "" {
 		cfg.GitHubRepo = v
 	}

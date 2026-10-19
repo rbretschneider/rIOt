@@ -23,6 +23,8 @@ func ParseRiotLabels(labels map[string]string) *models.RiotLabels {
 		found = true
 		key := strings.TrimPrefix(k, labelPrefix)
 		switch key {
+		case "role":
+			rl.Role = v
 		case "group":
 			rl.Group = v
 		case "name":

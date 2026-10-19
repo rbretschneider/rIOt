@@ -1,12 +1,12 @@
 package collectors
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
+	"strings"
+
 	"fmt"
 	"io"
-	"log/slog"
+
 	"runtime"
 	"sync"
 	"time"
@@ -19,108 +19,160 @@ import (
 
 // ContainerLogCollector fetches recent log lines from Docker containers.
 type ContainerLogCollector struct {
-	SocketPath string
-	TailLines  int // number of lines per container (default 50)
+	SocketPath     string
+	MaxLines       int
+	MaxBytes       int
+	lastCollection time.Time
+	TailLines      int // number of lines per container (default 50)
 
 	mu       sync.Mutex
 	lastSeen map[string]time.Time // containerID -> last seen timestamp
+	tty      map[string]bool
 }
 
 func (c *ContainerLogCollector) Name() string { return "container_logs" }
 
 func (c *ContainerLogCollector) Collect(ctx context.Context) (interface{}, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.lastSeen == nil {
-		c.lastSeen = make(map[string]time.Time)
+		c.lastSeen = map[string]time.Time{}
 	}
-	c.mu.Unlock()
-
-	tail := c.TailLines
-	if tail <= 0 {
-		tail = 50
+	if c.tty == nil {
+		c.tty = map[string]bool{}
 	}
-
+	maxLines, maxBytes := c.MaxLines, c.MaxBytes
+	if maxLines < 1 || maxLines > 1000 {
+		maxLines = 50
+	}
+	if maxBytes < 1024 || maxBytes > 262144 {
+		maxBytes = 16384
+	}
+	result := ContainerLogBatch{}
 	cli, err := c.newClient()
 	if err != nil {
-		return []models.ContainerLogEntry{}, nil
+		return result, nil
 	}
 	defer cli.Close()
-
-	if _, err := cli.Ping(ctx); err != nil {
-		return []models.ContainerLogEntry{}, nil
-	}
-
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: false}) // running only
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		return []models.ContainerLogEntry{}, nil
+		return result, nil
 	}
-
-	var allLogs []models.ContainerLogEntry
+	now := time.Now().UTC()
+	existing := map[string]bool{}
 	for _, ctr := range containers {
-		name := ""
-		if len(ctr.Names) > 0 {
-			name = ctr.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
+		existing[ctr.ID] = true
+		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		tty, known := c.tty[ctr.ID]
+		var inspect container.InspectResponse
+		if !known || ctr.State != "running" {
+			inspect, err = cli.ContainerInspect(callCtx, ctr.ID)
+			if err != nil {
+				cancel()
+				continue
+			}
+			tty = inspect.Config != nil && inspect.Config.Tty
+			c.tty[ctr.ID] = tty
+		}
+		since := c.lastSeen[ctr.ID]
+		opts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true}
+		if ctr.State != "running" {
+			if inspect.State == nil {
+				cancel()
+				continue
+			}
+			finished, e := time.Parse(time.RFC3339Nano, inspect.State.FinishedAt)
+			if e != nil || (!c.lastCollection.IsZero() && !finished.After(c.lastCollection)) {
+				delete(c.lastSeen, ctr.ID)
+				cancel()
+				continue
+			}
+			opts.Until = finished.Add(time.Second).Format(time.RFC3339Nano)
+			if since.IsZero() {
+				since = c.lastCollection
 			}
 		}
-
-		shortID := ctr.ID
-		if len(shortID) > 12 {
-			shortID = shortID[:12]
-		}
-
-		c.mu.Lock()
-		since := c.lastSeen[ctr.ID]
-		c.mu.Unlock()
-
-		opts := container.LogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Timestamps: true,
-		}
-
 		if since.IsZero() {
-			// First collection: tail last N lines
-			opts.Tail = fmt.Sprintf("%d", tail)
+			opts.Tail = fmt.Sprint(maxLines)
 		} else {
-			// Subsequent: only since last seen
 			opts.Since = since.Format(time.RFC3339Nano)
 		}
-
-		logs, err := cli.ContainerLogs(ctx, ctr.ID, opts)
+		logs, err := cli.ContainerLogs(callCtx, ctr.ID, opts)
 		if err != nil {
-			slog.Debug("container_logs: failed to get logs", "container", name, "error", err)
+			cancel()
 			continue
 		}
-
-		entries := parseDockerLogStream(logs, shortID, name)
+		name := ""
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
+		}
+		id := ctr.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		ring := capRing{maxLines: maxLines, maxBytes: maxBytes}
+		scanned, bytes := 0, 0
+		lower := false
+		newest := since
+		limited := &io.LimitedReader{R: logs, N: 8 << 20}
+		readDockerLogs(limited, tty, false, func(e models.ContainerLogEntry) bool {
+			scanned++
+			bytes += len(e.Line)
+			if e.Timestamp.After(newest) {
+				newest = e.Timestamp
+			}
+			if !since.IsZero() && !e.Timestamp.After(since) {
+				return true
+			}
+			e.ContainerID = id
+			e.ContainerName = name
+			ring.add(e)
+			if scanned >= 20000 || bytes >= 8<<20 {
+				lower = true
+				return false
+			}
+			return true
+		})
 		logs.Close()
-
-		if len(entries) > 0 {
-			allLogs = append(allLogs, entries...)
-			c.mu.Lock()
-			c.lastSeen[ctr.ID] = entries[len(entries)-1].Timestamp
-			c.mu.Unlock()
+		cancel()
+		if limited.N == 0 {
+			lower = true
+		}
+		MaskLogEntries(ring.entries)
+		result.Entries = append(result.Entries, ring.entries...)
+		if ring.dropped > 0 || lower {
+			count := ring.dropped
+			if lower {
+				count++
+			}
+			stamp := ring.droppedAt
+			if stamp.IsZero() {
+				stamp = newest
+			}
+			result.Gaps = append(result.Gaps, models.ContainerLogGap{ContainerID: id, ContainerName: name, Timestamp: stamp, Count: count, LowerBound: lower, Reason: "agent_cap"})
+		}
+		if lower {
+			newest = now
+		}
+		if ctr.State == "running" {
+			c.lastSeen[ctr.ID] = newest
+		} else {
+			delete(c.lastSeen, ctr.ID)
 		}
 	}
-
-	// Clean up lastSeen for containers that no longer exist
-	c.mu.Lock()
-	running := make(map[string]struct{}, len(containers))
-	for _, ctr := range containers {
-		running[ctr.ID] = struct{}{}
-	}
 	for id := range c.lastSeen {
-		if _, ok := running[id]; !ok {
+		if !existing[id] {
 			delete(c.lastSeen, id)
 		}
 	}
-	c.mu.Unlock()
-
-	return allLogs, nil
+	for id := range c.tty {
+		if !existing[id] {
+			delete(c.tty, id)
+		}
+	}
+	c.lastCollection = now
+	return result, nil
 }
-
 func (c *ContainerLogCollector) newClient() (*client.Client, error) {
 	opts := []client.Opt{client.WithAPIVersionNegotiation()}
 	if c.SocketPath != "" {
@@ -141,64 +193,11 @@ func (c *ContainerLogCollector) newClient() (*client.Client, error) {
 //	[4-7] = uint32 frame size (big-endian)
 func parseDockerLogStream(r io.Reader, containerID, containerName string) []models.ContainerLogEntry {
 	var entries []models.ContainerLogEntry
-	br := bufio.NewReader(r)
-
-	for {
-		// Read 8-byte header
-		header := make([]byte, 8)
-		if _, err := io.ReadFull(br, header); err != nil {
-			break
-		}
-
-		streamType := "stdout"
-		if header[0] == 2 {
-			streamType = "stderr"
-		}
-
-		frameSize := binary.BigEndian.Uint32(header[4:8])
-		if frameSize == 0 || frameSize > 1<<20 { // skip empty or >1MB frames
-			break
-		}
-
-		frame := make([]byte, frameSize)
-		if _, err := io.ReadFull(br, frame); err != nil {
-			break
-		}
-
-		line := string(frame)
-		// Docker timestamps format: 2006-01-02T15:04:05.999999999Z <message>
-		var ts time.Time
-		var msg string
-		if len(line) > 31 && line[10] == 'T' {
-			if t, err := time.Parse(time.RFC3339Nano, line[:30]); err == nil {
-				ts = t
-				msg = line[31:] // skip timestamp + space
-			} else {
-				ts = time.Now().UTC()
-				msg = line
-			}
-		} else {
-			ts = time.Now().UTC()
-			msg = line
-		}
-
-		// Trim trailing newline
-		if len(msg) > 0 && msg[len(msg)-1] == '\n' {
-			msg = msg[:len(msg)-1]
-		}
-
-		if msg == "" {
-			continue
-		}
-
-		entries = append(entries, models.ContainerLogEntry{
-			ContainerID:   containerID,
-			ContainerName: containerName,
-			Timestamp:     ts,
-			Stream:        streamType,
-			Line:          msg,
-		})
-	}
-
+	ReadDockerLogs(io.LimitReader(r, 8<<20), false, func(e models.ContainerLogEntry) bool {
+		e.ContainerID = containerID
+		e.ContainerName = containerName
+		entries = append(entries, e)
+		return len(entries) < 20000
+	})
 	return entries
 }

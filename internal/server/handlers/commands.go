@@ -32,11 +32,13 @@ var validActions = map[string]bool{
 
 // SendCommand handles POST /api/v1/devices/{id}/commands.
 func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
 	deviceID := chi.URLParam(r, "id")
 
 	var req struct {
-		Action string                 `json:"action"`
-		Params map[string]interface{} `json:"params"`
+		ConfirmHost string                 `json:"confirm_host"`
+		Action      string                 `json:"action"`
+		Params      map[string]interface{} `json:"params"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -57,10 +59,36 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 		delete(req.Params, "include_reboot_class")
 	}
 
-	res, err := h.cmdSvc().Dispatch(r.Context(), commands.DispatchRequest{
-		DeviceID: deviceID, Action: req.Action, Params: req.Params,
-	})
+	if req.Action == "docker_stop" {
+		if snap, ok := h.dockerSnapshot(r, deviceID); ok {
+			name, _ := req.Params["container"].(string)
+			id, _ := req.Params["container_id"].(string)
+			self := dockerSelf(snap.Data.Docker.Containers)
+			for _, c := range snap.Data.Docker.Containers {
+				if (c.Name == name || c.ID == id) && self[c.Name] != "" {
+					d, e := h.devices.GetByID(r.Context(), deviceID)
+					if e != nil || req.ConfirmHost != d.Hostname {
+						dockerError(w, 400, "confirmation_required")
+						return
+					}
+				}
+			}
+		}
+	}
+	res, err := h.cmdSvc().Dispatch(r.Context(), dockerDispatchRequest(r, deviceID, req.Action, req.Params))
 	if err != nil {
+		if errors.Is(err, commands.ErrInvalidCommandParams) {
+			dockerError(w, 400, "invalid_request")
+			return
+		}
+		if errors.Is(err, commands.ErrCreationRateLimited) {
+			dockerError(w, 429, "rate_limited")
+			return
+		}
+		if errors.Is(err, commands.ErrDeviceNotFound) {
+			dockerError(w, 404, "device_not_found")
+			return
+		}
 		slog.Error("dispatch command", "device_id", deviceID, "action", req.Action, "error", err.Error())
 		http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
 		return
@@ -72,7 +100,7 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := res.Command
 
 	// Emit informational event for all commands
-	if device, err := h.devices.GetByID(r.Context(), deviceID); err == nil {
+	if device, err := h.devices.GetByID(r.Context(), deviceID); err == nil && h.eventGen != nil {
 		h.eventGen.CommandSent(r.Context(), deviceID, device.Hostname, req.Action, req.Params)
 	}
 
@@ -96,6 +124,7 @@ func writeCommandConflict(w http.ResponseWriter, existing *models.Command, targe
 // Targets that conflict with an in-flight command are skipped and reported; the
 // rest get one docker_bulk_update. When every target conflicts the answer is 409.
 func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	deviceID := chi.URLParam(r, "id")
 
 	var req struct {
@@ -103,6 +132,10 @@ func (h *Handlers) BulkDockerUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.ContainerIDs) > 100 {
+		dockerError(w, 400, "too_many_targets")
 		return
 	}
 	if len(req.ContainerIDs) == 0 {

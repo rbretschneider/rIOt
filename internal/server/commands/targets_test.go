@@ -25,9 +25,9 @@ func TestResolveDockerUpdateKeys(t *testing.T) {
 		params map[string]interface{}
 		want   []string
 	}{
-		{"compose_work_dir wins, trailing slash removed", map[string]interface{}{"compose_work_dir": "/srv/stack/", "container": "solo"}, []string{"docker:compose:/srv/stack"}},
-		{"compose container by name", map[string]interface{}{"container": "app"}, []string{"docker:compose:/srv/stack"}},
-		{"leading slash ignored", map[string]interface{}{"container": "/app"}, []string{"docker:compose:/srv/stack"}},
+		{"compose_work_dir wins, trailing slash removed", map[string]interface{}{"compose_work_dir": "/srv/stack/", "container": "solo"}, []string{"docker:compose:/srv/stack", "docker:container:app"}},
+		{"compose container by name", map[string]interface{}{"container": "app"}, []string{"docker:compose:/srv/stack", "docker:container:app"}},
+		{"leading slash ignored", map[string]interface{}{"container": "/app"}, []string{"docker:compose:/srv/stack", "docker:container:app"}},
 		{"standalone by name", map[string]interface{}{"container": "solo"}, []string{"docker:container:solo"}},
 		{"standalone by id", map[string]interface{}{"container_id": "id-solo"}, []string{"docker:container:solo"}},
 		{"incomplete compose labels fall back to name key", map[string]interface{}{"container": "partial"}, []string{"docker:container:partial"}},
@@ -70,8 +70,8 @@ func TestServiceResolveTargetKeys(t *testing.T) {
 		{"enable_auto_updates", "enable_auto_updates", nil, []string{"host"}},
 		{"agent_update", "agent_update", nil, []string{"host"}},
 		{"fetch_logs holds nothing", "fetch_logs", nil, nil},
-		{"docker_stop holds nothing", "docker_stop", map[string]interface{}{"container_id": "id-app"}, nil},
-		{"docker_update compose container", "docker_update", map[string]interface{}{"container": "app"}, []string{"docker:compose:/srv/stack"}},
+		{"docker_stop holds container", "docker_stop", map[string]interface{}{"container_id": "id-app"}, []string{"docker:container:app"}},
+		{"docker_update compose container", "docker_update", map[string]interface{}{"container": "app"}, []string{"docker:compose:/srv/stack", "docker:container:app"}},
 		{"bulk is the union, deduplicated", "docker_bulk_update",
 			map[string]interface{}{"container_ids": []interface{}{"id-app", "id-db", "id-solo", "id-unknown"}},
 			[]string{"docker:compose:/srv/stack", "docker:container:solo", "docker:id:id-unknown"}},
@@ -107,7 +107,6 @@ func TestResolveDockerUpdateKeys_AC014_ProjectOnlyMapsViaTelemetry(t *testing.T)
 	got := resolveDockerUpdateKeys(map[string]interface{}{"compose_project": "stack"}, containers)
 	assert.Equal(t, []string{"docker:compose:/srv/stack"}, got, "[AC-014] the unique working directory of the project")
 }
-
 
 func TestResolveDockerUpdateKeys_AC014_WorkDirStillWins(t *testing.T) {
 	containers := []models.ContainerInfo{composeContainer("id-a", "a", "stack", "a", "/srv/one")}

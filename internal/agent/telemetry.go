@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/shirou/gopsutil/v3/host"
 )
@@ -15,6 +17,9 @@ import (
 const bootGracePeriod = 10 * time.Minute
 
 func (a *Agent) sendTelemetry(ctx context.Context) {
+	if time.Now().Before(a.telemetryRetryUntil) {
+		return
+	}
 	data := a.collectAll(ctx)
 
 	snap := &models.TelemetrySnapshot{
@@ -24,6 +29,7 @@ func (a *Agent) sendTelemetry(ctx context.Context) {
 	}
 
 	if err := a.client.SendTelemetry(ctx, a.config.Agent.DeviceID, snap); err != nil {
+		a.telemetryRetry(err)
 		slog.Warn("telemetry push failed, buffering", "error", err)
 		if a.buffer != nil {
 			a.buffer.Store(snap)
@@ -72,6 +78,7 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.Procs = v
 		case *models.DockerInfo:
 			data.Docker = v
+			a.observeStackRegistry(ctx, v)
 		case *models.SecurityInfo:
 			data.Security = v
 		case *models.UPSInfo:
@@ -86,6 +93,11 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.CronJobs = v
 		case *models.GPUTelemetry:
 			data.GPUTelemetry = v
+		case collectors.ContainerLogBatch:
+			data.ContainerLogs = v.Entries
+			data.ContainerLogGaps = v.Gaps
+		case *models.DockerInventory:
+			data.DockerInventory = v
 		case []models.ContainerLogEntry:
 			data.ContainerLogs = v
 		case []models.LogEntry:
@@ -110,22 +122,46 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 		}
 	}
 
+	if data.Docker != nil {
+		data.Docker.InventoryEnabled = false
+		for _, c := range a.registry.Collectors() {
+			if c.Name() == "docker_inventory" {
+				data.Docker.InventoryEnabled = true
+			}
+			if c.Name() == "container_logs" {
+				enabled := true
+				data.Docker.ContainerLogsEnabled = &enabled
+			}
+		}
+	}
 	return data
 }
 
 func (a *Agent) flushBuffer(ctx context.Context) {
-	items, err := a.buffer.GetAll()
+	items, err := a.buffer.Items()
 	if err != nil || len(items) == 0 {
 		return
 	}
 
 	slog.Info("flushing buffered telemetry", "count", len(items))
-	for _, snap := range items {
+	for _, item := range items {
+		snap := item.Snapshot
 		if err := a.client.SendTelemetry(ctx, snap.DeviceID, snap); err != nil {
+			a.telemetryRetry(err)
 			slog.Warn("buffer flush failed, will retry later", "error", err)
 			return
 		}
+		if err := a.buffer.Delete(item.ID); err != nil {
+			return
+		}
 	}
-	a.buffer.Clear()
+
 	slog.Info("buffer flushed successfully")
+}
+
+func (a *Agent) telemetryRetry(err error) {
+	var status *telemetryHTTPError
+	if errors.As(err, &status) && status.Status == 429 {
+		a.telemetryRetryUntil = time.Now().Add(status.RetryAfter)
+	}
 }

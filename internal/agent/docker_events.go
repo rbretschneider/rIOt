@@ -66,6 +66,7 @@ func (a *Agent) watchDockerEvents(ctx context.Context) {
 }
 
 func (a *Agent) handleDockerEvent(ctx context.Context, msg events.Message) {
+	a.dockerEvents.Publish(msg)
 	action := string(msg.Action)
 	// Only forward interesting actions
 	switch action {

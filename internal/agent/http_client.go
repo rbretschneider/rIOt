@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
@@ -159,7 +160,7 @@ func (c *HTTPClient) Register(ctx context.Context, reg *models.DeviceRegistratio
 
 // HeartbeatResponse is the server's response to a heartbeat, potentially including queued commands.
 type HeartbeatResponse struct {
-	Status          string                 `json:"status"`
+	Status          string                  `json:"status"`
 	PendingCommands []models.CommandPayload `json:"pending_commands,omitempty"`
 }
 
@@ -370,9 +371,22 @@ func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *m
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("telemetry push failed: %s", string(b))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		retry := time.Minute
+		if seconds, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && seconds > 0 {
+			retry = time.Duration(seconds) * time.Second
+		} else if at, e := http.ParseTime(resp.Header.Get("Retry-After")); e == nil {
+			retry = time.Until(at)
+		}
+		retry = min(max(retry, time.Second), time.Hour)
+		return &telemetryHTTPError{Status: resp.StatusCode, RetryAfter: retry}
 	}
 	return nil
 }
+
+type telemetryHTTPError struct {
+	Status     int
+	RetryAfter time.Duration
+}
+
+func (e *telemetryHTTPError) Error() string { return fmt.Sprintf("telemetry HTTP status %d", e.Status) }

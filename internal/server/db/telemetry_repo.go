@@ -94,6 +94,9 @@ func (r *TelemetryRepo) GetLatestSnapshot(ctx context.Context, deviceID string) 
 		return nil, err
 	}
 	json.Unmarshal(dataJSON, &snap.Data)
+	if err := r.restoreOmittedSections(ctx, snap, dataJSON); err != nil {
+		return nil, err
+	}
 	return snap, nil
 }
 
@@ -117,6 +120,9 @@ func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.Tel
 			return nil, err
 		}
 		json.Unmarshal(dataJSON, &s.Data)
+		if err := r.restoreOmittedSections(ctx, &s, dataJSON); err != nil {
+			return nil, err
+		}
 		snapshots = append(snapshots, s)
 	}
 	return snapshots, nil
@@ -128,9 +134,9 @@ func (r *TelemetryRepo) GetAllLatestSnapshots(ctx context.Context) ([]models.Tel
 func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSummary, error) {
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT device_id,
-			data->'updates' AS updates,
-			data->'security' AS security,
-			data->'web_servers'->'servers' AS servers
+			CASE WHEN data->'dropped_sections' ? 'updates' THEN (SELECT s.data->'updates' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'updates' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'updates' END AS updates,
+			CASE WHEN data->'dropped_sections' ? 'security' THEN (SELECT s.data->'security' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'security' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'security' END AS security,
+			CASE WHEN data->'dropped_sections' ? 'web_servers' THEN (SELECT s.data->'web_servers'->'servers' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'web_servers' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'web_servers'->'servers' END AS servers
 		 FROM (
 			SELECT DISTINCT ON (device_id) device_id, data
 			FROM telemetry_snapshots
@@ -222,24 +228,6 @@ func (r *TelemetryRepo) GetHeartbeatHistory(ctx context.Context, deviceID string
 	return heartbeats, nil
 }
 
-// PurgeHeartbeats deletes heartbeats older than the given duration.
-func (r *TelemetryRepo) PurgeHeartbeats(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM heartbeats WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
-// PurgeSnapshots deletes telemetry snapshots older than the given time.
-func (r *TelemetryRepo) PurgeSnapshots(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx, `DELETE FROM telemetry_snapshots WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}
-
 // GetFleetHeartbeats returns heartbeats for all devices since the given time,
 // grouped by device ID. A single query is used so the dashboard can fetch 60
 // minutes of fleet-wide data in one round trip (AD-001).
@@ -298,25 +286,50 @@ func (r *TelemetryRepo) GetGPUDeviceIDs(ctx context.Context) ([]string, error) {
 }
 
 // GetFleetContainerLeaderboard returns a slim container projection per device
-// from the latest telemetry snapshots. Uses jsonb_path_query_array to project
-// only the container sub-tree, avoiding full-blob decode on the server (AD-011).
+// from the latest Docker-bearing snapshots. SQL selects only the allowlisted
+// fields before transfer, including when a trimmed snapshot omits Docker (AD-011).
 func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]FleetContainerProjection, error) {
-	rows, err := r.db.Pool.Query(ctx,
-		`SELECT
-			device_id,
-			jsonb_path_query_array(
-				data,
-				'$.docker.containers[*] ?
-				   (@.state == "running" || @.state == "restarting" || @.state == "exited" ||
-				    @.state == "paused"  || @.state == "created"    || @.state == "dead")'
-			) AS containers
-		 FROM (
-			SELECT DISTINCT ON (device_id) device_id, data
-			FROM telemetry_snapshots
-			WHERE `+notFutureDatedSQL+`
-			ORDER BY device_id, timestamp DESC
-		 ) latest
-		 WHERE data ? 'docker'`)
+	// Build the allowlist in SQL: env, mounts, network attachments and arbitrary
+	// labels never cross the database connection or enter Go memory.
+	rows, err := r.db.Pool.Query(ctx, `SELECT device_id,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object(
+ 'id', left(c->>'id',128),
+'short_id', left(c->>'short_id',128),
+'name', left(c->>'name',128),
+'image', left(c->>'image',512),
+'image_id', left(c->>'image_id',128),
+'state', left(c->>'state',32),
+'status', left(c->>'status',512),
+'health_status', left(c->>'health_status',64),
+'started_at', left(c->>'started_at',64),
+'finished_at', left(c->>'finished_at',64),
+'exit_code', c->'exit_code',
+'update_available', c->'update_available',
+'update_status', left(c->>'update_status',64),
+'update_reason', left(c->>'update_reason',512),
+'cpu_percent', c->'cpu_percent',
+'mem_usage', c->'mem_usage',
+'mem_limit', c->'mem_limit',
+'mem_limit_configured', c->'mem_limit_configured',
+'restart_count', c->'restart_count',
+'network_mode', left(c->>'network_mode',256),
+'labels', jsonb_build_object('com.docker.compose.project', CASE WHEN length(c->'labels'->>'com.docker.compose.project')<=512 THEN c->'labels'->>'com.docker.compose.project' ELSE '' END,
+'com.docker.compose.service', CASE WHEN length(c->'labels'->>'com.docker.compose.service')<=512 THEN c->'labels'->>'com.docker.compose.service' ELSE '' END,
+'com.docker.compose.project.working_dir', CASE WHEN length(c->'labels'->>'com.docker.compose.project.working_dir')<=1024 THEN c->'labels'->>'com.docker.compose.project.working_dir' ELSE '' END,
+'com.docker.compose.project.config_files', CASE WHEN length(c->'labels'->>'com.docker.compose.project.config_files')<=10250 THEN c->'labels'->>'com.docker.compose.project.config_files' ELSE '' END,
+'riot.name', left(c->'labels'->>'riot.name',512),
+'riot.icon', left(c->'labels'->>'riot.icon',512),
+'riot.group', left(c->'labels'->>'riot.group',512),
+'riot.tags', left(c->'labels'->>'riot.tags',512),
+'riot.role', left(c->'labels'->>'riot.role',512)),
+'ports', COALESCE((SELECT jsonb_agg(jsonb_build_object('container_port',left(p->>'container_port',16),'host_port',left(p->>'host_port',16),'protocol',left(p->>'protocol',8),'host_ip',left(p->>'host_ip',64)) ORDER BY ord) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c->'ports')='array' THEN c->'ports' ELSE '[]'::jsonb END) WITH ORDINALITY AS ports(p,ord) WHERE ord<=256),'[]'::jsonb)
+ ) ORDER BY ord)
+ FROM jsonb_array_elements(CASE WHEN jsonb_typeof(data#>'{docker,containers}')='array' THEN data#>'{docker,containers}' ELSE '[]'::jsonb END) WITH ORDINALITY AS containers(c,ord)
+ WHERE c->>'state' IN ('running','restarting','exited','paused','created','dead')),'[]'::jsonb) AS containers
+ FROM (SELECT DISTINCT ON (device_id) device_id,data FROM telemetry_snapshots
+ WHERE `+notFutureDatedSQL+` AND data->'docker' IS NOT NULL AND data->'docker'<>'null'::jsonb
+ ORDER BY device_id, timestamp DESC) latest`)
+
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +343,9 @@ func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]Fle
 			return nil, err
 		}
 		if len(containersJSON) > 0 && string(containersJSON) != "null" {
-			json.Unmarshal(containersJSON, &proj.Containers)
+			if err := json.Unmarshal(containersJSON, &proj.Containers); err != nil {
+				return nil, err
+			}
 		}
 		result = append(result, proj)
 	}

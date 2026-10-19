@@ -8,14 +8,18 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/redact"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/DesyncTheThird/rIOt/internal/server/quota"
 	"github.com/google/uuid"
 )
 
@@ -56,6 +60,7 @@ type CompletionEvents interface {
 // is optional and nil-checked. Never assign a nil *websocket.Hub or
 // *events.Generator to an interface field (typed-nil trap): leave it unset.
 type Options struct {
+	Quota       *quota.Manager
 	Commands    db.CommandRepository
 	Policies    PolicyRecorder
 	Telemetry   TelemetryReader
@@ -70,6 +75,8 @@ type Options struct {
 
 // Service is the single writer of command state.
 type Service struct {
+	creation    creationGate
+	quota       *quota.Manager
 	repo        db.CommandRepository
 	policies    PolicyRecorder
 	telemetry   TelemetryReader
@@ -98,7 +105,8 @@ func New(o Options) *Service {
 		logger = slog.Default()
 	}
 	return &Service{
-		repo: o.Commands, policies: o.Policies, telemetry: o.Telemetry, agents: o.Agents,
+		quota: o.Quota,
+		repo:  o.Commands, policies: o.Policies, telemetry: o.Telemetry, agents: o.Agents,
 		broadcaster: o.Broadcaster, events: o.Events, now: now, log: logger,
 		limiter:         NewDeviceLimiter(now),
 		logThrottle:     NewLogThrottle(now, logger),
@@ -113,9 +121,12 @@ func New(o Options) *Service {
 
 // DispatchRequest describes one command to create.
 type DispatchRequest struct {
-	DeviceID string
-	Action   string
-	Params   map[string]interface{}
+	ActorKind, ActorAuth, ActorName, ActorSub string
+	ProbeKeys                                 []string
+	IsDocker, DockerExclusive                 bool
+	DeviceID                                  string
+	Action                                    string
+	Params                                    map[string]interface{}
 	// Origin is models.OriginUser (default), OriginAutoUpdate or OriginAutoPatch.
 	Origin   string
 	PolicyID *int
@@ -157,14 +168,52 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (DispatchRe
 	if params == nil {
 		params = map[string]interface{}{}
 	}
+	if req.Action == "docker_check_updates" {
+		if err := validateDockerCheckParams(params); err != nil {
+			return DispatchResult{}, err
+		}
+	}
+	rawParams, encodeErr := json.Marshal(params)
+	if encodeErr != nil || len(rawParams) > 64<<10 {
+		return DispatchResult{}, ErrInvalidCommandParams
+	}
 	keys := req.TargetKeys
 	if keys == nil {
 		keys = s.ResolveTargetKeys(ctx, req.DeviceID, req.Action, params)
 	}
 
+	if len(keys) > 200 {
+		return DispatchResult{}, ErrInvalidCommandParams
+	}
+	for _, key := range keys {
+		if len(key) > 2048 {
+			return DispatchResult{}, ErrInvalidCommandParams
+		}
+	}
 	now := s.now().UTC()
+	if known, ok := s.repo.(interface {
+		KnownDevice(context.Context, string) (bool, error)
+	}); ok {
+		exists, err := known.KnownDevice(ctx, req.DeviceID)
+		if err != nil {
+			return DispatchResult{}, err
+		}
+		if !exists {
+			return DispatchResult{}, ErrDeviceNotFound
+		}
+	}
+	target := strings.Join(keys, "|")
+	if req.PolicyID != nil {
+		target = fmt.Sprintf("%d/%s", *req.PolicyID, target)
+	}
+	if !s.creation.allow(req.DeviceID, origin, target, now) {
+		return DispatchResult{}, ErrCreationRateLimited
+	}
+	req.ActorName, _ = redact.MaskLine(models.TruncateHead(models.SanitizeText(req.ActorName), 128))
+	req.ActorSub = models.TruncateHead(models.SanitizeText(req.ActorSub), 512)
 	cmd := &models.Command{
-		ID:            uuid.New().String(),
+		ID:        uuid.New().String(),
+		ActorKind: req.ActorKind, ActorAuth: req.ActorAuth, ActorName: req.ActorName, ActorSub: req.ActorSub,
 		DeviceID:      req.DeviceID,
 		Action:        req.Action,
 		Params:        params,
@@ -176,6 +225,17 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (DispatchRe
 		Origin:        origin,
 		PolicyID:      req.PolicyID,
 		TargetKeys:    models.NormalizeTargetKeys(keys...),
+	}
+	cmd.ProbeKeys, cmd.IsDocker, cmd.DockerExclusive = s.DockerConflictSpec(ctx, req.DeviceID, req.Action, params)
+	cmd.ProbeKeys = append(cmd.ProbeKeys, req.ProbeKeys...)
+	cmd.IsDocker = cmd.IsDocker || req.IsDocker
+	cmd.DockerExclusive = cmd.DockerExclusive || req.DockerExclusive
+	if cmd.ActorKind == "" {
+		if origin == models.OriginUser {
+			cmd.ActorKind = "unknown"
+		} else {
+			cmd.ActorKind = "system"
+		}
 	}
 	conflict, err := s.repo.CreateIfNoConflict(ctx, cmd)
 	if err != nil {
@@ -292,7 +352,7 @@ type BulkResult struct {
 // conflict with an in-flight command and reports the others as conflicts
 // (FR-060). A conflict that appears between the pre-check and the insert is
 // reported for every target.
-func (s *Service) DispatchBulkDocker(ctx context.Context, deviceID string, containerIDs []string) (BulkResult, error) {
+func (s *Service) DispatchBulkDocker(ctx context.Context, deviceID string, containerIDs []string, actor ...DispatchRequest) (BulkResult, error) {
 	containers := s.containers(ctx, deviceID)
 
 	held := map[string]string{} // target key -> id of the oldest active holder
@@ -329,12 +389,23 @@ func (s *Service) DispatchBulkDocker(ctx context.Context, deviceID string, conta
 		return BulkResult{Conflicts: conflicts}, nil
 	}
 
-	res, err := s.Dispatch(ctx, DispatchRequest{
-		DeviceID:   deviceID,
-		Action:     models.ActionDockerBulkUpdate,
-		Params:     map[string]interface{}{"container_ids": kept},
-		TargetKeys: models.NormalizeTargetKeys(keptKeys...),
-	})
+	request := DispatchRequest{}
+	if len(actor) > 0 {
+		request = actor[0]
+	}
+	request.DeviceID = deviceID
+	request.Action = models.ActionDockerBulkUpdate
+	request.Params = map[string]interface{}{"container_ids": kept}
+	names := []string{}
+	for _, id := range kept {
+		if c := findContainer(containers, "", id); c != nil {
+			names = append(names, strings.TrimLeft(c.Name, "/"))
+		}
+	}
+	request.Params["containers"] = names
+	request.TargetKeys = models.NormalizeTargetKeys(keptKeys...)
+	res, err := s.Dispatch(ctx, request)
+
 	if err != nil {
 		return BulkResult{}, err
 	}
@@ -473,6 +544,33 @@ func (s *Service) HandleAgentReport(ctx context.Context, deviceID string, report
 		if report.Result == nil {
 			return ReportOutcome{}, fmt.Errorf("%w: result report without a result", ErrInvalidReport)
 		}
+		if s.quota != nil {
+			res := report.Result
+			var truncated bool
+			res.Output, truncated = s.quota.CommandOutput(deviceID, res.Output, now)
+			if len(res.TargetResults) > 0 {
+				raw, _ := json.Marshal(res.TargetResults)
+				_, cut := s.quota.CommandOutput(deviceID, string(raw), now)
+				truncated = truncated || cut
+			}
+			if res.Message != "" || res.Stderr != "" {
+				stub, cut := s.quota.CommandOutput(deviceID, res.Message+res.Stderr, now)
+				if cut {
+					res.Message = stub
+					res.Stderr = ""
+				}
+				truncated = truncated || cut
+			}
+			for i := range res.Steps {
+				var cut bool
+				res.Steps[i].Output, cut = s.quota.CommandOutput(deviceID, res.Steps[i].Output, now)
+				res.Steps[i].Truncated = res.Steps[i].Truncated || cut
+				truncated = truncated || cut
+			}
+			if truncated && len(res.TargetResults) > 0 {
+				res.TargetResults = []models.DockerTargetResult{{Container: "*", Outcome: "truncated", Message: "Output truncated (storage quota)"}}
+			}
+		}
 		s.fillResultTransition(&t, *report.Result)
 	default:
 		return ReportOutcome{}, fmt.Errorf("%w: kind", ErrInvalidReport)
@@ -497,6 +595,16 @@ func (s *Service) fillResultTransition(t *models.CommandTransition, res models.C
 		s.log.Warn("command result with unrecognized status treated as failed", "command_id", t.ID, "device_id", t.DeviceID)
 	}
 	t.To = state
+	bytesResult := int64(len(res.Message) + len(res.Stderr))
+	for _, step := range res.Steps {
+		bytesResult += int64(len(step.Output))
+	}
+	for _, target := range res.TargetResults {
+		bytesResult += int64(len(target.Container) + len(target.Message) + len(target.Outcome) + len(target.Step))
+	}
+	t.ResultBytes = &bytesResult
+	t.Steps = res.Steps
+	t.TargetResults = res.TargetResults
 	msg := res.Message
 	t.ResultMsg = &msg
 	tail := res.Stderr

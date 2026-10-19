@@ -67,6 +67,8 @@ const (
 // (FR-010): command results, lifecycle messages and terminal output all go
 // through send.
 type agentWSClient struct {
+	readSem   chan struct{}
+	logs      agentLogState
 	serverURL string
 	apiKey    string
 	deviceID  string
@@ -156,6 +158,11 @@ func (c *agentWSClient) connect(ctx context.Context) (connected bool, err error)
 	if err != nil {
 		return false, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if limited, ok := conn.(interface{ SetReadLimit(int64) }); ok {
+		limited.SetReadLimit(256 << 10)
+	}
 	c.setConn(conn)
 	defer func() {
 		c.clearConn(conn)
@@ -185,6 +192,18 @@ func (c *agentWSClient) connect(ctx context.Context) (connected bool, err error)
 		}
 
 		switch msg.Type {
+		case "logs_follow", "logs_unfollow", "logs_keep", "logs_backfill":
+			c.handleLogs(ctx, msg)
+		case "docker_read":
+			if c.readSem == nil {
+				c.readSem = make(chan struct{}, 4)
+			}
+			select {
+			case c.readSem <- struct{}{}:
+				go func() { defer func() { <-c.readSem }(); c.agent.handleDockerRead(ctx, msg) }()
+			default:
+				c.send(AgentWSMessage{Type: "docker_read_result", SessionID: msg.SessionID, Data: json.RawMessage(`{"error":"too_many_reads","reason":"too_many_reads"}`)})
+			}
 		case "terminal_start":
 			go c.agent.handleTerminalStart(ctx, msg)
 		case "terminal_input":

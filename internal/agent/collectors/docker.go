@@ -19,14 +19,18 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/redact"
 )
 
 // DockerCollector collects container and daemon info via the Docker SDK.
 type DockerCollector struct {
-	CollectStats bool
-	SocketPath   string
-	CheckUpdates bool
-	CachePath    string
+	ContainerLogsEnabled bool
+	rateMu               sync.Mutex
+	samples              map[string]ioSample
+	CollectStats         bool
+	SocketPath           string
+	CheckUpdates         bool
+	CachePath            string
 
 	// Image freshness cache
 	cacheMu     sync.RWMutex
@@ -90,7 +94,16 @@ func (e *imageFreshness) ttl() time.Duration {
 func (c *DockerCollector) Name() string { return "docker" }
 
 func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
-	info := &models.DockerInfo{}
+	info := &models.DockerInfo{ContainerLogsEnabled: &c.ContainerLogsEnabled, Capabilities: []string{models.DockerCapLogCaps, models.DockerCapMeta, models.DockerCapContainerLocks, models.DockerCapInspect, models.DockerCapLogsLive, models.DockerCapStackActions, models.DockerCapComposeRead, models.DockerCapInventory, models.DockerCapPrune}}
+	info.Capabilities = append(info.Capabilities, models.DockerCapBulkResults, models.DockerCapCommandSteps, models.DockerCapEventAttribution)
+	if runtime.GOOS != "linux" {
+		for i, cap := range info.Capabilities {
+			if cap == models.DockerCapComposeRead {
+				info.Capabilities = append(info.Capabilities[:i], info.Capabilities[i+1:]...)
+				break
+			}
+		}
+	}
 
 	cli, err := c.newClient()
 	if err != nil {
@@ -151,6 +164,20 @@ func (c *DockerCollector) Collect(ctx context.Context) (interface{}, error) {
 
 	// Phase 3: Collect network modes for dependency awareness (BR-004)
 	c.collectNetworkModes(ctx, cli, info.Containers)
+	c.rateMu.Lock()
+	for id := range c.samples {
+		found := false
+		for _, ctr := range info.Containers {
+			if ctr.ID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			delete(c.samples, id)
+		}
+	}
+	c.rateMu.Unlock()
 
 	return info, nil
 }
@@ -228,8 +255,9 @@ func containerFromAPI(c container.Summary) models.ContainerInfo {
 		}
 	}
 
-	riot := ParseRiotLabels(c.Labels)
-	repoURL := InferRepoURL(c.Labels, c.Image)
+	safeLabels, _ := redact.Labels(c.Labels)
+	riot := ParseRiotLabels(safeLabels)
+	repoURL, _ := redact.URLCreds(InferRepoURL(c.Labels, c.Image))
 
 	ci := models.ContainerInfo{
 		ID:       c.ID,
@@ -241,7 +269,7 @@ func containerFromAPI(c container.Summary) models.ContainerInfo {
 		Status:   c.Status,
 		Created:  c.Created,
 		Ports:    ports,
-		Labels:   c.Labels,
+		Labels:   safeLabels,
 		Mounts:   mounts,
 		Networks: networks,
 		RepoURL:  repoURL,
@@ -285,8 +313,18 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			}
 
 			var stats struct {
-				Read    time.Time `json:"read"`
-				PreRead time.Time `json:"preread"`
+				Networks map[string]struct {
+					Rx uint64 `json:"rx_bytes"`
+					Tx uint64 `json:"tx_bytes"`
+				} `json:"networks"`
+				Blkio struct {
+					Bytes []struct {
+						Op    string `json:"op"`
+						Value uint64 `json:"value"`
+					} `json:"io_service_bytes_recursive"`
+				} `json:"blkio_stats"`
+				Read     time.Time `json:"read"`
+				PreRead  time.Time `json:"preread"`
 				CPUStats struct {
 					CPUUsage struct {
 						TotalUsage uint64 `json:"total_usage"`
@@ -313,10 +351,42 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 				return
 			}
 
+			cur := ioSample{ID: containers[idx].ID, At: stats.Read}
+			for _, n := range stats.Networks {
+				cur.Rx += n.Rx
+				cur.Tx += n.Tx
+			}
+			for _, b := range stats.Blkio.Bytes {
+				if strings.EqualFold(b.Op, "read") {
+					cur.Read += b.Value
+				}
+				if strings.EqualFold(b.Op, "write") {
+					cur.Write += b.Value
+				}
+			}
+			containers[idx].NetRxBytes = &cur.Rx
+			containers[idx].NetTxBytes = &cur.Tx
+			containers[idx].BlkReadBytes = &cur.Read
+			containers[idx].BlkWriteBytes = &cur.Write
+			c.rateMu.Lock()
+			if c.samples == nil {
+				c.samples = map[string]ioSample{}
+			}
+			if rates := ioRates(c.samples[cur.ID], cur); rates != nil {
+				containers[idx].NetRxRate = &rates.Rx
+				containers[idx].NetTxRate = &rates.Tx
+				containers[idx].BlkReadRate = &rates.Read
+				containers[idx].BlkWriteRate = &rates.Write
+			}
+			c.samples[cur.ID] = cur
+			c.rateMu.Unlock()
 			// CPU percent calculation — use wall-clock time delta from Docker's
 			// read/preread timestamps instead of system_cpu_usage, which has unit
 			// inconsistencies on cgroup v2 hosts that inflate readings by 10-100x.
-			cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+			cpuDelta := float64(0)
+			if stats.CPUStats.CPUUsage.TotalUsage >= stats.PreCPUStats.CPUUsage.TotalUsage {
+				cpuDelta = float64(stats.CPUStats.CPUUsage.TotalUsage - stats.PreCPUStats.CPUUsage.TotalUsage)
+			}
 			wallDelta := stats.Read.Sub(stats.PreRead).Nanoseconds()
 			if wallDelta > 0 && cpuDelta > 0 {
 				containers[idx].CPUPercent = (cpuDelta / float64(wallDelta)) * 100.0
@@ -327,6 +397,9 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			cacheBytes := stats.MemoryStats.Stats.Cache
 			if cacheBytes == 0 {
 				cacheBytes = stats.MemoryStats.Stats.InactiveFile
+			}
+			if cacheBytes > stats.MemoryStats.Usage {
+				cacheBytes = stats.MemoryStats.Usage
 			}
 			containers[idx].MemUsage = int64(stats.MemoryStats.Usage - cacheBytes)
 			containers[idx].MemLimit = int64(stats.MemoryStats.Limit)
@@ -341,6 +414,7 @@ func (c *DockerCollector) collectStats(ctx context.Context, cli *client.Client, 
 			if inspect.HostConfig != nil && inspect.HostConfig.NanoCPUs > 0 {
 				containers[idx].CPULimit = inspect.HostConfig.NanoCPUs
 			}
+			fillContainerMetadata(&containers[idx], inspect)
 			if inspect.HostConfig != nil {
 				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
 				containers[idx].UsesGPU = usesGPU(inspect.HostConfig)
@@ -424,6 +498,7 @@ func (c *DockerCollector) collectNetworkModes(ctx context.Context, cli *client.C
 				slog.Debug("docker: ContainerInspect failed in network mode phase", "container", containers[idx].ID, "error", err)
 				return
 			}
+			fillContainerMetadata(&containers[idx], inspect)
 			if inspect.HostConfig != nil {
 				containers[idx].NetworkMode = string(inspect.HostConfig.NetworkMode)
 				containers[idx].UsesGPU = usesGPU(inspect.HostConfig)
@@ -709,4 +784,20 @@ func (c *DockerCollector) checkViaManifestInspect(ctx context.Context, imageRef 
 		}
 	}
 	return resultNewer // manifest list exists but no sub-manifest matches — genuine update
+}
+
+func fillContainerMetadata(dst *models.ContainerInfo, inspect container.InspectResponse) {
+	if inspect.State != nil {
+		dst.StartedAt = inspect.State.StartedAt
+		dst.RestartCount = inspect.RestartCount
+		if !inspect.State.Running {
+			dst.FinishedAt = inspect.State.FinishedAt
+			code := inspect.State.ExitCode
+			dst.ExitCode = &code
+		}
+	}
+	if inspect.HostConfig != nil {
+		dst.MemLimitConfigured = inspect.HostConfig.Memory
+		dst.RestartPolicy = string(inspect.HostConfig.RestartPolicy.Name)
+	}
 }

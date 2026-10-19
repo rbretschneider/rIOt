@@ -75,7 +75,7 @@ func loadDaemonSnapshot(ctx context.Context, api dockerAPI) (daemonSnapshot, err
 			}
 		}
 		for _, m := range c.Mounts {
-			if m.Type != mount.TypeVolume || m.Name == "" || (m.Driver != "" && m.Driver != "local") || volumeDone[m.Name] {
+			if m.Type != mount.TypeVolume || m.Name == "" || volumeDone[m.Name] {
 				continue
 			}
 			volumeDone[m.Name] = true
@@ -85,6 +85,14 @@ func loadDaemonSnapshot(ctx context.Context, api dockerAPI) (daemonSnapshot, err
 			}
 			if strings.Contains(v.Options["o"], "bind") && v.Options["device"] != "" {
 				snap.volumeDevices[m.Name] = v.Options["device"]
+			}
+			if m.Driver != "" && m.Driver != "local" {
+				for _, key := range []string{"device", "path", "mountpoint"} {
+					if path := v.Options[key]; filepath.IsAbs(path) {
+						snap.volumeDevices[m.Name] = path
+						break
+					}
+				}
 			}
 		}
 	}

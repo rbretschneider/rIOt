@@ -104,7 +104,7 @@ export default function DeviceContainers() {
   )
 }
 
-function ContainerLayout({
+export function ContainerLayout({
   allContainers,
   search,
   onContainerClick,

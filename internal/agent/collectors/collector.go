@@ -30,10 +30,12 @@ func (r *Registry) Register(c Collector) {
 
 // DockerOptions configures the Docker collector.
 type DockerOptions struct {
-	CollectStats bool
-	SocketPath   string
-	CheckUpdates bool
-	CachePath    string
+	CollectStats         bool
+	SocketPath           string
+	CheckUpdates         bool
+	CachePath            string
+	ContainerLogMaxLines int
+	ContainerLogMaxBytes int
 }
 
 func (r *Registry) RegisterDefaults() {
@@ -56,9 +58,11 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 		CheckUpdates: opts.CheckUpdates,
 		CachePath:    opts.CachePath,
 	})
+	r.Register(&DockerInventoryCollector{SocketPath: opts.SocketPath})
 	r.Register(&ContainerLogCollector{
 		SocketPath: opts.SocketPath,
 		TailLines:  50,
+		MaxLines:   opts.ContainerLogMaxLines, MaxBytes: opts.ContainerLogMaxBytes,
 	})
 
 	// authCounter is a shared per-interval counter that LogsCollector
@@ -88,6 +92,13 @@ func (r *Registry) RegisterDefaultsWithDocker(opts DockerOptions) {
 
 func (r *Registry) FilterEnabled(enabled []string) {
 	if len(enabled) == 0 {
+		var defaults []Collector
+		for _, c := range r.ordered {
+			if c.Name() != "docker_inventory" {
+				defaults = append(defaults, c)
+			}
+		}
+		r.ordered = defaults
 		return
 	}
 	enabledSet := make(map[string]bool)

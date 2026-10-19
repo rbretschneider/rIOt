@@ -59,12 +59,3 @@ func (r *ContainerMetricRepo) GetHistory(ctx context.Context, deviceID, containe
 	}
 	return result, nil
 }
-
-func (r *ContainerMetricRepo) Purge(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx,
-		`DELETE FROM container_metrics WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
-}

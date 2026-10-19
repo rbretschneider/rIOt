@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+import { stackPath } from '../utils/dockerUrlState'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -97,7 +99,7 @@ export default function ComposeStackSection({ stack, deviceId, onContainerClick,
         <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
-        <h2 className="text-sm font-semibold text-white uppercase tracking-wider">{stack.name}</h2>
+        <h2 className="text-sm font-semibold text-white uppercase tracking-wider"><Link to={stackPath(deviceId,stack.name)}>{stack.name}</Link></h2>
         <span className="text-xs text-gray-600">{runningCount}/{stack.containers.length}</span>
 
         <div className="flex-1" />

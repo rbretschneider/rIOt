@@ -8,8 +8,17 @@ import type { WSMessage } from './types/models'
 import Dashboard from './pages/Dashboard'
 import FleetOverview from './pages/FleetOverview'
 import DeviceDetail from './pages/DeviceDetail'
-import DeviceContainers from './pages/DeviceContainers'
-import ContainerDetailPage from './pages/ContainerDetailPage'
+import DockerLayout from './pages/docker/DockerLayout'
+import ContainersPage from './pages/docker/ContainersPage'
+import ContainerPage from './pages/docker/ContainerPage'
+import LegacyRedirect from './pages/docker/LegacyRedirect'
+import StacksPage from './pages/docker/StacksPage'
+import StackPage from './pages/docker/StackPage'
+import InventoryPage from './pages/docker/InventoryPage'
+import ActivityPage from './pages/docker/ActivityPage'
+import CommandPalette from './components/CommandPalette'
+import { useFeatures } from './hooks/useFeatures'
+
 import Alerts from './pages/Alerts'
 import Login from './pages/Login'
 import Setup from './pages/Setup'
@@ -267,6 +276,7 @@ function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => voi
 export default function App() {
   const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const { isEnabled } = useFeatures()
 
   if (loading) {
     return (
@@ -289,6 +299,7 @@ export default function App() {
     <div className="min-h-screen bg-gray-950">
       <ScrollToTop />
       <GlobalWSHandler />
+      <CommandPalette />
       <nav className="bg-gray-900 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
@@ -302,10 +313,11 @@ export default function App() {
               <div className="hidden sm:flex gap-1">
                 <NavLink to="/">Fleet</NavLink>
                 <NavLink to="/dashboard">Dashboard</NavLink>
+                {isEnabled('docker') && <NavLink to="/docker">Docker</NavLink>}
                 <NavLink to="/alert-rules">Alert Rules</NavLink>
                 <NavLink to="/probes">Probes</NavLink>
                 <NavLink to="/security">Security</NavLink>
-                <NavLink to="/settings">Settings</NavLink>
+                <NavLink to="/settings">Settings</NavLink><button type="button" className="px-3 py-2 text-sm text-gray-400 hover:text-white" aria-label="Open command palette" onClick={() => window.dispatchEvent(new Event('riot-palette-open'))}>Search · Ctrl K</button>
                 <a
                   href="https://github.com/rbretschneider/rIOt"
                   target="_blank"
@@ -332,10 +344,11 @@ export default function App() {
           <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
             <NavLink to="/">Fleet</NavLink>
             <NavLink to="/dashboard">Dashboard</NavLink>
+                {isEnabled('docker') && <NavLink to="/docker">Docker</NavLink>}
             <NavLink to="/alert-rules">Alert Rules</NavLink>
             <NavLink to="/probes">Probes</NavLink>
             <NavLink to="/security">Security</NavLink>
-            <NavLink to="/settings">Settings</NavLink>
+            <NavLink to="/settings">Settings</NavLink><button type="button" className="px-3 py-2 text-sm text-gray-400 hover:text-white" aria-label="Open command palette" onClick={() => window.dispatchEvent(new Event('riot-palette-open'))}>Search · Ctrl K</button>
             <a
               href="https://github.com/rbretschneider/rIOt"
               target="_blank"
@@ -371,8 +384,19 @@ export default function App() {
           <Route path="/" element={<FleetOverview />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
-          <Route path="/devices/:id/containers" element={<DeviceContainers />} />
-          <Route path="/devices/:id/containers/:cid" element={<ContainerDetailPage />} />
+          <Route path="/devices/:id/containers" element={<LegacyRedirect />} />
+          <Route path="/devices/:id/containers/:cid" element={<LegacyRedirect />} />
+          <Route path="/docker" element={<DockerLayout />} >
+            <Route index element={<Navigate replace to="containers" />} />
+            <Route path="containers" element={<ContainersPage />} />
+            <Route path="containers/:deviceId/:name" element={<ContainerPage />} />
+            <Route path="stacks" element={<StacksPage />} />
+            <Route path="stacks/:deviceId/:project" element={<StackPage />} />
+            <Route path="images" element={<InventoryPage key="images" kind="images" />} />
+            <Route path="volumes" element={<InventoryPage key="volumes" kind="volumes" />} />
+            <Route path="networks" element={<InventoryPage key="networks" kind="networks" />} />
+            <Route path="activity" element={<ActivityPage />} />
+          </Route>
           <Route path="/devices/:id/probes" element={<DeviceProbes />} />
           <Route path="/devices/:id/terminal" element={<DeviceTerminal />} />
           <Route path="/alerts" element={<Alerts />} />

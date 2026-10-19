@@ -137,12 +137,12 @@ export const api = {
     )
   },
 
-  sendCommand: async (deviceId: string, action: string, params: Record<string, unknown> = {}): Promise<Command> => {
+  sendCommand: async (deviceId: string, action: string, params: Record<string, unknown> = {}, confirmHost?: string): Promise<Command> => {
     const res = await fetch(`${BASE}/devices/${deviceId}/commands`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, params }),
+      body: JSON.stringify({ action, params, ...(confirmHost ? { confirm_host: confirmHost } : {}) }),
     })
     if (res.status === 401) {
       window.location.reload()

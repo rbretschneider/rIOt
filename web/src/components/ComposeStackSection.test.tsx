@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -147,9 +148,9 @@ function push(update: CommandUpdate) {
 function renderStack(stack: ComposeStackGroup = makeStack()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const utils = render(
-    <QueryClientProvider client={qc}>
+    <MemoryRouter><QueryClientProvider client={qc}>
       <ComposeStackSection stack={stack} deviceId={DEVICE} onContainerClick={() => {}} allContainers={stack.containers} />
-    </QueryClientProvider>,
+    </QueryClientProvider></MemoryRouter>,
   )
   return { qc, ...utils }
 }

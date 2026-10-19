@@ -39,25 +39,29 @@ type LogEntry struct {
 
 // FullTelemetryData contains all collected system information.
 type FullTelemetryData struct {
-	System        *SystemInfo         `json:"system,omitempty"`
-	OS            *OSInfo             `json:"os,omitempty"`
-	CPU           *CPUInfo            `json:"cpu,omitempty"`
-	Memory        *MemoryInfo         `json:"memory,omitempty"`
-	Disks         *DiskInfo           `json:"disks,omitempty"`
-	Network       *NetworkInfo        `json:"network,omitempty"`
-	Updates       *UpdateInfo         `json:"updates,omitempty"`
-	Services      []ServiceInfo       `json:"services,omitempty"`
-	Procs         *ProcessInfo        `json:"processes,omitempty"`
-	Docker        *DockerInfo         `json:"docker,omitempty"`
-	Security      *SecurityInfo       `json:"security,omitempty"`
-	Logs          []LogEntry          `json:"logs,omitempty"`
-	UPS           *UPSInfo            `json:"ups,omitempty"`
-	WebServers    *WebServerInfo      `json:"web_servers,omitempty"`
-	USB           *USBInfo            `json:"usb,omitempty"`
-	Hardware      *HardwareInfo       `json:"hardware,omitempty"`
-	CronJobs      *CronInfo           `json:"cron_jobs,omitempty"`
-	ContainerLogs []ContainerLogEntry `json:"container_logs,omitempty"`
-	GPUTelemetry  *GPUTelemetry       `json:"gpu_telemetry,omitempty"`
+	Trimmed          bool                `json:"trimmed,omitempty"`
+	DroppedSections  []string            `json:"dropped_sections,omitempty"`
+	DockerInventory  *DockerInventory    `json:"docker_inventory,omitempty"`
+	System           *SystemInfo         `json:"system,omitempty"`
+	OS               *OSInfo             `json:"os,omitempty"`
+	CPU              *CPUInfo            `json:"cpu,omitempty"`
+	Memory           *MemoryInfo         `json:"memory,omitempty"`
+	Disks            *DiskInfo           `json:"disks,omitempty"`
+	Network          *NetworkInfo        `json:"network,omitempty"`
+	Updates          *UpdateInfo         `json:"updates,omitempty"`
+	Services         []ServiceInfo       `json:"services,omitempty"`
+	Procs            *ProcessInfo        `json:"processes,omitempty"`
+	Docker           *DockerInfo         `json:"docker,omitempty"`
+	Security         *SecurityInfo       `json:"security,omitempty"`
+	Logs             []LogEntry          `json:"logs,omitempty"`
+	UPS              *UPSInfo            `json:"ups,omitempty"`
+	WebServers       *WebServerInfo      `json:"web_servers,omitempty"`
+	USB              *USBInfo            `json:"usb,omitempty"`
+	Hardware         *HardwareInfo       `json:"hardware,omitempty"`
+	CronJobs         *CronInfo           `json:"cron_jobs,omitempty"`
+	ContainerLogs    []ContainerLogEntry `json:"container_logs,omitempty"`
+	ContainerLogGaps []ContainerLogGap   `json:"container_log_gaps,omitempty"`
+	GPUTelemetry     *GPUTelemetry       `json:"gpu_telemetry,omitempty"`
 }
 
 // GPUDeviceMetrics holds runtime metrics for a single NVIDIA GPU.
@@ -319,45 +323,60 @@ type ProcessEntry struct {
 
 // DockerInfo holds Docker daemon and container details.
 type DockerInfo struct {
-	Available       bool            `json:"available"`
-	Version         string          `json:"version,omitempty"`
-	APIVersion      string          `json:"api_version,omitempty"`
-	TotalContainers int             `json:"total_containers"`
-	Running         int             `json:"running"`
-	Stopped         int             `json:"stopped"`
-	Paused          int             `json:"paused"`
-	ImagesTotal     int             `json:"images_total"`
-	StorageDriver   string          `json:"storage_driver,omitempty"`
-	DockerRootDir   string          `json:"docker_root_dir,omitempty"`
-	Containers      []ContainerInfo `json:"containers,omitempty"`
+	InventoryEnabled     bool            `json:"inventory_enabled"`
+	Capabilities         []string        `json:"capabilities,omitempty"`
+	ContainerLogsEnabled *bool           `json:"container_logs_enabled"`
+	Available            bool            `json:"available"`
+	Version              string          `json:"version,omitempty"`
+	APIVersion           string          `json:"api_version,omitempty"`
+	TotalContainers      int             `json:"total_containers"`
+	Running              int             `json:"running"`
+	Stopped              int             `json:"stopped"`
+	Paused               int             `json:"paused"`
+	ImagesTotal          int             `json:"images_total"`
+	StorageDriver        string          `json:"storage_driver,omitempty"`
+	DockerRootDir        string          `json:"docker_root_dir,omitempty"`
+	Containers           []ContainerInfo `json:"containers,omitempty"`
 }
 
 // ContainerInfo holds rich per-container data.
 type ContainerInfo struct {
-	ID              string            `json:"id"`
-	ShortID         string            `json:"short_id"`
-	Name            string            `json:"name"`
-	Image           string            `json:"image"`
-	State           string            `json:"state"`
-	Status          string            `json:"status"`
-	Created         int64             `json:"created"`
-	Ports           []PortMapping     `json:"ports,omitempty"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	CPUPercent      float64           `json:"cpu_percent"`
-	MemUsage        int64             `json:"mem_usage"`
-	MemLimit        int64             `json:"mem_limit"`
-	CPULimit        int64             `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
-	RestartPolicy   string            `json:"restart_policy,omitempty"`
-	RestartCount    int               `json:"restart_count,omitempty"`
-	Mounts          []MountInfo       `json:"mounts,omitempty"`
-	Networks        []NetworkAttach   `json:"networks,omitempty"`
-	Env             []EnvVar          `json:"env,omitempty"`
-	HealthStatus    string            `json:"health_status,omitempty"`
-	RepoURL         string            `json:"repo_url,omitempty"`
-	Riot            *RiotLabels       `json:"riot,omitempty"`
-	UpdateAvailable *bool             `json:"update_available,omitempty"`
-	NetworkMode     string            `json:"network_mode,omitempty"`
-	UsesGPU         bool              `json:"uses_gpu,omitempty"` // HostConfig requests GPU devices (PATCH-GATE FR-028)
+	StartedAt          string            `json:"started_at,omitempty"`
+	FinishedAt         string            `json:"finished_at,omitempty"`
+	ExitCode           *int              `json:"exit_code,omitempty"`
+	MemLimitConfigured int64             `json:"mem_limit_configured,omitempty"`
+	NetRxBytes         *uint64           `json:"net_rx_bytes,omitempty"`
+	NetTxBytes         *uint64           `json:"net_tx_bytes,omitempty"`
+	BlkReadBytes       *uint64           `json:"blk_read_bytes,omitempty"`
+	BlkWriteBytes      *uint64           `json:"blk_write_bytes,omitempty"`
+	NetRxRate          *float64          `json:"net_rx_rate,omitempty"`
+	NetTxRate          *float64          `json:"net_tx_rate,omitempty"`
+	BlkReadRate        *float64          `json:"blk_read_rate,omitempty"`
+	BlkWriteRate       *float64          `json:"blk_write_rate,omitempty"`
+	ID                 string            `json:"id"`
+	ShortID            string            `json:"short_id"`
+	Name               string            `json:"name"`
+	Image              string            `json:"image"`
+	State              string            `json:"state"`
+	Status             string            `json:"status"`
+	Created            int64             `json:"created"`
+	Ports              []PortMapping     `json:"ports,omitempty"`
+	Labels             map[string]string `json:"labels,omitempty"`
+	CPUPercent         float64           `json:"cpu_percent"`
+	MemUsage           int64             `json:"mem_usage"`
+	MemLimit           int64             `json:"mem_limit"`
+	CPULimit           int64             `json:"cpu_limit,omitempty"` // NanoCPUs (1e9 = 1 core)
+	RestartPolicy      string            `json:"restart_policy,omitempty"`
+	RestartCount       int               `json:"restart_count,omitempty"`
+	Mounts             []MountInfo       `json:"mounts,omitempty"`
+	Networks           []NetworkAttach   `json:"networks,omitempty"`
+	Env                []EnvVar          `json:"env,omitempty"`
+	HealthStatus       string            `json:"health_status,omitempty"`
+	RepoURL            string            `json:"repo_url,omitempty"`
+	Riot               *RiotLabels       `json:"riot,omitempty"`
+	UpdateAvailable    *bool             `json:"update_available,omitempty"`
+	NetworkMode        string            `json:"network_mode,omitempty"`
+	UsesGPU            bool              `json:"uses_gpu,omitempty"` // HostConfig requests GPU devices (PATCH-GATE FR-028)
 	// Per-container image freshness (CMD-LIFECYCLE-001, AD-016). UpdateAvailable
 	// above is true only when UpdateStatus is UpdateStatusAvailable, false for
 	// up_to_date and pinned, and nil for check_failed.
@@ -434,6 +453,7 @@ type EnvVar struct {
 
 // RiotLabels holds parsed riot.* label values.
 type RiotLabels struct {
+	Role        string   `json:"role,omitempty"`
 	Group       string   `json:"group,omitempty"`
 	Name        string   `json:"name,omitempty"`
 	Icon        string   `json:"icon,omitempty"`
@@ -474,13 +494,25 @@ type ContainerMetric struct {
 
 // ContainerLogEntry holds a single log line from a Docker container.
 type ContainerLogEntry struct {
-	ID            int64     `json:"id,omitempty"`
-	DeviceID      string    `json:"device_id,omitempty"`
+	StoredPriority bool       `json:"-"`
+	ID             int64      `json:"id,omitempty"`
+	DeviceID       string     `json:"device_id,omitempty"`
+	ContainerID    string     `json:"container_id"`
+	ContainerName  string     `json:"container_name"`
+	Timestamp      time.Time  `json:"timestamp"`
+	AgentTS        *time.Time `json:"agent_ts,omitempty"`
+	Stream         string     `json:"stream"` // "stdout" or "stderr"
+	Line           string     `json:"line"`
+}
+
+// ContainerLogGap describes omitted output; only the server creates stored gap rows.
+type ContainerLogGap struct {
 	ContainerID   string    `json:"container_id"`
 	ContainerName string    `json:"container_name"`
 	Timestamp     time.Time `json:"timestamp"`
-	Stream        string    `json:"stream"` // "stdout" or "stderr"
-	Line          string    `json:"line"`
+	Count         int64     `json:"count"`
+	LowerBound    bool      `json:"lower_bound"`
+	Reason        string    `json:"reason"`
 }
 
 // USBInfo holds USB device information.

@@ -6,6 +6,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
+	"github.com/DesyncTheThird/rIOt/internal/server/ingest"
 	"github.com/DesyncTheThird/rIOt/internal/server/middleware"
 	"github.com/DesyncTheThird/rIOt/internal/server/oidc"
 	"github.com/go-chi/chi/v5"
@@ -75,40 +76,45 @@ func (s *Server) setupRouter() *chi.Mux {
 	}
 
 	h := handlers.New(handlers.HandlerDeps{
-		Devices:           s.DeviceRepo,
-		Telemetry:         s.TelemetryRepo,
-		Events:            s.EventRepo,
-		Hub:               s.Hub,
-		EventGen:          s.EventGen,
-		UpdateChecker:     s.UpdateChecker,
-		AdminRepo:         s.AdminRepo,
-		TerminalRepo:      s.TerminalRepo,
-		AlertRuleRepo:     s.AlertRuleRepo,
-		NotifyRepo:        s.NotifyRepo,
-		Dispatcher:        s.Dispatcher,
-		CommandRepo:       s.CommandRepo,
-		Commands:          s.Commands,
-		ProbeRepo:         s.ProbeRepo,
-		ProbeRunner:       s.ProbeRunner,
-		LogRepo:           s.LogRepo,
-		DeviceLogRepo:     s.DeviceLogRepo,
-		AutoUpdateRepo:       s.AutoUpdateRepo,
-		ContainerLogRepo:     s.ContainerLogRepo,
-		ContainerMetricRepo:  s.ContainerMetricRepo,
-		DeviceProbeRepo:      s.DeviceProbeRepo,
-		JWTSecret:         s.JWTSecret,
-		AdminPasswordHash: s.Config.AdminPasswordHash,
-		OIDC:                 oidcSvc,
-		ExternalIdentityRepo: s.ExternalIdentityRepo,
-		SetupComplete:        &s.SetupComplete,
-		CARepo:               regCARepo,
+		Devices:                   s.DeviceRepo,
+		Telemetry:                 s.TelemetryRepo,
+		Events:                    s.EventRepo,
+		Hub:                       s.Hub,
+		EventGen:                  s.EventGen,
+		UpdateChecker:             s.UpdateChecker,
+		AdminRepo:                 s.AdminRepo,
+		TerminalRepo:              s.TerminalRepo,
+		AlertRuleRepo:             s.AlertRuleRepo,
+		NotifyRepo:                s.NotifyRepo,
+		Dispatcher:                s.Dispatcher,
+		CommandRepo:               s.CommandRepo,
+		Commands:                  s.Commands,
+		ProbeRepo:                 s.ProbeRepo,
+		ProbeRunner:               s.ProbeRunner,
+		LogRepo:                   s.LogRepo,
+		DeviceLogRepo:             s.DeviceLogRepo,
+		AutoUpdateRepo:            s.AutoUpdateRepo,
+		ContainerLogRepo:          s.ContainerLogRepo,
+		DockerRepo:                db.NewDockerRepo(s.DB),
+		ContainerLogRetentionDays: s.EffectiveContainerLogRetention(),
+		StorageQuota:              s.StorageQuota,
+		PartitionManager:          s.PartitionManager,
+		StorageGuard:              s.StorageGuard,
+		ContainerMetricRepo:       s.ContainerMetricRepo,
+		DeviceProbeRepo:           s.DeviceProbeRepo,
+		JWTSecret:                 s.JWTSecret,
+		AdminPasswordHash:         s.Config.AdminPasswordHash,
+		OIDC:                      oidcSvc,
+		ExternalIdentityRepo:      s.ExternalIdentityRepo,
+		SetupComplete:             &s.SetupComplete,
+		CARepo:                    regCARepo,
 	})
 
 	// Setup wizard handler
 	setupH := handlers.NewSetupHandler(s.AdminRepo, s.CARepo, s.applyTLSAndRestart)
 
 	// Rate limiters
-	loginLimiter := middleware.NewRateLimiter(5, 5)     // 5/min
+	loginLimiter := middleware.NewRateLimiter(5, 5)      // 5/min
 	registerLimiter := middleware.NewRateLimiter(10, 10) // 10/min
 	// OIDC-001 AD-013: a separate bucket from loginLimiter (same policy) so a
 	// burst of failed SSO attempts cannot consume the operator's
@@ -134,6 +140,7 @@ func (s *Server) setupRouter() *chi.Mux {
 	// check runs before the session check, so an unauthenticated cross-origin
 	// write gets 403, not 401.
 	adminAuth := middleware.AdminAuthSameOrigin(s.JWTSecret, s.Config.AllowedOrigins)
+	registerDockerRoutes(r, h, adminAuth)
 
 	// Setup wizard routes
 	r.Route("/api/v1/setup", func(r chi.Router) {
@@ -189,6 +196,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		}, deviceAuth...)
 	}
 
+	deviceAuth = append(deviceAuth, ingest.New().Middleware)
 	r.Route("/api/v1/devices/{id}", func(r chi.Router) {
 		// Agent-authenticated endpoints (mTLS + API key when mTLS enabled)
 		r.With(deviceAuth...).Post("/heartbeat", h.Heartbeat)

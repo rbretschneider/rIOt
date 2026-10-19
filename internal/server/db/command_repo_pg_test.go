@@ -19,7 +19,14 @@ import (
 
 var pgNow = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 
-func (e *pgEnv) repo() *CommandRepo { return &CommandRepo{db: &DB{Pool: e.Pool}} }
+func (e *pgEnv) repo() *CommandRepo {
+	e.T.Helper()
+	err := e.Mig.Migrate(32)
+	if err != nil && err.Error() != "no change" {
+		e.T.Fatal(err)
+	}
+	return &CommandRepo{db: &DB{Pool: e.Pool}}
+}
 
 // rawCommand is a row inserted directly, bypassing the repository, so tests can
 // create legacy shapes and arbitrary states.
@@ -317,7 +324,7 @@ func TestCL_NFR002_PG_DownMigrationRestoresLegacyValues(t *testing.T) {
 		env.insertRaw(c)
 	}
 
-	require.NoError(t, env.Mig.Steps(-1), "down migration")
+	require.NoError(t, env.Mig.Migrate(22), "down migration")
 
 	want := map[string]string{
 		"queued": "queued", "dispatched": "sent", "acknowledged": "sent", "running": "sent", "verifying": "sent",
@@ -353,7 +360,7 @@ func TestCL_SEC009_PG_DownMigrationFailsQueuedPowerActions(t *testing.T) {
 	env.insertRaw(rawCommand{ID: "docker", DeviceID: "dev-1", Action: "docker_update", Status: "queued", ExpiresAt: future})
 	env.insertRaw(rawCommand{ID: "stale", DeviceID: "dev-1", Action: "fetch_logs", Status: "queued", ExpiresAt: time.Now().UTC().Add(-time.Hour)})
 
-	require.NoError(t, env.Mig.Steps(-1))
+	require.NoError(t, env.Mig.Migrate(22))
 
 	for _, id := range []string{"reboot", "shutdown", "patch-reboot"} {
 		assert.Equal(t, "error", env.statusOf(id), "[SEC-009] queued power action %s must not survive a downgrade, even unexpired", id)

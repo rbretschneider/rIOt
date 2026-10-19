@@ -25,8 +25,12 @@ const sessionCookieName = "riot_session"
 // (NFR-010) are unaffected, while an https deployment gets the compensating
 // control that pairs with SameSite=Lax (AD-008, SEC-001).
 func (h *Handlers) issueSessionCookie(w http.ResponseWriter, r *http.Request, now time.Time) error {
+	return h.issueActorSessionCookie(w, r, now, "password", "local-admin", "Admin")
+}
+func (h *Handlers) issueActorSessionCookie(w http.ResponseWriter, r *http.Request, now time.Time, auth, sub, name string) error {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "admin",
+		"sub":         "admin",
+		"auth_method": auth, "actor_sub": sub, "display_name": name,
 		"exp": now.Add(24 * time.Hour).Unix(),
 		"iat": now.Unix(),
 	})

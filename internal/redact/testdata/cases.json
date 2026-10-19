@@ -1,0 +1,27 @@
+{
+  "mask": [
+    {"input":"password=hunter2", "want":"password=<masked>"},
+    {"input":"clientKey: hunter2", "want":"clientKey: <masked>"},
+    {"input":"\"DATABASE_PW\":\"hunter2\"", "want":"\"DATABASE_PW\":\"<masked>\""},
+    {"input":"redis://:hunter2@host", "want":"redis://:<masked>@host"},
+    {"input":"https://user:hunter2/a@b@host/path", "want":"https://user:<masked>@host/path"},
+    {"input":"https://host/path?apiKey=hunter2&safe=yes", "want":"https://host/path?apiKey=<masked>&safe=yes"},
+    {"input":"Authorization: Bearer hunter2", "want":"Authorization: <masked>"},
+    {"input":"service started successfully", "want":"service started successfully"}
+  ],
+  "keys": [
+    {"input":"clientKey", "want":true},
+    {"input":"PRIVKey", "want":true},
+    {"input":"DATABASE_PW", "want":true},
+    {"input":"connectionString", "want":true},
+    {"input":"MONKEY", "want":true},
+    {"input":"com.docker.compose.project", "want":false}
+  ],
+  "env": [
+    {"key":"TZ", "value":"UTC", "want":"UTC"},
+    {"key":"NODE_ENV", "value":"production", "want":"production"},
+    {"key":"DATABASE_URL", "value":"secret", "want":"<redacted>"},
+    {"key":"APP_MODE", "value":"value", "want":"<redacted>"},
+    {"key":"PATH", "value":"https://user:secret@host", "want":"https://user:<redacted>@host"}
+  ]
+}

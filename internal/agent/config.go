@@ -45,29 +45,31 @@ type HostTerminalConfig struct {
 
 // DockerConfig controls Docker collection behavior.
 type DockerConfig struct {
-	Enabled         string `yaml:"enabled"`          // "auto" (default), "true", "false"
-	SocketPath      string `yaml:"socket_path"`      // override auto-detection
-	CollectStats    bool   `yaml:"collect_stats"`    // CPU/mem per container
-	TerminalEnabled bool   `yaml:"terminal_enabled"` // opt-in for remote exec
+	Enabled         string `yaml:"enabled"`                 // "auto" (default), "true", "false"
+	SocketPath      string `yaml:"socket_path"`             // override auto-detection
+	CollectStats    bool   `yaml:"collect_stats"`           // CPU/mem per container
+	TerminalEnabled bool   `yaml:"terminal_enabled"`        // opt-in for remote exec
 	CheckUpdates    *bool  `yaml:"check_updates,omitempty"` // nil = true (default enabled)
 
 	// ComposeRoots limits where compose updates may run (AUTOUPD-HARDEN-001):
 	// absolute directories. Empty means not enforced (required on Windows).
-	ComposeRoots []string `yaml:"compose_roots,omitempty"`
+	ComposeTrustedRoots   []string `yaml:"compose_trusted_roots,omitempty"`
+	PruneSupersededImages bool     `yaml:"prune_superseded_images"`
+	ComposeRoots          []string `yaml:"compose_roots,omitempty"`
 	// rootsErr is set by normalizeComposeRoots when an entry is invalid. Every
 	// compose check then fails closed while the rest of the agent keeps running.
 	rootsErr error
 }
 
 type ServerConfig struct {
-	URL            string `yaml:"url"`
-	APIKey         string `yaml:"api_key"`
-	TLSVerify      bool   `yaml:"tls_verify"`
-	CACertFile     string `yaml:"ca_cert_file"`      // custom CA certificate for TLS verification
-	ClientCert     string `yaml:"client_cert"`        // mTLS client certificate path
-	ClientKey      string `yaml:"client_key"`         // mTLS client key path
-	BootstrapKey   string `yaml:"bootstrap_key"`      // single-use enrollment key
-	ServerCertPin  string `yaml:"server_cert_pin"`    // SHA256 fingerprint for TOFU verification
+	URL           string `yaml:"url"`
+	APIKey        string `yaml:"api_key"`
+	TLSVerify     bool   `yaml:"tls_verify"`
+	CACertFile    string `yaml:"ca_cert_file"`    // custom CA certificate for TLS verification
+	ClientCert    string `yaml:"client_cert"`     // mTLS client certificate path
+	ClientKey     string `yaml:"client_key"`      // mTLS client key path
+	BootstrapKey  string `yaml:"bootstrap_key"`   // single-use enrollment key
+	ServerCertPin string `yaml:"server_cert_pin"` // SHA256 fingerprint for TOFU verification
 }
 
 type AgentConfig struct {
@@ -79,10 +81,15 @@ type AgentConfig struct {
 	AutoUpdate        *bool    `yaml:"auto_update,omitempty"` // nil = true (default enabled)
 }
 
+type ContainerLogsConfig struct {
+	MaxLines int `yaml:"max_lines"`
+	MaxBytes int `yaml:"max_bytes"`
+}
 type CollectorConfig struct {
-	Enabled       []string        `yaml:"enabled"`
-	SMARTInterval int             `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
-	Webservers    WebServersConfig `yaml:"webservers"`
+	ContainerLogs ContainerLogsConfig `yaml:"container_logs"`
+	Enabled       []string            `yaml:"enabled"`
+	SMARTInterval int                 `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
+	Webservers    WebServersConfig    `yaml:"webservers"`
 }
 
 // WebServersConfig holds per-collector configuration for the webservers collector.
@@ -106,6 +113,7 @@ func DefaultConfig() *Config {
 			HeartbeatInterval: 15,
 		},
 		Collector: CollectorConfig{
+			ContainerLogs: ContainerLogsConfig{MaxLines: 50, MaxBytes: 16384},
 			Enabled: []string{
 				"system", "cpu", "memory", "disk", "network",
 				"os_info", "updates", "services", "processes",
@@ -139,6 +147,18 @@ func LoadConfig(path string) (*Config, error) {
 		return cfg, err
 	}
 	cfg.Docker.normalizeComposeRoots()
+	if cfg.Collector.ContainerLogs.MaxLines < 1 || cfg.Collector.ContainerLogs.MaxLines > 1000 {
+		if cfg.Collector.ContainerLogs.MaxLines != 0 {
+			slog.Warn("invalid container_logs.max_lines; using 50")
+		}
+		cfg.Collector.ContainerLogs.MaxLines = 50
+	}
+	if cfg.Collector.ContainerLogs.MaxBytes < 1024 || cfg.Collector.ContainerLogs.MaxBytes > 262144 {
+		if cfg.Collector.ContainerLogs.MaxBytes != 0 {
+			slog.Warn("invalid container_logs.max_bytes; using 16384")
+		}
+		cfg.Collector.ContainerLogs.MaxBytes = 16384
+	}
 
 	return cfg, nil
 }
@@ -202,6 +222,10 @@ collectors:
     - logs
     - ups
   # smart_interval: 14400  # SMART scan interval in seconds (default 14400 = 4 hours)
+  # container_logs:
+  #   max_lines: 50         # Newest stored lines per container, 1..1000
+  #   max_bytes: 16384      # Stored bytes per container, 1024..262144
+  # Add docker_inventory to enabled above for opt-in inventory scans (15 min).
   # webservers:
   #   nginx:
   #     access_log: /var/log/nginx/access.log  # Enable nginx access log monitoring
@@ -213,6 +237,8 @@ docker:
   # terminal_enabled: false  # Allow remote exec into containers
   # socket_path: ""        # Override Docker socket auto-detection
   # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)
+  # compose_trusted_roots: [] # Reviewed roots a container may write (host-local opt-in)
+  # prune_superseded_images: false # Remove unused, untagged previous images after successful updates
 
 commands:
   allow_reboot: false      # Allow remote reboot commands

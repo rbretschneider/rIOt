@@ -21,18 +21,23 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/logbudget"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 type Agent struct {
-	config     *Config
-	configPath string
-	version    string
-	registry   *collectors.Registry
-	buffer     *Buffer
-	client     *HTTPClient
-	wsClient   *agentWSClient
-	logErrors  atomic.Int64
+	removalFactory      func() (dockerRemovalAPI, error)
+	dockerEvents        dockerEventBus
+	stacks              agentStackRegistry
+	telemetryRetryUntil time.Time
+	config              *Config
+	configPath          string
+	version             string
+	registry            *collectors.Registry
+	buffer              *Buffer
+	client              *HTTPClient
+	wsClient            *agentWSClient
+	logErrors           atomic.Int64
 
 	// holdMgr enforces OS-level reboot-class package holds (PATCH-GATE).
 	// Shared with the updates collector via Registry.SetHoldManager.
@@ -111,7 +116,8 @@ func New(configPath, version string) (*Agent, error) {
 	registry := collectors.NewRegistry()
 	checkUpdates := cfg.Docker.CheckUpdates == nil || *cfg.Docker.CheckUpdates
 	registry.RegisterDefaultsWithDocker(collectors.DockerOptions{
-		CollectStats: cfg.Docker.CollectStats,
+		CollectStats:         cfg.Docker.CollectStats,
+		ContainerLogMaxLines: cfg.Collector.ContainerLogs.MaxLines, ContainerLogMaxBytes: cfg.Collector.ContainerLogs.MaxBytes,
 		SocketPath:   cfg.Docker.SocketPath,
 		CheckUpdates: checkUpdates,
 		CachePath:    FreshnessCachePath(),
@@ -140,7 +146,7 @@ func (a *Agent) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(logbudget.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}), 1000))
 	slog.SetDefault(logger)
 
 	// Auto-detect HTTP→HTTPS upgrade: if server is running TLS but config has http://,

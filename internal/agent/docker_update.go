@@ -405,11 +405,25 @@ func (cr *cmdRun) checkCompose(api dockerAPI, spec composeSpec) (snap daemonSnap
 		res := cr.refusal(snapshotRefusal(spec.WorkDir, err))
 		return snap, td, &res
 	}
+	if err := cr.a.composeTrust().strictWritable(snap, spec.WorkDir); err != nil {
+		res := cr.refusal(err)
+		return snap, td, &res
+	}
 	td, err = cr.a.composeTrust().Check(snap, trustRequest{Dir: spec.WorkDir, Project: spec.Project, SourceID: spec.SourceID})
 	if err != nil {
 		res := cr.refusal(err)
 		return snap, td, &res
 	}
+	var files []string
+	if raw, e := json.Marshal(cr.payload.Params["compose_config_files"]); e == nil {
+		json.Unmarshal(raw, &files)
+	}
+	checkedSnap, pinned, err := cr.a.resolveStackPaths(snap, spec.Project, spec.WorkDir, files, false)
+	if err != nil {
+		res := cr.refusal(newTrustError(ruleDirChanged, spec.WorkDir, "stack path agreement refused: %s", err.Error()))
+		return snap, trustedDir{}, &res
+	}
+	snap, td = checkedSnap, pinned
 	return snap, td, nil
 }
 
@@ -485,7 +499,20 @@ func (cr *cmdRun) composeUpdate(api dockerAPI, spec composeSpec) (res commandExe
 		res = cr.finishDependents(st, res)
 		cr.Event(spec.label(), "", lifecycleAction(res))
 	}()
+	var previous []string
+	if cr.a.config != nil && cr.a.config.Docker.PruneSupersededImages {
+		if all, err := api.ContainerList(cr.ctx, container.ListOptions{All: true}); err == nil {
+			for _, ctr := range all {
+				if ctr.Labels[models.LabelComposeProject] == spec.Project {
+					previous = append(previous, ctr.ImageID)
+				}
+			}
+		}
+	}
 	res, refs = cr.composeCore(api, spec, st)
+	if res.Status == models.ResultStatusSuccess {
+		cr.cleanupSupersededImages(previous)
+	}
 	return res, refs
 }
 
@@ -671,7 +698,9 @@ func timeoutFailure(step string, limit time.Duration, out []byte) commandExecRes
 // runCompose runs one docker compose invocation under its own limit with the
 // SIGTERM-then-SIGKILL stop (FR-043, FR-044).
 func (cr *cmdRun) runCompose(args []string, limit time.Duration) ([]byte, bool, error) {
-	return runLimited(cr.ctx, cr.a.newProc("docker", cr.a.composeChildEnv(), args...), limit, models.ChildGrace, cr.a.clock())
+	out, timedOut, err := runLimited(cr.ctx, cr.a.newProc("docker", cr.a.composeChildEnv(), args...), limit, models.ChildGrace, cr.a.clock())
+	cr.recordStepOutput(out, err != nil || timedOut)
+	return out, timedOut, err
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +722,9 @@ func (cr *cmdRun) standaloneUpdate(api dockerAPI, insp container.InspectResponse
 		cr.Event(name, imageRef, lifecycleAction(res))
 	}()
 	res = cr.standaloneCore(api, insp, st)
+	if res.Status == models.ResultStatusSuccess {
+		cr.cleanupSupersededImages([]string{insp.Image})
+	}
 	if imageRef != "" {
 		refs = []string{imageRef}
 	}
@@ -1058,12 +1090,14 @@ func (a *Agent) dockerBulkUpdate(cr *cmdRun) commandExecResult {
 	budget := models.BulkAgentBudget(len(rawIDs))
 	var lines []string
 	var refs []string
+	var targetResults []models.DockerTargetResult
 	failed := 0
 	firstFailStep := ""
 	for i, n := range ordered {
 		if a.clock().Now().Sub(cr.start)+models.BulkContainerWorstCase > budget {
 			for _, rest := range ordered[i:] {
 				lines = append(lines, fmt.Sprintf("%s: %s", rest.name, models.BulkSkippedMessage))
+				targetResults = append(targetResults, models.DockerTargetResult{Container: rest.name, Outcome: "skipped", Step: models.StepPrecheck, Message: models.BulkSkippedMessage})
 				failed++
 			}
 			if firstFailStep == "" {
@@ -1074,6 +1108,11 @@ func (a *Agent) dockerBulkUpdate(cr *cmdRun) commandExecResult {
 		res, r := cr.dockerUpdateOne(api, updateTarget{Name: n.name, ID: n.id}, updateOpts{lockHeld: true})
 		refs = append(refs, r...)
 		lines = append(lines, fmt.Sprintf("%s: %s", n.name, res.Message))
+		outcome := "succeeded"
+		if res.Status == models.ResultStatusError {
+			outcome = "failed"
+		}
+		targetResults = append(targetResults, models.DockerTargetResult{Container: n.name, Outcome: outcome, Message: res.Message, Step: res.Step})
 		if res.Status == models.ResultStatusError {
 			failed++
 			if firstFailStep == "" {
@@ -1088,9 +1127,9 @@ func (a *Agent) dockerBulkUpdate(cr *cmdRun) commandExecResult {
 
 	summary := fmt.Sprintf("bulk update: %d/%d succeeded\n%s", len(ordered)-failed, len(ordered), strings.Join(lines, "\n"))
 	if failed > 0 {
-		return commandExecResult{Status: models.ResultStatusError, Step: firstFailStep, Message: summary}
+		return commandExecResult{Status: models.ResultStatusError, Step: firstFailStep, Message: summary, TargetResults: targetResults}
 	}
-	return commandExecResult{Status: models.ResultStatusSuccess, Message: summary}
+	return commandExecResult{Status: models.ResultStatusSuccess, Message: summary, TargetResults: targetResults}
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,4 +1206,66 @@ func configWithoutComposeWorkDir(cfg *container.Config) *container.Config {
 		}
 	}
 	return &cp
+}
+
+func (a *Agent) clearScopedFreshness(ctx context.Context, params map[string]interface{}) error {
+	project, _ := params["compose_project"].(string)
+	if project != "" && !composeProjectRe.MatchString(project) {
+		return fmt.Errorf("invalid compose project")
+	}
+	ids := map[string]bool{}
+	if raw, ok := params["container_ids"]; ok {
+		data, err := json.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("invalid container selection")
+		}
+		var selected []string
+		if json.Unmarshal(data, &selected) != nil || len(selected) > 500 {
+			return fmt.Errorf("invalid container selection")
+		}
+		for _, id := range selected {
+			if len(id) < 12 || len(id) > 64 {
+				return fmt.Errorf("invalid container ID")
+			}
+			ids[id] = true
+		}
+		if len(ids) == 0 {
+			return fmt.Errorf("no containers selected")
+		}
+	}
+	api, err := a.newDocker()
+	if err != nil {
+		return fmt.Errorf("docker unavailable")
+	}
+	defer api.Close()
+	ctx, cancel := context.WithTimeout(ctx, models.DockerPrecheckBudget)
+	defer cancel()
+	all, err := api.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return fmt.Errorf("cannot inspect selected containers")
+	}
+	var selected []container.Summary
+	for _, ctr := range all {
+		if project != "" && ctr.Labels[models.LabelComposeProject] != project {
+			continue
+		}
+		if len(ids) > 0 {
+			match := false
+			for id := range ids {
+				if strings.HasPrefix(ctr.ID, id) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+		selected = append(selected, ctr)
+	}
+	if len(selected) == 0 {
+		return fmt.Errorf("selected containers not found")
+	}
+	a.invalidateFreshness(imageRefs(selected))
+	return nil
 }

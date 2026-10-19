@@ -7,6 +7,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const ActorClaimsKey contextKey = "actor_claims"
+
 const AdminContextKey contextKey = "admin"
 
 // AdminAuth validates the riot_session JWT cookie.
@@ -31,6 +33,7 @@ func AdminAuth(jwtSecret []byte) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), AdminContextKey, true)
+			ctx = context.WithValue(ctx, ActorClaimsKey, token.Claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
