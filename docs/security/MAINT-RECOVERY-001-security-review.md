@@ -1,6 +1,6 @@
 # Security Review — MAINT-RECOVERY-001
 
-**Date:** 2026-10-20  
+**Date:** 2026-10-20
 **Verdict:** APPROVED FOR IMPLEMENTATION against the current FRD/ADD, with the mandatory verification conditions below. No blocking design changes.
 
 ## Evidence and threat boundary

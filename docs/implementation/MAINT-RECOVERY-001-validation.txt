@@ -199,7 +199,7 @@ After this operation, 0 B of additional disk space will be used.
 Get:1 file:/tmp/riot-apt-fixture.nU8PuEgC/repo ./ riot-test-provider 1 [680 B]
 debconf: delaying package configuration, since apt-utils is not installed
 Selecting previously unselected package riot-test-provider.
-(Reading database ... 
+(Reading database ...
 (Reading database ... 5%
 (Reading database ... 10%
 (Reading database ... 15%
@@ -561,7 +561,7 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is ed
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
 stderr | src/pages/DeviceDetail.flows.test.tsx > [UIF SEC-003] QA: a Reboot that fails after the page was left is still reported once > raises exactly one persistent error toast naming the action and the reason
-No routes matched location "/devices/dev-1/probes" 
+No routes matched location "/devices/dev-1/probes"
 
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function

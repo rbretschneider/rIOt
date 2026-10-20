@@ -1,7 +1,7 @@
 # Architecture Decision Document — MAINT-RECOVERY-001
 
-**Date:** 2026-10-20  
-**FRD:** `docs/requirements/MAINT-RECOVERY-001-frd.md`  
+**Date:** 2026-10-20
+**FRD:** `docs/requirements/MAINT-RECOVERY-001-frd.md`
 **Status:** Proposed; security approval required before implementation
 
 ## 1. Verified context and scope

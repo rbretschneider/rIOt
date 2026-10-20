@@ -1,7 +1,7 @@
 # Formal Requirements Document — MAINT-RECOVERY-001
 
-**Date:** 2026-10-20  
-**Status:** Proposed implementation contract; security review required before code  
+**Date:** 2026-10-20
+**Status:** Proposed implementation contract; security review required before code
 **Scope:** Safe remote OS maintenance and bounded package recovery
 
 ## 1. Problem and intended outcome

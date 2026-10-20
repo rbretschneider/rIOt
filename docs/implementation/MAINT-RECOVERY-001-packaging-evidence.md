@@ -1,6 +1,6 @@
 # MAINT-RECOVERY-001 — Packaging and installer evidence
 
-**Date:** 2026-10-20  
+**Date:** 2026-10-20
 **Detected stack:** Go 1.24, Linux systemd/Bash installer, GitHub Actions release matrix, Ed25519-signed release manifest; Python3 standard-library installer fixtures. No dependency added to the application. This supplements the root implementation report, not the post-QA user guide.
 
 ## Implemented scope
