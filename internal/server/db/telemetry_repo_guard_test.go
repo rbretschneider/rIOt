@@ -64,7 +64,7 @@ func TestReadQueries_AC032_AC033_GuardPlacement(t *testing.T) {
 	// In the DISTINCT ON queries the guard must be inside the subquery, before
 	// the row is chosen: after ORDER BY (or in an outer WHERE) it would drop the
 	// device instead of falling back to its newest valid row.
-	for _, name := range []string{"GetAllLatestSnapshots", "GetAllLatestSummaries", "GetGPUDeviceIDs", "GetFleetContainerLeaderboard"} {
+	for _, name := range []string{"GetAllLatestSnapshots", "GetAllLatestSummaries", "GetGPUDeviceIDs"} {
 		name := name
 		t.Run("[AC-032] "+name+" guard precedes DISTINCT ON ordering", func(t *testing.T) {
 			body := methodBody(t, src, name)
@@ -78,6 +78,12 @@ func TestReadQueries_AC032_AC033_GuardPlacement(t *testing.T) {
 			}
 		})
 	}
+
+	// Fleet reads use one indexed lookup per registered device. The guard must
+	// still apply before LIMIT so a future snapshot cannot hide valid history.
+	body := methodBody(t, src, "GetFleetContainerLeaderboard")
+	assert.Contains(t, body, "WHERE device_id=d.id AND "+guard)
+	assert.Less(t, strings.Index(body, guard), strings.Index(body, "ORDER BY timestamp DESC LIMIT 1"))
 }
 
 // AC-034: this story adds no statement that rewrites existing snapshot or

@@ -11,6 +11,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Fixed
 
+- [DOCKER-UX-001] Use indexed latest-snapshot lookups per host for Docker hosts and containers, preventing full-history scans that caused slow page loads and 30-second host API timeouts.
 - [DOCKER-UX-001] Wait for a confirmed authenticated session before fetching navigation feature settings. Logged-out visits no longer loop through protected-setting 401 responses and page reloads, allowing the password form and OIDC button to finish rendering.
 
 ### Docker area

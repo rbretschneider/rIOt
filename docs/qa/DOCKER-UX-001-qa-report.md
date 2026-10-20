@@ -1,5 +1,13 @@
 # DOCKER-UX-001 QA report
 
+## Post-deployment Docker query timeout
+
+Hawaii exposed another gap in the small-fixture/demo validation: `/api/v1/docker/hosts` returned 500 after 30.49–30.52 seconds, while `/api/v1/fleet/containers` returned 200 after 53.80 seconds. These reads do not contact agents. The global `DISTINCT ON` latest-snapshot queries inspected historical JSON before selecting one row per device; the hosts read exceeded its 30-second transaction timeout.
+
+The replacement uses a lateral, timestamp-ordered `LIMIT 1` lookup for each registered device against the existing device/time index. Docker omission fallback, future-time guards and the allowlist applied before database transfer remain intact. No migration or production database write is needed.
+
+Read-only `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` of the complete replacement SQL on Hawaii, bounded to five seconds: hosts **2.072 ms**, containers **7.488 ms**, four device rows each. These are database execution measurements, not end-to-end browser timings. Regression coverage checks multiple hosts, no history, an explicit Docker-disabled snapshot, omitted Docker and a future-dated snapshot. Deployment is separate from this candidate-query verification.
+
 ## Post-deployment login regression and hotfix
 
 The first production deployment exposed a gap in the earlier demo-based browser review: App mounted the protected feature-settings query before authentication. Its expected 401 invoked the API client's full-page reload, repeating the request and preventing the public OIDC availability result from rendering. OIDC itself remained configured and available.

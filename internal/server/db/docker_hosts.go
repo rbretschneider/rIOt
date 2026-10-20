@@ -17,13 +17,19 @@ type DockerHostProjection struct {
 
 // GetDockerHostProjection extracts just host capabilities and ownership in SQL.
 // It never decodes a telemetry snapshot or transfers labels/env to the caller.
+// LIMIT inside each device's index lookup avoids inspecting the entire history.
 func (r *TelemetryRepo) GetDockerHostProjection(ctx context.Context) ([]DockerHostProjection, error) {
 	out := []DockerHostProjection{}
 	err := r.db.ReadTx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT device_id,COALESCE((docker->>'available')::boolean,false),COALESCE(docker->'capabilities','[]'::jsonb),COALESCE((docker->>'inventory_enabled')::boolean,false),(docker->>'container_logs_enabled')::boolean,
  CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(docker->'containers','[]'::jsonb)) c WHERE c->>'image' ILIKE '%riot-server%' OR c->'riot'->>'role'='server' OR c->'labels'->>'riot.role'='server') THEN 'server'
  WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(docker->'containers','[]'::jsonb)) c WHERE c->'riot'->>'role'='database' OR c->'labels'->>'riot.role'='database') THEN 'database' ELSE '' END
- FROM(SELECT DISTINCT ON(device_id) device_id,data->'docker' AS docker FROM telemetry_snapshots WHERE timestamp<=now()+interval '5 minutes' AND NOT COALESCE(data->'dropped_sections' ? 'docker',false) ORDER BY device_id,timestamp DESC) latest`)
+ FROM devices d CROSS JOIN LATERAL (
+ SELECT device_id,data->'docker' AS docker FROM telemetry_snapshots
+ WHERE device_id=d.id AND timestamp<=now()+interval '5 minutes'
+ AND NOT COALESCE(data->'dropped_sections' ? 'docker',false)
+ ORDER BY timestamp DESC LIMIT 1
+ ) latest ORDER BY device_id`)
 		if err != nil {
 			return err
 		}
