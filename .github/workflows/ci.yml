@@ -89,6 +89,41 @@ jobs:
       - name: Run tests
         run: npm run test:run
 
+  test-maintenance-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Download existing Go dependencies
+        run: go mod download
+      - name: Root filesystem, process and shared-lock fixtures
+        # Root is confined to an unprivileged disposable container. Repository
+        # and dependency mounts are read-only; no Docker socket/cgroup mounts.
+        run: |
+          docker run --rm --network none \
+            --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
+            --mount type=bind,src="$(go env GOMODCACHE)",dst=/go/pkg/mod,readonly \
+            -w /src -e GOPROXY=off -e GOSUMDB=off golang:1.24 \
+            go test -race -count=1 ./internal/maintenance ./cmd/riot-agent-apply ./cmd/riot-maintenance
+      - name: Signed installer and legacy migration fixtures
+        run: |
+          docker run --rm \
+            --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
+            -e DEBIAN_FRONTEND=noninteractive debian:bookworm-slim bash -ec '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends python3 openssl sudo systemd ca-certificates
+              RIOT_INSTALLER_FIXTURE=1 python3 /src/scripts/test_install_maintenance.py -v
+            '
+      - name: Real apt recovery and no-removal fixtures
+        run: |
+          docker run --rm --network none \
+            --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
+            debian:bookworm-slim \
+            bash /src/scripts/tests/maintenance-apt-fixture.sh --disposable-container
+
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=-+/usr/local/lib/riot/riot-agent-apply --boot
 ExecStart=/usr/local/bin/riot-agent -config /etc/riot/agent.yaml
 Restart=always
 RestartSec=5
@@ -14,8 +15,9 @@ SupplementaryGroups=docker systemd-journal
 LimitNOFILE=65536
 # Memory limit (GROWTH-001): MemoryMax caps the whole cgroup, GOMEMLIMIT makes
 # the Go runtime collect garbage before that, and OOMPolicy=continue keeps one
-# OOM-killed process from stopping the unit. The cgroup includes apt/dpkg started
-# by the agent, so a cgroup OOM or an agent restart can interrupt an upgrade.
+# OOM-killed process from stopping the unit. Supported apt maintenance runs in
+# the independent riot-maintenance.service, outside this cgroup. Legacy/DNF
+# package children still inherit this cgroup and can be interrupted with it.
 MemoryMax=50%
 Environment=GOMEMLIMIT=200MiB
 OOMPolicy=continue

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/releasekey"
 )
@@ -80,9 +82,13 @@ type updateFunc func(ctx context.Context, downloadURL, checksumURL, signatureURL
 // collaborators are injected so tests can use temp paths, a test key, and a
 // recording command runner.
 type updatePipeline struct {
-	paths     stagingPaths
-	publicKey func() (ed25519.PublicKey, error)
-	runner    collectors.CommandRunner
+	paths       stagingPaths
+	publicKey   func() (ed25519.PublicKey, error)
+	runner      collectors.CommandRunner
+	status      func() (maintenance.UpdateStatus, error)
+	wait        func(context.Context) error
+	beforeApply func(string, time.Time) error
+	onAccepted  func(string, time.Time)
 }
 
 func (a *Agent) updateCheckLoop(ctx context.Context) {
@@ -168,11 +174,32 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 		slog.Warn("no binary available for this platform", "platform", suffix)
 		return
 	}
+	if a.maintenanceBusy(ctx) {
+		slog.Info("agent update deferred during OS maintenance")
+		return
+	}
+	if a.locks != nil {
+		if _, _, ok := a.locks.TryLockAll([]string{models.TargetKeyHost}, "automatic-agent-update", models.ActionAgentUpdate); !ok {
+			slog.Info("agent update deferred while host or Docker work is active")
+			return
+		}
+	}
+	keepLock := false
+	defer func() {
+		if !keepLock && a.locks != nil {
+			a.locks.Unlock([]string{models.TargetKeyHost}, "automatic-agent-update")
+		}
+	}()
 
 	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
 		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
 
 	if err := apply(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
+		if errors.Is(err, errUpdateScheduled) {
+			keepLock = true
+			slog.Info("signed agent update accepted; privileged verifier owns installation and restart")
+			return
+		}
 		slog.Error("update failed", "error", err)
 		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
 			fmt.Sprintf("Agent update failed: %v", err))
@@ -189,7 +216,15 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 // privileged verifier. It fails closed: every verification problem is an error
 // and the live binary is never touched by the agent.
 func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, signatureURL, suffix string) error {
-	return a.newUpdatePipeline().run(ctx, downloadURL, checksumURL, signatureURL, suffix)
+	p := a.newUpdatePipeline()
+	id, _ := ctx.Value(updateCommandIDKey{}).(string)
+	p.beforeApply = func(digest string, at time.Time) error {
+		return a.persistSignedHandoff(updateHandoff{SHA256: digest, RequestedAt: at, CommandID: id})
+	}
+	p.onAccepted = func(digest string, at time.Time) {
+		a.watchSignedHandoff(updateHandoff{SHA256: digest, RequestedAt: at, CommandID: id})
+	}
+	return p.run(ctx, downloadURL, checksumURL, signatureURL, suffix)
 }
 
 func (a *Agent) newUpdatePipeline() *updatePipeline {
@@ -238,9 +273,18 @@ func (p *updatePipeline) run(ctx context.Context, downloadURL, checksumURL, sign
 		return err
 	}
 
+	handoffAt := time.Now().UTC()
+	if p.beforeApply != nil {
+		if err := p.beforeApply(actualSum, handoffAt); err != nil {
+			return err
+		}
+	}
 	staged = true // keep the three staged files for the verifier
-	p.applyStaged(ctx)
-	return nil
+	err = p.applyStaged(ctx, actualSum, handoffAt)
+	if errors.Is(err, errUpdateScheduled) && p.onAccepted != nil {
+		p.onAccepted(actualSum, handoffAt)
+	}
+	return err
 }
 
 // downloadBinary streams the binary to the staging path and returns its
@@ -395,22 +439,50 @@ func (p *updatePipeline) discardStaging() {
 // built. If the verifier cannot be started, the staged files are left for the
 // unit's ExecStartPre (`riot-agent-apply --boot`) to verify on next restart.
 //
-// It does not return an error in either case. The caller reports the update as
-// completed and exits so systemd restarts the agent; on the fallback path that
-// restart is what applies the staged update. A verifier refusal happens after
-// this returns, in the root process, so it surfaces in the journal, not as an
-// agent_update_failed event.
-func (p *updatePipeline) applyStaged(ctx context.Context) {
+// Launch is not installation proof. Only a fresh digest-bound root status can
+// acknowledge the handoff. The verifier owns stop/install/start; a deferred or
+// unavailable verifier leaves this observer running and reports no completion.
+func (p *updatePipeline) applyStaged(ctx context.Context, expectedDigest string, handoffAt time.Time) error {
 	_, _ = p.runner(ctx, "sudo", "systemctl", "reset-failed", updateUnit)
 
 	out, err := p.runner(ctx, "sudo", "systemd-run", "--unit="+updateUnit, applyBinPath)
 	if err == nil {
 		slog.Info("update scheduled via privileged verifier")
-		return
+		read := p.status
+		if read == nil {
+			read = maintenance.ReadUpdateStatus
+		}
+		for attempt := 0; attempt < 20; attempt++ {
+			if status, statusErr := read(); statusErr == nil && status.SHA256 == expectedDigest && !status.UpdatedAt.Before(handoffAt) {
+				switch status.State {
+				case "accepted":
+					return errUpdateScheduled
+				case "installed":
+					return nil
+				case "deferred", "error":
+					return fmt.Errorf("privileged update %s: %s", status.State, status.Message)
+				}
+			}
+			if p.wait != nil {
+				if err := p.wait(ctx); err != nil {
+					return err
+				}
+			} else {
+				timer := time.NewTimer(500 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return fmt.Errorf("privileged update launch lacks a matching durable acknowledgement; current agent kept running")
 	}
 	slog.Debug("privileged verifier unavailable",
 		"error", fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))))
 	slog.Warn("could not start the privileged update verifier; update staged for next restart — re-run install.sh to enable automatic updates")
+	return fmt.Errorf("privileged update unavailable; staged for a later verified restart: %w", err)
 }
 
 func (a *Agent) restartSelf() {

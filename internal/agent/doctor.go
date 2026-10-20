@@ -299,7 +299,7 @@ func Doctor(configPath string) {
 	// before an apt upgrade. Without it the self-heal is silently skipped and
 	// an interrupted dpkg state keeps failing every os_update.
 	if runtime.GOOS == "linux" && cfg.Commands.AllowPatching && commandExists("apt-get") {
-		checkDpkgRepair()
+		checkMaintenancePolicy()
 	}
 
 	// ── Files ──

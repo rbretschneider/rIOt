@@ -12,10 +12,48 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHoldGuard_MAINT_RECOVERY_AC008_BarrierDrainsPassAndSuppressesNext(t *testing.T) {
+	hm := NewHoldManager(true, filepath.Join(t.TempDir(), "holds.json"), "")
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	hm.SetRunner(func(context.Context, string, ...string) ([]byte, error) {
+		once.Do(func() { close(entered); <-release })
+		return nil, nil
+	})
+	go func() { hm.Reconcile(context.Background(), "apt", []string{"linux-image-amd64"}); close(done) }()
+	<-entered
+	barrierDone := make(chan struct{})
+	go func() { require.NoError(t, hm.MaintenanceBarrier(context.Background())); close(barrierDone) }()
+	select {
+	case <-barrierDone:
+		t.Fatal("barrier returned while reconciliation owns package state")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	<-barrierDone
+	calls := 0
+	hm.SetRunner(func(context.Context, string, ...string) ([]byte, error) { calls++; return nil, nil })
+	hm.SetMaintenanceGuard(func(context.Context) bool { return true })
+	hm.Reconcile(context.Background(), "apt", []string{"linux-image-amd64"})
+	assert.Zero(t, calls)
+}
+
+func TestHoldGuard_MAINT_RECOVERY_AC008_ActiveWorkerOwnsReconciliation(t *testing.T) {
+	hm := NewHoldManager(true, filepath.Join(t.TempDir(), "holds.json"), "")
+	calls := 0
+	hm.SetRunner(func(context.Context, string, ...string) ([]byte, error) { calls++; return nil, nil })
+	hm.SetMaintenanceGuard(func(context.Context) bool { return true })
+	hm.ReconcileStartup(context.Background())
+	hm.Reconcile(context.Background(), "apt", []string{"linux-image-amd64"})
+	assert.Zero(t, calls, "[MAINT-RECOVERY AC-008] startup and periodic collectors do not race the detached hold transaction")
+}
 
 // fakeHoldRunner records every invocation and scripts responses for the
 // commands the HoldManager runs. Privileged file operations (the sudo

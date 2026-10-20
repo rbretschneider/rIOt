@@ -129,6 +129,8 @@ func newOSUpdateTestAgent(t *testing.T, allowReboot bool) (*Agent, *fakeAgentRun
 		holdMgr:      hm,
 		runner:       fake.runner(),
 		rebootDelay:  time.Millisecond,
+		rebootIntentPath: filepath.Join(dir,"reboot-intents.json"),
+		locks: newTargetLocks(),
 		telemetryNow: make(chan struct{}, 1),
 	}
 	return a, fake
@@ -196,6 +198,7 @@ func TestRunOSUpdate_AC014_AppliedAndRebootInitiated(t *testing.T) {
 	a, fake := newOSUpdateTestAgent(t, true)
 
 	r := a.runOSUpdate(context.Background(), "cmd-4", aptTestPlan(true))
+	r.RebootCommandID=idA
 	require.Equal(t, "success", r.Status)
 	assert.Equal(t, []string{"nvidia-driver-550"}, r.RebootClassApplied)
 	assert.True(t, r.RebootPending)

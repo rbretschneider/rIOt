@@ -127,7 +127,7 @@ OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
 case "$ARCH" in
     x86_64)  SUFFIX="linux-amd64" ;;
-    aarch64) SUFFIX="linux-arm64" ;;
+    aarch64|arm64) SUFFIX="linux-arm64" ;;
     armv7l)  SUFFIX="linux-armv7" ;;
     armv6l)  SUFFIX="linux-armv6" ;;
     i686)    SUFFIX="linux-386" ;;
@@ -151,126 +151,354 @@ fi
 BINARY_NAME="riot-agent-${SUFFIX}"
 echo "==> Platform: ${OS}/${ARCH} (${BINARY_NAME})"
 
-# ── Resolve download URL ─────────────────────────────────────────────
-if [ "$RIOT_VERSION" = "latest" ]; then
-    DOWNLOAD_URL="https://github.com/${RIOT_REPO}/releases/latest/download/${BINARY_NAME}"
-else
-    DOWNLOAD_URL="https://github.com/${RIOT_REPO}/releases/download/v${RIOT_VERSION}/${BINARY_NAME}"
-fi
-
-# The privileged update verifier is published next to the agent binary.
-APPLY_ASSET_NAME="riot-agent-apply-${SUFFIX}"
-APPLY_DOWNLOAD_URL="${DOWNLOAD_URL%/*}/${APPLY_ASSET_NAME}"
-
-echo "==> Downloading from: ${DOWNLOAD_URL}"
-
-# ── Create system user (Linux only) ──────────────────────────────────
-if [ "$OS" = "linux" ]; then
-    if ! id -u "$RIOT_USER" >/dev/null 2>&1; then
-        echo "==> Creating system user: $RIOT_USER"
-        NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || echo /usr/sbin/nologin)"
-        useradd --system --no-create-home --shell "$NOLOGIN_SHELL" "$RIOT_USER"
+# Authenticate every asset before changing users, configuration, policy or services.
+[ "$(id -u)" = 0 ] || { echo "ERROR: Run this installer as root"; exit 1; }
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+RELEASE_PUBLIC_KEY='31W+lKF8LVms4ar/Qb9DI0//nj8CUT3zEx2aRhVbBjY='
+RIOT_APPLY_DIR=/usr/local/lib/riot
+RIOT_APPLY_BIN=${RIOT_APPLY_DIR}/riot-agent-apply
+MAINT_BIN=${RIOT_APPLY_DIR}/riot-maintenance
+STAGE=$(mktemp -d /tmp/riot_install.XXXXXXXX)
+chmod 0700 "$STAGE"
+NATIVE_LOCK_PID=""
+cleanup() {
+    if [ -n "$NATIVE_LOCK_PID" ]; then
+        kill "$NATIVE_LOCK_PID" 2>/dev/null || true
+        wait "$NATIVE_LOCK_PID" 2>/dev/null || true
     fi
-
-    # Add riot user to docker group if Docker is installed
-    if getent group docker >/dev/null 2>&1; then
-        if ! id -nG "$RIOT_USER" | grep -qw docker; then
-            echo "==> Adding $RIOT_USER to docker group (for container monitoring)"
-            usermod -aG docker "$RIOT_USER"
-        fi
-    fi
-
-    # Add riot user to systemd-journal group for log collection
-    if getent group systemd-journal >/dev/null 2>&1; then
-        if ! id -nG "$RIOT_USER" | grep -qw systemd-journal; then
-            echo "==> Adding $RIOT_USER to systemd-journal group (for log collection)"
-            usermod -aG systemd-journal "$RIOT_USER"
-        fi
-    fi
-fi
-
-# ── Install smartmontools for SMART disk health monitoring ────────────
-if [ "$OS" = "linux" ]; then
-    if ! command -v smartctl >/dev/null 2>&1; then
-        echo "==> Installing smartmontools (for SMART disk health monitoring)"
-        if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && apt-get install -y -qq smartmontools >/dev/null 2>&1
-        elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y -q smartmontools >/dev/null 2>&1
-        elif command -v yum >/dev/null 2>&1; then
-            yum install -y -q smartmontools >/dev/null 2>&1
-        elif command -v pacman >/dev/null 2>&1; then
-            pacman -S --noconfirm --quiet smartmontools >/dev/null 2>&1
-        elif command -v apk >/dev/null 2>&1; then
-            apk add --quiet smartmontools >/dev/null 2>&1
-        else
-            echo "    WARN: Could not install smartmontools — SMART monitoring will be unavailable"
-        fi
-    fi
-fi
-
-# ── Create directories ───────────────────────────────────────────────
-echo "==> Creating directories"
-mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
-if [ "$OS" = "linux" ]; then
-    chown "$RIOT_USER:$RIOT_USER" "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
-fi
-
-# ── Stop existing agent if running ────────────────────────────────────
-if [ "$OS" = "linux" ] && systemctl is-active riot-agent >/dev/null 2>&1; then
-    echo "==> Stopping running agent"
-    systemctl stop riot-agent
-fi
-
-# ── Download binary ──────────────────────────────────────────────────
-echo "==> Downloading agent binary"
-# download_file URL DEST — non-zero exit if the download fails.
-download_file() {
-    local url="$1" dest="$2"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$dest" "$url"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$dest" "$url"
+    rm -rf -- "$STAGE"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+fail() { echo "ERROR: $*" >&2; exit 1; }
+atomic_install() {
+    local source="$1" target="$2" mode="$3" fresh
+    fresh=$(mktemp "$(dirname "$target")/.riot_install.XXXXXXXX")
+    install -m "$mode" -o root -g root "$source" "$fresh"
+    mv -fT -- "$fresh" "$target"
+}
+restore_policy() {
+    if [ -f "$BACKUP/etc/sudoers.d/riot-agent" ]; then
+        atomic_install "$BACKUP/etc/sudoers.d/riot-agent" /etc/sudoers.d/riot-agent 0440
     else
-        echo "ERROR: curl or wget is required"
-        return 1
+        rm -f -- /etc/sudoers.d/riot-agent
     fi
 }
-download_file "$DOWNLOAD_URL" "$RIOT_BIN"
-chmod +x "$RIOT_BIN"
-if [ "$OS" = "linux" ]; then
-    # root:root, NOT riot: the riot user must have no direct path to overwrite
-    # the installed agent. Every update goes through the root-owned verifier
-    # (AGENT-HARDEN-001 AD-005). The service still runs as User=riot; a
-    # root-owned 0755 binary is executable by it.
-    chown root:root "$RIOT_BIN"
-fi
 
-echo "==> Installed: $($RIOT_BIN --version 2>/dev/null || echo "$RIOT_BIN")"
-
-# ── Install the privileged update verifier (Linux only) ──────────────
-# A root-owned, signature-verifying binary that installs staged agent updates.
-# Not auto-updated: re-run this installer to refresh it (or to rotate the
-# release key). Releases that predate signing do not publish it; in that case
-# the agent still installs, but automatic updates stay unavailable.
-RIOT_APPLY_DIR="/usr/local/lib/riot"
-RIOT_APPLY_BIN="${RIOT_APPLY_DIR}/riot-agent-apply"
-if [ "$OS" = "linux" ]; then
-    echo "==> Installing update verifier: ${RIOT_APPLY_BIN}"
-    mkdir -p "$RIOT_APPLY_DIR"
-    chown root:root "$RIOT_APPLY_DIR"
-    chmod 0755 "$RIOT_APPLY_DIR"
-    APPLY_TMP="${RIOT_APPLY_BIN}.new"
-    if download_file "$APPLY_DOWNLOAD_URL" "$APPLY_TMP"; then
-        chown root:root "$APPLY_TMP"
-        chmod 0755 "$APPLY_TMP"
-        mv -f "$APPLY_TMP" "$RIOT_APPLY_BIN"
+download_file() {
+    if command -v curl >/dev/null 2>&1; then
+        curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --https-only -qO "$2" "$1"
     else
-        rm -f "$APPLY_TMP"
-        echo "    WARN: ${APPLY_ASSET_NAME} is not published for this release — automatic updates will stay unavailable until a signed release is installed"
+        fail "curl or wget is required"
     fi
+}
+if [ "$RIOT_VERSION" = latest ]; then
+    RELEASE_URL="https://github.com/${RIOT_REPO}/releases/latest/download"
+else
+    [[ "$RIOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]] || fail "Invalid release version"
+    RELEASE_URL="https://github.com/${RIOT_REPO}/releases/download/v${RIOT_VERSION}"
+fi
+for metadata in checksums.txt checksums.txt.sig; do
+    download_file "$RELEASE_URL/$metadata" "$STAGE/$metadata"
+done
+[ "$(wc -c < "$STAGE/checksums.txt")" -le 1048576 ] || fail "Release manifest is too large"
+[ "$(wc -c < "$STAGE/checksums.txt.sig")" -le 4096 ] || fail "Release signature is too large"
+# OpenSSL 3 supports Ed25519 raw verification. Do not install a verifier through apt.
+if command -v openssl >/dev/null 2>&1 && [[ "$(openssl version)" =~ ^OpenSSL\ [3-9]\. ]]; then
+    { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; printf '%s' "$RELEASE_PUBLIC_KEY" | openssl base64 -d -A; } > "$STAGE/release.der"
+    tr -d '[:space:]' < "$STAGE/checksums.txt.sig" | openssl base64 -d -A > "$STAGE/signature.raw"
+    [ "$(wc -c < "$STAGE/signature.raw")" -eq 64 ] || fail "Invalid Ed25519 signature encoding"
+    openssl pkeyutl -verify -pubin -inkey "$STAGE/release.der" -keyform DER -rawin -in "$STAGE/checksums.txt" -sigfile "$STAGE/signature.raw" >/dev/null 2>&1 || fail "Release signature verification failed"
+elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$STAGE" "$RELEASE_PUBLIC_KEY" <<'PY'
+import base64, pathlib, sys
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    stage = pathlib.Path(sys.argv[1])
+    key = base64.b64decode(sys.argv[2], validate=True)
+    sig = base64.b64decode((stage / 'checksums.txt.sig').read_bytes().strip(), validate=True)
+    Ed25519PublicKey.from_public_bytes(key).verify(sig, (stage / 'checksums.txt').read_bytes())
+except Exception:
+    sys.exit('ERROR: preinstalled Python cryptography and a valid release signature are required')
+PY
+else
+    fail "Install OpenSSL 3 or Python3 cryptography through your normal administrative process first"
+fi
+verify_asset() {
+    local asset="$1" digest actual count
+    count=$(awk -v name="$asset" '$2 == name || $2 == "*"name {n++} END {print n+0}' "$STAGE/checksums.txt")
+    [ "$count" -eq 1 ] || fail "Missing or duplicate signed asset: $asset"
+    digest=$(awk -v name="$asset" '$2 == name || $2 == "*"name {print $1}' "$STAGE/checksums.txt")
+    [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || fail "Invalid checksum for $asset"
+    download_file "$RELEASE_URL/$asset" "$STAGE/$asset"
+    [ "$(wc -c < "$STAGE/$asset")" -le 134217728 ] || fail "Oversize asset: $asset"
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$STAGE/$asset" | awk '{print $1}')
+    else
+        actual=$(shasum -a 256 "$STAGE/$asset" | awk '{print $1}')
+    fi
+    [ "$(printf '%s' "$actual" | tr A-F a-f)" = "$(printf '%s' "$digest" | tr A-F a-f)" ] || fail "Signed checksum mismatch: $asset"
+}
+verify_asset "$BINARY_NAME"
+if [ "$OS" = linux ]; then
+    verify_asset "riot-agent-apply-${SUFFIX}"
+    verify_asset "riot-maintenance-${SUFFIX}"
+    verify_asset riot-maintenance.service
 fi
 
+# Validate privileged path parents before using them as root write destinations.
+secure_dir() {
+    local path="$1" mode owner
+    [ -d "$path" ] && [ ! -L "$path" ] || fail "Unsafe directory: $path"
+    owner=$(stat -c %u "$path"); mode=$(stat -c %a "$path")
+    [ "$owner" -eq 0 ] && (( (8#$mode & 0022) == 0 )) || fail "Directory must be root-owned and not group/world writable: $path"
+}
+secure_file() {
+    local path="$1" mode
+    [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %u "$path")" -eq 0 ] || fail "Unsafe privileged file: $path"
+    mode=$(stat -c %a "$path")
+    (( (8#$mode & 0022) == 0 )) || fail "Writable privileged file: $path"
+}
+MAINT_SUPPORTED=false
+if [ "$OS" = linux ]; then
+    for tool in systemctl systemd-run systemd-analyze visudo flock install; do
+        command -v "$tool" >/dev/null 2>&1 || fail "$tool is required; install prerequisites separately"
+        secure_file "$(readlink -f "$(command -v "$tool")")"
+    done
+    SYSTEMCTL_PATH=$(command -v systemctl)
+    SYSTEMD_RUN_PATH=$(command -v systemd-run)
+    for directory in /usr /usr/local /usr/local/bin /usr/local/lib /etc /etc/systemd /etc/systemd/system /etc/sudoers.d /var /var/lib /var/backups /run; do secure_dir "$directory"; done
+    if [ -e "$RIOT_APPLY_DIR" ] || [ -L "$RIOT_APPLY_DIR" ]; then secure_dir "$RIOT_APPLY_DIR"; fi
+    if [ -e /etc/systemd/system/riot-agent.service.d ] || [ -L /etc/systemd/system/riot-agent.service.d ]; then
+        secure_dir /etc/systemd/system/riot-agent.service.d
+    fi
+    for directory in "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"; do
+        [ ! -L "$directory" ] || fail "Refusing symlink directory: $directory"
+        if [ -e "$directory" ]; then [ -d "$directory" ] || fail "Expected directory: $directory"; fi
+    done
+    if command -v apt-get >/dev/null 2>&1; then
+        apt_major=$(/usr/bin/apt-get --version | awk 'NR==1 {split($2,v,"."); print v[1]}')
+        systemd_major=$(systemctl --version | awk 'NR==1 {print $2}')
+        [[ "$apt_major" =~ ^[0-9]+$ && "$systemd_major" =~ ^[0-9]+$ ]] || fail "Cannot determine apt/systemd versions"
+        [ "$apt_major" -ge 2 ] && [ "$systemd_major" -ge 241 ] || fail "Detached apt requires apt2+/systemd241+"
+        for tool in /usr/bin/apt-get /usr/bin/dpkg /usr/bin/dpkg-query /usr/bin/apt-mark; do secure_file "$tool"; done
+        command -v python3 >/dev/null 2>&1 || fail "Preinstalled Python3 is required for native package-lock-safe migration"
+        secure_file "$(readlink -f "$(command -v python3)")"
+        MAINT_SUPPORTED=true
+    fi
+    # The lock's root-owned inode lives in the normal sticky root-owned lock dir.
+    [ -d /run/lock ] && [ ! -L /run/lock ] && [ "$(stat -c %u /run/lock)" -eq 0 ] || fail "Unsafe lock directory"
+    lock_mode=$(stat -c %a /run/lock)
+    (( (8#$lock_mode & 0022) == 0 || (8#$lock_mode & 01000) != 0 )) || fail "Unsafe lock directory permissions"
+    if [ ! -e /run/lock/riot-maintenance.lock ] && [ ! -L /run/lock/riot-maintenance.lock ]; then
+        (set -o noclobber; : > /run/lock/riot-maintenance.lock) || fail "Cannot create exclusion lock"
+    fi
+    secure_file /run/lock/riot-maintenance.lock
+    [ "$(stat -c %h /run/lock/riot-maintenance.lock)" -eq 1 ] || fail "Exclusion lock must have one link"
+    [ "$(stat -c %a /run/lock/riot-maintenance.lock)" = 600 ] || fail "Exclusion lock must be0600"
+    exec 9>>/run/lock/riot-maintenance.lock
+    flock -n 9 || fail "Maintenance/apply/installer is busy; no files changed"
+    state=$(systemctl show riot-maintenance.service -p ActiveState --value) || fail "Cannot inspect maintenance service"
+    case "$state" in inactive|failed) ;; *) fail "Maintenance service is $state; refusing replacement" ;; esac
+    if [ -e /var/lib/riot-maintenance ] || [ -L /var/lib/riot-maintenance ]; then
+        secure_dir /var/lib/riot-maintenance
+        if [ -e /var/lib/riot-maintenance/current.json ] || [ -L /var/lib/riot-maintenance/current.json ]; then
+            secure_file /var/lib/riot-maintenance/current.json
+            command -v python3 >/dev/null 2>&1 || fail "Python3 is required to validate existing maintenance state"
+            python3 - <<'PY'
+import datetime, json, os, sys, uuid
+p = '/var/lib/riot-maintenance/current.json'
+if os.stat(p).st_size > 2*1024*1024: sys.exit('ERROR: oversized maintenance state')
+def unique(pairs):
+    d = {}
+    for k, v in pairs:
+        if k in d: raise ValueError('duplicate field')
+        d[k] = v
+    return d
+try:
+    d = json.load(open(p), object_pairs_hook=unique)
+    assert type(d['version']) is int and d['version'] == 1
+    assert str(uuid.UUID(d['command_id'])) == d['command_id'] and uuid.UUID(d['command_id']).int != 0
+    assert d['mode'] in ('full','security','repair') and type(d['include_reboot_class']) is bool
+    assert d['mode'] != 'repair' or d['include_reboot_class'] is False
+    assert d['outcome'] in ('success','error','interrupted') and d['phase'] == 'finished'
+    times = [datetime.datetime.fromisoformat(d[k].replace('Z', '+00:00')) for k in ('started_at','updated_at','finished_at')]
+    assert all(t.tzinfo is not None for t in times) and times[0] <= times[1] <= times[2]
+    assert d['holds_released'] is False and d['hold_cleanup_failed'] is False
+    assert type(d['interrupted']) is bool and type(d['exit_code']) is int
+    assert d.get('hold_restore_error', '') == ''
+    assert isinstance(d.get('output',''), str) and len(d.get('output','').encode()) <= 256*1024
+    assert isinstance(d.get('summary',''), str) and len(d.get('summary','').encode()) <= 4096
+    if d['outcome'] == 'success': assert d['exit_code'] == 0 and d['interrupted'] is False
+except Exception:
+    sys.exit('ERROR: unfinished or invalid maintenance state; recover it before installing')
+PY
+        fi
+    fi
+    if [ "$MAINT_SUPPORTED" = true ]; then
+        # flock does not see apt/dpkg's POSIX record locks. Hold all four native
+        # locks in an independent, bounded helper through stop and replacement.
+        python3 - "$STAGE" "$$" <<'PY' &
+import fcntl, os, pathlib, signal, stat, sys, time
+stage, parent = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+fds = []
+try:
+    for path in ('/var/lib/dpkg/lock-frontend', '/var/lib/dpkg/lock', '/var/lib/apt/lists/lock', '/var/cache/apt/archives/lock'):
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            parts = pathlib.PurePosixPath(path).parts[1:]
+            for part in parts[:-1]:
+                nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd); fd = nxt
+                s = os.fstat(fd)
+                if s.st_uid != 0 or s.st_mode & 0o022: raise ValueError('unsafe native lock parent')
+            lock = os.open(parts[-1], os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=fd)
+        finally:
+            os.close(fd)
+        fds.append(lock)
+        s = os.fstat(lock)
+        if not stat.S_ISREG(s.st_mode) or s.st_uid != 0 or s.st_nlink != 1 or s.st_mode & 0o022:
+            raise ValueError('unsafe native package lock')
+        fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    (stage / 'native-lock-ready').write_text('ok')
+    deadline = time.monotonic() + 15*60
+    while os.getppid() == parent:
+        if time.monotonic() >= deadline:
+            # Never quietly drop exclusion while an installer could still replace files.
+            os.kill(parent, signal.SIGTERM)
+            time.sleep(3)
+            if os.getppid() == parent: os.kill(parent, signal.SIGKILL)
+            break
+        time.sleep(0.2)
+except Exception:
+    (stage / 'native-lock-ready').write_text('error: package manager busy or unsafe native lock; no replacement allowed')
+finally:
+    for fd in fds: os.close(fd)
+PY
+        NATIVE_LOCK_PID=$!
+        for _ in {1..100}; do
+            [ ! -f "$STAGE/native-lock-ready" ] || break
+            kill -0 "$NATIVE_LOCK_PID" 2>/dev/null || fail "Native package lock holder failed"
+            sleep 0.05
+        done
+        [ -f "$STAGE/native-lock-ready" ] && [ "$(cat "$STAGE/native-lock-ready")" = ok ] || fail "Native package locks are busy, unsafe or unavailable"
+    fi
+    # Validate the entire existing policy first; unrelated invalid files are never edited.
+    visudo -cf /etc/sudoers >/dev/null || fail "Existing sudo policy is invalid; resolve it before installing"
+    {
+        echo '# rIOt fixed privileges; package transactions run only in the detached worker.'
+        if [ "$MAINT_SUPPORTED" = true ]; then
+            echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} start --no-block riot-maintenance.service"
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark hold *'
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark unhold *'
+        elif command -v dnf >/dev/null 2>&1; then
+            DNF_PATH=$(command -v dnf)
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} makecache"
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y update"
+            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y --security update"
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/install -m 0644 -o root -g root /var/lib/riot/dnf-holds.staged /etc/dnf/libdnf5.conf.d/60-riot-holds.conf'
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/rm -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf'
+        fi
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update ${RIOT_APPLY_BIN}"
+        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reset-failed riot-agent-update"
+        if command -v nginx >/dev/null 2>&1; then
+            NGINX_PATH=$(command -v nginx)
+            echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -t"
+            echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -T"
+        fi
+        if command -v smartctl >/dev/null 2>&1; then
+            SMARTCTL_PATH=$(command -v smartctl)
+            echo "riot ALL=(root) NOPASSWD: ${SMARTCTL_PATH} --version"
+            for disk in /sys/block/*; do
+                [ -e "$disk" ] || continue
+                disk=${disk##*/}
+                [[ "$disk" =~ ^(sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$ ]] || continue
+                echo "riot ALL=(root) NOPASSWD: ${SMARTCTL_PATH} --json=c --all /dev/${disk}"
+            done
+        else
+            echo '# smartmontools absent: install separately if SMART monitoring is wanted.'
+        fi
+    } > "$STAGE/riot-agent.sudoers"
+    chmod 0440 "$STAGE/riot-agent.sudoers"
+    visudo -cf "$STAGE/riot-agent.sudoers" >/dev/null || fail "Candidate sudo policy is invalid"
+    cat > "$STAGE/riot-agent.service" <<EOF
+[Unit]
+Description=rIOt Agent - Infrastructure Monitoring
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+ExecStartPre=-+${RIOT_APPLY_BIN} --boot
+ExecStart=${RIOT_BIN} -config ${RIOT_CONFIG_DIR}/agent.yaml
+Restart=always
+RestartSec=5
+User=riot
+Group=riot
+SupplementaryGroups=$(for group in docker systemd-journal; do getent group "$group" >/dev/null && printf '%s ' "$group"; done)
+LimitNOFILE=65536
+MemoryMax=50%
+Environment=GOMEMLIMIT=200MiB
+OOMPolicy=continue
+ProtectSystem=false
+ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR}
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target
+EOF
+    mkdir "$STAGE/verify"
+    chmod 0755 "$STAGE/$BINARY_NAME" "$STAGE/riot-agent-apply-${SUFFIX}" "$STAGE/riot-maintenance-${SUFFIX}"
+    # Verify syntax using authenticated executable snapshots before replacing live files.
+    sed -e "s|${RIOT_APPLY_BIN}|$STAGE/riot-agent-apply-${SUFFIX}|g" -e "s|${RIOT_BIN}|$STAGE/$BINARY_NAME|g" "$STAGE/riot-agent.service" > "$STAGE/verify/riot-agent.service"
+    sed "s|${MAINT_BIN}|$STAGE/riot-maintenance-${SUFFIX}|g" "$STAGE/riot-maintenance.service" > "$STAGE/verify/riot-maintenance.service"
+    systemd-analyze verify "$STAGE/verify/riot-agent.service" "$STAGE/verify/riot-maintenance.service" || fail "Candidate units did not validate"
+    # Preserve current config, binaries and reviewed policy before the first mutation.
+    BACKUP=$(mktemp -d /var/backups/riot_install.XXXXXXXX)
+    chmod 0700 "$BACKUP"
+    for path in "$RIOT_BIN" "$RIOT_APPLY_DIR" /etc/riot /etc/sudoers.d/riot-agent /etc/systemd/system/riot-agent.service /etc/systemd/system/riot-agent.service.d /etc/systemd/system/riot-maintenance.service; do
+        if [ -e "$path" ] || [ -L "$path" ]; then
+            mkdir -p "$BACKUP$(dirname "$path")"
+            cp -a -- "$path" "$BACKUP$path"
+        fi
+    done
+    echo "==> Existing files preserved in $BACKUP"
+    # Validate the effective policy before stopping the old agent or replacing
+    # any executable/unit. A failed merged policy restores the working drop-in.
+    atomic_install "$STAGE/riot-agent.sudoers" /etc/sudoers.d/riot-agent 0440
+    if ! visudo -cf /etc/sudoers >/dev/null; then
+        restore_policy
+        fail "Effective candidate policy failed; previous managed policy restored"
+    fi
+    if ! id -u riot >/dev/null 2>&1; then
+        useradd --system --no-create-home --shell "$(command -v nologin)" riot
+    fi
+    for group in docker systemd-journal; do
+        if getent group "$group" >/dev/null; then usermod -aG "$group" riot; fi
+    done
+    # Stop only after lock, signature and candidate validation. No package operation runs.
+    if [ "$(systemctl show riot-agent.service -p LoadState --value)" != not-found ]; then
+        systemctl stop riot-agent
+    fi
+    for directory in "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"; do
+        [ ! -L "$directory" ] || fail "Refusing symlink directory: $directory"
+    done
+    mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
+    chown root:root "$RIOT_CONFIG_DIR"
+    chmod 0700 "$RIOT_CONFIG_DIR"
+    chown riot:riot "$RIOT_DATA_DIR"
+    mkdir -p "$RIOT_APPLY_DIR" /var/lib/riot-maintenance
+    chmod 0755 "$RIOT_APPLY_DIR"
+    chown root:root "$RIOT_APPLY_DIR"
+    chown root:riot /var/lib/riot-maintenance
+    chmod 0750 /var/lib/riot-maintenance
+else
+    mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
+fi
 # ── Helper: ask yes/no question ──────────────────────────────────────
 # Reads from /dev/tty so it works even when piped (curl | bash).
 # Usage: ask_yn "prompt" default_value
@@ -458,145 +686,39 @@ if [ -n "$SUPP_GROUPS" ]; then
     SUPPLEMENTARY_GROUPS="SupplementaryGroups=$SUPP_GROUPS"
 fi
 
-# ── Install sudoers drop-in for privilege escalation ──────────────────
-PROTECT_SYSTEM="ProtectSystem=strict"
-if [ "$OS" = "linux" ]; then
-    SUDOERS_FILE="/etc/sudoers.d/riot-agent"
-    echo "==> Installing sudoers rules for fleet management"
-
-    # Resolve binary paths dynamically — different distros install to different locations
-    SYSTEMCTL_PATH="$(command -v systemctl 2>/dev/null || echo /usr/bin/systemctl)"
-    SYSTEMD_RUN_PATH="$(command -v systemd-run 2>/dev/null || echo /usr/bin/systemd-run)"
-    SMARTCTL_PATH="$(command -v smartctl 2>/dev/null || echo /usr/sbin/smartctl)"
-    NGINX_PATH="$(command -v nginx 2>/dev/null || echo /usr/sbin/nginx)"
-
-    {
-        echo "# rIOt Agent — least-privilege escalation for fleet management"
-
-        # Package manager rules (only for the detected manager)
-        if command -v apt-get >/dev/null 2>&1; then
-            APT_PATH="$(command -v apt-get)"
-            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} update"
-            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y dist-upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
-            echo "riot ALL=(root) NOPASSWD: ${APT_PATH} -y upgrade -o Dpkg\:\:Options\:\:=--force-confold -o Dpkg\:\:Options\:\:=--force-confdef"
-            # Interrupted-dpkg self-heal: the agent runs this between refresh
-            # and upgrade so a transaction left half-configured by an earlier
-            # kill/power-loss can't make every future os_update fail with
-            # exit 100 "dpkg was interrupted". Subcommand is locked to
-            # --configure -a; no other dpkg operation is reachable.
-            DPKG_PATH="$(command -v dpkg 2>/dev/null || echo /usr/bin/dpkg)"
-            echo "riot ALL=(root) NOPASSWD: ${DPKG_PATH} --configure -a"
-            # Reboot-class package holds (PATCH-GATE AD-015): subcommand is
-            # locked so the rule cannot reach any other apt-mark operation;
-            # package-name arguments are charset-validated by the agent
-            # before they reach argv (leading-alphanumeric allowlist).
-            APTMARK_PATH="$(command -v apt-mark 2>/dev/null || echo /usr/bin/apt-mark)"
-            echo "riot ALL=(root) NOPASSWD: ${APTMARK_PATH} hold *"
-            echo "riot ALL=(root) NOPASSWD: ${APTMARK_PATH} unhold *"
-        fi
-        if command -v dnf >/dev/null 2>&1; then
-            DNF_PATH="$(command -v dnf)"
-            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} makecache"
-            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y update"
-            echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} -y --security update"
-            # Reboot-class dnf excludes fragment (PATCH-GATE AD-015): both
-            # paths are fixed — the riot user can place content into exactly
-            # one root-owned file, ever. These paths must match the Go
-            # constants byte-for-byte (internal/agent/config.go
-            # DNFHoldsStagedPath, internal/agent/collectors/holds.go
-            # DNFFragmentPath). No sh -c, no tee, no wildcard path components.
-            INSTALL_PATH="$(command -v install 2>/dev/null || echo /usr/bin/install)"
-            RM_PATH="$(command -v rm 2>/dev/null || echo /usr/bin/rm)"
-            echo "riot ALL=(root) NOPASSWD: ${INSTALL_PATH} -m 0644 -o root -g root /var/lib/riot/dnf-holds.staged /etc/dnf/libdnf5.conf.d/60-riot-holds.conf"
-            echo "riot ALL=(root) NOPASSWD: ${RM_PATH} -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf"
-        fi
-
-        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"
-        # Agent self-update (AGENT-HARDEN-001): the ONLY update rule runs the
-        # root-owned signature-verifying binary with no arguments, byte-for-byte
-        # as internal/agent/updater.go (applyBinPath, updateUnit) invokes it and
-        # as `riot-agent doctor` probes it. No shell, no wildcard.
-        echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update ${RIOT_APPLY_BIN}"
-        echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reset-failed riot-agent-update"
-
-        # Web server config inspection (read-only)
-        echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -t"
-        echo "riot ALL=(root) NOPASSWD: ${NGINX_PATH} -T"
-
-        # SMART disk health monitoring
-        echo "riot ALL=(root) NOPASSWD: ${SMARTCTL_PATH}"
-    } > "$SUDOERS_FILE"
-    chmod 0440 "$SUDOERS_FILE"
-    if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
-        echo "==> Sudoers rules validated OK"
-        # With sudoers installed, relax ProtectSystem so sudo children
-        # (package managers, reboot) can write to /usr, /var/lib/dpkg, etc.
-        PROTECT_SYSTEM="ProtectSystem=false"
-    else
-        echo "WARN: Sudoers validation failed, removing ${SUDOERS_FILE}"
-        rm -f "$SUDOERS_FILE"
-    fi
-fi
-
-# ── Install systemd service (Linux only) ──────────────────────────────
-if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-    echo "==> Installing systemd service"
-    # ExecStartPre=-+ combines two systemd prefixes. "+" runs the command as root
-    # even though User=riot, so the verifier can write /usr/local/bin. "-" ignores
-    # a non-zero exit or a missing file, so a host without the verifier (or one
-    # that refuses a bad staged update) still starts the current agent.
-    # Memory limits (GROWTH-001 AD-019): MemoryMax caps the agent's whole cgroup
-    # at half of RAM, GOMEMLIMIT makes the Go runtime collect garbage well before
-    # that, and OOMPolicy=continue stops systemd from killing the whole unit when
-    # one process in it is OOM-killed. Residual: the cgroup includes the
-    # apt/dpkg children the agent starts, so a cgroup OOM or an agent restart can
-    # interrupt a running upgrade (see the README, "Memory limit").
-    # The comment is outside the heredoc so it is not written into the unit file.
-    cat > /etc/systemd/system/riot-agent.service <<EOF
-[Unit]
-Description=rIOt Agent - Infrastructure Monitoring
-After=network-online.target
-Wants=network-online.target
-
+# Fresh temporary inodes prevent retained write descriptors from modifying an installed binary.
+if [ "$OS" = linux ]; then
+    atomic_install "$STAGE/$BINARY_NAME" "$RIOT_BIN" 0755
+    atomic_install "$STAGE/riot-agent-apply-${SUFFIX}" "$RIOT_APPLY_BIN" 0755
+    atomic_install "$STAGE/riot-maintenance-${SUFFIX}" "$MAINT_BIN" 0755
+    atomic_install "$STAGE/riot-maintenance.service" /etc/systemd/system/riot-maintenance.service 0644
+    atomic_install "$STAGE/riot-agent.service" /etc/systemd/system/riot-agent.service 0644
+    mkdir -p /etc/systemd/system/riot-agent.service.d
+    secure_dir /etc/systemd/system/riot-agent.service.d
+    cat > "$STAGE/zzzz-riot-signed-boot.conf" <<EOF
 [Service]
-Type=simple
+ExecStartPre=
 ExecStartPre=-+${RIOT_APPLY_BIN} --boot
-ExecStart=${RIOT_BIN} -config ${RIOT_CONFIG_DIR}/agent.yaml
-Restart=always
-RestartSec=5
-User=${RIOT_USER}
-Group=${RIOT_USER}
-${SUPPLEMENTARY_GROUPS}
-LimitNOFILE=65536
-MemoryMax=50%
-Environment=GOMEMLIMIT=200MiB
-OOMPolicy=continue
-${PROTECT_SYSTEM}
-ReadWritePaths=${RIOT_DATA_DIR} ${RIOT_CONFIG_DIR} ${RIOT_BIN}
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
 EOF
-
+    atomic_install "$STAGE/zzzz-riot-signed-boot.conf" /etc/systemd/system/riot-agent.service.d/zzzz-riot-signed-boot.conf 0644
+    chown riot:riot "$RIOT_CONFIG_DIR"
+    chmod 0700 "$RIOT_CONFIG_DIR"
+    if ! visudo -cf /etc/sudoers >/dev/null; then
+        restore_policy
+        fail "Effective policy changed during installation; previous managed policy restored; backup: $BACKUP"
+    fi
     systemctl daemon-reload
+    pre=$(systemctl show riot-agent.service -p ExecStartPre --value) || fail "Cannot inspect effective agent precommand"
+    [[ "$pre" == *"path=${RIOT_APPLY_BIN} ;"* && "$pre" == *"argv[]=${RIOT_APPLY_BIN} --boot ;"* ]] || fail "Unexpected effective boot hook; review preserved drop-ins before starting"
+    [ "$(printf '%s' "$pre" | grep -o 'path=' | wc -l)" -eq 1 ] || fail "Unexpected additional boot hooks; review preserved drop-ins before starting"
     systemctl enable riot-agent
-    systemctl restart riot-agent
-
-    echo ""
-    echo "==> rIOt agent installed and running!"
-    echo "    Config:  ${RIOT_CONFIG_DIR}/agent.yaml"
-    echo "    Status:  systemctl status riot-agent"
-    echo "    Logs:    journalctl -u riot-agent -f"
-elif [ "$OS" = "darwin" ]; then
-    echo ""
-    echo "==> rIOt agent installed at ${RIOT_BIN}"
-    echo "    Run manually:  riot-agent -config ${RIOT_CONFIG_DIR}/agent.yaml"
-    echo "    Config:        ${RIOT_CONFIG_DIR}/agent.yaml"
-    echo ""
-    echo "    To run as a launchd service, create a plist in ~/Library/LaunchAgents/"
+    # The installer owns exclusion here, so boot verification safely defers staged updates.
+    systemctl start riot-agent
+    echo "==> rIOt installed; detached apt maintenance: $MAINT_SUPPORTED"
+    echo "    Config: ${RIOT_CONFIG_DIR}/agent.yaml"
+    echo "    Backup: $BACKUP"
+    echo '    Run riot-agent doctor to inspect readiness without package changes.'
 else
-    echo ""
-    echo "==> rIOt agent installed at ${RIOT_BIN}"
-    echo "    Run manually:  riot-agent -config ${RIOT_CONFIG_DIR}/agent.yaml"
+    install -m 0755 "$STAGE/$BINARY_NAME" "$RIOT_BIN"
+    echo "==> rIOt agent installed at $RIOT_BIN; run manually with -config ${RIOT_CONFIG_DIR}/agent.yaml"
 fi

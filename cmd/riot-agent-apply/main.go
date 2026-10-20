@@ -44,6 +44,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 	"github.com/DesyncTheThird/rIOt/internal/releasekey"
 )
 
@@ -74,9 +75,10 @@ const (
 
 	bootFlag = "--boot"
 
-	exitOK      = 0
-	exitFailure = 1
-	exitUsage   = 2
+	exitOK       = 0
+	exitFailure  = 1
+	exitUsage    = 2
+	exitDeferred = 75
 
 	installedFileMode fs.FileMode = 0o755
 	tempSuffixBytes               = 8
@@ -112,13 +114,19 @@ type stagedInputs struct {
 // installer holds the verifier's inputs. Production wiring is
 // newProductionInstaller; tests inject temp paths and a test key.
 type installer struct {
-	staged          stagedInputs
-	targetBin       string
-	targetAssetName string
-	publicKey       func() (ed25519.PublicKey, error)
-	maxBinarySize   int64
-	maxMetaSize     int64
-	logger          *slog.Logger
+	// Production always wires these; fixtures inject harmless lock/status seams.
+	acquireMaintenance func() (io.Closer, error)
+	maintenanceIdle    func() error
+	writeUpdateStatus  func(maintenance.UpdateStatus) error
+	verifiedSHA256     string
+	stagedSHA256       string
+	staged             stagedInputs
+	targetBin          string
+	targetAssetName    string
+	publicKey          func() (ed25519.PublicKey, error)
+	maxBinarySize      int64
+	maxMetaSize        int64
+	logger             *slog.Logger
 
 	// betweenVerifyAndWrite is a test seam invoked after the bytes are
 	// verified and before they are written. Production leaves it nil.
@@ -140,6 +148,9 @@ type serviceController interface {
 
 func newProductionInstaller(logger *slog.Logger) *installer {
 	return &installer{
+		acquireMaintenance: func() (io.Closer, error) { return maintenance.AcquireLock() },
+		maintenanceIdle:    requireMaintenanceIdle,
+		writeUpdateStatus:  maintenance.WriteUpdateStatus,
 		staged: stagedInputs{
 			binary:    stagingBinaryPath,
 			checksums: stagingChecksumsPath,
@@ -163,6 +174,9 @@ func main() {
 // influence the trust anchor or the install target.
 func runMode(args []string, in *installer, svc serviceController, sleep func(time.Duration)) int {
 	switch {
+	case len(args) == 1 && args[0] == "--maintenance-protocol":
+		fmt.Fprintln(os.Stdout, maintenance.ProtocolVersion)
+		return exitOK
 	case len(args) == 0:
 		return runApply(in, svc, sleep)
 	case len(args) == 1 && args[0] == bootFlag:
@@ -176,10 +190,26 @@ func runMode(args []string, in *installer, svc serviceController, sleep func(tim
 // runApply stops the service, verifies and installs, and ALWAYS restarts the
 // service so a refused update never leaves the agent down.
 func runApply(in *installer, svc serviceController, sleep func(time.Duration)) int {
+	unlock, err := in.maintenanceExclusion()
+	if err != nil {
+		in.noteUpdateStatus("deferred", "", err.Error())
+		in.logger.Warn("agent replacement deferred", "error", err)
+		return exitDeferred
+	}
+	defer unlock()
+	if err := in.updateStatus("accepted", "", "signed updater accepted handoff"); err != nil {
+		in.logger.Error("cannot persist update handoff", "error", err)
+		return exitFailure
+	}
 	in.sweepStaleTemps()
 	sleep(applyStopDelay)
 	if err := svc.Stop(); err != nil {
-		in.logger.Warn("could not stop service; continuing", "error", err)
+		in.logger.Error("could not stop service; refusing replacement", "error", err)
+		in.noteUpdateStatus("error", "", "cannot stop agent before replacement")
+		if startErr := svc.Start(); startErr != nil {
+			in.logger.Error("could not restore current agent service", "error", startErr)
+		}
+		return exitFailure
 	}
 
 	code := exitOK
@@ -187,12 +217,18 @@ func runApply(in *installer, svc serviceController, sleep func(time.Duration)) i
 		in.logger.Error("update refused", "error", err)
 		in.removeStaging()
 		code = exitFailure
+		in.noteUpdateStatus("error", "", err.Error())
 	} else {
+		if err := in.updateStatus("installed", in.verifiedSHA256, "signed agent installed"); err != nil {
+			in.logger.Error("cannot persist installed outcome", "error", err)
+			code = exitFailure
+		}
 		in.logger.Info("update installed", "target", in.targetBin)
 	}
 
 	if err := svc.Start(); err != nil {
 		in.logger.Error("could not start service", "error", err)
+		in.noteUpdateStatus("error", "", "agent installed but service start failed")
 		code = exitFailure
 	}
 	return code
@@ -201,14 +237,24 @@ func runApply(in *installer, svc serviceController, sleep func(time.Duration)) i
 // runBoot applies a pending staged update at service start. It never blocks
 // the current agent from starting: every outcome returns exitOK (NFR-005).
 func runBoot(in *installer) int {
+	unlock, err := in.maintenanceExclusion()
+	if err != nil {
+		in.logger.Info("boot update deferred while maintenance is reserved", "error", err)
+		return exitOK
+	}
+	defer unlock()
 	in.sweepStaleTemps()
 	if _, err := os.Lstat(in.staged.binary); errors.Is(err, fs.ErrNotExist) {
 		return exitOK
 	}
 	if err := in.verifyAndInstall(); err != nil {
 		in.logger.Error("staged update refused at boot", "error", err)
+		in.noteUpdateStatus("error", "", err.Error())
 		in.removeStaging()
 		return exitOK
+	}
+	if err := in.updateStatus("installed", in.verifiedSHA256, "signed agent installed at boot"); err != nil {
+		in.logger.Error("cannot persist boot update outcome", "error", err)
 	}
 	in.logger.Info("staged update installed at boot", "target", in.targetBin)
 	return exitOK
@@ -241,6 +287,7 @@ func (in *installer) verifyAndInstall() error {
 	if err := requireHashMatch(binary, expected); err != nil {
 		return err
 	}
+	in.verifiedSHA256 = strings.ToLower(expected)
 	if in.betweenVerifyAndWrite != nil {
 		in.betweenVerifyAndWrite()
 	}

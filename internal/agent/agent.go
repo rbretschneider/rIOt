@@ -23,6 +23,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/logbudget"
+	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
@@ -45,10 +46,15 @@ type Agent struct {
 	holdMgr *collectors.HoldManager
 
 	// runner overrides external command execution in tests; nil = real exec.
-	runner collectors.CommandRunner
+	runner             collectors.CommandRunner
+	maintenanceClient  *maintenanceClient
+	updateStatusReader func() (maintenance.UpdateStatus, error)
+	updateDigestReader func() (string, error)
 	// rebootDelay is the pause between sending an os_update result and the
 	// post-run auto-reboot; zero means the 2s default (test override).
-	rebootDelay time.Duration
+	rebootDelay      time.Duration
+	rebootIntentPath string
+	rebootIntentMu   sync.Mutex
 
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).
@@ -144,14 +150,16 @@ func New(configPath, version string) (*Agent, error) {
 	holdMgr := collectors.NewHoldManager(cfg.Commands.HoldRebootClass, HoldStatePath(), DNFHoldsStagedPath())
 	registry.SetHoldManager(holdMgr)
 
-	return &Agent{
+	a := &Agent{
 		config:       cfg,
 		configPath:   configPath,
 		version:      version,
 		registry:     registry,
 		holdMgr:      holdMgr,
 		telemetryNow: make(chan struct{}, 1),
-	}, nil
+	}
+	holdMgr.SetMaintenanceGuard(a.holdMaintenanceBusy)
+	return a, nil
 }
 
 func (a *Agent) Run() error {
@@ -238,10 +246,21 @@ func (a *Agent) Run() error {
 	// FR-005). This line is informational only; it does not change behavior.
 	slog.Info("auth failure detector initialized", "note", "first interval reports zero regardless of journal backfill")
 
-	// Startup hold reconcile (PATCH-GATE AD-007): a host that crashed
-	// mid-patch-run is re-protected within seconds of the agent restarting,
-	// not up to one poll interval later. No-op when the feature is disabled
-	// and no hold state exists.
+	// Construct every component before any loop starts so no loop reads a
+	// field that Run is still assigning (a.wsClient raced heartbeatLoop).
+	a.wsClient = newAgentWSClient(a)
+	a.cmdCtx, a.cmdCancel = context.WithCancel(context.Background())
+	defer a.cmdCancel()
+	a.setupCommandSystem(a.cmdCtx, a.defaultCommandDeps())
+	a.reserveMaintenanceHost(ctx)
+
+	// Report commands that were executing when the agent last stopped, before
+	// any loop can accept new work (FR-019, SEC C-4).
+	a.recoverInterruptedCommands(ctx)
+	a.recoverAutomaticSignedHandoff()
+
+	// Reconciliation starts only after host reservations and command locks
+	// exist, so it cannot race an independently running maintenance worker.
 	if runtime.GOOS == "linux" && a.holdMgr != nil {
 		go func() {
 			reconcileCtx, reconcileCancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -249,17 +268,6 @@ func (a *Agent) Run() error {
 			a.holdMgr.ReconcileStartup(reconcileCtx)
 		}()
 	}
-
-	// Construct every component before any loop starts so no loop reads a
-	// field that Run is still assigning (a.wsClient raced heartbeatLoop).
-	a.wsClient = newAgentWSClient(a)
-	a.cmdCtx, a.cmdCancel = context.WithCancel(context.Background())
-	defer a.cmdCancel()
-	a.setupCommandSystem(a.cmdCtx, a.defaultCommandDeps())
-
-	// Report commands that were executing when the agent last stopped, before
-	// any loop can accept new work (FR-019, SEC C-4).
-	a.recoverInterruptedCommands(ctx)
 
 	// Start loops
 	var wg sync.WaitGroup

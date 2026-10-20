@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/releasekey"
 )
@@ -119,6 +120,9 @@ func newReleaseFixture(t *testing.T, mods ...fixtureMod) *releaseFixture {
 		paths:     fx.paths,
 		publicKey: func() (ed25519.PublicKey, error) { return fx.pub, nil },
 		runner:    fx.runner.run,
+		status: func() (maintenance.UpdateStatus, error) {
+			return maintenance.UpdateStatus{Version: 1, State: "installed", SHA256: sha256HexString(fx.binary), UpdatedAt: time.Now().UTC()}, nil
+		},
 	}
 	for _, mod := range mods {
 		mod(fx)
@@ -375,7 +379,7 @@ func TestAC011_PerformUpdate_VerifierUnavailableLeavesVerifiedStagingForBoot(t *
 		return nil
 	}
 
-	require.NoError(t, fx.update(), "falling back to the next-restart apply is not an update failure")
+	require.ErrorContains(t, fx.update(), "privileged update unavailable", "[MAINT-RECOVERY AC-005] staging alone must not report installation or restart the observer")
 
 	for _, path := range fx.stagedFiles() {
 		_, err := os.Stat(path)
