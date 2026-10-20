@@ -34,6 +34,7 @@ import {
 import { formatBytes } from '../../utils/docker'
 import { publishedPortUrl } from '../../utils/safeUrl'
 import { formatDuration } from '../../utils/format'
+import { hasUpdateAvailable } from '../../utils/commandLifecycle'
 import { useTimePreference } from '../../contexts/TimePreferenceProvider'
 const defaultColumns = [
   'name',
@@ -140,6 +141,10 @@ export default function ContainersPage() {
           ? x - y
           : String(x).localeCompare(String(y))) *
           (state.direction === 'desc' ? -1 : 1) ||
+        (state.sort === 'stack'
+          ? a.hostname.localeCompare(b.hostname) ||
+            a.container_name.localeCompare(b.container_name)
+          : 0) ||
         rowKey(a).localeCompare(rowKey(b))
       )
     })
@@ -281,15 +286,26 @@ export default function ContainersPage() {
       key: 'name',
       title: 'Name',
       render: (r) => (
-        <Link
-          className="font-medium text-text hover:text-link"
-          title={`${r.container_name} · ${r.image}`}
-          to={containerPath(r.device_id, r.container_name)}
-          state={collectionState}
-        >
-          {r.riot_icon} {r.riot_name || r.container_name}
-          {r.self_role ? ` · rIOt ${r.self_role}` : ''}
-        </Link>
+        <div className="flex min-w-0 items-center gap-2">
+          <Link
+            className="min-w-0 truncate font-medium text-text hover:text-link"
+            title={`${r.container_name} · ${r.image}`}
+            to={containerPath(r.device_id, r.container_name)}
+            state={collectionState}
+          >
+            {r.riot_icon} {r.riot_name || r.container_name}
+            {r.self_role ? ` · rIOt ${r.self_role}` : ''}
+          </Link>
+          {hasUpdateAvailable(r) && (
+            <span
+              aria-label="Update available"
+              title="Update available"
+              className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-xs text-warn-fg"
+            >
+              Update
+            </span>
+          )}
+        </div>
       ),
     },
     {
@@ -319,11 +335,6 @@ export default function ContainersPage() {
       render: (r) => (
         <span title={r.image}>
           {r.image}
-          {applicable('update', r) && (
-            <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 text-xs text-warn-fg">
-              Update
-            </span>
-          )}
         </span>
       ),
     },
@@ -479,7 +490,7 @@ export default function ContainersPage() {
     return {
       ...column,
       width: widths[key],
-      grow: key === 'name',
+      grow: key === 'links',
       pinned: key === 'name',
       align: key === 'cpu' || key === 'mem' ? ('right' as const) : undefined,
     }

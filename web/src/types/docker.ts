@@ -1,4 +1,4 @@
-import type { FleetContainerRow, Command } from './models'
+import type { FleetContainerRow, Command, UpdateStatus } from './models'
 export interface DockerHost {
   device_id: string
   hostname: string
@@ -32,7 +32,7 @@ export interface DockerRow extends FleetContainerRow {
     host_ip?: string
     protocol: string
   }[]
-  update_status?: string
+  update_status?: UpdateStatus
   mem_limit_configured?: boolean
 }
 export interface DockerStack {

@@ -182,6 +182,88 @@ beforeEach(() => {
   })
 })
 describe('Docker fleet', () => {
+  it('[AC-001] keeps Name compact and pinned with default and restored columns', async () => {
+    let view = renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    const nameColumn = () => screen.getByRole('grid').querySelectorAll('col')[1]
+    expect(nameColumn()).toHaveStyle({ width: '184px' })
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveStyle({ left: '44px' })
+    view.unmount()
+    localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack']))
+    view = renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    expect(nameColumn()).toHaveStyle({ width: '184px' })
+    expect(screen.queryByRole('columnheader', { name: 'Open' })).not.toBeInTheDocument()
+  })
+  it('[AC-002][AC-005] keeps updates beside long names with saved hidden Image and without duplicate badges', async () => {
+    const user = userEvent.setup()
+    const name = 'a-very-long-container-name-that-needs-truncating'
+    mock.containers.mockResolvedValue([{ ...row, container_name: name }])
+    localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack', 'links']))
+    renderWithProviders(<ContainersPage />)
+    const link = await screen.findByRole('link', { name })
+    expect(link).toHaveAttribute('title', `${name} · nginx:latest`)
+    expect(link).toHaveAttribute('href', `/docker/containers/host-1/${name}`)
+    expect(screen.getByLabelText('Update available')).toBeVisible()
+    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Columns' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Image' }))
+    expect(screen.getByRole('columnheader', { name: 'Image' })).toBeInTheDocument()
+    expect(screen.getAllByLabelText('Update available')).toHaveLength(1)
+  })
+  it.each([
+    ['update_available', true, true],
+    ['update_available', false, true],
+    ['pinned', true, false],
+    ['check_failed', true, false],
+    ['up_to_date', true, false],
+    [undefined, true, true],
+    [undefined, false, false],
+    [undefined, null, false],
+    [undefined, undefined, false],
+  ])('[AC-003] shows availability using verdict %s and legacy value %s', async (status, available, visible) => {
+    mock.containers.mockResolvedValue([{ ...row, update_status: status, update_available: available }])
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    expect(screen.queryByLabelText('Update available') !== null).toBe(visible)
+  })
+  it('[AC-003] shows known updates on stopped containers without dispatching an action', async () => {
+    mock.containers.mockResolvedValue([{ ...row, state: 'exited', update_status: 'update_available' }])
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    expect(screen.getByLabelText('Update available')).toBeVisible()
+    expect(mock.bulk).not.toHaveBeenCalled()
+  })
+  it('[AC-004] defaults to Stack then host and name, keeping standalone together in either direction', async () => {
+    const user = userEvent.setup()
+    mock.containers.mockResolvedValue([
+      { ...row, container_name: 'zulu', stack: 'alpha', hostname: 'host-z', device_id: 'host-z' },
+      { ...row, container_name: 'beta-web', stack: 'beta' },
+      { ...row, container_name: 'alpha-web', stack: 'alpha' },
+      { ...row, container_name: 'solo-z', stack: '' },
+      { ...row, container_name: 'alpha-db', stack: 'alpha' },
+      { ...row, container_name: 'solo-a', stack: '' },
+    ])
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'alpha-db' })
+    const names = () => within(screen.getByRole('grid')).getAllByRole('row').slice(1)
+      .map((r) => within(r).getAllByRole('link')[0].textContent!.trim())
+    expect(screen.getByRole('columnheader', { name: 'Stack' })).toHaveAttribute('aria-sort', 'ascending')
+    expect(names()).toEqual(['solo-a', 'solo-z', 'alpha-db', 'alpha-web', 'zulu', 'beta-web'])
+    await user.click(screen.getByRole('button', { name: 'Stack' }))
+    expect(names()).toEqual(['beta-web', 'alpha-db', 'alpha-web', 'zulu', 'solo-a', 'solo-z'])
+  })
+  it('[AC-004] honors an explicit Name sort instead of default Stack ordering', async () => {
+    mock.containers.mockResolvedValue([
+      { ...row, container_name: 'zulu', stack: 'alpha' },
+      { ...row, container_name: 'alpha', stack: 'zulu' },
+    ])
+    renderWithProviders(<ContainersPage />, { route: '/docker/containers?sort=name:asc' })
+    await screen.findByRole('link', { name: 'Logs for zulu' })
+    const rows = within(screen.getByRole('grid')).getAllByRole('row').slice(1)
+    expect(within(rows[0]).getAllByRole('link')[0]).toHaveTextContent('alpha')
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveAttribute('aria-sort', 'ascending')
+  })
   it('remembers visible columns across visits and restores the default columns', async () => {
     const user = userEvent.setup()
     let view = renderWithProviders(<ContainersPage />)
