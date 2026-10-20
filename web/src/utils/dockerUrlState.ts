@@ -26,7 +26,7 @@ export function parseDockerState(search: string, preferredView = 'table') {
       .filter((s) => statuses.includes(s)),
     host: (p.get('host') ?? '').split(',').filter(Boolean),
     stack: (p.get('stack') ?? '').split(',').filter(Boolean),
-    sort: columns.includes(sort[0]) ? sort[0] : 'name',
+    sort: columns.includes(sort[0]) ? sort[0] : 'stack',
     direction: columns.includes(sort[0]) && sort[1] === 'desc' ? 'desc' : 'asc',
     view: (p.get('view') ?? preferredView) === 'tiles' ? 'tiles' : 'table',
     selection: (p.get('sel') ?? '').split(',').filter(Boolean).slice(0, 200),

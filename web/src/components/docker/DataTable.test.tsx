@@ -122,4 +122,6 @@ it('offsets consecutive pinned columns past selection and previous pinned widths
   expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveStyle({ left: '44px' })
   expect(screen.getByRole('columnheader', { name: 'ID' })).toHaveStyle({ left: '244px' })
   expect(screen.getByRole('cell', { name: 'row-0' })).toHaveStyle({ left: '244px' })
+  expect(screen.getByRole('grid')).toHaveStyle({ width: '364px' })
+  expect(screen.getByRole('grid').querySelectorAll('col')[2]).toHaveStyle({ width: '120px' })
 })

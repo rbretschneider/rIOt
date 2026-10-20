@@ -24,6 +24,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Fixed
 
+- [DOCKER-TABLE-002] Keep the container table's Name column compact and pinned, including Name-only saved preferences. Show known updates beside the name even with Image hidden, without duplicating the marker when Image is shown. Missing or invalid sort defaults to Stack ascending, with deterministic host/name ordering inside each stack and adjacent Standalone containers. Explicit sorts, saved columns/view, filters, links and action confirmations are preserved; no API or update-action change.
 - [DOCKER-UX-001] Fit the default container table on portrait desktop screens by tightening column minimums and narrower-screen workspace spacing. Spare width goes to container names; Logs remains directly accessible.
 - [DOCKER-UX-001] Rework Docker into a Komodo-inspired resource workspace with persistent side navigation, Hosts capability views, compact detail headers, saved column choices, pinned names, direct Logs links and filter-preserving return navigation. Thin theme-aware scrollbars are now the repository-wide UI default. Large tables keep virtual scrolling and keyboard navigation aligned after filtering and resizing.
 - [DOCKER-UX-001] Use indexed latest-snapshot lookups per host for Docker hosts and containers, preventing full-history scans that caused slow page loads and 30-second host API timeouts.

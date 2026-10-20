@@ -33,8 +33,15 @@ describe('Docker fleet URL state', () => {
       '?status=running,evil&sort=env:desc&q=' + 'x'.repeat(300),
     )
     expect(s.status).toEqual(['running'])
-    expect(s.sort).toBe('name')
+    expect(s.sort).toBe('stack')
     expect(s.q).toHaveLength(200)
+  })
+  it('[AC-004] defaults to Stack ascending without overriding explicit sorts', () => {
+    expect(parseDockerState('')).toMatchObject({ sort: 'stack', direction: 'asc' })
+    expect(parseDockerState('?sort=unknown:desc')).toMatchObject({ sort: 'stack', direction: 'asc' })
+    for (const sort of ['name', 'status', 'host', 'image', 'cpu', 'mem', 'uptime', 'stack']) {
+      expect(parseDockerState(`?sort=${sort}:desc`)).toMatchObject({ sort, direction: 'desc' })
+    }
   })
   it('combines categories with AND and status chips with OR', () => {
     expect(
