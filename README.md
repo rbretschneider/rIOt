@@ -40,6 +40,7 @@
 - **Signed, fail-closed agent auto-update** — agents install new versions automatically, but only after verifying an ed25519 signature on the release checksums against a public key compiled into the agent; anything unsigned or unverifiable is refused and the running version keeps working. The `riot` user holds no arbitrary-root sudo rule (see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing))
 - **Uptime probes** — unified Probes page showing server probes (HTTP, DNS, ping/ICMP — run by the server) and device probes (shell, HTTP, port check, file check, container exec — run by agents) in two separate sections; per-device probe assertion templates for response validation; full history and status tracking for both types
 - **Fleet management** — agent version overview, bulk update, and patch status across devices
+- **Bounded apt recovery** — independent signed maintenance worker repairs interrupted configuration and attempts one no-removal dependency repair before updates; repair-only mode is available through the existing API. Explicit root migration required; see [OS maintenance](docs/ops/os-maintenance.md)
 - **Remote commands** — send commands to agents from the dashboard: Docker start/stop/restart/update, OS patching, enable automatic updates, agent update, system reboot, system shutdown (with per-command permission controls); all commands generate informational events with container context for full audit trail; command output capture with per-device activity log
 - **Command lifecycle** — every command is tracked by ID through queued, dispatched, acknowledged, running, and verifying to a final state, and the dashboard shows the real state and current step; queued commands expire instead of firing days late and can be cancelled; agents keep final results in a durable outbox and deliver them over HTTP when the WebSocket is down ([details](#command-lifecycle))
 - **Host terminal** — browser-based SSH-like shell access to devices via WebSocket relay (opt-in per agent); visibility toggleable via Settings > Features
@@ -224,12 +225,14 @@ curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/ins
 This will:
 1. Detect your architecture
 2. Download the correct agent binary from GitHub Releases (Linux: installed `root:root`)
-3. Linux only: download the matching `riot-agent-apply-<platform>` update verifier to `/usr/local/lib/riot/riot-agent-apply` (`root:root`, mode `0755`). If the release does not publish it, the installer prints a warning and continues, and automatic updates stay unavailable.
+3. Linux only: authenticate the release manifest with the pinned Ed25519 key, then verify and install the matching signed apply helper, maintenance helper and fixed service. Missing, altered or unsigned assets abort before replacing the running install.
 4. Write a default config to `/etc/riot/agent.yaml`
 5. On first connect, automatically pin the server's TLS certificate (TOFU)
 6. Install and start a systemd service (Linux) or print manual run instructions (macOS)
 
-Re-running the installer on an existing host is safe. It is also how an existing agent receives the update verifier and the tightened sudoers rule (see [Upgrading existing agents](#upgrading-existing-agents)).
+An explicit root installer re-run migrates an existing host, preserving configuration and device identity while backing up managed files. It refuses active or unresolved maintenance before stopping the agent. Use an installer and release that both publish the new privileged assets; see [Upgrading existing agents](#upgrading-existing-agents) and the [maintenance migration guide](docs/ops/os-maintenance.md). The first release containing MAINT-RECOVERY-001 is required; v2.72.0 does not contain these assets.
+
+Apt hosts require apt 2+, systemd 241+, sudo 1.9.10+, Python 3, and either OpenSSL 3 or Python 3 with `cryptography` already installed. The installer does not bootstrap prerequisites through apt or pip. Unsupported versions fail before replacing the install; arrange prerequisite upgrades separately.
 
 **Optional flags:**
 
@@ -243,8 +246,8 @@ curl ... | sudo bash -s -- https://server:7331 --fingerprint SHA256:xxxx
 # Provide a registration key (if the server requires one)
 curl ... | sudo bash -s -- https://server:7331 --key mykey
 
-# Install a specific version
-curl ... | sudo bash -s -- https://server:7331 --version 2.3.0
+# Install a compatible published release (replace X.Y.Z; required helpers must exist)
+curl ... | sudo bash -s -- https://server:7331 --version X.Y.Z
 
 # Combine flags as needed
 curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY> --key mykey --fingerprint SHA256:xxxx
@@ -381,13 +384,13 @@ Then re-run `riot-agent doctor` to confirm the check passes.
 
 When Docker is enabled, `doctor` also checks every Compose project directory against the agent's [compose directory trust](#compose-directory-trust) rules and prints the rule that fails. Run it as the agent's service user (`sudo -u riot riot-agent doctor`) so it sees what the agent sees.
 
-On Linux, when auto-update is enabled (the default), `doctor` also prints an **Agent Update** section. It runs `sudo -n -l systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` to check that the update sudoers rule exists, and checks that `/usr/local/lib/riot/riot-agent-apply` exists with mode `0755`. If either check fails, re-run the installer to rewrite `/etc/sudoers.d/riot-agent` and install the verifier. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing).
+On Linux, when auto-update is enabled (the default), `doctor` also prints an **Agent Update** section for the fixed signed-update privilege and helper. On apt hosts with `commands.allow_patching: true`, it also checks detached maintenance prerequisites, trusted helper paths, the lock-aware apply protocol, and effective service/sudo policy. Run it as the service account: `sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor`. These checks list privileges and inspect status; they do not run repair or start maintenance. See the [maintenance guide](docs/ops/os-maintenance.md).
 
 `doctor` also prints a **Collection Limits** section with the values the agent actually uses, after clamping. On Linux it prints a **Memory Limit** section for the installed service unit. See [Agent Resource Bounds](#agent-resource-bounds).
 
 ### Agent Resource Bounds
 
-An agent keeps its disk, memory and network use bounded, even when the server is unreachable or rejects its data. Every limit below applies as soon as the agent binary updates, except the memory limit and the update-verifier sweep. Those two need an installer re-run ([Upgrading existing agents](#upgrading-existing-agents)).
+An agent keeps its disk, memory and network use bounded, even when the server is unreachable or rejects its data. The collection limits below apply with the agent binary update. Memory policy, verifier sweep and detached maintenance helpers/units need a root installer re-run ([Upgrading existing agents](#upgrading-existing-agents)).
 
 #### Configurable limits
 
@@ -446,7 +449,7 @@ The unit written by `install.sh` sets `MemoryMax=50%`, `Environment=GOMEMLIMIT=2
 
 On Linux, `riot-agent doctor` prints a **Memory Limit** section from `systemctl show riot-agent`: `MemoryMax` in bytes (`infinity` is a failure), `OOMPolicy`, `KillMode` and whether `GOMEMLIMIT` is set. A host that shows a failure or warning there has not had the installer re-run. `doctor` cannot show whether the verifier sweep is installed.
 
-> **Known limitation: package upgrades.** The unit uses systemd's default `KillMode=control-group`, and the `apt` or `dpkg` that the agent starts for an OS patch runs inside the agent's cgroup. Two events can interrupt an upgrade in progress: the agent process dying (systemd stops the whole unit before it restarts it), and the cgroup reaching `MemoryMax`. On a small host the cap is tight: 512 MiB on a 1 GiB board. Before its next patch the agent runs `dpkg --configure -a` to repair an interrupted `dpkg`, when the sudoers rule for it is installed (`doctor` checks this). The planned fix is to run `apt` and `dpkg` in their own transient systemd unit, so neither an agent restart nor the agent's cgroup limit can kill an upgrade in flight. It is tracked with AGENT-PRIV and is not part of this change.
+> **Package maintenance isolation.** After the root migration for MAINT-RECOVERY-001, supported apt updates run in a fixed independent `riot-maintenance.service`, outside the agent cgroup and its memory cap. Agent restart detaches observation; it does not stop that worker. Missing or unsafe privileged installation refuses apt maintenance. DNF retains its existing inline behavior and interruption risks. Package scripts, host OOM and power loss can still interrupt or change the system; see [OS maintenance and recovery](docs/ops/os-maintenance.md).
 
 ### Manual Install
 
@@ -534,26 +537,19 @@ Download `riot-agent-windows-amd64.exe` from [Releases](https://github.com/rbret
 
 ### Sudoers Rules
 
-The installer creates `/etc/sudoers.d/riot-agent` with least-privilege rules that let the `riot` user perform specific operations as root without a password. Each rule is locked to an exact command — no shell access, no wildcard escalation.
+The root installer creates `/etc/sudoers.d/riot-agent` with platform-specific fixed privileges. Supported apt transactions run only through the signed worker; direct apt/dpkg sudo grants and legacy root-shell update grants are removed from this managed file. Unrelated administrator policies are preserved and must also be reviewed: a constrained managed file cannot cancel broader grants elsewhere.
 
-| Rule | Used By | Purpose |
-|---|---|---|
-| `/usr/bin/apt-get update` | Remote patching | Refresh APT package index |
-| `/usr/bin/apt-get -y upgrade ...` | Remote patching | Install available package updates (Debian/Ubuntu) |
-| `/usr/bin/apt-get -y dist-upgrade ...` | Remote patching | Install updates including dependency changes |
-| `/usr/bin/dnf makecache` | Remote patching | Refresh DNF package cache (Fedora/RHEL) |
-| `/usr/bin/dnf -y update` | Remote patching | Install available package updates |
-| `/usr/bin/dnf -y --security update` | Remote patching | Install security-only updates |
-| `/usr/bin/apt-mark hold *` | Reboot-class holds | Hold GPU driver / kernel packages (Debian/Ubuntu); subcommand locked, package name charset-validated agent-side |
-| `/usr/bin/apt-mark unhold *` | Reboot-class holds | Release rIOt-managed holds during an in-window patch run or on disable |
-| `install -m 0644 -o root -g root /var/lib/riot/dnf-holds.staged /etc/dnf/libdnf5.conf.d/60-riot-holds.conf` | Reboot-class holds | Place the rIOt-owned `excludepkgs` fragment (dnf5); both paths fixed, zero variable arguments |
-| `rm -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf` | Reboot-class holds | Remove the fragment on disable / empty set (dnf5); exact-path |
-| `/usr/bin/systemctl reboot` | Remote reboot | Reboot the device from the dashboard |
-| `sudo systemctl poweroff` | Remote shutdown | Shut down the device from the dashboard (Linux) |
-| `/usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` | Agent self-update | Run the root-owned update verifier in a transient systemd unit. The verifier re-checks the release signature and hash, then installs the agent binary. Fixed path, no arguments, no shell, no wildcard |
-| `/usr/bin/systemctl reset-failed riot-agent-update` | Agent self-update | Clear failed state from a previous update unit |
-| `/usr/sbin/nginx -t` | Web server collector | Test nginx config validity and extract config path |
-| `/usr/sbin/nginx -T` | Web server collector | Dump full resolved nginx config (needed to read SSL cert references) |
+| Rule or operation | Purpose |
+|---|---|
+| `/usr/bin/systemctl start --no-block riot-maintenance.service` | Start the one fixed independent apt worker; no caller-selected unit, arguments or environment |
+| Anchored `apt-mark` hold/unhold argument expressions | Permit only package-name operands; sudo 1.9.10+ is required. Wildcard hold rules are unsafe and rejected. |
+| Fixed DNF makecache/update/security-update commands and fixed dnf5 hold-fragment paths | Existing DNF behavior on DNF hosts; no new apt recovery capability |
+| `/usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` | Run the signed root-owned update verifier, with maintenance exclusion |
+| `/usr/bin/systemctl reset-failed riot-agent-update` | Clear a previous update unit failure |
+| `/usr/bin/systemctl reboot` | Existing separate reboot privilege |
+| Exact nginx `-t` / `-T` and SMART read commands, when present | Collector reads; SMART rules name discovered disks rather than allowing arbitrary options |
+
+Executable paths are resolved on the host. The installer validates candidate and complete sudo policy with `visudo`, and service units with `systemd-analyze verify`. Do not restore broad shell, bare `smartctl`, or wildcard hold rules to bypass a failed check. See the [fixed privilege contract and migration procedure](docs/ops/os-maintenance.md).
 
 **Existing installs**: If you add the `webservers` collector to an existing device, add the nginx sudoers rules manually:
 
@@ -567,7 +563,7 @@ sudo visudo -cf /etc/sudoers.d/riot-agent
 
 New installs via `install.sh` include all rules automatically.
 
-**Reboot-class holds on existing agents**: the four `apt-mark` / dnf-fragment rules above are added by `install.sh`, but an in-place agent self-update (`agent_update`) only swaps the binary — it does **not** rewrite `/etc/sudoers.d/riot-agent`. To enable [Reboot-Class Package Gating](#reboot-class-package-gating) on an already-deployed host, **re-run the installer** (`curl … | sudo bash`, which `install.sh` supports idempotently) so the new rules are written. Until then the agent reports `hold_enforcement: no_privilege` and the device page shows a "Hold enforcement inactive" warning rather than silently failing to protect anything. `riot-agent doctor` runs the same privilege probes and flags the gap.
+**Reboot-class holds on existing agents:** an agent-only update cannot install the required privileged rules or helpers. Re-run the matching released root installer and verify the effective policy with doctor. On apt, the new policy constrains hold/unhold names at the sudo boundary as well as in the agent; legacy wildcard rules must be migrated. See [OS maintenance and recovery](docs/ops/os-maintenance.md).
 
 ### Agent Config Reference
 
@@ -638,7 +634,7 @@ New installs via `install.sh` include all rules automatically.
 | `cron` | Cron jobs and scheduled tasks — user crontabs, system crontabs (`/etc/crontab`, `/etc/cron.d/*`), systemd timers with next/last run times (Linux); scheduled tasks via `schtasks` (Windows) |
 | `gpu` | NVIDIA GPU runtime metrics — temperature, utilization %, memory used/total, fan speed, power draw/limit, per GPU (requires `nvidia-smi`; Linux-only; see [GPU Monitoring](#gpu-monitoring)) |
 
-**Note:** The `usb` and `hardware` collectors are Linux-only. They read from sysfs (`/sys/bus/usb/devices/`, `/sys/bus/pci/devices/`, `/sys/block/`, `/sys/class/tty/`) and use the system ID databases (shipped with `usbutils` or `hwdata`) to resolve vendor/product names. No additional packages are required for basic hardware info. **SMART disk health** requires `smartmontools` — the installer installs it automatically and adds a sudoers rule for `smartctl`. SMART scans run every 4 hours by default (configurable via `collectors.smart_interval` in agent YAML).
+**Note:** The `usb` and `hardware` collectors are Linux-only. They read from sysfs (`/sys/bus/usb/devices/`, `/sys/bus/pci/devices/`, `/sys/block/`, `/sys/class/tty/`) and use the system ID databases (shipped with `usbutils` or `hwdata`) to resolve vendor/product names. No additional packages are required for basic hardware info. **SMART disk health** requires separately installed `smartmontools`. The installer grants fixed SMART read commands for discovered disks; re-run the reviewed installer when adding disks. SMART scans run every 4 hours by default (configurable via `collectors.smart_interval` in agent YAML).
 
 **Note:** Existing agent installs use a whitelist from the installer — new collectors like `hardware`, `container_logs`, and `gpu` are **not** picked up automatically. You must add the collector name to `collectors.enabled` in each agent's `/etc/riot/agent.yaml` and restart the agent.
 
@@ -1051,11 +1047,7 @@ Agents check for a new release 30 seconds after start and every 6 hours after th
 4. The agent checks that the SHA-256 of the downloaded binary equals the `riot-agent-<platform>` line in the now-trusted `checksums.txt`.
 5. The agent starts the root-owned verifier `/usr/local/lib/riot/riot-agent-apply` through one fixed sudo rule. The verifier repeats steps 3 and 4 on the exact bytes it installs, writes them to `/usr/local/bin/riot-agent`, and restarts the `riot-agent` service. The agent is not the security boundary because it runs as the unprivileged `riot` user.
 
-If any step fails, the agent refuses the update. A refusal:
-
-- removes the staged files and leaves the current binary running
-- logs an error and raises an `agent_update_failed` event whose message names the cause
-- never stops telemetry, heartbeats, or collectors
+Validation failures refuse the update and report the cause. A maintenance conflict defers the privileged handoff before stopping or replacing the agent. Merely scheduling the verifier is not completion: success requires fresh root acknowledgement for the expected digest and verification of the running binary after restart. The agent does not exit just because it staged an update or launched the verifier; see [maintenance coordination](docs/ops/os-maintenance.md#holds-restart-recovery-and-update-coordination).
 
 Refusal causes you may see in the event message:
 
@@ -1086,7 +1078,7 @@ Two properties keep this rule from being a root shortcut:
 - `/usr/local/bin/riot-agent` and `/usr/local/lib/riot/riot-agent-apply` are owned by `root:root`. The `riot` user cannot overwrite either file.
 - The verifier installs only bytes covered by a valid signature. A compromised `riot` account that stages its own file and runs the rule gets a refusal. The verifier also rejects symlinked, non-regular, or oversized staged files, and its install target is fixed at build time.
 
-The package-manager, reboot, `smartctl`, and `nginx` rules are unchanged. The `apt-mark hold *` and `apt-mark unhold *` rules still contain a wildcard by design (see [Sudoers Rules](#sudoers-rules)).
+Supported apt patching uses the independent fixed worker, with package-name-only hold rules enforced by sudo argument regex. The signed apply helper also takes the shared maintenance lock before stopping or replacing the agent. New helpers, units and privilege rules require a root installer migration; see [Sudoers Rules](#sudoers-rules).
 
 ### Disabling auto-update
 
@@ -1105,33 +1097,19 @@ With the flag set to `false`, the agent makes no update check and the dashboard 
 
 ### Upgrading existing agents
 
-Installing a new agent version does not rewrite `/etc/sudoers.d/riot-agent` or the systemd unit. **Re-run the installer on every Linux host** to get the hardened setup:
+An agent-only update replaces only the agent binary. It cannot update sudoers, units, either root-owned helper, or the root exclusion protocol. **An existing hardened signed updater also needs this migration** before it can coordinate with the detached worker. Missing or old helpers and unsafe legacy policies fail closed for apt maintenance.
+
+Once a release containing MAINT-RECOVERY-001 is published, obtain and review that release's `scripts/install.sh`, then explicitly run it as root with the matching `--version` (without the `v` prefix), your existing server URL and applicable installation flags. Preserve the current config and device identity; do not use `--bootstrap-key` for an ordinary migration because it resets enrollment. Do not pair the new installer with v2.72.0 or an older release: those releases lack the maintenance assets, and installation will abort. Prefer a reviewed tagged installer over a moving `main` URL during migration.
+
+The installer authenticates every required asset before replacement, checks host/native package locks, backs up managed files, replaces legacy riot-owned agent inodes with fresh root-owned signed bytes, installs both helpers, narrows managed sudo rules and replaces the blind boot copy with signed `--boot` verification. Unknown administrator rules and drop-ins are retained for review. Invalid policy, unsafe paths, busy package work or unresolved maintenance refuse migration; do not delete locks or bypass the checks.
+
+After migration run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331
+sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
 ```
 
-Use the same flags you used for the original install. The re-run:
-
-1. Installs the verifier at `/usr/local/lib/riot/riot-agent-apply` (`root:root`, `0755`).
-2. Changes `/usr/local/bin/riot-agent` from `riot:riot` to `root:root`.
-3. Replaces the two shell-based update sudoers rules with the single fixed rule above.
-4. Rewrites the service unit so `ExecStartPre=-+/usr/local/lib/riot/riot-agent-apply --boot` applies a verified staged update on restart. This replaces the old unverified `cp`.
-5. Adds the memory limit to the unit (`MemoryMax=50%`, `GOMEMLIMIT=200MiB`, `OOMPolicy=continue`; see [Memory limit](#memory-limit)) and installs the verifier that sweeps stale temp files. Both take effect only after this re-run. A new agent binary alone neither limits memory nor sweeps the verifier's temp files.
-
-Until a host is re-run:
-
-- The host keeps its previous sudoers rules and service unit, so the privilege hardening is **not in effect** on it.
-- `riot-agent doctor` reports the update sudo rule or the verifier as missing.
-- The agent has no memory limit. `doctor` reports `MemoryMax=infinity` as a failure in its **Memory Limit** section, and a missing `OOMPolicy` or `GOMEMLIMIT` as warnings.
-- The verifier does not remove its stale temp files. `doctor` cannot detect this.
-- A new agent on such a host cannot start the verifier. It logs `could not start the privileged update verifier; update staged for next restart` and relies on the unit's restart-time apply.
-
-Run `riot-agent doctor` after the re-run. The **Agent Update** section must show both `update-apply sudo rule present` and `apply helper present`.
-
-The verifier is **not** auto-updated. Only the agent binary is replaced during an update. Re-run the installer to refresh the verifier. A stale verifier keeps working as long as the release signing key does not change.
-
-If you install an old version with `--version`, the release may not publish a verifier. The installer prints a warning and continues. Automatic updates stay unavailable until you install a release that publishes one.
+The [maintenance guide](docs/ops/os-maintenance.md) covers prerequisites, legacy/current/unsupported installations, result inspection and recovery. A real systemd PID 1 smoke test remains required before production rollout of this feature. Helpers are not refreshed by future agent-only updates; use the matching reviewed root installer to update privileged assets.
 
 ### Known limitations
 
@@ -1143,11 +1121,11 @@ If you install an old version with `--version`, the release may not publish a ve
 
 Every release is signed in GitHub Actions. The private key is the Actions secret `AGENT_SIGNING_PRIVATE_KEY`. The matching public key is committed as `PublicKeyBase64` in `internal/releasekey/releasekey.go` and compiled into both `riot-agent` and `riot-agent-apply`. The release workflow:
 
-1. Builds `riot-agent-<platform>` for 8 targets and `riot-agent-apply-<platform>` for the 5 Linux targets.
+1. Builds `riot-agent-<platform>` for 8 targets, both `riot-agent-apply-<platform>` and `riot-maintenance-<platform>` for the 5 Linux targets, and publishes the fixed `riot-maintenance.service`. All required Linux assets are included in the signed manifest; agent entries precede helper entries for older checksum consumers.
 2. Writes `checksums.txt` (SHA-256 of every `dist/` file, including the verifiers).
 3. Signs it with `go run ./cmd/riot-signer sign`, producing `checksums.txt.sig` (base64 of the 64-byte signature, one line).
 4. Runs `go run ./cmd/riot-signer verify` against the **committed** public key and fails the release if the signature does not verify or the committed key is not a valid 32-byte ed25519 key.
-5. Attaches `checksums.txt` and `checksums.txt.sig` to the GitHub Release. The `dist/riot-agent-*` glob also attaches the verifier binaries.
+5. Attaches the agents, both Linux helpers, fixed maintenance service, `install.sh`, `checksums.txt` and `checksums.txt.sig` to the GitHub Release.
 
 **The repository ships with a placeholder public key. Complete the one-time setup in [Releasing](#releasing) before you push the next release tag, or the release workflow fails.**
 

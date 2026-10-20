@@ -1,10 +1,10 @@
 # QA report — MAINT-RECOVERY-001
 
-Date: 2026-10-20. Reviewed development commits: `75ed334` and `e6b7aae`, against base `ba02585` on `codex/maintenance-recovery`.
+Date: 2026-10-20. Reviewed development commits: `75ed334`, `e6b7aae` and corrective revision `e12436a`, against base `ba02585` on `codex/maintenance-recovery`.
 
-**Current verdict: PROVISIONAL — earlier PASS WITH NOTES superseded.** After the review below, the root reviewer demonstrated a privilege escalation in the retained legacy `/usr/bin/apt-mark hold *` sudo rule: caller-supplied `-o Dir::Bin::dpkg=...` options can select an arbitrary root executable. The demonstration used a harmless marker inside an isolated, network-disabled Debian 12 container. No production probe was performed. The earlier conclusion that no blocking implementation defect remained is withdrawn. Technical writing and final QA approval must wait for the committed restriction and independent regression review.
+**Final verdict: PASS WITH NOTES against `e12436a`.** The confirmed apt-mark privilege blocker is corrected and independently retested. Technical writing and PR review may proceed. This is not production package-repair authorization or a claim of end-to-end systemd cgroup validation. The real-systemd smoke test below remains a production rollout gate.
 
-The proposed correction restricts hold/unhold arguments using anchored sudo argument expressions, requires a sudo version that supports that matching, and adds read-only doctor probes plus actual sudo matching fixtures. This report does not yet approve that correction. The evidence below describes the original reviewed commits and remains useful only within that scope. The real-systemd smoke test also remains a production rollout gate.
+The earlier PASS WITH NOTES was withdrawn when the root reviewer demonstrated that retained legacy `/usr/bin/apt-mark hold *` permitted `-o Dir::Bin::dpkg=...` option injection. The demonstration used a harmless marker inside an isolated, network-disabled Debian 12 container; no production probe occurred. QA resumed only after the correction was committed and the checkout was clean. Revision `e12436a` replaces the wildcard rules with anchored argument expressions, requires supporting sudo, and adds read-only doctor probes and real sudo matching regressions. The independent correction results are recorded below; earlier evidence remains applicable to the unchanged components.
 
 ## Independence and scope
 
@@ -60,7 +60,30 @@ The apt fixture intentionally produces failing maintainer-script/configuration a
 | AC-011 | PASS. Signed asset and manifest-order tests passed. Invalid signature, changed/missing helper or invalid signed unit preserves the running install. Reported actual cross-build evidence covers five Linux architectures for all three binaries and three existing non-Linux agent targets. |
 | AC-012 | PASS. Fourteen independent installer scenarios passed, including legacy fresh-inode migration preserving identity, candidate/effective policy failure restoration, unsafe paths and unresolved state. Doctor negative privilege probes list permissions only; effective unit/sudo policy tests passed. Existing DNF/portable regression evidence is green. |
 
-SEC-1 through SEC-7 are covered by the corresponding rows. The review found no new caller-selected command, package operand, root output path, environment or service-name execution surface. Root publication remains signature/checksum-gated; the installed agent alone cannot grant the new helper/policy capabilities. Terminal history is immutable and capacity-limited rather than automatically expired.
+SEC-1 through SEC-7 are covered by the corresponding rows and corrective review. The corrected fixed worker exposes no caller-selected command, root output path, environment or service name. Direct sudo hold/unhold permits only validated package-name-shaped operands. Root publication remains signature/checksum-gated; the installed agent alone cannot grant the new helper/policy capabilities. Terminal history is immutable and capacity-limited rather than automatically expired.
+
+## Corrective independent QA — `e12436a`
+
+Inspected the installer-generated anchored expressions and doctor policy/version logic against the amended FRD/ADD/security correction. Each hold/unhold operand begins with a lowercase alphanumeric and allows only lowercase alphanumerics, plus, dot, underscore, colon and hyphen afterward; options cannot start a new operand. Literal spaces separate names. Paths, equals signs, configuration options, environment assignments, shell syntax and line/tab separators cannot match. The installer requires preinstalled sudo 1.9.10+ before lock creation, lifecycle actions or policy/install replacement. The unsupported-version fixture confirms preservation of the existing install. The agent also verifies supporting sudo and rejects retained wildcard/equivalent option-bearing grants, even alongside an approved managed rule. Doctor probes use permission listing only and do not execute apt-mark or injected paths.
+
+Independent corrected-revision commands, all exit zero:
+
+```text
+docker exec -e RIOT_INSTALLER_FIXTURE=1 riot-installer-test-20261020 python3 /src/scripts/test_install_maintenance.py
+Ran 16 tests in 2.577s
+OK
+
+docker exec -w /src riot-maintenance-test-20261020 go test -race -count=1 -run 'TestMaintenance_AC012' ./internal/agent
+ok github.com/DesyncTheThird/rIOt/internal/agent 1.024s
+
+docker exec -e RIOT_INSTALLER_FIXTURE=1 riot-installer-test-20261020 python3 /src/scripts/test_install_maintenance.py InstallerFixtures.test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection
+Ran 1 test in 0.459s
+OK
+```
+
+The real-sudo fixture includes 39 permission-list checks: valid single/multiple/multiarch names succeed, while options before/after the operation or package, configuration paths, environment wrappers, empty operands, leading hyphens, slashes, equals and newline arguments fail. QA then independently ran **34 additional real sudo permission-list negative checks**, covering both hold/unhold with tab, carriage return, newline, split/combined options, environment-like operands, slash/backslash, glob characters, equals, leading hyphen, trailing `--`, semicolon and command-substitution syntax. All were denied. No denied command was executed; only isolated `sudo -n -l` was used.
+
+Audited the appended corrected full-Linux-race and Go-vet outputs; both passed. The correction changes no worker transaction, service lifecycle, API or dependency. No unresolved blocker remains within this review scope. The original fourteen-fixture counts above describe the initial run; the corrected suite has sixteen fixtures. This corrected verdict does not extend earlier real-systemd coverage claims.
 
 ## Required rollout checks and limitations
 
@@ -68,4 +91,4 @@ Before enabling this worker in production, use a disposable or explicitly approv
 
 Keep the explicit root migration requirement in user documentation. An agent-only upgrade must fail closed on old/missing helpers or legacy broad policy. Package scripts can restart services, migrate applications or change mounts; no-removal is not rollback. Power loss, host OOM and privileged administrator interference remain external risks. Existing reboot permission is separate from this worker and is not a newly constrained reboot gateway. The retained apt `security` mode is conservative upgrade behavior, not security-origin filtering.
 
-No Vermont/OpenMediaVault recovery was attempted. Its pending writecache migration requires separate impact review and operational authorization. No release or production rollout follows automatically from this provisional report.
+No Vermont/OpenMediaVault recovery was attempted. Its pending writecache migration requires separate impact review and operational authorization. No release or production rollout follows automatically from this QA verdict.

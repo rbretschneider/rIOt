@@ -9,6 +9,15 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ## [Unreleased]
 
+### Added
+
+- [MAINT-RECOVERY-001] Independent signed apt maintenance worker with configure-first recovery, one bounded no-removal dependency repair, explicit `os_update` repair mode through the existing API, root-owned durable results and same-command recovery after agent restart. Repair preserves holds and never refreshes/upgrades/reboots. Existing apt security mode remains conservative upgrade behavior, not security-origin filtering.
+
+### Maintenance deployment
+
+- [MAINT-RECOVERY-001] Requires explicit root migration with a matching release containing both Linux helpers and the fixed unit; agent-only updates cannot grant or refresh privileged capabilities. Apt prerequisites are apt 2+, systemd 241+, sudo 1.9.10+, Python 3, and OpenSSL 3 or Python cryptography. No automatic apt/pip bootstrap. v2.72.0 lacks these assets. A real systemd PID 1 lifecycle smoke test remains required before production rollout; see [operator guide](docs/ops/os-maintenance.md).
+- [MAINT-RECOVERY-001] Shared root exclusion blocks agent/apply/boot/installer replacement during active or unresolved maintenance; update acknowledgement is digest/time-bound rather than treating launch as success. Managed apt sudo policy uses one exact worker start and anchored package-name-only hold expressions, replacing direct apt/dpkg and unsafe wildcard hold grants. Installer authenticates assets and validates policy/units before replacement; doctor performs read-only checks. History stops new work at 32 terminal records or 16 MiB without automatic deletion. No API endpoint, UI, schema or runtime dependency change; DNF retains its existing inline behavior.
+
 ### Changed
 
 - [APP-WORKSPACE-001] Unified Devices, Overview, Docker, monitoring and settings under one grouped application sidebar and compact search/notifications/account bar. Shared resource headers, global neutral surfaces and thin scrollbars keep the layout consistent; navigation collapses below 1280px. Devices retains every machine, while Docker hosts and filters exclude machines without Docker and keep offline Docker hosts. Existing URLs, authentication, stored/live logs, terminals and action confirmations are preserved.
