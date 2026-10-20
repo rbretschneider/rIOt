@@ -233,7 +233,22 @@ func (h *Handlers) ReceiveDeviceProbeResults(w http.ResponseWriter, r *http.Requ
 	}
 
 	stored := 0
+	if len(results) > 64 {
+		results = results[:64]
+	}
+	enabled, err := h.deviceProbeRepo.ListEnabled(r.Context(), deviceID)
+	if err != nil {
+		http.Error(w, `{"error":"probe state unavailable"}`, 503)
+		return
+	}
+	allowed := map[int64]bool{}
+	for _, probe := range enabled {
+		allowed[probe.ID] = true
+	}
 	for i := range results {
+		if !allowed[results[i].ProbeID] || !h.acceptProbeResult(deviceID, results[i].ProbeID, h.clock()) {
+			continue
+		}
 		results[i].DeviceID = deviceID
 		if err := h.deviceProbeRepo.StoreResult(r.Context(), &results[i]); err != nil {
 			slog.Error("store device probe result", "probe_id", results[i].ProbeID, "error", err.Error())

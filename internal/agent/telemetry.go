@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/shirou/gopsutil/v3/host"
 )
@@ -110,6 +111,22 @@ func guardTelemetryBody(snap *models.TelemetrySnapshot, limit int) {
 		return
 	}
 	if n := len(snap.Data.ContainerLogs); n > 0 {
+		// Preserve loss visibility when the entire elastic section is dropped.
+		gaps := make(map[string]*models.ContainerLogGap)
+		for _, entry := range snap.Data.ContainerLogs {
+			gap := gaps[entry.ContainerID]
+			if gap == nil {
+				gap = &models.ContainerLogGap{ContainerID: entry.ContainerID, ContainerName: entry.ContainerName, Reason: "agent_cap", Timestamp: entry.Timestamp}
+				gaps[entry.ContainerID] = gap
+			}
+			gap.Count++
+			if entry.Timestamp.After(gap.Timestamp) {
+				gap.Timestamp = entry.Timestamp
+			}
+		}
+		for _, gap := range gaps {
+			snap.Data.ContainerLogGaps = append(snap.Data.ContainerLogGaps, *gap)
+		}
 		snap.Data.ContainerLogs = nil
 		slog.Warn("telemetry body over the guard, dropped container logs",
 			"dropped_lines", n, "was_bytes", size, "limit_bytes", limit)
@@ -171,6 +188,7 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.Procs = v
 		case *models.DockerInfo:
 			data.Docker = v
+			a.observeStackRegistry(ctx, v)
 		case *models.SecurityInfo:
 			data.Security = v
 		case *models.UPSInfo:
@@ -185,6 +203,11 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			data.CronJobs = v
 		case *models.GPUTelemetry:
 			data.GPUTelemetry = v
+		case collectors.ContainerLogBatch:
+			data.ContainerLogs = v.Entries
+			data.ContainerLogGaps = v.Gaps
+		case *models.DockerInventory:
+			data.DockerInventory = v
 		case []models.ContainerLogEntry:
 			data.ContainerLogs = v
 		case []models.LogEntry:
@@ -209,6 +232,18 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 		}
 	}
 
+	if data.Docker != nil {
+		data.Docker.InventoryEnabled = false
+		for _, c := range a.registry.Collectors() {
+			if c.Name() == "docker_inventory" {
+				data.Docker.InventoryEnabled = true
+			}
+			if c.Name() == "container_logs" {
+				enabled := true
+				data.Docker.ContainerLogsEnabled = &enabled
+			}
+		}
+	}
 	return data
 }
 

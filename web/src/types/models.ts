@@ -70,6 +70,8 @@ export interface TelemetrySnapshot {
 }
 
 export interface FullTelemetryData {
+  trimmed?: boolean
+  dropped_sections?: string[]
   system?: SystemInfo
   os?: OSInfo
   cpu?: CPUInfo
@@ -267,6 +269,18 @@ export interface DockerInfo {
 }
 
 export interface ContainerInfo {
+  started_at?: string
+  finished_at?: string
+  exit_code?: number
+  mem_limit_configured?: boolean
+  net_rx_bytes?: number
+  net_tx_bytes?: number
+  blk_read_bytes?: number
+  blk_write_bytes?: number
+  net_rx_rate?: number
+  net_tx_rate?: number
+  blk_read_rate?: number
+  blk_write_rate?: number
   id: string
   short_id: string
   name: string
@@ -328,6 +342,7 @@ export interface EnvVar {
 }
 
 export interface RiotLabels {
+  role?: string
   group?: string
   name?: string
   icon?: string
@@ -349,6 +364,10 @@ export interface ContainerLogEntry {
 }
 
 export interface ContainerMetric {
+  net_rx_rate?: number
+  net_tx_rate?: number
+  blk_read_rate?: number
+  blk_write_rate?: number
   id?: number
   device_id: string
   container_name: string
@@ -789,6 +808,11 @@ export type LegacyCommandStatus = 'pending' | 'sent' | 'success' | 'error'
 export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch'
 
 export interface Command {
+  target_results?: {container:string;outcome:string;message?:string;step?:string}[]
+  actor_kind?: string
+  actor_auth?: string
+  actor_name?: string
+  steps?: {seq:number;name:string;started_at:string;finished_at?:string;outcome?:string}[]
   id: string
   device_id: string
   action: string

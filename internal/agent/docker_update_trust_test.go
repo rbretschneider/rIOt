@@ -254,7 +254,7 @@ func TestUpdateStack_AC011_WorkDirAloneUntrustedRefused(t *testing.T) {
 	h.noCompose(t, "[AC-011]")
 }
 
-func TestUpdateStack_AC018_ImageLabelContainerCannotCauseAmbiguity(t *testing.T) {
+func TestUpdateStack_AC018_ImageLabelContainerRefusesPathAgreement(t *testing.T) {
 	h := newDockerHarness(t)
 	dir := composeDir(t)
 	h.composeService(dir, "web", true, "")
@@ -264,7 +264,9 @@ func TestUpdateStack_AC018_ImageLabelContainerCannotCauseAmbiguity(t *testing.T)
 
 	res := h.run(idA, "docker_update", projectParams("stack", ""))
 
-	assert.Equal(t, "success", res.Status, "[AC-018] a container whose image defines the label is not a source, so it cannot make the project ambiguous: %s", res.Message)
+	assert.Equal(t, "error", res.Status, "DOCKER-UX SEC-024: every observed member must agree on source-validated stack paths")
+	assert.Contains(t, res.Message, "untrusted stack provenance")
+	h.noCompose(t, "untrusted member labels")
 }
 
 // ---------------------------------------------------------------------------

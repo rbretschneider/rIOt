@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,6 +38,8 @@ func New(ctx context.Context, connStr string) (*DB, error) {
 	config.MaxConnLifetime = 30 * time.Minute
 	config.MaxConnIdleTime = 5 * time.Minute
 	config.HealthCheckPeriod = 1 * time.Minute
+	config.ConnConfig.RuntimeParams["application_name"] = "riot-server"
+	config.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "60000"
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -49,6 +54,18 @@ func New(ctx context.Context, connStr string) (*DB, error) {
 
 // RunMigrations applies all pending database migrations.
 func (d *DB) RunMigrations(migrationsFS fs.FS, connStr string) error {
+	cfg, err := pgx.ParseConfig(connStr)
+	if err != nil {
+		return err
+	}
+	if u, parseErr := url.Parse(connStr); parseErr == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		query := u.Query()
+		query.Set("application_name", "riot-server-migrate")
+		u.RawQuery = query.Encode()
+		connStr = u.String()
+	} else {
+		connStr = strings.TrimSpace(cfg.ConnString()) + " application_name=riot-server-migrate"
+	}
 	source, err := iofs.New(migrationsFS, ".")
 	if err != nil {
 		return fmt.Errorf("create migration source: %w", err)
@@ -57,10 +74,27 @@ func (d *DB) RunMigrations(migrationsFS fs.FS, connStr string) error {
 	if err != nil {
 		return fmt.Errorf("create migrator: %w", err)
 	}
+	defer m.Close()
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return nil
+}
+
+// ReadTx bounds administrative reads so they cannot indefinitely block rotation.
+func (d *DB) ReadTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := d.Pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout='30s'`); err != nil {
+		return err
+	}
+	if err = fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Close shuts down the connection pool.

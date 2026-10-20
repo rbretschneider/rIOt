@@ -48,29 +48,31 @@ type HostTerminalConfig struct {
 
 // DockerConfig controls Docker collection behavior.
 type DockerConfig struct {
-	Enabled         string `yaml:"enabled"`          // "auto" (default), "true", "false"
-	SocketPath      string `yaml:"socket_path"`      // override auto-detection
-	CollectStats    bool   `yaml:"collect_stats"`    // CPU/mem per container
-	TerminalEnabled bool   `yaml:"terminal_enabled"` // opt-in for remote exec
+	Enabled         string `yaml:"enabled"`                 // "auto" (default), "true", "false"
+	SocketPath      string `yaml:"socket_path"`             // override auto-detection
+	CollectStats    bool   `yaml:"collect_stats"`           // CPU/mem per container
+	TerminalEnabled bool   `yaml:"terminal_enabled"`        // opt-in for remote exec
 	CheckUpdates    *bool  `yaml:"check_updates,omitempty"` // nil = true (default enabled)
 
 	// ComposeRoots limits where compose updates may run (AUTOUPD-HARDEN-001):
 	// absolute directories. Empty means not enforced (required on Windows).
-	ComposeRoots []string `yaml:"compose_roots,omitempty"`
+	ComposeTrustedRoots   []string `yaml:"compose_trusted_roots,omitempty"`
+	PruneSupersededImages bool     `yaml:"prune_superseded_images"`
+	ComposeRoots          []string `yaml:"compose_roots,omitempty"`
 	// rootsErr is set by normalizeComposeRoots when an entry is invalid. Every
 	// compose check then fails closed while the rest of the agent keeps running.
 	rootsErr error
 }
 
 type ServerConfig struct {
-	URL            string `yaml:"url"`
-	APIKey         string `yaml:"api_key"`
-	TLSVerify      bool   `yaml:"tls_verify"`
-	CACertFile     string `yaml:"ca_cert_file"`      // custom CA certificate for TLS verification
-	ClientCert     string `yaml:"client_cert"`        // mTLS client certificate path
-	ClientKey      string `yaml:"client_key"`         // mTLS client key path
-	BootstrapKey   string `yaml:"bootstrap_key"`      // single-use enrollment key
-	ServerCertPin  string `yaml:"server_cert_pin"`    // SHA256 fingerprint for TOFU verification
+	URL           string `yaml:"url"`
+	APIKey        string `yaml:"api_key"`
+	TLSVerify     bool   `yaml:"tls_verify"`
+	CACertFile    string `yaml:"ca_cert_file"`    // custom CA certificate for TLS verification
+	ClientCert    string `yaml:"client_cert"`     // mTLS client certificate path
+	ClientKey     string `yaml:"client_key"`      // mTLS client key path
+	BootstrapKey  string `yaml:"bootstrap_key"`   // single-use enrollment key
+	ServerCertPin string `yaml:"server_cert_pin"` // SHA256 fingerprint for TOFU verification
 }
 
 type AgentConfig struct {
@@ -80,14 +82,14 @@ type AgentConfig struct {
 	PollInterval      int      `yaml:"poll_interval"`
 	HeartbeatInterval int      `yaml:"heartbeat_interval"`
 	AutoUpdate        *bool    `yaml:"auto_update,omitempty"` // nil = true (default enabled)
-	// BufferMaxMB caps the offline telemetry buffer in MiB (default 50, range 5-500).
+	// BufferMaxMB caps the offline telemetry buffer in MiB (default 50, range 5-64).
 	BufferMaxMB LimitInt `yaml:"buffer_max_mb,omitempty"`
 }
 
 type CollectorConfig struct {
-	Enabled       []string        `yaml:"enabled"`
-	SMARTInterval int             `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
-	Webservers    WebServersConfig `yaml:"webservers"`
+	Enabled       []string            `yaml:"enabled"`
+	SMARTInterval int                 `yaml:"smart_interval"` // SMART scan interval in seconds (default 14400 = 4h)
+	Webservers    WebServersConfig    `yaml:"webservers"`
 	ContainerLogs ContainerLogsConfig `yaml:"container_logs,omitempty"`
 	Logs          LogsConfig          `yaml:"logs,omitempty"`
 }
@@ -206,7 +208,7 @@ agent:
   # device_name: ""        # Override auto-detected hostname
   # auto_update: true      # Auto-update agent binary when server offers a new version
   # tags: []               # Device tags for grouping/filtering
-  # buffer_max_mb: 50      # Offline telemetry buffer size cap in MiB (5-500)
+  # buffer_max_mb: 50      # Offline telemetry buffer size cap in MiB (5-64)
 
 collectors:
   enabled:
@@ -225,9 +227,9 @@ collectors:
     - ups
   # smart_interval: 14400  # SMART scan interval in seconds (default 14400 = 4 hours)
   # container_logs:
-  #   max_lines: 1000       # newest lines kept per container per pass (1-1000)
-  #   max_bytes: 262144     # bytes kept per container per pass (1024-262144)
-  #   max_line_bytes: 4096  # longer lines are truncated (1024-16384)
+  #   max_lines: 50       # newest lines kept per container per pass (1-1000)
+  #   max_bytes: 16384     # bytes kept per container per pass (1024-262144)
+  #   max_line_bytes: 16384 # longer lines are truncated (1024-16384)
   # logs:
   #   max_entries_per_pass: 5000  # newest journal entries kept per pass (500-20000)
   #   max_line_bytes: 4096        # longer messages are truncated (1024-16384)
@@ -241,6 +243,8 @@ docker:
   # check_updates: true    # Check registries for newer images (30min cache)
   # terminal_enabled: false  # Allow remote exec into containers
   # socket_path: ""        # Override Docker socket auto-detection
+  # compose_trusted_roots: [] # Host-local reviewed roots containers may write
+  # prune_superseded_images: false # Opt-in removal of unused, untagged previous images
   # compose_roots: []      # Directories compose updates may run in, e.g. [/opt/stacks] (required on Windows)
 
 commands:
@@ -493,12 +497,12 @@ const (
 
 // agentLimitSpecs are the six configurable agent bounds (GROWTH-001 AD-017).
 var agentLimitSpecs = map[string]limitSpec{
-	keyContainerLogMaxLines:     {keyContainerLogMaxLines, 1000, 1, 1000},
-	keyContainerLogMaxBytes:     {keyContainerLogMaxBytes, 256 << 10, 1 << 10, 256 << 10},
-	keyContainerLogMaxLineBytes: {keyContainerLogMaxLineBytes, 4 << 10, 1 << 10, 16 << 10},
+	keyContainerLogMaxLines:     {keyContainerLogMaxLines, 50, 1, 1000},
+	keyContainerLogMaxBytes:     {keyContainerLogMaxBytes, 16 << 10, 1 << 10, 256 << 10},
+	keyContainerLogMaxLineBytes: {keyContainerLogMaxLineBytes, 16 << 10, 1 << 10, 16 << 10},
 	keyLogsMaxEntries:           {keyLogsMaxEntries, 5000, 500, 20000},
 	keyLogsMaxLineBytes:         {keyLogsMaxLineBytes, 4 << 10, 1 << 10, 16 << 10},
-	keyBufferMaxMB:              {keyBufferMaxMB, 50, 5, 500},
+	keyBufferMaxMB:              {keyBufferMaxMB, 50, 5, 64},
 }
 
 type configuredLimit struct {

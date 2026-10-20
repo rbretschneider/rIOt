@@ -42,7 +42,7 @@ var (
 
 const commandColumns = `id, device_id, action, params, status, result_msg, duration_ms, exit_code, created_at, updated_at,
 	expires_at, exec_deadline_s, deadline_at, dispatched_at, acknowledged_at, started_at, verifying_at, finished_at,
-	step, progress, failure_step, stderr_tail, origin, policy_id, target_keys, pre_lifecycle, send_ambiguous`
+	step, progress, failure_step, stderr_tail, origin, policy_id, target_keys, pre_lifecycle, send_ambiguous, actor_kind, actor_auth, actor_name, actor_sub, steps, target_results`
 
 // scanCommand scans a single command row selected with commandColumns. The
 // result is normalized, so legacy status values read as canonical ones
@@ -55,7 +55,7 @@ func scanCommand(scan func(dest ...interface{}) error) (models.Command, error) {
 		&cmd.ExpiresAt, &cmd.ExecDeadlineS, &cmd.DeadlineAt, &cmd.DispatchedAt, &cmd.AcknowledgedAt,
 		&cmd.StartedAt, &cmd.VerifyingAt, &cmd.FinishedAt,
 		&cmd.Step, &cmd.Progress, &cmd.FailureStep, &cmd.StderrTail, &cmd.Origin, &cmd.PolicyID,
-		&cmd.TargetKeys, &cmd.PreLifecycle, &cmd.SendAmbiguous); err != nil {
+		&cmd.TargetKeys, &cmd.PreLifecycle, &cmd.SendAmbiguous, &cmd.ActorKind, &cmd.ActorAuth, &cmd.ActorName, &cmd.ActorSub, &cmd.Steps, &cmd.TargetResults); err != nil {
 		return cmd, err
 	}
 	cmd.Params = make(map[string]interface{})
@@ -119,7 +119,7 @@ func (r *CommandRepo) CreateIfNoConflict(ctx context.Context, cmd *models.Comman
 		}
 	}()
 
-	if len(keys) > 0 {
+	if len(keys) > 0 || len(cmd.ProbeKeys) > 0 || cmd.IsDocker || cmd.DockerExclusive {
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtextextended('riot.cmd.' || $1::text, 0))`, cmd.DeviceID); err != nil {
 			return nil, fmt.Errorf("lock device commands: %w", err)
@@ -127,8 +127,8 @@ func (r *CommandRepo) CreateIfNoConflict(ctx context.Context, cmd *models.Comman
 		existing, err := scanCommand(func(dest ...interface{}) error {
 			return tx.QueryRow(ctx,
 				`SELECT `+commandColumns+` FROM commands
-				 WHERE device_id=$1 AND status IN (`+activeStatusList+`) AND target_keys && $2::text[]
-				 ORDER BY created_at LIMIT 1`, cmd.DeviceID, keys).Scan(dest...)
+				 WHERE device_id=$1 AND status IN (`+activeStatusList+`) AND (target_keys && $2::text[] OR ($3 AND EXISTS(SELECT 1 FROM unnest(target_keys) k WHERE k LIKE 'docker:%')) OR ($4 AND 'docker:host'=ANY(target_keys)))
+				 ORDER BY created_at LIMIT 1`, cmd.DeviceID, models.NormalizeTargetKeys(append(keys, cmd.ProbeKeys...)...), cmd.DockerExclusive, cmd.IsDocker).Scan(dest...)
 		})
 		switch {
 		case err == nil:
@@ -140,11 +140,17 @@ func (r *CommandRepo) CreateIfNoConflict(ctx context.Context, cmd *models.Comman
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO commands (id, device_id, action, params, status, result_msg, created_at, updated_at,
-			expires_at, exec_deadline_s, step, origin, policy_id, target_keys)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			expires_at, exec_deadline_s, step, origin, policy_id, target_keys, actor_kind, actor_auth, actor_name, actor_sub)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
 		cmd.ID, cmd.DeviceID, cmd.Action, paramsJSON, status, cmd.ResultMsg, cmd.CreatedAt, cmd.UpdatedAt,
-		cmd.ExpiresAt, cmd.ExecDeadlineS, cmd.Step, origin, cmd.PolicyID, keys); err != nil {
+		cmd.ExpiresAt, cmd.ExecDeadlineS, cmd.Step, origin, cmd.PolicyID, keys, cmd.ActorKind, cmd.ActorAuth, cmd.ActorName, cmd.ActorSub); err != nil {
 		return nil, fmt.Errorf("insert command: %w", err)
+	}
+	if cmd.ActorKind == "operator" || cmd.Origin == models.OriginUser {
+		detail, _ := json.Marshal(map[string]interface{}{"command_id": cmd.ID, "actor_kind": cmd.ActorKind, "actor_auth": cmd.ActorAuth, "actor_name": cmd.ActorName, "target_keys": keys})
+		if _, err := tx.Exec(ctx, `INSERT INTO docker_audit(device_id,kind,action,actor_sub,data,created_at) VALUES($1,'command',$2,$3,$4,$5)`, cmd.DeviceID, cmd.Action, cmd.ActorSub, detail, cmd.CreatedAt); err != nil {
+			return nil, fmt.Errorf("audit command: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit: %w", err)
@@ -363,6 +369,15 @@ func buildTransitionSQL(t models.CommandTransition) (query string, args []interf
 		set("duration_ms", *t.DurationMs)
 	}
 
+	if t.ResultBytes != nil {
+		set("result_bytes", *t.ResultBytes)
+	}
+	if t.Steps != nil {
+		set("steps", t.Steps)
+	}
+	if t.TargetResults != nil {
+		set("target_results", t.TargetResults)
+	}
 	switch to {
 	case models.CommandAcknowledged:
 		sets = append(sets, "acknowledged_at=$3")
@@ -466,8 +481,8 @@ func (r *CommandRepo) listDue(ctx context.Context, predicate, orderCol, deviceID
 // SaveCommandOutput inserts a command output record.
 func (r *CommandRepo) SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error {
 	err := r.db.Pool.QueryRow(ctx,
-		`INSERT INTO command_output (command_id, stream, content, created_at)
-		 VALUES ($1, $2, $3, NOW())
+		`INSERT INTO command_output (command_id, stream, content, created_at,bytes)
+		 VALUES ($1, $2, $3, NOW(),octet_length($3::text))
 		 RETURNING id, created_at`,
 		output.CommandID, output.Stream, output.Content).Scan(&output.ID, &output.CreatedAt)
 	return err
@@ -493,4 +508,10 @@ func (r *CommandRepo) GetCommandOutput(ctx context.Context, commandID string) ([
 		outputs = append(outputs, o)
 	}
 	return outputs, rows.Err()
+}
+
+func (r *CommandRepo) KnownDevice(ctx context.Context, id string) (bool, error) {
+	var exists bool
+	err := r.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1)`, id).Scan(&exists)
+	return exists, err
 }

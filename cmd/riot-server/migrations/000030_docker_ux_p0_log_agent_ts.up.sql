@@ -1,0 +1,1 @@
+ALTER TABLE container_logs ADD COLUMN IF NOT EXISTS agent_ts TIMESTAMPTZ;

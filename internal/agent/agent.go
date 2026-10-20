@@ -22,10 +22,15 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/logbudget"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 type Agent struct {
+	removalFactory func() (dockerRemovalAPI, error)
+	dockerEvents   dockerEventBus
+	stacks         agentStackRegistry
+
 	config     *Config
 	configPath string
 	version    string
@@ -120,7 +125,8 @@ func New(configPath, version string) (*Agent, error) {
 	registry := collectors.NewRegistry()
 	checkUpdates := cfg.Docker.CheckUpdates == nil || *cfg.Docker.CheckUpdates
 	registry.RegisterDefaultsWithDocker(collectors.DockerOptions{
-		CollectStats: cfg.Docker.CollectStats,
+		CollectStats:         cfg.Docker.CollectStats,
+		ContainerLogMaxLines: cfg.Limits().ContainerLogMaxLines, ContainerLogMaxBytes: cfg.Limits().ContainerLogMaxBytes,
 		SocketPath:   cfg.Docker.SocketPath,
 		CheckUpdates: checkUpdates,
 		CachePath:    FreshnessCachePath(),
@@ -152,7 +158,7 @@ func (a *Agent) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(logbudget.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}), 1000))
 	slog.SetDefault(logger)
 
 	// Auto-detect HTTP→HTTPS upgrade: if server is running TLS but config has http://,

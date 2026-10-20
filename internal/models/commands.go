@@ -9,16 +9,25 @@ import "time"
 // value. Rows stored with legacy values are mapped by Normalize (called by the
 // repository scan and by the mocks).
 type Command struct {
-	ID         string                 `json:"id"`
-	DeviceID   string                 `json:"device_id"`
-	Action     string                 `json:"action"` // docker_stop, docker_restart, docker_start, reboot, agent_update
-	Params     map[string]interface{} `json:"params"`
-	Status     string                 `json:"status"` // canonical CommandState value, see command_state.go
-	ResultMsg  string                 `json:"result_msg"`
-	DurationMs *int64                 `json:"duration_ms,omitempty"`
-	ExitCode   *int                   `json:"exit_code,omitempty"`
-	CreatedAt  time.Time              `json:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at"`
+	ActorKind       string                 `json:"actor_kind"`
+	ActorAuth       string                 `json:"actor_auth"`
+	ActorName       string                 `json:"actor_name"`
+	ActorSub        string                 `json:"-"`
+	Steps           []DockerCommandStep    `json:"steps,omitempty"`
+	TargetResults   []DockerTargetResult   `json:"target_results,omitempty"`
+	ProbeKeys       []string               `json:"-"`
+	IsDocker        bool                   `json:"-"`
+	DockerExclusive bool                   `json:"-"`
+	ID              string                 `json:"id"`
+	DeviceID        string                 `json:"device_id"`
+	Action          string                 `json:"action"` // docker_stop, docker_restart, docker_start, reboot, agent_update
+	Params          map[string]interface{} `json:"params"`
+	Status          string                 `json:"status"` // canonical CommandState value, see command_state.go
+	ResultMsg       string                 `json:"result_msg"`
+	DurationMs      *int64                 `json:"duration_ms,omitempty"`
+	ExitCode        *int                   `json:"exit_code,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
 
 	// Lifecycle fields (CMD-LIFECYCLE-001, migration 000023).
 	ExpiresAt      time.Time  `json:"expires_at"`
@@ -98,12 +107,14 @@ const (
 // ResultStatusError) so a legacy server stores something it understands; a new
 // server derives the canonical state from Outcome first (ResolveState).
 type CommandResult struct {
-	CommandID  string `json:"command_id"`
-	Status     string `json:"status"` // success, error
-	Message    string `json:"message"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
-	DurationMs *int64 `json:"duration_ms,omitempty"`
-	Output     string `json:"output,omitempty"`
+	Steps         []DockerCommandStep  `json:"steps,omitempty"`
+	TargetResults []DockerTargetResult `json:"target_results,omitempty"`
+	CommandID     string               `json:"command_id"`
+	Status        string               `json:"status"` // success, error
+	Message       string               `json:"message"`
+	ExitCode      *int                 `json:"exit_code,omitempty"`
+	DurationMs    *int64               `json:"duration_ms,omitempty"`
+	Output        string               `json:"output,omitempty"`
 	// New in CMD-LIFECYCLE-001 (all optional on the wire):
 	Step    string `json:"step,omitempty"`    // failing step, or the last step on success
 	Outcome string `json:"outcome,omitempty"` // OutcomeSucceeded | OutcomeFailed
@@ -134,7 +145,10 @@ func (r CommandResult) ResolveState() (state CommandState, recognized bool) {
 // CommandTransition is the input of CommandRepository.Transition: one guarded
 // UPDATE ... WHERE id=$ [AND device_id=$] AND status IN (GuardStates()).
 type CommandTransition struct {
-	ID string
+	ResultBytes   *int64
+	Steps         []DockerCommandStep
+	TargetResults []DockerTargetResult
+	ID            string
 	// DeviceID scopes the UPDATE (and the follow-up classification read) to one
 	// device. It is mandatory for ActorAgent and optional ("" = unscoped) for
 	// ActorServer and ActorOperator.
@@ -287,18 +301,22 @@ type ReportResponse struct {
 // CommandUpdate is the dashboard WS message `command_update`, broadcast once
 // per accepted transition.
 type CommandUpdate struct {
-	CommandID   string    `json:"command_id"`
-	DeviceID    string    `json:"device_id"`
-	Action      string    `json:"action"`
-	TargetKey   string    `json:"target_key"`
-	TargetKeys  []string  `json:"target_keys"`
-	Status      string    `json:"status"`
-	Step        string    `json:"step"`
-	Progress    *int      `json:"progress"`
-	Message     string    `json:"message"`
-	FailureStep string    `json:"failure_step"`
-	Origin      string    `json:"origin"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ActorKind     string               `json:"actor_kind"`
+	ActorAuth     string               `json:"actor_auth"`
+	ActorName     string               `json:"actor_name"`
+	TargetResults []DockerTargetResult `json:"target_results,omitempty"`
+	CommandID     string               `json:"command_id"`
+	DeviceID      string               `json:"device_id"`
+	Action        string               `json:"action"`
+	TargetKey     string               `json:"target_key"`
+	TargetKeys    []string             `json:"target_keys"`
+	Status        string               `json:"status"`
+	Step          string               `json:"step"`
+	Progress      *int                 `json:"progress"`
+	Message       string               `json:"message"`
+	FailureStep   string               `json:"failure_step"`
+	Origin        string               `json:"origin"`
+	UpdatedAt     time.Time            `json:"updated_at"`
 }
 
 // NewCommandUpdate builds the broadcast for a command's current row.
@@ -311,8 +329,12 @@ func NewCommandUpdate(c Command) CommandUpdate {
 	if target == "" && len(keys) > 0 {
 		target = keys[0]
 	}
+	results := []DockerTargetResult(nil)
+	if c.State().IsTerminal() {
+		results = c.TargetResults
+	}
 	return CommandUpdate{
-		CommandID: c.ID, DeviceID: c.DeviceID, Action: c.Action,
+		ActorKind: c.ActorKind, ActorAuth: c.ActorAuth, ActorName: c.ActorName, TargetResults: results, CommandID: c.ID, DeviceID: c.DeviceID, Action: c.Action,
 		TargetKey: target, TargetKeys: keys,
 		Status: string(CanonicalStatus(c.Status)), Step: c.Step, Progress: c.Progress,
 		Message: c.ResultMsg, FailureStep: c.FailureStep, Origin: c.Origin,

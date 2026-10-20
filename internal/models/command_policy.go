@@ -97,6 +97,12 @@ func ExpiresAt(action string, now, windowEnd time.Time) time.Time {
 // declaring timed_out. nTargets matters only for docker_bulk_update
 // (min(35m*N + 5m, 6h), with N < 1 treated as 1).
 func ExecDeadline(action string, nTargets int) time.Duration {
+	if action == "docker_remove_items" {
+		return 10 * time.Minute
+	}
+	if strings.HasPrefix(action, "docker_stack_") {
+		return 35 * time.Minute
+	}
 	switch ActionClass(action) {
 	case ClassPower:
 		return 10 * time.Minute
@@ -180,6 +186,12 @@ func BulkAgentBudget(nTargets int) time.Duration {
 //	docker_update 29m55s, docker_bulk_update deadline-5m30s,
 //	agent_update 9m, other 9m.
 func AgentHardMax(action string, nTargets int) time.Duration {
+	if action == "docker_remove_items" {
+		return 9 * time.Minute
+	}
+	if strings.HasPrefix(action, "docker_stack_") {
+		return 30 * time.Minute
+	}
 	switch ActionClass(action) {
 	case ClassPower:
 		return time.Minute
@@ -454,6 +466,9 @@ var DedupeCriticalActions = []string{
 
 // IsDedupeCriticalAction reports whether action is in DedupeCriticalActions.
 func IsDedupeCriticalAction(action string) bool {
+	if action == "docker_remove_items" || strings.HasPrefix(action, "docker_stack_") {
+		return true
+	}
 	for _, a := range DedupeCriticalActions {
 		if a == action {
 			return true

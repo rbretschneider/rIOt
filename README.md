@@ -22,7 +22,7 @@
 - **Lightweight agent** — single static binary, under 30 MB RAM, runs on everything from a Raspberry Pi Zero to a Threadripper workstation
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
-- **Docker container management** — dedicated per-device container dashboard with search, grouping via `riot.*` labels, real-time container events, image update detection, remote start/stop/restart/update with rollback for standalone containers, container log viewer, and optional remote terminal (exec into running containers from the browser)
+- **Docker container management** — fleet-wide searchable table and optional grouped tiles, bulk actions, stable container links, stored and live logs, Inspect, Activity, I/O charts, first-class Compose stacks, inventory and previewed cleanup, plus optional remote terminals
 - **Real-time dashboard** — dark-mode React UI with live WebSocket updates; click the header clock to switch every timestamp between UTC and your browser's local time ([details](#time-display))
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
@@ -380,7 +380,7 @@ Six optional keys in the [Agent Config Reference](#agent-config-reference) set t
 #### Container and journal logs
 
 - One container-log pass sends at most 5,000 lines and 4 MiB across all containers. The agent never scans more than 20,000 lines or 8 MiB of one container's stream.
-- The first pass after an upgrade reads up to 1,000 lines per container. The earlier agent read 50. Later passes read only lines newer than the previous pass.
+- The default keeps the newest 50 lines and 16 KiB per container. Later passes resume from the previous cursor with a bounded scan and report omitted lines.
 - The journal collector no longer passes `-n 500` to `journalctl`. It streams the journal through a ring that keeps the newest 5,000 entries and at most 2 MiB, and scans at most 500,000 lines or 256 MiB per pass. The agent logs how many entries it skipped. Authentication-failure counting covers every line read.
 - A line longer than `max_line_bytes` is cut at a character boundary and ends in ` [truncated]`. The `fetch_logs` command applies the same cut.
 - A telemetry body over 6 MiB loses its container logs first, then its journal entries.
@@ -391,7 +391,7 @@ While the server cannot take telemetry, the agent keeps snapshots in a local SQL
 
 - A buffer file from an older agent is converted to this layout once, at the first start. If the conversion fails (for example the disk is full), the agent keeps the file and tries again at the next start.
 - A corrupt buffer file is moved aside with its `-journal`, `-wal` and `-shm` files, replacing any earlier set. The agent then starts with an empty buffer.
-- The agent checks the file's integrity at every start. At the 500 MiB maximum this takes a few seconds on a slow disk.
+- The agent checks the file's integrity at every start. At the 64 MiB maximum this takes a few seconds on a slow disk.
 
 #### How the agent treats the server's answer
 
@@ -570,12 +570,12 @@ New installs via `install.sh` include all rules automatically.
 | `agent.poll_interval` | `60` | Seconds between full telemetry pushes |
 | `agent.heartbeat_interval` | `15` | Seconds between heartbeat pings |
 | `agent.auto_update` | `true` | Automatically install agent updates when available. Updates are installed only if the release signature verifies (fail-closed). Set to `false` to disable. Dev builds never auto-update. See [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing) |
-| `agent.buffer_max_mb` | `50` | Cap on the payload bytes of the offline telemetry buffer, in MiB, range 5-500. The file on disk is about this size plus SQLite overhead. The buffer also holds at most 100 items. See [Agent Resource Bounds](#agent-resource-bounds) |
+| `agent.buffer_max_mb` | `50` | Cap on the payload bytes of the offline telemetry buffer, in MiB, range 5-64. The file on disk is about this size plus SQLite overhead. The buffer also holds at most 100 items. See [Agent Resource Bounds](#agent-resource-bounds) |
 | `collectors.enabled` | all | List of collectors to run |
 | `collectors.smart_interval` | `4h` | Interval between SMART disk health scans (e.g. `1h`, `4h`, `12h`) |
-| `collectors.container_logs.max_lines` | `1000` | Newest log lines kept per container per collection, range 1-1000 |
-| `collectors.container_logs.max_bytes` | `262144` | Log bytes kept per container per collection (newest first), range 1024-262144 |
-| `collectors.container_logs.max_line_bytes` | `4096` | Container-log lines longer than this are cut at a character boundary and end in ` [truncated]`, range 1024-16384 |
+| `collectors.container_logs.max_lines` | `50` | Newest log lines kept per container per collection, range 1-1000 |
+| `collectors.container_logs.max_bytes` | `16384` | Log bytes kept per container per collection (newest first), range 1024-262144 |
+| `collectors.container_logs.max_line_bytes` | `16384` | Container-log lines longer than this are cut at a character boundary and end in ` [truncated]`, range 1024-16384 |
 | `collectors.logs.max_entries_per_pass` | `5000` | Newest journal entries sent per collection, range 500-20000 |
 | `collectors.logs.max_line_bytes` | `4096` | Journal messages longer than this are cut the same way, range 1024-16384 |
 | `collectors.webservers.nginx.access_log` | — | Absolute path to the nginx access log file. When set, the `webservers` collector parses the log each interval and includes HTTP status code counts in telemetry. Omit to disable access log monitoring (no default path is assumed). |
@@ -1678,7 +1678,7 @@ make test-web
 make coverage
 ```
 
-CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`).
+CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`). One job, `test-go-integration`, spins up a disposable PostgreSQL 16 service and runs the partitioning integration suite (`go test -tags=integration ./internal/server/partition/...`) against it — this is the only CI job that requires Postgres; `test-go` and `test-web` do not. Running that suite locally requires your own PostgreSQL 16 instance (set `RIOT_TEST_DB_URL`); without it, the integration tests skip cleanly rather than fail.
 
 Frontend contributors: the shared UI components, design tokens and the rules that tests enforce (no native `confirm()`, no hex colors in primitives, one formatting module) are described in [web/src/components/ui/README.md](web/src/components/ui/README.md).
 
@@ -1765,17 +1765,67 @@ After the first signed release, run `riot-agent doctor` on a re-installed host a
 | Notification log | 90 days |
 | Probe results | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Container metrics | 7 days |
-| Container logs | 7 days |
+| Container logs | 7 days; `RIOT_CONTAINER_LOG_RETENTION_DAYS` accepts 1–90 |
 | Device logs | 30 days (configurable via `RIOT_RETENTION_DAYS`) |
 | Device registry | Forever (until manually deleted) |
 
-A background worker purges expired data hourly.
+A background worker purges expired data hourly for `events`, `notification_log`, server logs, device probe results, and stale bootstrap keys.
+
+### Partitioned tables and drop-based retention
+
+The six high-churn tables — `heartbeats`, `telemetry_snapshots`, `probe_results`, `container_metrics`, `container_logs`, and `device_logs` — are range-partitioned by day and retained by dropping expired whole partitions. Container logs have their own retention setting, described below. Before upgrading an existing database, follow the [Docker upgrade procedure](docs/ops/docker-upgrade.md). Partitioning changes two operational realities:
+
+- **On first boot after upgrading to the version that ships this**, the server converts each of the six tables to a partitioned table automatically, before it starts serving requests. The conversion is a metadata operation (rename + attach), not a data copy, so it does not scale with table size and does not rewrite existing rows — but it does briefly hold an exclusive lock on each table while the swap happens, so expect a short pause in server availability during that one boot, proportional to the number of tables rather than their size. Subsequent boots are a no-op.
+- **The conversion is effectively one-way.** The migration's down-direction can restore the original plain tables, but only recovers pre-conversion data — anything written after the conversion is discarded by the downgrade. Treat downgrading past this version as a dev/test operation only, not a production rollback.
+
+Because a day-partition is only dropped once it is *entirely* past the retention window, actual retention on these six tables is "at least the configured window" — up to one extra day of data may be retained beyond it. This does not affect the numbers in the table above; it is a rounding-up, not a change to the configured duration.
+
+This does **not** reclaim disk space already lost to bloat from before the conversion — see [`docs/ops/postgres-bloat.md`](docs/ops/postgres-bloat.md) for the one-time `VACUUM FULL` / `pg_repack` reclaim that partitioning does not perform on its own.
 
 ---
 
 ## Docker Container Management
 
-Devices running Docker get a dedicated container dashboard in the web UI with search, filtering, and grouped container cards.
+Open **Docker** in the main navigation for containers across every host. The default table supports search, host and stack filters, status chips, sorting and selection. **Tiles** keeps the existing Compose, network and standalone grouping. Filters and selection can be shared in a URL; opening a link never starts an action. Older per-device Docker links redirect into the fleet section.
+
+Container pages use host ID and container name, so a recreate keeps the same link. Overview keeps network and mount information; Logs combines stored history and an opt-in Live tail; Activity records commands and observed events; Inspect shows redacted Docker configuration; Stats includes CPU, memory and network/block I/O. Terminal still needs its existing feature and agent settings. **Ctrl+K** opens the resource search palette; terminal keystrokes are exempt.
+
+### Stored and live logs
+
+Enable `container_logs` in each agent's existing `collectors.enabled` list to retain history. Live logs are on demand and do not write to the database or the agent's offline buffer. Every new Logs view starts with Live off. Older agents keep history access and show **Requires agent update** for unsupported live/read capabilities.
+
+```yaml
+collectors:
+  # Add these names to the existing list; keep the other collectors you use.
+  enabled: [system, cpu, memory, disk, network, docker, container_logs, docker_inventory]
+  container_logs:
+    max_lines: 50
+    max_bytes: 16384
+```
+
+The stored collector keeps the newest lines within both limits per container per collection. Accepted ranges are 1–1,000 lines and 1,024–262,144 bytes. The server independently caps each container and device, and adds structured gap markers for omitted lines. Stopped containers and raw TTY logs are supported. Lines with clocks outside the retention window are kept at receive time, with the original time shown as a clock-skew marker. Downloads retain these markers.
+
+Known secret patterns are masked at the agent and server. Environment values are hidden unless their key is on the documented safe list. Obfuscated credentials under innocuous names can remain in logs, labels or read-only configuration; review downloads before sharing them.
+
+### Stacks and inventory
+
+**Stacks** lists Compose projects separately per host, including projects taken Down through rIOt. Pull, Update, Redeploy, Restart, Down and Up use the host's agreed Compose paths. Down never removes volumes or images. A changed source path needs acknowledgement; conflicting members refuse actions. Compose and `.env` views are read-only, and values are redacted before leaving the host. File reads are supported on Linux agents only and require the agent service user to have read permission.
+
+Compose files beneath container-writable mounts are refused. The host-local `docker.compose_trusted_roots` setting can explicitly trust operator-controlled roots; it is separate from the existing `docker.compose_roots` confinement setting. Run `riot-agent doctor` as the service user to inspect effective settings and affected stacks.
+
+**Images**, **Volumes** and **Networks** require the opt-in `docker_inventory` collector. The server stores only the latest inventory. Cleanup starts with an exact preview, excludes in-use resources, and rechecks identity at execution. Named volumes are unselected by default and require host-name confirmation. Superseded image removal additionally requires the host-local `docker.prune_superseded_images: true` setting. Refresh stale inventory before executing a preview. Cleanup never calls blanket Docker prune APIs or forces image/volume removal.
+
+### Storage controls and upgrades
+
+`RIOT_CONTAINER_LOG_RETENTION_DAYS` defaults to 7 and accepts 1–90. Lowering it irreversibly deletes expired whole days on a subsequent rotation; raising it cannot restore deleted history. Normal retention keeps the configured full days plus the current day. Storage pressure can shorten it, and the Logs view reports the effective value.
+
+`RIOT_CONTAINER_LOG_MAX_GB` defaults to 16 GiB and `RIOT_COMMAND_RESULTS_MAX_GB` to 4 GiB. Per-device allowances refill continuously: logs 512 MiB/day, telemetry 1 GiB/day, device logs 256 MiB/day and command results 64 MiB/day. At low allowance, priority lines are kept first, stdout is sampled, telemetry is downsampled, and command output is truncated. Quota levels persist across restarts. Downsampled telemetry marks omitted sections, which readers treat as unknown or restore from the latest available observation.
+
+The headroom guard uses `RIOT_DB_FS_PROBE_PATH` on the database filesystem, or `RIOT_DB_MAX_GB` for a configured capacity. The shipped Compose files mount an empty **read-only** probe volume and keep the database files confined to the database container. For custom volume layouts, the probe must share the database filesystem. `RIOT_DB_FREE_LOW_GB` and `RIOT_DB_FREE_EMERGENCY_GB` override automatic thresholds. Critical space narrows storage to priority logs and hourly snapshots while preserving today's partitions. Without a valid headroom source, daily quotas and fleet budgets remain active.
+
+Both Compose files rotate each service's Docker logs at 10 MiB × 5 files. Use the same `json-file` options in custom deployments, or configure equivalent daemon-wide rotation. Device registration defaults to 500 total devices and 100 new registrations per rolling day (`RIOT_MAX_DEVICES`, `RIOT_REGISTRATIONS_PER_DAY`); existing devices can still re-register.
+
+Upgrade the server before the agents. Follow the [migration fingerprint and backup procedure](docs/ops/docker-upgrade.md) before deploying this schema. Existing terminal audit rows now have retention: optionally export `terminal_sessions` before the upgrade if you need a longer archive. Treat that export and the database dump as credentials. The [Docker API reference](docs/ops/docker-api.md) covers history, live sessions, stacks and cleanup previews.
 
 ### `riot.*` Labels
 

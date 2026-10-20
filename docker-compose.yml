@@ -12,6 +12,8 @@ services:
       - RIOT_PORT=7331
       - RIOT_API_KEY=changeme
       - RIOT_RETENTION_DAYS=30
+      - RIOT_CONTAINER_LOG_RETENTION_DAYS=7
+      - RIOT_DB_FS_PROBE_PATH=/riot-fsprobe
       - RIOT_ADMIN_PASSWORD=changeme
       - RIOT_JWT_SECRET=
       # - RIOT_ALLOWED_ORIGINS=https://my-riot.example.com
@@ -25,6 +27,13 @@ services:
       # Optional trusted reverse-proxy CIDRs — set only if rIOt sits behind
       # a reverse proxy (default empty trusts nobody, see .env.example).
       # - RIOT_TRUSTED_PROXIES=10.0.0.5/32
+    volumes:
+      - riot-fsprobe:/riot-fsprobe:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
       riot-db:
         condition: service_healthy
@@ -33,6 +42,11 @@ services:
   riot-db:
     image: postgres:16-alpine
     container_name: riot-db
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       - POSTGRES_USER=riot
       - POSTGRES_PASSWORD=riot
@@ -48,3 +62,4 @@ services:
 
 volumes:
   riot-data:
+  riot-fsprobe:

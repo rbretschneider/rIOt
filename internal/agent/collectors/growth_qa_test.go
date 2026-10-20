@@ -19,7 +19,7 @@ import (
 func TestGROWTH_QA_AC056_ScanLineBoundStopsTinyLines(t *testing.T) {
 	fd := newFakeDocker(t, fakeContainer{id: "ffffffffffff6666", name: "chatty", lines: numberedLines(60_000, 1, logStart)})
 	fd.ignoreTail = true
-	c := &ContainerLogCollector{Host: fd.host()}
+	c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 	lines := collectContainerLogs(t, c)
 

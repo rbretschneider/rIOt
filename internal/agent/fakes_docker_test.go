@@ -548,6 +548,7 @@ func newDockerHarness(t *testing.T) *dockerHarness {
 	h.a.procFactory = h.procs.factory
 	h.a.trustFS = rootOwnedFS{}
 	h.a.trustPlatform = "linux"
+	h.a.stacks.path = filepath.Join(t.TempDir(), "docker-stacks.json")
 	h.a.freshness = h.fresh
 	h.a.pause = func(_ context.Context, d time.Duration) bool {
 		lh.log.add("pause")
@@ -586,6 +587,7 @@ func composeDir(t *testing.T) string {
 // composeLabels builds the compose labels of a service in dir.
 func composeLabels(dir, service string) map[string]string {
 	return map[string]string{
+		"com.docker.compose.version":  "2.40.0",
 		models.LabelComposeProject:    "stack",
 		models.LabelComposeService:    service,
 		models.LabelComposeWorkingDir: dir,

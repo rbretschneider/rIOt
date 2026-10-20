@@ -145,7 +145,7 @@ func TestSnapshot_AC019_BindDeviceVolumeRecorded(t *testing.T) {
 	snap := snapshotOf(t, d)
 
 	assert.Equal(t, map[string]string{"data": "/srv/media"}, snap.volumeDevices, "[AC-019] only local bind-device volumes are recorded")
-	assert.Empty(t, d.callsWithPrefix("volumeinspect:remote"), "non-local volume drivers are not inspected")
+	assert.NotEmpty(t, d.callsWithPrefix("volumeinspect:remote"), "DOCKER-UX SEC-024: host-path options on non-local volume drivers must be inspected")
 }
 
 func TestSnapshot_AC009_ProjectResolution(t *testing.T) {

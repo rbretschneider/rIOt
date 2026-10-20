@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/redact"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -121,6 +124,27 @@ type HeartbeatJSON struct {
 // FleetContainerRow is the per-container shape returned by GET /api/v1/fleet/containers.
 // Fields mirror only what the dashboard leaderboard renders (AD-011, AD-012).
 type FleetContainerRow struct {
+	ShortID            string               `json:"short_id"`
+	ImageID            string               `json:"image_id,omitempty"`
+	Status             string               `json:"status"`
+	HealthStatus       string               `json:"health_status,omitempty"`
+	StartedAt          string               `json:"started_at,omitempty"`
+	FinishedAt         string               `json:"finished_at,omitempty"`
+	ExitCode           *int                 `json:"exit_code,omitempty"`
+	Ports              []models.PortMapping `json:"ports"`
+	UpdateStatus       string               `json:"update_status,omitempty"`
+	UpdateReason       string               `json:"update_reason,omitempty"`
+	ComposeService     string               `json:"compose_service,omitempty"`
+	TargetKey          string               `json:"target_key"`
+	StackKey           string               `json:"stack_key,omitempty"`
+	RiotName           string               `json:"riot_name,omitempty"`
+	RiotIcon           string               `json:"riot_icon,omitempty"`
+	RiotGroup          string               `json:"riot_group,omitempty"`
+	RiotTags           []string             `json:"riot_tags,omitempty"`
+	MemLimitConfigured int64                `json:"mem_limit_configured,omitempty"`
+	NetworkParent      string               `json:"network_parent,omitempty"`
+	SelfRole           string               `json:"self_role,omitempty"`
+
 	DeviceID        string  `json:"device_id"`
 	Hostname        string  `json:"hostname"`
 	ContainerID     string  `json:"container_id"`
@@ -238,6 +262,7 @@ func (h *Handlers) FleetContainers(w http.ResponseWriter, r *http.Request) {
 			}
 
 			rows = append(rows, FleetContainerRow{
+				ShortID: c.ShortID, ImageID: c.ImageID, Status: c.Status, HealthStatus: c.HealthStatus, StartedAt: c.StartedAt, FinishedAt: c.FinishedAt, ExitCode: c.ExitCode, Ports: c.Ports, UpdateStatus: c.UpdateStatus, UpdateReason: c.UpdateReason, ComposeService: c.Labels["com.docker.compose.service"], TargetKey: models.TargetKeyContainer(strings.TrimLeft(c.Name, "/")), StackKey: dockerStackKey(c.Labels), RiotName: c.Labels["riot.name"], RiotIcon: c.Labels["riot.icon"], RiotGroup: c.Labels["riot.group"], MemLimitConfigured: c.MemLimitConfigured, NetworkParent: dockerNetworkParent(c.NetworkMode), SelfRole: dockerProjectionRole(proj.Containers, c),
 				DeviceID:        proj.DeviceID,
 				Hostname:        hostname,
 				ContainerID:     c.ID,
@@ -259,5 +284,13 @@ func (h *Handlers) FleetContainers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	for i := range rows {
+		rows[i].Image, _ = redact.MaskLine(rows[i].Image)
+		rows[i].Status, _ = redact.MaskLine(rows[i].Status)
+		rows[i].UpdateReason, _ = redact.MaskLine(rows[i].UpdateReason)
+		rows[i].RiotName, _ = redact.MaskLine(rows[i].RiotName)
+		rows[i].RiotIcon, _ = redact.MaskLine(rows[i].RiotIcon)
+		rows[i].RiotGroup, _ = redact.MaskLine(rows[i].RiotGroup)
+	}
 	json.NewEncoder(w).Encode(rows)
 }

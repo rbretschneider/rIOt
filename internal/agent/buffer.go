@@ -14,6 +14,8 @@ import (
 	"modernc.org/sqlite"
 )
 
+const AgentBufferMaxBytes = 64 << 20
+
 const (
 	// maxBuffered caps the number of buffered snapshots.
 	maxBuffered = 100
@@ -72,6 +74,10 @@ func NewBuffer(path string) (*Buffer, error) {
 // memory siblings, replacing any earlier aside set, and a new empty buffer is
 // started (GROWTH-001 FR-071, SEC-022).
 func NewBufferWithLimit(path string, maxBytes int64) (*Buffer, error) {
+	if maxBytes <= 0 {
+		maxBytes = defaultBufferMaxBytes
+	}
+	maxBytes = min(maxBytes, AgentBufferMaxBytes)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create buffer directory: %w", err)
 	}
@@ -343,4 +349,30 @@ func (b *Buffer) Bytes() int64 {
 
 func (b *Buffer) Close() error {
 	return b.db.Close()
+}
+
+// Items is the bounded compatibility view used by diagnostics and tests.
+func (b *Buffer) Items() ([]BufferedItem, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	rows, err := b.db.Query("SELECT id,payload FROM buffer ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BufferedItem
+	for rows.Next() {
+		var item BufferedItem
+		var raw string
+		if err := rows.Scan(&item.ID, &raw); err != nil {
+			return nil, err
+		}
+		var snap models.TelemetrySnapshot
+		if json.Unmarshal([]byte(raw), &snap) != nil {
+			continue
+		}
+		item.Snapshot = &snap
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

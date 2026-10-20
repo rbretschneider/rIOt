@@ -282,7 +282,7 @@ func (c *HTTPClient) Register(ctx context.Context, reg *models.DeviceRegistratio
 
 // HeartbeatResponse is the server's response to a heartbeat, potentially including queued commands.
 type HeartbeatResponse struct {
-	Status          string                 `json:"status"`
+	Status          string                  `json:"status"`
 	PendingCommands []models.CommandPayload `json:"pending_commands,omitempty"`
 }
 
@@ -498,7 +498,7 @@ func (c *HTTPClient) SendTelemetry(ctx context.Context, deviceID string, snap *m
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		statusErr := c.newStatusError("telemetry push", resp)
 		c.noteTelemetryOutcome(statusErr)
 		return statusErr

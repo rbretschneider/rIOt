@@ -59,6 +59,7 @@ func (h *Handlers) SetAutoUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to save auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
+	h.auditDockerPolicy(r, deviceID, "auto_update", body.Target)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -71,6 +72,7 @@ func (h *Handlers) DeleteAutoUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to delete auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
+	h.auditDockerPolicy(r, deviceID, "delete_auto_update", target)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -590,4 +592,12 @@ func projectsWithSeveralWorkDirs(containers []models.ContainerInfo) map[string]b
 		}
 	}
 	return out
+}
+
+func (h *Handlers) auditDockerPolicy(r *http.Request, device, action, target string) {
+	if h.dockerRepo == nil {
+		return
+	}
+	_, sub, _ := dockerActor(r)
+	h.dockerRepo.Audit(r.Context(), device, "policy", action, sub, map[string]interface{}{"target": models.TruncateHead(models.SanitizeText(target), 128)})
 }

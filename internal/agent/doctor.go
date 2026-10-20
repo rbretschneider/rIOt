@@ -131,7 +131,7 @@ func Doctor(configPath string) {
 		"system", "cpu", "memory", "disk", "network", "os_info",
 		"updates", "services", "processes", "docker", "container_logs",
 		"security", "logs", "ups", "webservers", "usb", "hardware", "cron",
-		"gpu",
+		"gpu", "docker_inventory",
 	}
 	enabled := make(map[string]bool)
 	for _, name := range cfg.Collector.Enabled {
@@ -216,7 +216,7 @@ func Doctor(configPath string) {
 	}
 
 	// ── Docker ──
-	if enabled["docker"] || enabled["container_logs"] {
+	if enabled["docker"] || enabled["container_logs"] || enabled["docker_inventory"] {
 		fmt.Println()
 		section("Docker")
 		fmt.Printf("  Mode:         %s\n", cfg.Docker.Enabled)
@@ -226,7 +226,37 @@ func Doctor(configPath string) {
 			fmt.Printf("  Socket:       auto-detect\n")
 		}
 		fmt.Printf("  Stats:        %v\n", cfg.Docker.CollectStats)
+		lines, bytes := cfg.Limits().ContainerLogMaxLines, cfg.Limits().ContainerLogMaxBytes
+		if lines < 1 || lines > 1000 {
+			lines = 50
+		}
+		if bytes < 1024 || bytes > 262144 {
+			bytes = 16384
+		}
+		fmt.Printf("  Stored logs: %d lines, %d bytes per container per collection\n", lines, bytes)
+		fmt.Printf("  Superseded image cleanup: %v\n", cfg.Docker.PruneSupersededImages)
 		fmt.Printf("  Terminal:     %v\n", cfg.Docker.TerminalEnabled)
+		if enabled["docker_inventory"] {
+			pass("docker_inventory: enabled (15 minute cadence)")
+		} else {
+			fmt.Printf("  docker_inventory: disabled (add \"docker_inventory\" to collectors.enabled)\n")
+		}
+		if cli, err := newDockerClient(cfg.Docker.SocketPath); err != nil {
+			fail("Docker socket unavailable")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err = cli.Ping(ctx)
+			cancel()
+			cli.Close()
+			if err != nil {
+				fail("Docker socket ping failed")
+			} else {
+				pass("Docker socket reachable")
+			}
+		}
+		for _, root := range cfg.Docker.ComposeTrustedRoots {
+			fmt.Printf("  Trusted stack root: %s\n", root)
+		}
 		checkComposeTrust(cfg)
 	}
 
@@ -651,8 +681,8 @@ func fail(format string, args ...interface{}) {
 	fmt.Printf("  \033[31m✗\033[0m %s\n", fmt.Sprintf(format, args...))
 }
 
-func green(s string) string  { return "\033[32m" + s + "\033[0m" }
-func dim(s string) string    { return "\033[90m" + s + "\033[0m" }
+func green(s string) string { return "\033[32m" + s + "\033[0m" }
+func dim(s string) string   { return "\033[90m" + s + "\033[0m" }
 
 func friendlyDuration(seconds int) string {
 	if seconds >= 3600 {
@@ -668,7 +698,6 @@ func friendlyDuration(seconds int) string {
 	}
 	return fmt.Sprintf("%ds", seconds)
 }
-
 
 // maxDoctorLine bounds one doctor line that carries a label- or
 // filesystem-derived value.
@@ -761,6 +790,10 @@ func reportComposeTrust(cfg DockerConfig, snap daemonSnapshot, snapErr error, t 
 		return
 	}
 	for _, p := range pairs {
+		if err := t.strictWritable(snap, p.dir); err != nil {
+			fail("%s", line("project %q: %s; add a reviewed root to docker.compose_trusted_roots to allow this layout", models.TruncateHead(p.project, maxRefusalValueBytes), err.Error()))
+			continue
+		}
 		td, err := t.Check(snap, trustRequest{Dir: p.dir, Project: p.project})
 		if err != nil {
 			fail("%s", line("project %q: %s", models.TruncateHead(p.project, maxRefusalValueBytes), err.Error()))

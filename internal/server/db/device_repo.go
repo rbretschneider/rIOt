@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,7 +13,15 @@ import (
 
 // DeviceRepo handles device database operations.
 type DeviceRepo struct {
-	db *DB
+	db                              *DB
+	maxDevices, registrationsPerDay int
+}
+
+var ErrDeviceLimit = errors.New("device registration limit reached")
+
+func (r *DeviceRepo) SetRegistrationLimits(total, daily int) {
+	r.maxDevices = total
+	r.registrationsPerDay = daily
 }
 
 func NewDeviceRepo(db *DB) *DeviceRepo {
@@ -22,12 +31,37 @@ func NewDeviceRepo(db *DB) *DeviceRepo {
 func (r *DeviceRepo) Create(ctx context.Context, d *models.Device) error {
 	tagsJSON, _ := json.Marshal(d.Tags)
 	hwJSON, _ := json.Marshal(d.HardwareProfile)
-	_, err := r.db.Pool.Exec(ctx,
+	tx, err := r.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(732100058)`); err != nil {
+		return err
+	}
+	maxDevices, daily := r.maxDevices, r.registrationsPerDay
+	if maxDevices <= 0 {
+		maxDevices = 500
+	}
+	if daily <= 0 {
+		daily = 100
+	}
+	var count, recent int
+	if err = tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE created_at>=now()-interval '24 hours') FROM devices`).Scan(&count, &recent); err != nil {
+		return err
+	}
+	if count >= maxDevices || recent >= daily {
+		return ErrDeviceLimit
+	}
+	_, err = tx.Exec(ctx,
 		`INSERT INTO devices (id, short_id, hostname, arch, agent_version, primary_ip, status, location, tags, hardware_profile, created_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		d.ID, d.ShortID, d.Hostname, d.Arch, d.AgentVersion, d.PrimaryIP, d.Status, d.Location, tagsJSON, hwJSON, d.CreatedAt, d.UpdatedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *DeviceRepo) Update(ctx context.Context, d *models.Device) error {

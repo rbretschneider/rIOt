@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"strings"
+
+	"fmt"
 	"io"
-	"log/slog"
+
 	"runtime"
-	"strconv"
 	"sync"
 	"time"
 
@@ -17,187 +19,222 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
-// Bounds on one container-log collection pass (GROWTH-001 AD-017). The first
-// three are the defaults of the configurable max_lines, max_bytes and
-// max_line_bytes keys; the rest are fixed.
 const (
-	defaultContainerLogMaxLines     = 1000
-	defaultContainerLogMaxBytes     = 256 << 10
-	defaultContainerLogMaxLineBytes = 4 << 10
-
-	// A single container is never scanned past 20,000 lines or 8 MiB, whatever
-	// the daemon sends (DUX D-41).
-	containerLogScanMaxLines = 20000
-	containerLogScanMaxBytes = 8 << 20
-
-	// One whole pass keeps at most 5,000 lines and 4 MiB across all containers.
-	containerLogPassMaxLines = 5000
-	containerLogPassMaxBytes = 4 << 20
-
-	// dockerMaxFrame is the largest single log frame accepted from the daemon.
-	dockerMaxFrame = 1 << 20
-
-	// truncationMarker is appended to a line that was cut.
-	truncationMarker = " [truncated]"
+	defaultContainerLogMaxLines     = 50
+	defaultContainerLogMaxBytes     = 16 << 10
+	defaultContainerLogMaxLineBytes = 16 << 10
+	containerLogScanMaxLines        = 20000
+	containerLogScanMaxBytes        = 8 << 20
+	containerLogPassMaxLines        = 5000
+	containerLogPassMaxBytes        = 4 << 20
+	dockerMaxFrame                  = 1 << 20
+	truncationMarker                = " [truncated]"
 )
+
+func (c *ContainerLogCollector) limits() (int, int, int) {
+	lines, bytes, line := c.MaxLines, c.MaxBytes, c.MaxLineBytes
+	if lines <= 0 || lines > 1000 {
+		lines = defaultContainerLogMaxLines
+	}
+	if bytes < 1024 || bytes > 262144 {
+		bytes = defaultContainerLogMaxBytes
+	}
+	if line < 1024 || line > 16<<10 {
+		line = defaultContainerLogMaxLineBytes
+	}
+	return lines, bytes, line
+}
 
 // ContainerLogCollector fetches recent log lines from Docker containers.
 type ContainerLogCollector struct {
-	SocketPath string
-	// Host overrides the Docker daemon address (for example tcp://127.0.0.1:2375).
-	// It exists so tests can point the collector at a fake daemon.
-	Host string
+	SocketPath     string
+	Host           string
+	MaxLineBytes   int
+	MaxLines       int
+	MaxBytes       int
+	lastCollection time.Time
+	TailLines      int // number of lines per container (default 50)
 
-	// Per-container limits per collection pass. Zero means the default; the agent
-	// passes values already clamped to their configured ranges.
-	MaxLines     int
-	MaxBytes     int
-	MaxLineBytes int
-
-	mu       sync.Mutex
-	lastSeen map[string]time.Time // containerID -> last seen timestamp
+	mu            sync.Mutex
+	lastSeen      map[string]time.Time // containerID -> last seen timestamp
+	tty           map[string]bool
+	deferredSince map[string]time.Time
 }
 
 func (c *ContainerLogCollector) Name() string { return "container_logs" }
 
-// limits returns the per-container limits with defaults applied.
-func (c *ContainerLogCollector) limits() (maxLines, maxBytes, maxLineBytes int) {
-	maxLines, maxBytes, maxLineBytes = c.MaxLines, c.MaxBytes, c.MaxLineBytes
-	if maxLines <= 0 {
-		maxLines = defaultContainerLogMaxLines
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultContainerLogMaxBytes
-	}
-	if maxLineBytes <= 0 {
-		maxLineBytes = defaultContainerLogMaxLineBytes
-	}
-	return maxLines, maxBytes, maxLineBytes
-}
-
 func (c *ContainerLogCollector) Collect(ctx context.Context) (interface{}, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.lastSeen == nil {
-		c.lastSeen = make(map[string]time.Time)
+		c.lastSeen = map[string]time.Time{}
 	}
-	c.mu.Unlock()
-
+	if c.tty == nil {
+		c.tty = map[string]bool{}
+	}
+	if c.deferredSince == nil {
+		c.deferredSince = map[string]time.Time{}
+	}
 	maxLines, maxBytes, maxLineBytes := c.limits()
-
+	linesLeft, bytesLeft := containerLogPassMaxLines, containerLogPassMaxBytes
+	result := ContainerLogBatch{}
 	cli, err := c.newClient()
 	if err != nil {
-		return []models.ContainerLogEntry{}, nil
+		return result, nil
 	}
 	defer cli.Close()
-
-	if _, err := cli.Ping(ctx); err != nil {
-		return []models.ContainerLogEntry{}, nil
-	}
-
-	containers, err := cli.ContainerList(ctx, container.ListOptions{All: false}) // running only
+	containers, err := cli.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		return []models.ContainerLogEntry{}, nil
+		return result, nil
 	}
-
-	var (
-		allLogs          []models.ContainerLogEntry
-		passLinesLeft    = containerLogPassMaxLines
-		passBytesLeft    = containerLogPassMaxBytes
-		droppedLines     int
-		skippedContainer int
-	)
+	now := time.Now().UTC()
+	existing := map[string]bool{}
 	for _, ctr := range containers {
-		name := ""
-		if len(ctr.Names) > 0 {
-			name = ctr.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
+		existing[ctr.ID] = true
+		if linesLeft <= 0 || bytesLeft <= len(truncationMarker) {
+			if _, ok := c.deferredSince[ctr.ID]; !ok {
+				since := c.lastSeen[ctr.ID]
+				if since.IsZero() {
+					since = c.lastCollection
+				}
+				c.deferredSince[ctr.ID] = since
+			}
+			continue
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		tty, known := c.tty[ctr.ID]
+		var inspect container.InspectResponse
+		if !known || ctr.State != "running" {
+			inspect, err = cli.ContainerInspect(callCtx, ctr.ID)
+			if err != nil {
+				cancel()
+				continue
+			}
+			tty = inspect.Config != nil && inspect.Config.Tty
+			c.tty[ctr.ID] = tty
+		}
+		since := c.lastSeen[ctr.ID]
+		deferred, deferredBefore := c.deferredSince[ctr.ID]
+		if deferredBefore {
+			since = deferred
+		}
+		opts := container.LogsOptions{ShowStdout: true, ShowStderr: true, Timestamps: true}
+		if ctr.State != "running" {
+			if inspect.State == nil {
+				cancel()
+				continue
+			}
+			finished, e := time.Parse(time.RFC3339Nano, inspect.State.FinishedAt)
+			if e != nil || (!deferredBefore && !c.lastCollection.IsZero() && !finished.After(c.lastCollection)) {
+				delete(c.lastSeen, ctr.ID)
+				cancel()
+				continue
+			}
+			opts.Until = finished.Add(time.Second).Format(time.RFC3339Nano)
+			if since.IsZero() && !deferredBefore {
+				since = c.lastCollection
 			}
 		}
-
-		shortID := ctr.ID
-		if len(shortID) > 12 {
-			shortID = shortID[:12]
-		}
-
-		// The pass budget caps what this container may add. A container left
-		// without budget is not read at all, so its cursor stays put and the next
-		// pass picks its lines up.
-		lines := min(maxLines, passLinesLeft)
-		bytes := min(maxBytes, passBytesLeft)
-		if lines <= 0 || bytes <= len(truncationMarker) {
-			skippedContainer++
-			continue
-		}
-
-		c.mu.Lock()
-		since := c.lastSeen[ctr.ID]
-		c.mu.Unlock()
-
-		opts := container.LogsOptions{
-			ShowStdout: true,
-			ShowStderr: true,
-			Timestamps: true,
-			// The daemon never sends more than the newest max_lines lines, so a
-			// container that wrote 50,000 lines costs one bounded read.
-			Tail: strconv.Itoa(maxLines),
-		}
-		if !since.IsZero() {
+		if since.IsZero() {
+			opts.Tail = fmt.Sprint(maxLines)
+		} else {
 			opts.Since = since.Format(time.RFC3339Nano)
+			// A bounded look-back counts capped-away lines, rather than silently
+			// hiding them behind a daemon tail equal to the retained ring size.
+			opts.Tail = fmt.Sprint(containerLogScanMaxLines + 1)
 		}
-
-		logs, err := cli.ContainerLogs(ctx, ctr.ID, opts)
+		logs, err := cli.ContainerLogs(callCtx, ctr.ID, opts)
 		if err != nil {
-			slog.Debug("container_logs: failed to get logs", "container", name, "error", err)
+			cancel()
 			continue
 		}
-
-		res := readDockerLogStream(logs, shortID, name, dockerScanLimits{
-			maxLines:  lines,
-			maxBytes:  bytes,
-			lineBytes: min(maxLineBytes, bytes-len(truncationMarker)),
+		name := ""
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
+		}
+		id := ctr.ID
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		ring := containerLogCapRing{maxLines: min(maxLines, linesLeft), maxBytes: min(maxBytes, bytesLeft)}
+		scanned, bytes := 0, 0
+		lower := false
+		newest := since
+		limited := &io.LimitedReader{R: logs, N: 8 << 20}
+		readDockerLogs(limited, tty, false, func(e models.ContainerLogEntry) bool {
+			scanned++
+			bytes += len(e.Line)
+			if e.Timestamp.After(newest) {
+				newest = e.Timestamp
+			}
+			if !since.IsZero() && !e.Timestamp.After(since) {
+				return true
+			}
+			e.ContainerID = id
+			e.ContainerName = name
+			e.Line = CanonicalLogLine(e.Line, maxLineBytes)
+			ring.add(e)
+			if scanned >= 20000 || bytes >= 8<<20 {
+				lower = true
+				return false
+			}
+			return true
 		})
 		logs.Close()
-
-		droppedLines += res.dropped
-		if len(res.entries) > 0 {
-			passLinesLeft -= len(res.entries)
-			passBytesLeft -= res.keptBytes
-			allLogs = append(allLogs, res.entries...)
-			c.mu.Lock()
-			c.lastSeen[ctr.ID] = res.entries[len(res.entries)-1].Timestamp
-			c.mu.Unlock()
+		cancel()
+		if limited.N == 0 {
+			lower = true
+		}
+		for i := range ring.entries {
+			ring.entries[i].Timestamp = ring.entries[i].Timestamp.Truncate(time.Microsecond)
+		}
+		result.Entries = append(result.Entries, ring.entries...)
+		linesLeft -= len(ring.entries)
+		bytesLeft -= ring.bytes
+		delete(c.deferredSince, ctr.ID)
+		if ring.dropped > 0 || lower {
+			count := ring.dropped
+			if lower {
+				count++
+			}
+			stamp := ring.droppedAt
+			if stamp.IsZero() {
+				stamp = newest
+			}
+			result.Gaps = append(result.Gaps, models.ContainerLogGap{ContainerID: id, ContainerName: name, Timestamp: stamp, Count: count, LowerBound: lower, Reason: "agent_cap"})
+		}
+		if lower {
+			newest = now
+		}
+		if ctr.State == "running" {
+			c.lastSeen[ctr.ID] = newest
+		} else {
+			delete(c.lastSeen, ctr.ID)
 		}
 	}
-
-	if droppedLines > 0 || skippedContainer > 0 {
-		slog.Warn("container_logs: older lines dropped to stay within the per-pass limits",
-			"dropped_lines", droppedLines, "containers_deferred", skippedContainer,
-			"max_lines", maxLines, "max_bytes", maxBytes)
-	}
-
-	// Clean up lastSeen for containers that no longer exist
-	c.mu.Lock()
-	running := make(map[string]struct{}, len(containers))
-	for _, ctr := range containers {
-		running[ctr.ID] = struct{}{}
-	}
 	for id := range c.lastSeen {
-		if _, ok := running[id]; !ok {
+		if !existing[id] {
 			delete(c.lastSeen, id)
 		}
 	}
-	c.mu.Unlock()
-
-	return allLogs, nil
+	for id := range c.tty {
+		if !existing[id] {
+			delete(c.tty, id)
+		}
+	}
+	for id := range c.deferredSince {
+		if !existing[id] {
+			delete(c.deferredSince, id)
+		}
+	}
+	c.lastCollection = now
+	return result, nil
 }
-
 func (c *ContainerLogCollector) newClient() (*client.Client, error) {
 	opts := []client.Opt{client.WithAPIVersionNegotiation()}
-	switch {
-	case c.Host != "":
+	if c.Host != "" {
 		opts = append(opts, client.WithHost(c.Host))
-	case c.SocketPath != "":
+	} else if c.SocketPath != "" {
 		host := "unix://" + c.SocketPath
 		if runtime.GOOS == "windows" {
 			host = "npipe://" + c.SocketPath
@@ -205,6 +242,23 @@ func (c *ContainerLogCollector) newClient() (*client.Client, error) {
 		opts = append(opts, client.WithHost(host))
 	}
 	return client.NewClientWithOpts(opts...)
+}
+
+// parseDockerLogStream reads Docker multiplexed log output.
+// Docker log stream format: 8-byte header per frame:
+//
+//	[0]   = stream type (1=stdout, 2=stderr)
+//	[1-3] = padding
+//	[4-7] = uint32 frame size (big-endian)
+func parseDockerLogStream(r io.Reader, containerID, containerName string) []models.ContainerLogEntry {
+	var entries []models.ContainerLogEntry
+	ReadDockerLogs(io.LimitReader(r, 8<<20), false, func(e models.ContainerLogEntry) bool {
+		e.ContainerID = containerID
+		e.ContainerName = containerName
+		entries = append(entries, e)
+		return len(entries) < 20000
+	})
+	return entries
 }
 
 // dockerScanLimits bound the reading of one container's log stream.

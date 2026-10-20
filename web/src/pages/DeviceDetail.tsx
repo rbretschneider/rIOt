@@ -239,6 +239,7 @@ export default function DeviceDetail() {
 
   return (
     <div className="space-y-6">
+      {data?.latest_telemetry?.data?.trimmed && <p role="status" className="rounded border border-warn-fg p-3 text-sm text-warn-fg">Stored telemetry is downsampled by the storage quota. Omitted sections are unavailable; last known data may be shown.</p>}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         {/* Left: name, status, summary menu, subtitle, navigation links */}
@@ -357,7 +358,7 @@ export default function DeviceDetail() {
             {isEnabled('docker') && tel?.docker?.available && (
               <span className="flex items-center gap-2">
                 <Link
-                  to={`/devices/${id}/containers`}
+                  to={`/docker/containers?host=${id}`}
                   className="text-sm text-gray-400 hover:text-white transition-colors"
                 >
                   Docker
@@ -1298,6 +1299,7 @@ export default function DeviceDetail() {
       {isEnabled('web_servers') && tel?.web_servers?.servers && tel.web_servers.servers.length > 0 && (
         <Section title="Web Servers">
           <div className="space-y-6">
+
             {tel.web_servers.servers.map((srv, srvIdx) => {
               const hasSecurityConfig = srv.security_config && (
                 (srv.security_config.security_headers && Object.keys(srv.security_config.security_headers).length > 0) ||

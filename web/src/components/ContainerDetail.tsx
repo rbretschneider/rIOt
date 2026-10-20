@@ -16,6 +16,8 @@ import { Section, InfoItem } from './Section'
 import { Badge, Timestamp, enumLabel } from './ui'
 import { useTimePreference } from '../contexts/TimePreferenceProvider'
 import { chartColors } from '../theme/chartColors'
+import { maskDockerValue } from '../utils/logMask'
+import { safeUrl } from '../utils/safeUrl'
 import { formatDuration } from '../utils/format'
 
 const EVENTS_PER_PAGE = 15
@@ -162,7 +164,7 @@ export function ContainerDetailContent({ container: c, deviceId, terminalEnabled
   )
 }
 
-function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; deviceId?: string }) {
+export function GeneralTab({ container: c, deviceId, hideMetricHistory = false }: { container: ContainerInfo; deviceId?: string; hideMetricHistory?: boolean }) {
   const { now } = useTimePreference()
   const [metricHours, setMetricHours] = useState(() => {
     const saved = localStorage.getItem('container-metric-hours')
@@ -234,7 +236,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <InfoItem label="State" value={c.state} valueClassName={statusColor(c.state)} />
           <InfoItem label="Status" value={c.status} />
-          {c.state === 'running' && <InfoItem label="Up" value={formatDuration(now() / 1000 - c.created)} />}
+          {c.state === 'running' && <InfoItem label="Up" value={c.started_at ? formatDuration((now() - Date.parse(c.started_at)) / 1000) : 'Requires agent update'} />}
           {c.restart_policy && <InfoItem label="Restart Policy" value={c.restart_policy} />}
           {(c.restart_count ?? 0) > 0 && <InfoItem label="Restart Count" value={String(c.restart_count)} />}
           {c.health_status && <InfoItem label="Health" value={c.health_status} />}
@@ -271,7 +273,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
       })()}
 
       {/* Metric history charts */}
-      {deviceId && metrics.length > 0 && (
+      {!hideMetricHistory && deviceId && metrics.length > 0 && (
         <Section title="Metric History">
           <div className="flex gap-1 mb-3">
             {[{ label: '1h', value: 1 }, { label: '6h', value: 6 }, { label: '24h', value: 24 }, { label: '7d', value: 168 }].map(tr => (
@@ -401,9 +403,9 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         </Section>
       )}
 
-      {c.repo_url && (
+      {safeUrl(c.repo_url) && (
         <Section title="Source">
-          <a href={c.repo_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline text-sm break-all">
+          <a href={safeUrl(c.repo_url)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline text-sm break-all">
             {c.repo_url}
           </a>
         </Section>
@@ -415,28 +417,13 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
         </Section>
       )}
 
-      {c.env && c.env.length > 0 && (
-        <Section title="Environment">
-          <div className="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
-            {c.env.map((e, i) => (
-              <div key={i} className="flex gap-2 text-xs font-mono">
-                <span className="text-gray-400 flex-shrink-0">{e.key}=</span>
-                <span className={`break-all ${isSensitiveKey(e.key) ? 'text-amber-400/70' : 'text-gray-500'}`}>
-                  {maskValue(e.key, e.value)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
       {c.labels && Object.keys(c.labels).length > 0 && (
         <Section title="Labels">
           <div className="space-y-1 max-h-64 overflow-y-auto scrollbar-thin">
             {Object.entries(c.labels).map(([k, v]) => (
               <div key={k} className="flex gap-2 text-xs font-mono">
                 <span className="text-gray-400 flex-shrink-0">{k}=</span>
-                <span className="text-gray-500 break-all">{v}</span>
+                <span className="text-gray-500 break-all">{maskDockerValue(k, v)}</span>
               </div>
             ))}
           </div>
@@ -446,7 +433,7 @@ function GeneralTab({ container: c, deviceId }: { container: ContainerInfo; devi
   )
 }
 
-function NetworkTab({ container: c }: { container: ContainerInfo }) {
+export function NetworkTab({ container: c }: { container: ContainerInfo }) {
   const hasPorts = c.ports && c.ports.length > 0
   const hasNetworks = c.networks && c.networks.length > 0
 
@@ -513,7 +500,7 @@ function NetworkTab({ container: c }: { container: ContainerInfo }) {
   )
 }
 
-function VolumesTab({ container: c }: { container: ContainerInfo }) {
+export function VolumesTab({ container: c }: { container: ContainerInfo }) {
   if (!c.mounts || c.mounts.length === 0) {
     return (
       <Section title="Volumes">

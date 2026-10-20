@@ -1,0 +1,54 @@
+# Documentation Report
+
+**Story ID:** PART-001
+**Author:** Technical Writer Agent
+**Date:** 2026-09-10
+**Trigger:** QA verdict PASS WITH NOTES
+
+---
+
+## Artifacts Updated
+
+| File | Change Type | Summary |
+|------|-------------|---------|
+| `CHANGELOG.md` | Updated | New `[Unreleased]` `[PART-001]` entries under `### Added` (partitioning + drop-partition retention, metadata-swap conversion, forward DEFAULT catch, hand-rolled Go manager, new CI integration job), `### Changed` (retention worker no longer purges the six tables; `docs/ops/postgres-bloat.md` status), and a new `### Known Limitations` block (one-way down-migration, pre-existing bloat not reclaimed). |
+| `README.md` | Updated | New "Partitioned tables and drop-based retention" subsection under **Data Retention** — documents the on-startup conversion, the boot-time pause on first upgrade, the one-way down-migration, the unchanged retention durations/config, and cross-references `docs/ops/postgres-bloat.md` for the still-pending one-time reclaim. **Testing** section extended with one sentence noting `test-go-integration` is the only CI job requiring Postgres, and how to run it locally (`RIOT_TEST_DB_URL`). |
+| `docs/ops/postgres-bloat.md` | Updated | Status line changed from "interim fix shipped; one-time reclaim + long-term partitioning still open" to "long-term fix shipped (PART-001); one-time reclaim of pre-existing bloat still open." Fix 1 (autovacuum tuning) annotated as superseded-for-these-six-tables with an explanation of why (drop-partition retention generates zero dead tuples) and why the reloptions aren't carried onto new partitions (legacy partition keeps them until it ages out). Fix 2 (one-time reclaim) reworded to point at `<table>_legacy` post-conversion and clarified that a legacy partition's eventual drop reclaims its bloat automatically. Fix 3 rewritten from "proper long-term solution (future)" to "shipped, PART-001," describing the live conversion + drop-partition mechanism, the DEFAULT catch, and what it deliberately does not do (retroactive bloat reclaim, retention-duration changes). TL;DR rewritten to match. Cross-links the new README section. |
+| `docs/technical-writing/PART-001-docs-report.md` | Created | This report. |
+
+No inline code comments were added. Every load-bearing decision in the migrations (`000024`–`000028`), `plan.go`, and `manager.go` already carries a "why" comment at the point of the decision (data-derived `cutoff` and why it can't fail `VALIDATE`, the PG16 PK-adoption/index-rename workaround, why the FK validate is split into its own file, why `PartitionsToDrop` never returns the DEFAULT partition, why the stall counter is per-operation, the `DEFAULT`-row remediation hint in `manager.go`'s benign-error log). Adding more would be restating what's already there — no `.go` file was touched, so no `go build ./...` verification was required.
+
+## API Documentation
+
+No API surface changed. This story is schema + background-job only — no new or modified HTTP endpoint, confirmed against the ADD (§6, "No HTTP API changes") and by inspection of `internal/server/server.go` (only `PartitionManager` wiring and `runRetention` trimming; no router changes) and `internal/server/handlers/` (untouched, not in the ADD's Section 4 file list). No API documentation update was required.
+
+## Config-Key Verification
+
+Verified against the actual code before writing anything: PART-001 introduced **no new environment variable and no new config key**. Retention continues to come from the pre-existing `RIOT_RETENTION_DAYS` (`internal/server/config.go:18,50,65-67`, default 30) plus the hardcoded 7-day constant in `internal/server/partition/plan.go`'s `BuildSpecs` (unchanged value, moved from `runRetention` into the partition spec builder — confirmed via `grep Partition internal/server/config.go` returning no matches). The six migration files (`cmd/riot-server/migrations/000024`–`000028`) and the `internal/server/partition/` package were read directly, not inferred from the ADD/impl report, to confirm: the `partition_conversion` bookkeeping table exists but is not operator-facing config; the CI job (`.github/workflows/ci.yml` `test-go-integration`) uses `RIOT_TEST_DB_URL`, an existing test-only variable, not a new production one.
+
+## Stale Content Found (Not Fixed)
+
+Items found outside the scope of this story that need a documentation pass of their own — flagged per the stale-documentation protocol, not edited inline:
+
+| File | Issue | Recommended Action |
+|------|-------|--------------------|
+| `docs/ops/postgres-bloat.md` (pre-existing, before my edit) | "Evidence (Hawaii, 2026-09-10)" section states the whole DB shrank 34 GB → 7.3 GB after `VACUUM FULL container_logs`, and separately Fix 2 says `telemetry_snapshots` (~4.3 GB) "still wants a reclaim." Both figures are now stale in a different way than before: `container_logs`'s *existing* bloat was reclaimed pre-PART-001, but PART-001's conversion re-attaches `container_logs`'s live post-`VACUUM FULL` data as its legacy partition, so the 28 GB/97%-bloat historical figure at the top of the doc no longer describes the table's current on-disk state at all (it describes the pre-`VACUUM FULL`, pre-partition state, kept for record purposes). I left the "Evidence" section's historical numbers untouched since they document a real, dated measurement and rewriting them would erase the incident record the doc exists to preserve — but a future pass should add a clearer "as of [date]" boundary between the historical incident writeup and the now-multiple-times-updated fix status, since the doc has accumulated three sequential Fix-status rewrites (autovacuum → reclaim → partitioning) without ever refreshing the "Evidence" numbers that motivated it. Not fixed inline because it is a structural/editorial concern spanning the whole document, not a PART-001-scoped fact. |
+| `README.md` L18 | `> **README last updated for v2.38.0**` — this marker was already stale before this story (the CHANGELOG's `[Unreleased]` section lists at least six other unreleased stories — FLEET-DASH, FLEET-NET, SYS-EXPORT-001, GPU-001, POOL-001/002, SEC-001, NGINX-ALERTS, LOG-001, OIDC-001 — none of which appear to have bumped this marker either). This is a pre-existing, repo-wide convention gap unrelated to PART-001; recommend the team decide whether this marker is updated per-release or retired, since it has clearly not been kept current across the last several stories in the pipeline. |
+| `docs/implementation/PART-001-impl-report.md` §"Notes for QA" | References `DELETE FROM <t>_default WHERE <key> < now() - <window>` as the documented manual DEFAULT-row remediation SQL and says it is "staged for the technical writer to add to the operator-facing docs." I did not add this exact SQL as a copy-pasteable runbook step in the README, because I could not verify it is safe to run as-is against a live parent (it targets a specific partition table directly, which is fine, but the impl report itself only stages it as guidance, not a QA-verified runbook). I instead documented the *symptom and cause* (skewed device clock → rows accumulate in the catch partition → surfaced via WARN/health) in both the README and `docs/ops/postgres-bloat.md`'s Fix 3 section, pointing at the WARN log as the actionable signal, without publishing an unverified raw `DELETE` statement as an official runbook step. Recommend a future pass (or the impl team) turn this into a verified, tested operator runbook if the manual-cleanup path is expected to be used in practice. |
+
+No stale content found **outside** the areas above and **within** PART-001's direct scope — the six tables' behavior, the migrations, the partition manager, and the retention worker changes were all verified against the code and are accurately documented.
+
+## Accuracy Flags
+
+| Discrepancy | Location | Documented As |
+|-------------|----------|---------------|
+| None found. | — | — |
+
+Every claim in the ADD/impl report I verified against the actual shipped code (migrations `000024`–`000028`, `internal/server/partition/plan.go` and `manager.go`, `internal/server/server.go`, `internal/server/config.go`, `.github/workflows/ci.yml`) matched. The two implementation deviations documented in the impl report (PK adoption via `ADD CONSTRAINT ... PRIMARY KEY USING INDEX` + legacy index renaming; single validating FK `ADD CONSTRAINT` instead of `NOT VALID`+`VALIDATE`, forced by a PostgreSQL 16 limitation) are both real and correctly described — I read `000027_partition_swap.up.sql` directly and confirmed the PK-adoption and index-rename steps are present exactly as the impl report and QA report describe. QA's one open finding (AC-020 stall-counter masking) was fixed post-QA per the user's instruction ("the one non-blocking finding has since been fixed") — I confirmed this via `git log` (commit `b95c4c3 PART-001 fix: per-operation stall escalation in partition manager (AC-020)`) and by reading the resulting `ensureFailures`/`dropFailures` independent-tracker code in `manager.go`; no documentation needed to hedge around that finding since it is resolved.
+
+## Notes for Future Writers
+
+- **`docs/ops/postgres-bloat.md` is a living incident/status doc, not a static reference.** It has now been rewritten across three story passes (autovacuum tuning → this story's partitioning). When a future story further changes retention/bloat behavior on these tables, update it in place rather than creating a new doc — the README's Data Retention section links to it as the canonical deep-dive, and duplicating it would create a second source of truth.
+- **The README's Data Retention table is the single source of truth for retention *durations*; the new "Partitioned tables and drop-based retention" subsection is the source of truth for *mechanism*.** Keep these two concerns separated if a future story changes one but not the other (e.g., a story that changes `RIOT_RETENTION_DAYS`'s default should only touch the table; a story that changes how partitions are managed should only touch the subsection below it).
+- **This codebase's CHANGELOG groups all of a story's entries together under each `### Added`/`### Changed` heading, in story order, not interleaved alphabetically** — I followed that convention (PART-001's block sits above OIDC-001's, matching the pattern already used for FLEET-DASH/FLEET-NET/SYS-EXPORT-001/etc., which are ordered newest-first above older entries within `[Unreleased]`).
+- **Verify config/env claims against `internal/server/config.go` directly, not the ADD's prose**, even when the ADD is explicit that "no new config is introduced" — this story's ADD, impl report, and QA report all agreed no new config was added, and I still grepped the file directly before writing the CHANGELOG/README to avoid propagating an unverified claim, per the standing instruction not to invent config keys.

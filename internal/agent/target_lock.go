@@ -38,6 +38,26 @@ func (l *targetLocks) TryLockAll(keys []string, cmdID, action string) (conflictK
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	docker, exclusive := false, false
+	for _, key := range sorted {
+		if strings.HasPrefix(key, models.TargetKeyDockerPrefix) {
+			docker = true
+		}
+		if key == "docker:host" {
+			exclusive = true
+		}
+	}
+	restarting := action == models.ActionAgentUpdate || action == models.ActionAgentUninstall
+	for key, h := range l.m {
+		if h.CmdID == cmdID {
+			continue
+		}
+		heldDocker := strings.HasPrefix(key, models.TargetKeyDockerPrefix)
+		heldRestart := key == models.TargetKeyHost && (h.Action == models.ActionAgentUpdate || h.Action == models.ActionAgentUninstall)
+		if docker && (key == "docker:host" || heldRestart) || exclusive && heldDocker || restarting && heldDocker {
+			return key, h, false
+		}
+	}
 	for _, k := range sorted {
 		if h, held := l.m[k]; held && h.CmdID != cmdID {
 			return k, h, false

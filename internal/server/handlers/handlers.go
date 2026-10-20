@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -25,7 +26,10 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
 	"github.com/DesyncTheThird/rIOt/internal/server/oidc"
+	"github.com/DesyncTheThird/rIOt/internal/server/partition"
 	"github.com/DesyncTheThird/rIOt/internal/server/probes"
+	"github.com/DesyncTheThird/rIOt/internal/server/quota"
+	"github.com/DesyncTheThird/rIOt/internal/server/storage"
 	devicesummary "github.com/DesyncTheThird/rIOt/internal/server/summary"
 	"github.com/DesyncTheThird/rIOt/internal/server/updates"
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
@@ -35,28 +39,33 @@ import (
 
 // HandlerDeps bundles all dependencies for the Handlers constructor.
 type HandlerDeps struct {
-	Devices             db.DeviceRepository
-	Telemetry           db.TelemetryRepository
-	Events              db.EventRepository
-	Hub                 *websocket.Hub
-	EventGen            *events.Generator
-	UpdateChecker       *updates.Checker
-	AdminRepo           db.AdminRepository
-	TerminalRepo        db.TerminalRepository
-	AlertRuleRepo       db.AlertRuleRepository
-	NotifyRepo          db.NotifyRepository
-	Dispatcher          *notify.Dispatcher
-	CommandRepo         db.CommandRepository
-	ProbeRepo           db.ProbeRepository
-	ProbeRunner         *probes.Runner
-	LogRepo             db.LogRepository
-	DeviceLogRepo       db.DeviceLogRepository
-	AutoUpdateRepo      db.AutoUpdateRepository
-	ContainerLogRepo    db.ContainerLogRepository
-	ContainerMetricRepo db.ContainerMetricRepository
-	DeviceProbeRepo     db.DeviceProbeRepository
-	JWTSecret           []byte
-	AdminPasswordHash   string
+	Devices                   db.DeviceRepository
+	Telemetry                 db.TelemetryRepository
+	Events                    db.EventRepository
+	Hub                       *websocket.Hub
+	EventGen                  *events.Generator
+	UpdateChecker             *updates.Checker
+	AdminRepo                 db.AdminRepository
+	TerminalRepo              db.TerminalRepository
+	AlertRuleRepo             db.AlertRuleRepository
+	NotifyRepo                db.NotifyRepository
+	Dispatcher                *notify.Dispatcher
+	CommandRepo               db.CommandRepository
+	ProbeRepo                 db.ProbeRepository
+	ProbeRunner               *probes.Runner
+	LogRepo                   db.LogRepository
+	DeviceLogRepo             db.DeviceLogRepository
+	AutoUpdateRepo            db.AutoUpdateRepository
+	ContainerLogRepo          db.ContainerLogRepository
+	DockerRepo                *db.DockerRepo
+	ContainerLogRetentionDays int
+	StorageQuota              *quota.Manager
+	PartitionManager          *partition.Manager
+	StorageGuard              *storage.Guard
+	ContainerMetricRepo       db.ContainerMetricRepository
+	DeviceProbeRepo           db.DeviceProbeRepository
+	JWTSecret                 []byte
+	AdminPasswordHash         string
 
 	// OIDC-001
 	OIDC                 *oidc.Service
@@ -74,28 +83,36 @@ type HandlerDeps struct {
 }
 
 type Handlers struct {
-	devices             db.DeviceRepository
-	telemetry           db.TelemetryRepository
-	events              db.EventRepository
-	hub                 dashboardHub
-	eventGen            *events.Generator
-	updateChecker       *updates.Checker
-	adminRepo           db.AdminRepository
-	terminalRepo        db.TerminalRepository
-	alertRuleRepo       db.AlertRuleRepository
-	notifyRepo          db.NotifyRepository
-	dispatcher          *notify.Dispatcher
-	commandRepo         db.CommandRepository
-	probeRepo           db.ProbeRepository
-	probeRunner         *probes.Runner
-	logRepo             db.LogRepository
-	deviceLogRepo       db.DeviceLogRepository
-	autoUpdateRepo      db.AutoUpdateRepository
-	containerLogRepo    db.ContainerLogRepository
-	containerMetricRepo db.ContainerMetricRepository
-	deviceProbeRepo     db.DeviceProbeRepository
-	jwtSecret           []byte
-	adminPasswordHash   string
+	dockerOnce                sync.Once
+	dockerRuntime             *dockerRuntime
+	devices                   db.DeviceRepository
+	telemetry                 db.TelemetryRepository
+	events                    db.EventRepository
+	hub                       dashboardHub
+	eventGen                  *events.Generator
+	updateChecker             *updates.Checker
+	adminRepo                 db.AdminRepository
+	terminalRepo              db.TerminalRepository
+	alertRuleRepo             db.AlertRuleRepository
+	notifyRepo                db.NotifyRepository
+	dispatcher                *notify.Dispatcher
+	commandRepo               db.CommandRepository
+	probeRepo                 db.ProbeRepository
+	probeRunner               *probes.Runner
+	logRepo                   db.LogRepository
+	deviceLogRepo             db.DeviceLogRepository
+	autoUpdateRepo            db.AutoUpdateRepository
+	containerLogRepo          db.ContainerLogRepository
+	dockerRepo                *db.DockerRepo
+	containerLogRetentionDays int
+	logIngest                 *containerLogIngest
+	storageQuota              *quota.Manager
+	partitionManager          *partition.Manager
+	storageGuard              *storage.Guard
+	containerMetricRepo       db.ContainerMetricRepository
+	deviceProbeRepo           db.DeviceProbeRepository
+	jwtSecret                 []byte
+	adminPasswordHash         string
 
 	// OIDC-001
 	oidc                 *oidc.Service
@@ -178,7 +195,7 @@ func (h *Handlers) cmdSvc() *commands.Service {
 		if h.commands != nil {
 			return
 		}
-		opts := commands.Options{Commands: h.commandRepo, Agents: agentSender{reg: h.registry()}, Now: h.now}
+		opts := commands.Options{Commands: h.commandRepo, Agents: agentSender{reg: h.registry()}, Now: h.now, Quota: h.storageQuota}
 		if h.autoUpdateRepo != nil {
 			opts.Policies = h.autoUpdateRepo
 		}
@@ -227,34 +244,40 @@ func NewCompletionEvents(gen *events.Generator, devices db.DeviceRepository) com
 
 func New(deps HandlerDeps) *Handlers {
 	h := &Handlers{
-		commands:             deps.Commands,
-		now:                  deps.Clock,
-		devices:              deps.Devices,
-		telemetry:            deps.Telemetry,
-		events:               deps.Events,
-		eventGen:             deps.EventGen,
-		updateChecker:        deps.UpdateChecker,
-		adminRepo:            deps.AdminRepo,
-		terminalRepo:         deps.TerminalRepo,
-		alertRuleRepo:        deps.AlertRuleRepo,
-		notifyRepo:           deps.NotifyRepo,
-		dispatcher:           deps.Dispatcher,
-		commandRepo:          deps.CommandRepo,
-		probeRepo:            deps.ProbeRepo,
-		probeRunner:          deps.ProbeRunner,
-		logRepo:              deps.LogRepo,
-		deviceLogRepo:        deps.DeviceLogRepo,
-		autoUpdateRepo:       deps.AutoUpdateRepo,
-		containerLogRepo:     deps.ContainerLogRepo,
-		containerMetricRepo:  deps.ContainerMetricRepo,
-		deviceProbeRepo:      deps.DeviceProbeRepo,
-		jwtSecret:            deps.JWTSecret,
-		adminPasswordHash:    deps.AdminPasswordHash,
-		oidc:                 deps.OIDC,
-		externalIdentityRepo: deps.ExternalIdentityRepo,
-		setupComplete:        deps.SetupComplete,
-		caRepo:               deps.CARepo,
-		clampLog:             newClampLogLimiter(),
+		commands:                  deps.Commands,
+		now:                       deps.Clock,
+		devices:                   deps.Devices,
+		telemetry:                 deps.Telemetry,
+		events:                    deps.Events,
+		eventGen:                  deps.EventGen,
+		updateChecker:             deps.UpdateChecker,
+		adminRepo:                 deps.AdminRepo,
+		terminalRepo:              deps.TerminalRepo,
+		alertRuleRepo:             deps.AlertRuleRepo,
+		notifyRepo:                deps.NotifyRepo,
+		dispatcher:                deps.Dispatcher,
+		commandRepo:               deps.CommandRepo,
+		probeRepo:                 deps.ProbeRepo,
+		probeRunner:               deps.ProbeRunner,
+		logRepo:                   deps.LogRepo,
+		deviceLogRepo:             deps.DeviceLogRepo,
+		autoUpdateRepo:            deps.AutoUpdateRepo,
+		containerLogRepo:          deps.ContainerLogRepo,
+		dockerRepo:                deps.DockerRepo,
+		containerLogRetentionDays: deps.ContainerLogRetentionDays,
+		logIngest:                 newContainerLogIngest(),
+		storageQuota:              deps.StorageQuota,
+		partitionManager:          deps.PartitionManager,
+		storageGuard:              deps.StorageGuard,
+		containerMetricRepo:       deps.ContainerMetricRepo,
+		deviceProbeRepo:           deps.DeviceProbeRepo,
+		jwtSecret:                 deps.JWTSecret,
+		adminPasswordHash:         deps.AdminPasswordHash,
+		oidc:                      deps.OIDC,
+		externalIdentityRepo:      deps.ExternalIdentityRepo,
+		setupComplete:             deps.SetupComplete,
+		caRepo:                    deps.CARepo,
+		clampLog:                  newClampLogLimiter(),
 	}
 	// A nil *websocket.Hub must stay a nil interface (typed-nil trap).
 	if deps.Hub != nil {
@@ -394,6 +417,10 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.devices.Create(r.Context(), device); err != nil {
+		if errors.Is(err, db.ErrDeviceLimit) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"code": "registration_limit", "error": "Device registration limit reached"})
+			return
+		}
 		slog.Error("create device", "error", err.Error())
 		http.Error(w, `{"error":"failed to create device"}`, http.StatusInternalServerError)
 		return
@@ -511,6 +538,20 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	snap.Data.Logs = nil
 	containerLogs := snap.Data.ContainerLogs
 	snap.Data.ContainerLogs = nil
+	containerLogGaps := snap.Data.ContainerLogGaps
+	snap.Data.ContainerLogGaps = nil
+	containerLogs = h.prepareContainerLogs(deviceID, containerLogs, containerLogGaps, snap.Data.Docker, receivedAt)
+	if h.storageQuota != nil {
+		deviceLogs = h.storageQuota.FilterDeviceLogs(deviceID, deviceLogs, receivedAt)
+	}
+	if snap.Data.DockerInventory != nil && h.dockerRepo != nil {
+		inventoryCtx, inventoryCancel := context.WithTimeout(r.Context(), 5*time.Second)
+		if err := h.dockerRepo.SaveInventory(inventoryCtx, deviceID, snap.Data.DockerInventory); err != nil {
+			slog.Warn("store Docker inventory failed", "device_id", deviceID)
+		}
+		inventoryCancel()
+	}
+	snap.Data.DockerInventory = nil
 
 	// Guard against runaway collectors shipping gigantic payloads. PG's per-JSONB
 	// limit is ~256MB for array element totals — a single oversized snapshot
@@ -548,10 +589,27 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("stale telemetry stored as history only", "device_id", deviceID)
 	}
 
-	if err := h.telemetry.StoreSnapshot(ctx, &snap); err != nil {
-		slog.Error("store telemetry", "error", err.Error())
-		http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
-		return
+	storeSnapshot, trim := true, false
+	if h.storageQuota != nil {
+		metricsCost := 0
+		if snap.Data.Docker != nil {
+			metricsCost = len(snap.Data.Docker.Containers) * 200
+		}
+		storeSnapshot, trim = h.storageQuota.AllowSnapshot(deviceID, int64(approxSnapshotSize(&snap.Data)+metricsCost), receivedAt)
+	}
+	storedSnap := snap
+	if trim {
+		storedSnap.Data = trimSnapshot(snap.Data)
+	}
+	if storeSnapshot {
+		if err := h.telemetry.StoreSnapshot(ctx, &storedSnap); err != nil {
+			slog.Error("store telemetry", "error", err.Error())
+			http.Error(w, `{"error":"failed to store telemetry"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+	if !stale && h.storageQuota != nil {
+		stale = !h.storageQuota.AcceptTelemetry(deviceID, snap.Timestamp, receivedAt)
 	}
 	h.devices.UpdateTelemetryTime(ctx, deviceID)
 
@@ -585,7 +643,7 @@ func (h *Handlers) Telemetry(w http.ResponseWriter, r *http.Request) {
 	// cascade into "context deadline exceeded" on the others — which was
 	// silently disabling auto-updates because loadAutomationConfig would time
 	// out and fall back to the default (disabled) config.
-	h.runAsync(func() { h.processTelemetryPostWork(deviceID, snap, deviceLogs, containerLogs, stale) })
+	h.runAsync(func() { h.processTelemetryPostWork(deviceID, snap, deviceLogs, containerLogs, stale, storeSnapshot) })
 }
 
 // processTelemetryPostWork runs everything that isn't on the agent's critical
@@ -598,6 +656,7 @@ func (h *Handlers) processTelemetryPostWork(
 	deviceLogs []models.LogEntry,
 	containerLogs []models.ContainerLogEntry,
 	stale bool,
+	storeMetrics bool,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -606,6 +665,7 @@ func (h *Handlers) processTelemetryPostWork(
 	// its logs and container metrics; current-state work, alerting and the
 	// auto-update/auto-patch evaluation must not run on outdated data.
 	if !stale {
+		h.ObserveDockerSnapshot(ctx, deviceID, &snap)
 		// Track whether Docker is available on this device, plus how many of its
 		// containers are covered by an enabled auto-update policy (stack-level or
 		// individual). The count powers the fleet page's "Auto: X/Y" badge.
@@ -632,13 +692,23 @@ func (h *Handlers) processTelemetryPostWork(
 
 	// Store container logs in their dedicated table
 	if len(containerLogs) > 0 && h.containerLogRepo != nil {
+		if h.partitionManager != nil {
+			guardCtx, guardCancel := context.WithTimeout(ctx, 12*time.Second)
+			if err := h.partitionManager.GuardLogRows(guardCtx, containerLogs, h.clock()); err != nil {
+				slog.Warn("container log partition guard failed", "device_id", deviceID)
+				guardCancel()
+				containerLogs = nil
+			} else {
+				guardCancel()
+			}
+		}
 		if err := h.containerLogRepo.InsertBatch(ctx, deviceID, containerLogs); err != nil {
 			slog.Error("store container logs", "error", err.Error())
 		}
 	}
 
 	// Extract and store per-container metrics
-	if snap.Data.Docker != nil && snap.Data.Docker.Available && h.containerMetricRepo != nil {
+	if storeMetrics && snap.Data.Docker != nil && snap.Data.Docker.Available && h.containerMetricRepo != nil {
 		var metrics []models.ContainerMetric
 		for _, c := range snap.Data.Docker.Containers {
 			if c.State != "running" {
@@ -820,6 +890,9 @@ func (h *Handlers) ReceiveDeviceLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
+	if h.storageQuota != nil {
+		entries = h.storageQuota.FilterDeviceLogs(deviceID, entries, h.clock())
+	}
 	if h.deviceLogRepo == nil {
 		http.Error(w, `{"error":"device log storage not available"}`, http.StatusServiceUnavailable)
 		return
@@ -829,7 +902,6 @@ func (h *Handlers) ReceiveDeviceLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to store logs"}`, http.StatusInternalServerError)
 		return
 	}
-	slog.Info("received device logs", "device", deviceID, "count", len(entries))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "count": strconv.Itoa(len(entries))})
 }
 
@@ -895,6 +967,18 @@ func (h *Handlers) UpdateDeviceTags(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) DeleteDevice(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	uninstall := r.URL.Query().Get("uninstall") == "true"
+	if h.dockerRepo != nil {
+		device, err := h.devices.GetByID(r.Context(), id)
+		if err != nil || device == nil {
+			dockerError(w, 404, "device_not_found")
+			return
+		}
+		auth, sub, name := dockerActor(r)
+		if err = h.dockerRepo.Audit(r.Context(), id, "device_delete", "requested", sub, map[string]interface{}{"hostname": device.Hostname, "uninstall": uninstall, "actor_auth": auth, "actor_name": name}); err != nil {
+			dockerError(w, 500, "internal")
+			return
+		}
+	}
 
 	// If uninstall requested, try to send uninstall command to connected agent
 	if uninstall {
@@ -1093,12 +1177,17 @@ func (h *Handlers) ReceiveDockerEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.dockerEventAllowed(deviceID, &dockerEvt) {
+		h.dockerEventResponse(w)
+		return
+	}
 	// Look up hostname for alert scoping
 	var dockerHostname string
 	if dev, err := h.devices.GetByID(r.Context(), deviceID); err == nil && dev != nil {
 		dockerHostname = dev.Hostname
 	}
 
+	h.validateDockerEventCommand(r, &dockerEvt)
 	// Generate appropriate event
 	h.eventGen.CheckDockerEvent(r.Context(), deviceID, dockerHostname, &dockerEvt)
 
@@ -1111,7 +1200,7 @@ func (h *Handlers) ReceiveDockerEvent(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(sanitizeDockerOutput(v))
 }
 
 // AgentUpdateCheck returns update info for an agent.
@@ -1168,10 +1257,11 @@ func extractPrimaryIP(data *models.FullTelemetryData) string {
 			if idx := strings.Index(ip, "/"); idx != -1 {
 				bare = ip[:idx]
 			}
-			if bare == "127.0.0.1" {
+			parsed := net.ParseIP(bare)
+			if parsed == nil || parsed.To4() == nil || parsed.IsLoopback() || parsed.IsUnspecified() {
 				continue
 			}
-			return bare
+			return parsed.String()
 		}
 	}
 	return ""
@@ -1335,7 +1425,7 @@ func stripHeavyTelemetry(data *models.FullTelemetryData) *models.FullTelemetryDa
 		light.Docker = &dockerCopy
 	}
 
-	return &light
+	return sanitizeDockerTelemetry(&light)
 }
 
 // RotateKey handles POST /api/v1/devices/{id}/rotate-key.
@@ -1463,6 +1553,11 @@ func (h *Handlers) DeviceSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if snapshot != nil {
+		copy := *snapshot
+		copy.Data = *sanitizeDockerTelemetry(&snapshot.Data)
+		snapshot = &copy
+	}
 	markdown, err := devicesummary.Render(device, snapshot)
 	if err != nil {
 		slog.Error("render device summary", "device_id", id, "error", err.Error())

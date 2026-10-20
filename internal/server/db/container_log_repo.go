@@ -38,19 +38,19 @@ func (r *ContainerLogRepo) InsertBatch(ctx context.Context, deviceID string, ent
 	// deadline mid-batch and cascading into every other ingest path.
 	rows := make([][]interface{}, len(entries))
 	for i, e := range entries {
-		rows[i] = []interface{}{deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line}
+		rows[i] = []interface{}{deviceID, e.ContainerID, e.ContainerName, e.Timestamp, e.Stream, e.Line,e.AgentTS}
 	}
 	_, err := r.db.Pool.CopyFrom(
 		ctx,
 		pgx.Identifier{"container_logs"},
-		[]string{"device_id", "container_id", "container_name", "timestamp", "stream", "line"},
+		[]string{"device_id", "container_id", "container_name", "timestamp", "stream", "line","agent_ts"},
 		pgx.CopyFromRows(rows),
 	)
 	return err
 }
 
 func (r *ContainerLogRepo) List(ctx context.Context, deviceID, containerID string, limit int, stream string, since *time.Time) ([]models.ContainerLogEntry, error) {
-	query := `SELECT id, container_id, container_name, timestamp, stream, line
+	query := `SELECT id, container_id, container_name, timestamp, stream, line, agent_ts
 		 FROM container_logs
 		 WHERE device_id=$1 AND container_id=$2`
 	args := []interface{}{deviceID, containerID}
@@ -68,7 +68,7 @@ func (r *ContainerLogRepo) List(ctx context.Context, deviceID, containerID strin
 		argN++
 	}
 
-	query += ` ORDER BY timestamp DESC`
+	query += ` AND timestamp <= now() + interval '5 minutes' ORDER BY timestamp DESC, id DESC`
 
 	if limit > 0 {
 		query += ` LIMIT $` + strconv.Itoa(argN)
@@ -84,7 +84,7 @@ func (r *ContainerLogRepo) List(ctx context.Context, deviceID, containerID strin
 	var result []models.ContainerLogEntry
 	for rows.Next() {
 		var e models.ContainerLogEntry
-		if err := rows.Scan(&e.ID, &e.ContainerID, &e.ContainerName, &e.Timestamp, &e.Stream, &e.Line); err != nil {
+		if err := rows.Scan(&e.ID, &e.ContainerID, &e.ContainerName, &e.Timestamp, &e.Stream, &e.Line,&e.AgentTS); err != nil {
 			return nil, err
 		}
 		e.DeviceID = deviceID
@@ -97,13 +97,4 @@ func (r *ContainerLogRepo) List(ctx context.Context, deviceID, containerID strin
 	}
 
 	return result, nil
-}
-
-func (r *ContainerLogRepo) Purge(ctx context.Context, olderThan time.Time) (int64, error) {
-	tag, err := r.db.Pool.Exec(ctx,
-		`DELETE FROM container_logs WHERE timestamp < $1`, olderThan)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
 }

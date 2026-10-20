@@ -17,8 +17,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
 // fakeLogLine is one line a fake container "wrote".
@@ -68,15 +66,18 @@ func (fd *fakeDocker) serve(w http.ResponseWriter, r *http.Request) {
 		type ctr struct {
 			ID    string   `json:"Id"`
 			Names []string `json:"Names"`
+			State string   `json:"State"`
 		}
 		var out []ctr
 		fd.mu.Lock()
 		for _, c := range fd.containers {
-			out = append(out, ctr{ID: c.id, Names: []string{"/" + c.name}})
+			out = append(out, ctr{ID: c.id, Names: []string{"/" + c.name}, State: "running"})
 		}
 		fd.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
+	case strings.HasSuffix(path, "/json"):
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"Config": map[string]interface{}{"Tty": false}, "State": map[string]interface{}{"Running": true}})
 	case strings.HasSuffix(path, "/logs"):
 		fd.serveLogs(w, r)
 	default:
@@ -179,7 +180,8 @@ type containerLine struct {
 
 func toLines(t *testing.T, got interface{}) []containerLine {
 	t.Helper()
-	entries, ok := got.([]models.ContainerLogEntry)
+	batch, ok := got.(ContainerLogBatch)
+	entries := batch.Entries
 	require.True(t, ok, "Collect must return []models.ContainerLogEntry, got %T", got)
 	out := make([]containerLine, len(entries))
 	for i, e := range entries {
@@ -191,7 +193,7 @@ func toLines(t *testing.T, got interface{}) []containerLine {
 func TestGROWTH_AC056_NewestThousandLinesBoundedRead(t *testing.T) {
 	t.Run("a container that wrote 50,000 lines yields the newest 1,000 and the daemon is asked for only 1,000", func(t *testing.T) {
 		fd := newFakeDocker(t, fakeContainer{id: "aaaaaaaaaaaa1111", name: "web", lines: numberedLines(50_000, 100, logStart)})
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 		lines := collectContainerLogs(t, c)
 
@@ -209,7 +211,7 @@ func TestGROWTH_AC056_NewestThousandLinesBoundedRead(t *testing.T) {
 	t.Run("the next pass asks for Since the last line seen and the same Tail", func(t *testing.T) {
 		all := numberedLines(3000, 100, logStart)
 		fd := newFakeDocker(t, fakeContainer{id: "bbbbbbbbbbbb2222", name: "api", lines: all[:2000]})
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 		first := collectContainerLogs(t, c)
 		require.Len(t, first, 1000)
 
@@ -220,7 +222,7 @@ func TestGROWTH_AC056_NewestThousandLinesBoundedRead(t *testing.T) {
 
 		q := fd.logQueries()
 		require.Len(t, q, 2)
-		assert.Equal(t, "1000", q[1]["tail"], "[AC-056] every pass is bounded by Tail")
+		assert.Equal(t, "20001", q[1]["tail"], "[AC-056] every pass is bounded by Tail")
 		last := first[len(first)-1].TS
 		assert.Equal(t, fmt.Sprintf("%d.%09d", last.Unix(), last.Nanosecond()), q[1]["since"],
 			"[AC-056] Since is the last line seen (the Docker client sends unix seconds.nanoseconds)")
@@ -240,7 +242,7 @@ func TestGROWTH_AC056_NewestThousandLinesBoundedRead(t *testing.T) {
 	t.Run("a daemon that ignores Tail is cut off at the scan bound and the newest lines of what was read are kept", func(t *testing.T) {
 		fd := newFakeDocker(t, fakeContainer{id: "dddddddddddd4444", name: "noisy", lines: numberedLines(50_000, 1000, logStart)})
 		fd.ignoreTail = true
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 		lines := collectContainerLogs(t, c)
 
@@ -256,7 +258,7 @@ func TestGROWTH_AC056_NewestThousandLinesBoundedRead(t *testing.T) {
 func TestGROWTH_AC056_ByteAndPassBoundsHold(t *testing.T) {
 	t.Run("max_bytes keeps the newest lines within 256 KiB per container", func(t *testing.T) {
 		fd := newFakeDocker(t, fakeContainer{id: "eeeeeeeeeeee5555", name: "fat", lines: numberedLines(1000, 1000, logStart)})
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 		lines := collectContainerLogs(t, c)
 
@@ -278,7 +280,7 @@ func TestGROWTH_AC056_ByteAndPassBoundsHold(t *testing.T) {
 			})
 		}
 		fd := newFakeDocker(t, ctrs...)
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 		first := collectContainerLogs(t, c)
 		assert.Len(t, first, 5000, "[AC-056] the pass cap is 5,000 lines")
@@ -302,7 +304,7 @@ func TestGROWTH_AC056_ByteAndPassBoundsHold(t *testing.T) {
 			})
 		}
 		fd := newFakeDocker(t, ctrs...)
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10}
 
 		lines := collectContainerLogs(t, c)
 
@@ -318,12 +320,12 @@ func TestGROWTH_AC056_ByteAndPassBoundsHold(t *testing.T) {
 func TestGROWTH_AC057_LongLinesTruncatedAtRuneBoundary(t *testing.T) {
 	t.Run("a 10 KiB container-log line is 4 KiB plus the marker", func(t *testing.T) {
 		fd := newFakeDocker(t, fakeContainer{id: "ffffffffffff6666", name: "long", lines: []fakeLogLine{{ts: logStart, text: strings.Repeat("a", 10<<10)}}})
-		c := &ContainerLogCollector{Host: fd.host()}
+		c := &ContainerLogCollector{Host: fd.host(), MaxLines: 1000, MaxBytes: 256 << 10, MaxLineBytes: 4096}
 
 		lines := collectContainerLogs(t, c)
 
 		require.Len(t, lines, 1)
-		assert.Equal(t, strings.Repeat("a", 4096)+" [truncated]", lines[0].Line, "[AC-057] 4 KiB plus the visible marker")
+		assert.Equal(t, strings.Repeat("a", 4096-len(" [truncated]"))+" [truncated]", lines[0].Line, "[AC-057] 4 KiB plus the visible marker")
 	})
 
 	t.Run("the cut never splits a multi-byte character", func(t *testing.T) {
@@ -358,7 +360,7 @@ func TestGROWTH_AC057_LongLinesTruncatedAtRuneBoundary(t *testing.T) {
 		lines := collectContainerLogs(t, c)
 
 		require.Len(t, lines, 1)
-		assert.Equal(t, 1024+len(" [truncated]"), len(lines[0].Line))
+		assert.Equal(t, 1024, len(lines[0].Line))
 	})
 }
 

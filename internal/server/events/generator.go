@@ -809,13 +809,13 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerStart, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s started (%s)", evt.ContainerName, evt.Image),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "stop":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerStop, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s stopped", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "die":
 		g.mu.Lock()
@@ -827,7 +827,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			g.createEvent(ctx, &models.Event{
 				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityInfo,
 				Message:     fmt.Sprintf("Container %s died (update in progress)", evt.ContainerName),
-				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 			})
 		} else {
 			// User explicitly opted this container out of container_died alerts —
@@ -838,7 +838,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			e := &models.Event{
 				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
 				Message:     fmt.Sprintf("Container %s died", evt.ContainerName),
-				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 			}
 			rule := g.findMatchingRuleForContainer(ctx, "container_died", deviceID, hostname, evt.ContainerName, 1)
 			if rule != nil {
@@ -858,7 +858,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		e := &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerOOM, Severity: models.SeverityCrit,
 			Message:     fmt.Sprintf("Container %s OOM killed", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		}
 		rule := g.findMatchingRuleForContainer(ctx, "container_oom", deviceID, hostname, evt.ContainerName, 1)
 		if rule != nil {
@@ -874,25 +874,25 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerCreated, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s created (%s)", evt.ContainerName, evt.Image),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "destroy":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerDestroyed, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s removed", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "pause":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerPaused, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s paused", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "unpause":
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUnpaused, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s unpaused", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_started":
 		g.mu.Lock()
@@ -904,7 +904,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateStarted, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s update started", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_completed":
 		g.mu.Lock()
@@ -919,7 +919,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateDone, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s updated successfully", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_failed":
 		g.mu.Lock()
@@ -934,7 +934,7 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
 			Message:     fmt.Sprintf("Container %s update failed", evt.ContainerName),
-			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now,
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	}
 }
@@ -1420,4 +1420,3 @@ func compareValue(value float64, operator string, threshold float64) bool {
 		return false
 	}
 }
-

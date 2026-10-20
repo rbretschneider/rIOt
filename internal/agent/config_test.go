@@ -249,9 +249,9 @@ func TestGROWTH_AC068_InRangeAndUnsetValuesDoNotWarn(t *testing.T) {
 
 func TestGROWTH_AC068_DefaultsMatchTheDocumentedValues(t *testing.T) {
 	l := DefaultConfig().Limits()
-	assert.Equal(t, 1000, l.ContainerLogMaxLines)
-	assert.Equal(t, 262144, l.ContainerLogMaxBytes)
-	assert.Equal(t, 4096, l.ContainerLogMaxLineBytes)
+	assert.Equal(t, 50, l.ContainerLogMaxLines)
+	assert.Equal(t, 16384, l.ContainerLogMaxBytes)
+	assert.Equal(t, 16384, l.ContainerLogMaxLineBytes)
 	assert.Equal(t, 5000, l.JournalMaxEntries)
 	assert.Equal(t, 4096, l.JournalMaxLineBytes)
 	assert.Equal(t, int64(50<<20), l.BufferMaxBytes())

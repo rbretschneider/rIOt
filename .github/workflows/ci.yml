@@ -39,6 +39,38 @@ jobs:
       - name: Build
         run: go build ./...
 
+  test-go-integration:
+    # PART-001 residual R1: the AC-019 relfilenode/no-rewrite gate and the
+    # other PG-dependent PART-001 ACs (AC-001..009, AC-016, AC-018, AC-022)
+    # are build-tag gated (`integration`) and skip cleanly with no DB
+    # configured — this job is what actually runs them against a live
+    # PostgreSQL 16 so the gate is enforced, not just written.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: riot
+          POSTGRES_PASSWORD: riot
+          POSTGRES_DB: riot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Run Docker storage and partition integration tests
+        env:
+          RIOT_TEST_DB_URL: postgres://riot:riot@localhost:5432/riot?sslmode=disable
+          RIOT_TEST_PG_URL: postgres://riot:riot@localhost:5432/riot?sslmode=disable
+        run: go test -p 1 -tags=integration -count=1 -v ./internal/server/db ./internal/server/partition ./internal/server/storage
+
   test-web:
     runs-on: ubuntu-latest
     defaults:

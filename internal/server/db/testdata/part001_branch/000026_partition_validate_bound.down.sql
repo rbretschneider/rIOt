@@ -1,0 +1,4 @@
+-- PART-001 file 3/5 down: no-op. A validated CHECK constraint cannot be
+-- "un-validated" — the constraint itself is dropped by file 000024's down
+-- migration (or reverted along with the whole table by file 000027's down).
+-- This file intentionally performs no action; documented per FR-019/AD-007.
