@@ -16,13 +16,13 @@ The only additional shared component change beyond the named page files is Devic
 
 ## Verification
 
-Baseline before implementation: 80 files / 1,499 tests passed. Final full frontend suite: **85 files / 1,538 tests passed**. Focused final shell/auth/settings subset: 4 files / 33 tests passed; specialists also passed Fleet/device, monitoring and Docker suites. TypeScript `npx tsc --noEmit`, production `npm run build`, and demo Vite build with `VITE_DEMO=true` passed. Full captured focused/full/type/build output is in [validation output](APP-WORKSPACE-001-validation.txt).
+Baseline before implementation: 80 files / 1,499 tests passed. Final full frontend suite: **85 files / 1,540 tests passed**. Focused final shell/auth/settings subset: 4 files / 33 tests passed; specialists also passed Fleet/device, monitoring and Docker suites. TypeScript `npx tsc --noEmit`, production `npm run build`, and demo Vite build with `VITE_DEMO=true` passed. Full captured focused/full/type/build output is in [validation output](APP-WORKSPACE-001-validation.txt).
 
-Sandboxed Vite initially could not rename its temporary cache; validation used normal runtime permissions. New auth assertions initially selected both the Alerts navigation and utility links; corrected to assert both explicitly. TypeScript caught an unsupported Testing Library option; removed it. Legacy fallback tests were updated to the Devices label. Final tests pass. Existing fixture/query/act warnings and Vite's existing large-chunk advisory remain; these are not new runtime failures.
+Sandboxed Vite initially could not rename its temporary cache; validation used normal runtime permissions. New auth assertions initially selected both the Alerts navigation and utility links; corrected to assert both explicitly. TypeScript caught an unsupported Testing Library option; removed it. Legacy fallback tests were updated to the Devices label. QA also identified trailing-slash aliases that could mark Agents/Settings twice or omit Security. Normalized paths before active matching and added both route fixtures. Final tests pass. Existing fixture/query/act warnings and Vite's existing large-chunk advisory remain; these are not new runtime failures.
 
 | Acceptance | Evidence |
 |---|---|
-| AC-001–003 | AppShell's 19 route/disclosure/skip-link tests; Docker boundary tests. Single current app-navigation item for representative routes; Docker-disabled links absent. |
+| AC-001–003 | AppShell's 21 route/disclosure/skip-link tests; Docker boundary tests. Single current app-navigation item for representative routes; Docker-disabled links absent. |
 | AC-004–005 | App.auth tests exercise pending, setup and anonymous OIDC without protected requests/reloads; authenticated utilities remain mounted. Existing palette/terminal guards retained; browser search/account checks below. |
 | AC-006–007 | PageHeader slot/title tests and new representative Devices/device/monitoring/settings action/context tests. Existing mutation and confirmation regressions pass. |
 | AC-008 | Online/offline Docker and non-Docker fixtures cover Hosts, all Docker host filters, unchanged cache and complete Devices. Empty and query-error cases tested separately. |

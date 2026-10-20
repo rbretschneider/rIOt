@@ -81,6 +81,7 @@ function NavigationIcon({ kind }: { kind: string }) {
 }
 
 function activeRoute(pathname: string, path: string) {
+  pathname = pathname.replace(/\/+$/, '') || '/'
   if (path === '/') return pathname === '/' || pathname.startsWith('/devices/')
   if (path === '/security')
     return pathname === path || pathname.startsWith('/learn/')

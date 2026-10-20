@@ -21,6 +21,8 @@ describe('Application workspace', () => {
     ['/learn/a', 'Security'],
     ['/alert-rules', 'Alert Rules'],
     ['/settings/agents', 'Agents'],
+    ['/settings/agents/', 'Agents'],
+    ['/security/', 'Security'],
     ['/settings/general', 'Settings'],
   ])(
     '[APP-WORKSPACE AC-002] %s has one owning navigation item',

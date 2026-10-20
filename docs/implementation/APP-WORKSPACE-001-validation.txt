@@ -1,4 +1,4 @@
-APP-WORKSPACE-001 validation output (2026-10-20)
+APP-WORKSPACE-001 final validation output (2026-10-20)
 
 === focused ===
 
@@ -138,7 +138,6 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure t
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
- ✓ src/pages/DeviceContainers.test.tsx (7 tests) 350ms
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
@@ -232,6 +231,8 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rul
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
+ ✓ src/components/docker/DataTable.test.tsx (6 tests) 916ms
+   ✓ uses a roving row stop and moves keyboard focus across the virtualized boundary to row 45  720ms
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > opens a danger ConfirmDialog naming the rule
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
@@ -274,7 +275,6 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rul
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
- ✓ src/components/ui/Modal.test.tsx (35 tests) 1096ms
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
@@ -283,11 +283,13 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rul
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
+ ✓ src/pages/settings/NotificationSettings.qa.test.tsx (11 tests) 879ms
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
+ ✓ src/components/ui/Modal.test.tsx (35 tests) 1116ms
 stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
 [["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
@@ -379,14 +381,12 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule sever
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
- ✓ src/pages/settings/AlertRuleSettings.test.tsx (17 tests) 1268ms
- ✓ src/pages/Security.test.tsx (27 tests) 1287ms
- ✓ src/components/layout/AppShell.test.tsx (19 tests) 1582ms
-     ✓ [APP-WORKSPACE AC-003] closes the disclosure on Escape and route selection  477ms
- ✓ src/pages/ContainerDetailPage.test.tsx (15 tests) 1551ms
-     ✓ renders "Couldn't load device", the message and Retry  1035ms
- ✓ src/pages/settings/NotificationSettings.secrets.test.tsx (21 tests) 1523ms
- ✓ src/components/ActivityLog.test.tsx (23 tests) 1827ms
+ ✓ src/pages/settings/AlertRuleSettings.test.tsx (17 tests) 1208ms
+ ✓ src/pages/Security.test.tsx (27 tests) 1383ms
+ ✓ src/pages/ContainerDetailPage.test.tsx (15 tests) 1500ms
+     ✓ renders "Couldn't load device", the message and Retry  1047ms
+ ✓ src/pages/settings/NotificationSettings.secrets.test.tsx (21 tests) 1517ms
+ ✓ src/components/ActivityLog.test.tsx (23 tests) 1805ms
 stderr | src/pages/DeviceDetail.test.tsx > DeviceDetail > [AC-014] GPU Temp Alert button opens alert dialog pre-filled with gpu_temp > clicking GPU Temp Alert button shows metric label "GPU Temperature" in dialog
 An update to DeviceDetail inside a test was not wrapped in act(...).
 
@@ -402,61 +402,56 @@ This ensures that you're testing the behavior the user would see in the browser.
 stderr | src/pages/DeviceDetail.test.tsx > DeviceDetail > [AC-014] GPU Temp Alert button opens alert dialog pre-filled with gpu_temp > clicking GPU Temp Alert button shows metric label "GPU Temperature" in dialog
 [["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
 
- ✓ src/components/ContainerDetail.test.tsx (21 tests) 1701ms
- ✓ src/pages/Probes.test.tsx (36 tests) 2386ms
- ✓ src/pages/settings/NotificationSettings.qa.test.tsx (11 tests) 1140ms
- ✓ src/components/ui/ConfirmDialog.test.tsx (45 tests) 2947ms
- ✓ src/components/docker/DataTable.test.tsx (6 tests) 1007ms
-   ✓ uses a roving row stop and moves keyboard focus across the virtualized boundary to row 45  812ms
+ ✓ src/components/ContainerDetail.test.tsx (21 tests) 1779ms
+ ✓ src/pages/Probes.test.tsx (36 tests) 2272ms
+ ✓ src/components/ui/ConfirmDialog.test.tsx (45 tests) 2772ms
+ ✓ src/pages/DeviceProbes.test.tsx (6 tests) 809ms
+ ✓ src/pages/settings/AgentManagement.test.tsx (10 tests) 977ms
+ ✓ src/pages/FleetOverview.states.test.tsx (12 tests) 714ms
+ ✓ src/api/demo-settings.test.ts (3 tests) 823ms
+     ✓ [HARDEN-002][AC-040] create and update echo redacted config, like the real server  816ms
+ ✓ src/pages/FleetOverview.test.tsx (45 tests) 3388ms
+ ✓ src/pages/Alerts.test.tsx (8 tests) 789ms
+     ✓ keeps one page title and usable filter and acknowledgement actions  578ms
+ ✓ src/pages/docker/DockerWorkspace.test.tsx (6 tests) 915ms
+     ✓ searches hostnames without case sensitivity and addresses, with a recoverable no-match state  688ms
+ ✓ src/components/layout/AppShell.test.tsx (21 tests) 1693ms
+     ✓ [APP-WORKSPACE AC-003] closes the disclosure on Escape and route selection  465ms
 stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > opens a danger dialog titled "Delete all server logs" whose message says it cannot be undone
 Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
 
+ ✓ src/pages/settings/NotificationSettings.test.tsx (6 tests) 903ms
+ ✓ src/components/ComposeStackSection.test.tsx (14 tests) 622ms
 stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > does not call clearLogs when cancelled
 Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
 
 stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > clears the logs and raises a success toast on confirm
 Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
 
- ✓ src/api/demo-settings.test.ts (3 tests) 819ms
-     ✓ [HARDEN-002][AC-040] create and update echo redacted config, like the real server  813ms
- ✓ src/pages/settings/NotificationSettings.test.tsx (6 tests) 903ms
- ✓ src/pages/settings/AgentManagement.test.tsx (10 tests) 953ms
+ ✓ src/components/HeaderClock.test.tsx (14 tests) 370ms
+ ✓ src/components/ui/Button.test.tsx (26 tests) 404ms
 stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > shows a failure inline and keeps the dialog open
 Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
 
- ✓ src/pages/FleetOverview.test.tsx (45 tests) 3562ms
- ✓ src/pages/Alerts.test.tsx (8 tests) 782ms
-     ✓ keeps one page title and usable filter and acknowledgement actions  522ms
- ✓ src/pages/docker/DockerWorkspace.test.tsx (6 tests) 814ms
-     ✓ searches hostnames without case sensitivity and addresses, with a recoverable no-match state  631ms
+ ✓ src/pages/dashboard/Dashboard.test.tsx (17 tests) 590ms
 stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > keeps the trigger button label "Clear" and disables it when there are no logs
 Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
 
- ✓ src/pages/settings/LogSettings.test.tsx (5 tests) 683ms
- ✓ src/pages/FleetOverview.states.test.tsx (12 tests) 828ms
- ✓ src/components/ui/Button.test.tsx (26 tests) 384ms
- ✓ src/pages/DeviceProbes.test.tsx (6 tests) 831ms
- ✓ src/components/ComposeStackSection.test.tsx (14 tests) 701ms
- ✓ src/pages/dashboard/ContainerLeaderboard.test.tsx (16 tests) 306ms
- ✓ src/pages/docker/DockerPages.test.tsx (20 tests) 4070ms
-     ✓ remembers visible columns across visits and restores the default columns  1022ms
-     ✓ previews skipped targets and requires the typed count before a bulk stop  561ms
-     ✓ sends the compose project separately from the typed host for a self-stack Down  418ms
-     ✓ previews first, leaves named volumes unchecked and requires host confirmation  496ms
- ✓ src/hooks/useCommandTracker.test.tsx (35 tests) 366ms
- ✓ src/pages/dashboard/Dashboard.test.tsx (17 tests) 684ms
- ✓ src/components/HeaderClock.test.tsx (14 tests) 370ms
- ✓ src/components/ui/Toast.test.tsx (24 tests) 220ms
- ✓ src/components/UpdateConfirmModal.test.tsx (6 tests) 352ms
- ✓ src/pages/Login.test.tsx (12 tests) 363ms
- ✓ src/pages/DeviceDetail.test.tsx (38 tests) 5087ms
-     ✓ Copied! label reverts to Copy Summary after 2 seconds (FRD max 3s)  2141ms
+ ✓ src/pages/settings/LogSettings.test.tsx (5 tests) 671ms
+ ✓ src/hooks/useCommandTracker.test.tsx (35 tests) 371ms
+ ✓ src/components/UpdateConfirmModal.test.tsx (6 tests) 259ms
+ ✓ src/pages/Login.test.tsx (12 tests) 325ms
+ ✓ src/pages/dashboard/ContainerLeaderboard.test.tsx (16 tests) 230ms
+ ✓ src/pages/docker/DockerPages.test.tsx (20 tests) 4176ms
+     ✓ remembers visible columns across visits and restores the default columns  1120ms
+     ✓ opens canonical container logs directly and returns to the filtered collection  348ms
+     ✓ previews skipped targets and requires the typed count before a bulk stop  558ms
+     ✓ sends the compose project separately from the typed host for a self-stack Down  423ms
+     ✓ previews first, leaves named volumes unchecked and requires host confirmation  509ms
 stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netRxPoints[0].value equals net_rx_bytes_sec from the REST seed
 Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
 
-stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netRxPoints[0].value equals net_rx_bytes_sec from the REST seed
-Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
-
+ ✓ src/pages/DeviceContainers.test.tsx (7 tests) 359ms
 stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netRxPoints[0].value equals net_rx_bytes_sec from the REST seed
 Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
 
@@ -467,15 +462,6 @@ stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints po
 Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
 
 stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netTxPoints[0].value equals net_tx_bytes_sec from the REST seed
-Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
-
-stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netTxPoints[0].value equals net_tx_bytes_sec from the REST seed
-Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
-
-stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
-Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
-
-stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
 Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
 
 stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
@@ -493,25 +479,38 @@ Maximum update depth exceeded. This can happen when a component calls setState i
 stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
 Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
 
- ✓ src/hooks/useFleetMetrics.test.ts (4 tests) 258ms
- ✓ src/pages/ProbeDetail.test.tsx (2 tests) 330ms
- ✓ src/components/ConfirmModal.test.tsx (10 tests) 284ms
- ✓ src/pages/dashboard/ActivityRiver.test.tsx (21 tests) 238ms
- ✓ src/App.auth.test.tsx (3 tests) 281ms
- ✓ src/utils/logBuffer.test.ts (6 tests) 316ms
- ✓ src/components/ui/QueryState.test.tsx (15 tests) 242ms
- ✓ src/components/ui/DockerPrimitives.test.tsx (2 tests) 177ms
- ✓ src/pages/settings/CertificateSettings.test.tsx (3 tests) 234ms
- ✓ src/pages/DeviceTerminal.test.tsx (1 test) 211ms
- ✓ src/api/demo-parity.test.ts (71 tests) 144ms
- ✓ src/pages/dashboard/PerDeviceCharts.test.tsx (15 tests) 188ms
- ✓ src/pages/LearnMore.test.tsx (3 tests) 213ms
- ✓ src/contexts/TimePreferenceProvider.test.tsx (25 tests) 171ms
- ✓ src/components/ui/Timestamp.test.tsx (10 tests) 125ms
- ✓ src/hooks/useDevices.test.ts (34 tests) 124ms
- ✓ src/components/ui/EmptyState.test.tsx (6 tests) 134ms
- ✓ src/components/ui/RelativeTime.test.tsx (10 tests) 109ms
- ✓ src/components/ui/Card.test.tsx (7 tests) 66ms
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+ ✓ src/pages/ProbeDetail.test.tsx (2 tests) 356ms
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+ ✓ src/hooks/useFleetMetrics.test.ts (4 tests) 273ms
+ ✓ src/pages/DeviceDetail.test.tsx (38 tests) 4858ms
+     ✓ Copied! label reverts to Copy Summary after 2 seconds (FRD max 3s)  2124ms
+ ✓ src/components/ConfirmModal.test.tsx (10 tests) 344ms
+ ✓ src/components/ui/QueryState.test.tsx (15 tests) 198ms
+ ✓ src/pages/dashboard/ActivityRiver.test.tsx (21 tests) 192ms
+ ✓ src/components/ui/Toast.test.tsx (24 tests) 259ms
+ ✓ src/pages/settings/CertificateSettings.test.tsx (3 tests) 243ms
+ ✓ src/components/ui/DockerPrimitives.test.tsx (2 tests) 263ms
+ ✓ src/contexts/TimePreferenceProvider.test.tsx (25 tests) 200ms
+ ✓ src/pages/LearnMore.test.tsx (3 tests) 252ms
+ ✓ src/pages/dashboard/PerDeviceCharts.test.tsx (15 tests) 244ms
+ ✓ src/utils/logBuffer.test.ts (6 tests) 280ms
+ ✓ src/components/ui/Timestamp.test.tsx (10 tests) 103ms
+ ✓ src/components/ui/EmptyState.test.tsx (6 tests) 141ms
+ ✓ src/pages/DeviceTerminal.test.tsx (1 test) 180ms
+ ✓ src/api/demo-parity.test.ts (71 tests) 163ms
+ ✓ src/components/ui/RelativeTime.test.tsx (10 tests) 111ms
+ ✓ src/hooks/useDevices.test.ts (34 tests) 103ms
 stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: MetricChart passes the zone-aware formatters to recharts > uses UTC for the tick and tooltip by default
 The tag <stop> is unrecognized in this browser. If you meant to render a React component, start its name with an uppercase letter.
 <linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
@@ -527,53 +526,55 @@ stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: ContainerMet
 stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: ContainerMetricChart passes the zone-aware formatters to recharts > shows local time of day on ticks and a zone-labelled tooltip under the Local preference
 <linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
 
- ✓ src/components/chartTimeWiring.test.tsx (4 tests) 72ms
- ✓ src/components/CompactContainerTile.test.tsx (9 tests) 46ms
- ✓ src/components/ui/PageHeader.test.tsx (2 tests) 53ms
+ ✓ src/components/chartTimeWiring.test.tsx (4 tests) 66ms
+ ✓ src/components/ui/Card.test.tsx (7 tests) 56ms
+ ✓ src/components/ui/Badge.test.tsx (12 tests) 52ms
 stderr | src/pages/DeviceDetail.flows.test.tsx > [UIF SEC-003] QA: a Reboot that fails after the page was left is still reported once > raises exactly one persistent error toast naming the action and the reason
 No routes matched location "/devices/dev-1/probes" 
 
- ✓ src/components/ui/Badge.test.tsx (12 tests) 52ms
- ✓ src/utils/format.test.ts (73 tests) 46ms
- ✓ src/pages/DeviceDetail.flows.test.tsx (38 tests) 7284ms
-     ✓ reads the scope again from the device the next time the dialog is opened  331ms
-     ✓ shows no "Command sent:" banner after a successful command and no error banner after a failed one  770ms
-     ✓ uses the requested action label even if the server echoes another  393ms
-     ✓ keeps the dialog open with the error and raises no toast  322ms
-     ✓ a rejected Reboot shows its message once, inside the dialog, and nowhere else  360ms
-     ✓ raises exactly one persistent error toast naming the action and the reason  397ms
- ✓ src/components/GaugeBar.test.tsx (5 tests) 45ms
+ ✓ src/components/CompactContainerTile.test.tsx (9 tests) 65ms
+ ✓ src/pages/DeviceDetail.flows.test.tsx (38 tests) 7093ms
+     ✓ reads the scope again from the device the next time the dialog is opened  325ms
+     ✓ shows no "Command sent:" banner after a successful command and no error banner after a failed one  687ms
+     ✓ uses the requested action label even if the server echoes another  334ms
+     ✓ keeps the dialog open with the error and raises no toast  311ms
+     ✓ a rejected Reboot shows its message once, inside the dialog, and nowhere else  324ms
+     ✓ raises exactly one persistent error toast naming the action and the reason  443ms
+ ✓ src/components/GaugeBar.test.tsx (5 tests) 44ms
+ ✓ src/utils/format.test.ts (73 tests) 47ms
+ ✓ src/components/ui/PageHeader.test.tsx (2 tests) 56ms
+ ✓ src/App.auth.test.tsx (3 tests) 333ms
+ ✓ src/utils/cron.test.ts (27 tests) 40ms
  ✓ src/utils/rebootEta.test.ts (33 tests) 40ms
- ✓ src/utils/cron.test.ts (27 tests) 37ms
- ✓ src/components/RebootClassBadge.test.tsx (4 tests) 36ms
- ✓ src/api/client.test.ts (28 tests) 30ms
- ✓ src/components/ui/Skeleton.test.tsx (6 tests) 34ms
- ✓ src/components/StatusBadge.test.tsx (3 tests) 35ms
- ✓ src/hooks/useMinuteTick.test.tsx (3 tests) 29ms
- ✓ src/utils/paletteRank.test.ts (3 tests) 26ms
+ ✓ src/components/RebootClassBadge.test.tsx (4 tests) 35ms
+ ✓ src/components/StatusBadge.test.tsx (3 tests) 33ms
+ ✓ src/api/client.test.ts (28 tests) 32ms
+ ✓ src/components/ui/Skeleton.test.tsx (6 tests) 37ms
+ ✓ src/hooks/useMinuteTick.test.tsx (3 tests) 32ms
  ✓ src/contexts/DemoWebSocketProvider.test.tsx (2 tests) 28ms
+ ✓ src/utils/paletteRank.test.ts (3 tests) 29ms
+ ✓ src/api/dockerDemo.test.ts (2 tests) 15ms
  ✓ src/components/ui/labels.test.ts (107 tests) 24ms
- ✓ src/utils/commandLifecycle.test.ts (64 tests) 19ms
+ ✓ src/utils/commandLifecycle.test.ts (64 tests) 20ms
+ ✓ src/utils/filesystem.test.ts (39 tests) 15ms
+ ✓ src/hooks/telemetryMerge.test.ts (13 tests) 10ms
+ ✓ src/utils/secrets.test.ts (20 tests) 8ms
  ✓ src/theme/tokens.test.ts (50 tests) 12ms
- ✓ src/utils/filesystem.test.ts (39 tests) 14ms
- ✓ src/api/dockerDemo.test.ts (2 tests) 12ms
  ✓ src/utils/dockerUrlState.test.ts (6 tests) 10ms
- ✓ src/hooks/telemetryMerge.test.ts (13 tests) 11ms
- ✓ src/utils/secrets.test.ts (20 tests) 10ms
- ✓ src/api/docker.test.ts (3 tests) 9ms
- ✓ src/utils/logMask.test.ts (19 tests) 8ms
- ✓ src/api/errors.test.ts (13 tests) 7ms
- ✓ src/utils/recentResources.test.ts (3 tests) 6ms
- ✓ src/utils/security.test.ts (18 tests) 5ms
- ✓ src/utils/dockerActions.test.ts (10 tests) 4ms
+ ✓ src/api/docker.test.ts (3 tests) 10ms
+ ✓ src/api/errors.test.ts (13 tests) 5ms
+ ✓ src/utils/logMask.test.ts (19 tests) 6ms
+ ✓ src/utils/security.test.ts (18 tests) 6ms
+ ✓ src/utils/recentResources.test.ts (3 tests) 4ms
  ✓ src/utils/eventCategory.test.ts (11 tests) 5ms
- ✓ src/utils/safeUrl.test.ts (2 tests) 3ms
- ✓ src/test/static-guards.test.ts (52 tests) 38ms
+ ✓ src/utils/safeUrl.test.ts (2 tests) 4ms
+ ✓ src/utils/dockerActions.test.ts (10 tests) 4ms
+ ✓ src/test/static-guards.test.ts (52 tests) 35ms
 
  Test Files  85 passed (85)
-      Tests  1538 passed (1538)
-   Start at  10:49:37
-   Duration  12.04s (transform 10.97s, setup 19.11s, import 23.39s, tests 54.68s, environment 46.64s)
+      Tests  1540 passed (1540)
+   Start at  10:53:11
+   Duration  12.35s (transform 11.58s, setup 19.63s, import 23.57s, tests 53.61s, environment 47.65s)
 
 
 === typecheck ===
@@ -590,35 +591,35 @@ rendering chunks...
 computing gzip size...
 dist/index.html                     0.87 kB │ gzip:   0.45 kB
 dist/assets/index-C_XQPyhv.css     72.25 kB │ gzip:  13.49 kB
-dist/assets/index-CC5ScAiY.js   1,551.21 kB │ gzip: 433.69 kB
+dist/assets/index-D3vjPWk4.js   1,551.24 kB │ gzip: 433.71 kB
 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-✓ built in 4.83s
+✓ built in 4.72s
 
 === demo_build ===
 vite v6.4.1 building for production...
 
-(!) outDir C:\Users\Ryan\AppData\Local\Temp\riot_app_workspace_demo_5e465a56a4554e67839d67ba2955e707 is not inside project root and will not be emptied.
+(!) outDir C:\Users\Ryan\AppData\Local\Temp\riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2 is not inside project root and will not be emptied.
 Use --emptyOutDir to override.
 
 transforming...
 ✓ 864 modules transformed.
 rendering chunks...
 computing gzip size...
-C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_5e465a56a4554e67839d67ba2955e707/index.html                     0.91 kB │ gzip:   0.45 kB
-C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_5e465a56a4554e67839d67ba2955e707/assets/index-C_XQPyhv.css     72.25 kB │ gzip:  13.49 kB
-C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_5e465a56a4554e67839d67ba2955e707/assets/index-DBc_5Bnr.js   1,593.95 kB │ gzip: 445.75 kB
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/index.html                     0.91 kB │ gzip:   0.45 kB
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/assets/index-C_XQPyhv.css     72.25 kB │ gzip:  13.49 kB
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/assets/index-DZuyFkLJ.js   1,593.98 kB │ gzip: 445.77 kB
 
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
-✓ built in 4.64s
+✓ built in 4.76s
 
-=== QA-requested authentication assertion strengthening ===
+=== auth_final ===
 
 > web@1.0.0 test:run
 > vitest run src/App.auth.test.tsx
