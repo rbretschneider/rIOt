@@ -5,6 +5,8 @@
 
 **Implementation amendment approved:** Narrow the existing optional frontend `DockerRow.update_status` annotation to imported existing `UpdateStatus` from models. This permits the established typed verdict helper without a cast, adds no field/value/endpoint, and preserves its runtime precedence. `web/src/types/docker.ts` is added to the allowed component list; no helper semantic change is authorized or needed.
 
+**QA sizing amendment approved:** Permit `components/docker/DataTable.tsx` to retain explicit summed width for fully sized pinned-only tables without explicit grow, and exclude pinned columns from the implicit last-column growth fallback. No synthetic cells, aria count changes, selection identity changes or new interactions. AC-001 must verify Name-only/empty/unknown saved preferences and generic pinned-only layout, with actual browser measurement; other security invariants remain unchanged.
+
 ## Scope and boundary
 
 Reviewed current ContainersPage, DataTable, URL-state parser, DockerRow/fleet types, update verdict helpers and frontend package/TypeScript configuration. The proposal changes frontend sizing, informational presentation and fallback sort only. It adds no dependency, endpoint, privilege, credential handling, server data field or remote command path.

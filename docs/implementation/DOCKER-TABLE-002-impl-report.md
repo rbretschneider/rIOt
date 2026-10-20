@@ -6,7 +6,8 @@ No dependency, server, agent or production deployment changes.
 ## Changes
 
 - Keep mandatory pinned Name184px; Open absorbs available desktop space using
-  the existing DataTable sizing contract. Shared table implementation untouched.
+  the existing DataTable sizing contract. Pinned-only tables retain their summed
+  widths and never implicitly grow a pinned last column.
 - Move Update available marker from optional Image into a nonshrinking sibling
   of the truncated identity link, preserving the full identity/image tooltip.
 - Reuse authoritative update verdict precedence, including legacy boolean
@@ -40,5 +41,19 @@ overflow and marker inside Name bounds. Wide and portrait screenshots retained
 in ignored bin/docker_table_002/wide.png and portrait.png. Demo uses simulated
 data; no production action invoked. Browser viewport override reset afterward.
 
+## Independent-review correction
+
+QA found saved Name-only, empty or unknown-only column choices still triggered
+DataTable's last-column grow fallback. Added failing AC001 regressions before
+the fix; all four relevant assertions failed on the prior implementation.
+Architect/security approved constraining fully sized, pinned-only tables to
+their summed width and preventing implicit pinned-column growth. No filler
+columns, selectable rows, grid-count or virtualization changes.
+
+Final focused50tests and full1559tests pass; production build passes again.
+Actual browser Name-only measurement: Name184px, table228.5px including borders,
+two semantic columns including selection, four update markers. Screenshot:
+bin/docker_table_002/name_only.png. Default preferences restored afterward.
+
 Vite retains its existing large-chunk warning. No separate lint command exists.
-Ready for independent QA against this commit.
+Ready for independent QA against the corrective commit.

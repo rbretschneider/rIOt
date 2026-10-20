@@ -182,6 +182,20 @@ beforeEach(() => {
   })
 })
 describe('Docker fleet', () => {
+  it.each([
+    { saved: ['name'] },
+    { saved: [] },
+    { saved: ['removed-column'] },
+  ])('[AC-001] keeps Name compact when saved preferences leave it as the only column: $saved', async ({ saved }) => {
+    localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    const table = screen.getByRole('grid')
+    expect(table).toHaveStyle({ width: '228px' })
+    expect(table.querySelectorAll('col')[1]).toHaveStyle({ width: '184px' })
+    expect(table).toHaveAttribute('aria-colcount', '2')
+    expect(screen.getAllByLabelText('Update available')).toHaveLength(2)
+  })
   it('[AC-001] keeps Name compact and pinned with default and restored columns', async () => {
     let view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })

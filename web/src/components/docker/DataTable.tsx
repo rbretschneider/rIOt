@@ -48,6 +48,12 @@ export default function DataTable<T>({
   const height = 44
   const columnCount = columns.length + (onSelect ? 1 : 0)
   const sized = columns.every((c) => c.width !== undefined)
+  const minimumWidth = columns.reduce(
+    (sum, column) => sum + (column.width ?? 0),
+    onSelect ? 44 : 0,
+  )
+  const pinnedOnly =
+    sized && columns.length > 0 && columns.every((c) => c.pinned && !c.grow)
   const pinnedStyle = (column: Column<T>, index: number) =>
     column.pinned
       ? {
@@ -127,10 +133,8 @@ export default function DataTable<T>({
         style={
           sized
             ? {
-                minWidth: columns.reduce(
-                  (sum, c) => sum + (c.width ?? 0),
-                  onSelect ? 44 : 0,
-                ),
+                minWidth: minimumWidth,
+                width: pinnedOnly ? minimumWidth : undefined,
               }
             : undefined
         }
@@ -145,6 +149,7 @@ export default function DataTable<T>({
                   c.grow ||
                   (sized &&
                     !columns.some((column) => column.grow) &&
+                    !c.pinned &&
                     index === columns.length - 1)
                     ? undefined
                     : c.width,

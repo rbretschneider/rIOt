@@ -9,7 +9,9 @@ Retain the existing `ContainersPage` and generic virtual `DataTable`. Fix column
 
 ## 2. Column allocation and identity
 
-`ContainersPage` currently sets `grow: key === 'name'`; `DataTable` deliberately ignores width for grow columns. Remove Name's grow assignment, retaining width 184 and pinned true. Prefer Open (`links`) as the explicit grow column when visible, so its utility cell absorbs desktop slack. If users hide Open, retain DataTable's existing last-visible-column slack fallback. All explicit width minima, selection width 44, table min-width sum and pinned offsets stay valid. No shared DataTable behavioral change is needed unless a focused regression proves the existing contract insufficient.
+`ContainersPage` currently sets `grow: key === 'name'`; `DataTable` deliberately ignores width for grow columns. Remove Name's grow assignment, retaining width 184 and pinned true. Prefer Open (`links`) as the explicit grow column when visible, so its utility cell absorbs desktop slack. If users hide Open, retain DataTable's existing last-visible non-pinned column slack fallback. All explicit width minima, selection width 44, table min-width sum and pinned offsets stay valid.
+
+**QA amendment:** A saved Name-only/empty/unknown column preference resolves to mandatory Name alone. DataTable's prior last-column fallback would grow that pinned column. For a fully sized table with all visible columns pinned and no explicit grow column, set table width to the exact sum of column widths plus the optional 44px selection column instead of filling the viewport; retain that sum as minimum width. Never apply the implicit last-column grow fallback to a pinned column. Keep ordinary mixed-column/explicit-grow allocation unchanged. This introduces no filler/header/body cells, and aria counts, sticky offsets, row height and virtualization remain unchanged. Recheck exact 184px Name width in a real wide and portrait browser for Name-only as well as ordinary default columns.
 
 Render Name contents in a constrained single-row flex container: identity link `min-w-0`/truncate, compact update marker `shrink-0`. Keep full existing identity/image title, canonical `containerPath`, collection router state, icon/name/self-role display and keyboard activation. The marker uses neutral/warn theme tokens, visible compact text or existing icon plus an accessible name `Update available`; title provides the same explanation. It is not a button/link and has no event handler. This keeps 44px virtual rows stable and prevents truncation from swallowing availability. Remove the old optional Image badge; Image retains its own full-image title.
 
@@ -22,11 +24,12 @@ Reuse `hasUpdateAvailable` from `utils/commandLifecycle.ts` with the existing `D
 | File | Change |
 |---|---|
 | `web/src/pages/docker/ContainersPage.tsx` | Compact Name sizing/flex marker; move Image badge; Stack comparator tie-breakers. |
+| `web/src/components/docker/DataTable.tsx` | Preserve declared pinned widths for a fully sized pinned-only/no-explicit-grow table; restrict implicit slack fallback to non-pinned columns. No extra cells or count changes. |
 | `web/src/utils/dockerUrlState.ts` | Fallback sort `stack` (asc) when omitted/invalid; keep valid explicit sorts/directions. |
 | `web/src/types/docker.ts` | Import existing `UpdateStatus` from models and narrow existing optional `DockerRow.update_status` from string to that union, allowing reuse of the typed verdict helper without a cast. No field or wire change. |
 | `web/src/pages/docker/DockerPages.test.tsx` | AC-001/002/003/004/005 integration regressions with verdicts, hidden Image, preference restoration, row ordering/routes. |
 | `web/src/utils/dockerUrlState.test.ts` | AC-004 fallback and explicit-sort matrix; update obsolete name-fallback expectation. |
-| `web/src/components/docker/DataTable.test.tsx` | AC-001 column metadata/pinned offset regression only if useful; implementation need not change. |
+| `web/src/components/docker/DataTable.test.tsx` | AC-001 pinned-only/no-grow table width regression alongside mixed-column allocation/pinned offset regression. |
 
 No modifications to server/agent, shared model definitions, shared auth shell, tiles implementation or global theme. The narrow DockerRow annotation correction above is permitted; no new verdict or helper semantics are introduced. Existing table tests and Docker detail/log tests remain regression evidence.
 
@@ -40,4 +43,4 @@ All names remain React text; no HTML injection, remote icon fetching or new exte
 
 ## 7. Verification and pipeline
 
-Map FRD AC-001–005 to named tests. Run existing baseline before edits, focused Docker pages/URL/DataTable tests, full `npm run test:run`, `npx tsc --noEmit` and production build. Actual browser QA at wide desktop and portrait width must confirm Name bounding, nonclipped marker, internal horizontal scroll and preserved Name/Logs navigation. Report existing lint availability honestly; package.json defines no lint script. Security review precedes implementation, then independent QA and technical writing; no production deployment is part of this story.
+Map FRD AC-001–005 to named tests. Include saved `['name']`, `[]`, and unknown-only column preferences resolving to mandatory compact Name, plus a generic pinned-only table case. Run existing baseline before edits, focused Docker pages/URL/DataTable tests, full `npm run test:run`, `npx tsc --noEmit` and production build. Actual browser QA at wide desktop and portrait width must confirm Name bounding, nonclipped marker, internal horizontal scroll and preserved Name/Logs navigation. Report existing lint availability honestly; package.json defines no lint script. Security review precedes implementation, then independent QA and technical writing; no production deployment is part of this story.
