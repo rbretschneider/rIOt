@@ -9,6 +9,10 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ## [Unreleased]
 
+### Fixed
+
+- [DOCKER-UX-001] Wait for a confirmed authenticated session before fetching navigation feature settings. Logged-out visits no longer loop through protected-setting 401 responses and page reloads, allowing the password form and OIDC button to finish rendering.
+
 ### Docker area
 
 - [DOCKER-UX-001] Added the fleet Docker table and grouped tiles, shareable filters, bulk commands, canonical container pages, resource search, stored/live logs, Inspect, Activity, I/O stats, Compose stacks and inventory cleanup with exact previews. Existing device Docker links redirect. Capabilities make unsupported features explicit on older agents.

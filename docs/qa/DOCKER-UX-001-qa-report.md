@@ -1,5 +1,13 @@
 # DOCKER-UX-001 QA report
 
+## Post-deployment login regression and hotfix
+
+The first production deployment exposed a gap in the earlier demo-based browser review: App mounted the protected feature-settings query before authentication. Its expected 401 invoked the API client's full-page reload, repeating the request and preventing the public OIDC availability result from rendering. OIDC itself remained configured and available.
+
+The hotfix disables App's feature query until authentication has finished successfully and setup is complete. Three real-App regression tests cover anonymous startup with OIDC, a pending-to-authenticated transition with feature toggles applied, and initial setup. The full frontend suite passes: **79 files / 1,484 tests**; the production TypeScript/Vite build passes (existing bundle-size advisory only).
+
+The production bundle was also checked in a real browser through a loopback preview proxy to Hawaii's public auth endpoints. The login and authentik button remained visible; the proxy recorded only `/api/v1/auth/check` and `/api/v1/auth/oidc`, with no protected settings request. This verifies the candidate bundle; the live hotfix requires its release/deployment.
+
 Scope: combined P0–P4 implementation on Windows, with PostgreSQL 16 integration tests and Linux agent/collector/redaction tests in a disposable container. Review uses the existing FRD, ADD and security review; it does not replace their production deployment gates.
 
 ## Results

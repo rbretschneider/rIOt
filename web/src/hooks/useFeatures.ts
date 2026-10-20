@@ -7,12 +7,14 @@ export { FEATURES, type FeatureKey }
 
 /**
  * Hook to get feature toggle state. Features default to enabled (true).
+ * Pass false until authentication is confirmed: settings are a protected API.
  * Returns { isEnabled, toggles, isLoading }.
  */
-export function useFeatures() {
+export function useFeatures(enabled = true) {
   const { data: toggles = {}, isLoading } = useQuery({
     queryKey: ['feature-toggles'],
     queryFn: settingsApi.getFeatureToggles,
+    enabled,
     staleTime: 30_000,
   })
 

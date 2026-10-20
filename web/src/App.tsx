@@ -276,7 +276,7 @@ function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => voi
 export default function App() {
   const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const { isEnabled } = useFeatures()
+  const { isEnabled } = useFeatures(authenticated && !loading && !needsSetup)
 
   if (loading) {
     return (
