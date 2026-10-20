@@ -32,3 +32,13 @@ The separately approved hardening plan is sound with a fresh signed root-owned a
 ## Residual limitations
 
 No-removal prevents apt-selected removals, not every side effect of a trusted package script: configuration, service restarts, mounts and application migrations can still change. Holds cannot undo already-unpacked packages. Host-wide OOM, root intervention or power loss can interrupt work; bounded recovery is not rollback. The retained apt security mode is conservative upgrade behavior, not a security-origin selector.
+
+## Implementation boundary correction: retained apt-mark grants
+
+Final adversarial testing found that retaining `apt-mark hold *` / `unhold *` violates the compromised-agent boundary. In the disposable, network-disabled Debian 12 fixture, a caller-supplied `-oDir::Bin::dpkg=/tmp/riot-hold-boundary-probe` after `hold` selected a harmless marker-only executable and ran it as root. No production probe was run. Agent-side package-name validation cannot protect a direct sudo invocation by a compromised agent.
+
+The correction narrows the existing grants: require preinstalled sudo 1.9.10 or newer for apt installation and match hold/unhold arguments with anchored POSIX regular expressions accepting only nonempty, space-separated package-name operands. Every operand begins with a lowercase alphanumeric character and continues only with lowercase alphanumerics, plus, dot, underscore, colon or hyphen. Reject leading option tokens, equals signs, slashes, shell syntax, newline/tab separators and empty lists. Do not add a new privileged helper mode, shell or package-management action. Unsupported sudo fails before changing the working installation.
+
+The [sudo project's own sudoers source](https://raw.githubusercontent.com/sudo-project/sudo/main/docs/sudoers.mdoc.in) documents argument regular expressions from version 1.9.10, anchored with caret/dollar. Real visudo validation and real agent-user `sudo -n -l` positive/negative matching are required, including options before and after the subcommand and multiarch/multiple valid names. Read-only doctor must reject the old wildcard or an equivalent option-bearing grant even when the fixed maintenance-start rule is present.
+
+This narrow correction is approved for implementation. The earlier QA verdict must be reissued against the corrected committed policy and tests before the PR is ready for review.

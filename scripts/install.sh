@@ -282,6 +282,12 @@ if [ "$OS" = linux ]; then
         if [ -e "$directory" ]; then [ -d "$directory" ] || fail "Expected directory: $directory"; fi
     done
     if command -v apt-get >/dev/null 2>&1; then
+        command -v sudo >/dev/null 2>&1 || fail "Preinstalled sudo1.9.10+ is required for safe package-hold rules"
+        secure_file "$(readlink -f "$(command -v sudo)")"
+        sudo_version=$(sudo --version | awk 'NR==1 {print $3}')
+        [[ "$sudo_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(p[0-9]+)?$ ]] || fail "Cannot determine supported sudo version"
+        sudo_major=${BASH_REMATCH[1]}; sudo_minor=${BASH_REMATCH[2]}; sudo_patch=${BASH_REMATCH[3]}
+        (( sudo_major > 1 || (sudo_major == 1 && (sudo_minor > 9 || (sudo_minor == 9 && sudo_patch >= 10))) )) || fail "Preinstalled sudo1.9.10+ is required; wildcard package-hold rules are unsafe"
         apt_major=$(/usr/bin/apt-get --version | awk 'NR==1 {split($2,v,"."); print v[1]}')
         systemd_major=$(systemctl --version | awk 'NR==1 {print $2}')
         [[ "$apt_major" =~ ^[0-9]+$ && "$systemd_major" =~ ^[0-9]+$ ]] || fail "Cannot determine apt/systemd versions"
@@ -394,8 +400,10 @@ PY
         echo '# rIOt fixed privileges; package transactions run only in the detached worker.'
         if [ "$MAINT_SUPPORTED" = true ]; then
             echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} start --no-block riot-maintenance.service"
-            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark hold *'
-            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark unhold *'
+            # sudo>=1.9.10 argument regexes avoid apt-mark option injection.
+            # Only package operands are allowed; no option, path or environment.
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^hold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$'
+            echo 'riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^unhold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$'
         elif command -v dnf >/dev/null 2>&1; then
             DNF_PATH=$(command -v dnf)
             echo "riot ALL=(root) NOPASSWD: ${DNF_PATH} makecache"

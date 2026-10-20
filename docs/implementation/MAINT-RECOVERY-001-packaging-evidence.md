@@ -9,7 +9,7 @@
 - `scripts/riot-agent.service`: signed boot verifier hook and accurate cgroup comments.
 - `Makefile`: local Linux apply/maintenance helper builds, all five Linux helper architectures, helpers included in `build-agent-all`.
 - Release workflow: all Linux maintenance assets and fixed service asset built/published/signed; explicit real-agent-first checksum ordering preserves legacy platform lookup.
-- Installer: fixed-key signature verification of manifest and exact asset checksums before installed-file mutation; preinstalled OpenSSL3 or Python cryptography; no apt/pip dependency bootstrap or automatic SMART package installation. Apt migration additionally requires preinstalled Python3 for secure native POSIX lock holding.
+- Installer: fixed-key signature verification of manifest and exact asset checksums before installed-file mutation; preinstalled OpenSSL3 or Python cryptography; no apt/pip dependency bootstrap or automatic SMART package installation. Apt migration additionally requires preinstalled Python3 for secure native POSIX lock holding and sudo>=1.9.10 for anchored package-hold operand regexes.
 - Installer exclusion: root flock plus active-unit/strict unfinished-record checks, all four native apt/dpkg POSIX locks held through stop/replacement, trusted parent/file ownership and single-link checks. Native lock holder exits with its parent and has a 15-minute budget that terminates the installer before releasing exclusion.
 - Policy publication: validate candidates and existing policy, preserve root-only backups, publish and validate effective policy before stopping/replacing agent/unit; restore original managed policy on effective-policy failure. Fresh signed root-owned binary inodes replace legacy riot-writable files. Reviewed boot precommands are cleared by a preserved/validated drop-in; config/device identity remain intact.
 
@@ -31,7 +31,7 @@ PID1: sleep
 
 The fixture uses real OpenSSL verification, real visudo parsing and real `systemd-analyze verify`. `systemctl` is a recording stub; PID1 is **not systemd**. These tests do not prove actual service startup/stop, process-tree timeout behavior, journal delivery or independence from a real agent service. Those remain Linux lifecycle QA obligations. A signed-but-invalid service is rejected by the real unit validator before agent stop. Package executables are not used for repair/update; the apt stub accepts only its version query and fails any attempted package operation.
 
-## Installer fixtures — complete final output
+## Initial installer fixtures — complete output
 
 Command:
 
@@ -158,3 +158,51 @@ ok  github.com/DesyncTheThird/rIOt/scripts  0.014s
 ```
 
 This is 18 successful actual builds: 15 Linux agent/helper outputs plus the three existing non-Linux agent outputs. The matrix also executed both packaging regressions natively on Linux, with no skips. The container retains these temporary artifacts for integration inspection; no release tag or publication was performed.
+
+## Post-QA apt-mark authority correction — final installer evidence
+
+The retained wildcard `apt-mark hold *` / `unhold *` grants were unsafe: arguments could inject apt configuration options instead of naming packages. They are replaced by these exact argument regexes, with a preinstalled sudo>=1.9.10 gate before installed-file mutation:
+
+```text
+riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^hold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$
+riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^unhold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$
+```
+
+The sudo project's [primary sudoers manual source](https://raw.githubusercontent.com/sudo-project/sudo/main/docs/sudoers.mdoc.in) specifies POSIX extended command argument regexes starting with `^` and ending with `$`, available since 1.9.10; special sudoers characters inside regexes need no escaping except `#`. Actual Debian visudo validates these unescaped expressions, and effective `sudo -n -l` output preserves each literally on one line.
+
+The new matrix runs the real setuid sudo executable **as riot**, using only `-n -l` permission queries. Twelve positive cases cover normal, versioned, multiarch and multiple package operands for hold/unhold. Twenty-seven negative cases cover `-oDir::Bin::dpkg=/tmp/evil` before the operation, immediately after it and after a normal operand; `--file`; environment operands/wrappers; paths; semicolons; newlines; empty lists/arguments and option separators. No apt-mark or supplied executable is run. An unsupported sudo1.9.9 fixture additionally proves refusal leaves the original binary, unit and policy unchanged, without stopping the service.
+
+Command remains:
+
+```sh
+docker exec -e RIOT_INSTALLER_FIXTURE=1 riot-installer-test-20261020 \
+  python3 /src/scripts/test_install_maintenance.py
+```
+
+Complete updated output:
+
+```text
+test_AC011_changed_signed_asset_preserves_running_install (__main__.InstallerFixtures.test_AC011_changed_signed_asset_preserves_running_install) ... ok
+test_AC011_invalid_signature_preserves_running_install (__main__.InstallerFixtures.test_AC011_invalid_signature_preserves_running_install) ... ok
+test_AC011_missing_helper_preserves_running_install (__main__.InstallerFixtures.test_AC011_missing_helper_preserves_running_install) ... ok
+test_AC012_active_worker_refuses_before_stop (__main__.InstallerFixtures.test_AC012_active_worker_refuses_before_stop) ... ok
+test_AC012_candidate_policy_failure_preserves_old_policy (__main__.InstallerFixtures.test_AC012_candidate_policy_failure_preserves_old_policy) ... ok
+test_AC012_duplicate_status_keys_refuse_before_stop (__main__.InstallerFixtures.test_AC012_duplicate_status_keys_refuse_before_stop) ... ok
+test_AC012_effective_policy_failure_restores_old_policy_before_stop (__main__.InstallerFixtures.test_AC012_effective_policy_failure_restores_old_policy_before_stop) ... ok
+test_AC012_invalid_signed_unit_preserves_binary_unit_policy (__main__.InstallerFixtures.test_AC012_invalid_signed_unit_preserves_binary_unit_policy) ... ok
+test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity (__main__.InstallerFixtures.test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity) ... ok
+test_AC012_multilink_root_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_multilink_root_lock_refuses_before_stop) ... ok
+test_AC012_native_dpkg_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_native_dpkg_lock_refuses_before_stop) ... ok
+test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation (__main__.InstallerFixtures.test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation) ... ok
+test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection (__main__.InstallerFixtures.test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection) ... ok
+test_AC012_root_lock_contention_preserves_running_install (__main__.InstallerFixtures.test_AC012_root_lock_contention_preserves_running_install) ... ok
+test_AC012_symlink_helper_directory_refuses_before_stop (__main__.InstallerFixtures.test_AC012_symlink_helper_directory_refuses_before_stop) ... ok
+test_AC012_unfinished_root_record_refuses_before_stop (__main__.InstallerFixtures.test_AC012_unfinished_root_record_refuses_before_stop) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 2.593s
+
+OK
+```
+
+The earlier architecture-build evidence remains applicable: this correction changes installer policy generation/version checking and its fixture/evidence only, without changing Go binaries or release build commands. Systemd PID1 lifecycle limitations above remain unchanged.

@@ -26,7 +26,7 @@ func checkMaintenancePolicy() {
 		warn("Re-run the independently verified root installer; agent-only updates do not replace privileged helpers or sudoers")
 		return
 	}
-	pass("fixed maintenance service, root helper, exact sudo rule and lock-aware signed apply protocol verified")
+	pass("fixed maintenance service, root helper, sudo 1.9.10+ constrained hold rules and lock-aware signed apply protocol verified")
 	probe := &Agent{}
 	if probe.maintenanceBusy(ctx) {
 		warn("independent maintenance is active or requires recovery; conflicting host actions are blocked")

@@ -768,3 +768,69 @@ stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule sever
 No diagnostics; EXIT 0.
 === Frontend npx tsc --noEmit ===
 No diagnostics; EXIT 0.
+=== Corrected hold-policy full Linux race suite; EXIT 0 ===
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-agent-apply	1.354s
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-maintenance	1.018s
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-server	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	1.102s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent	54.793s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent/collectors	81.078s
+ok  	github.com/DesyncTheThird/rIOt/internal/logbudget	1.028s
+ok  	github.com/DesyncTheThird/rIOt/internal/maintenance	3.632s
+ok  	github.com/DesyncTheThird/rIOt/internal/models	1.083s
+ok  	github.com/DesyncTheThird/rIOt/internal/redact	1.074s
+ok  	github.com/DesyncTheThird/rIOt/internal/releasekey	1.058s
+ok  	github.com/DesyncTheThird/rIOt/internal/resilient	1.050s
+ok  	github.com/DesyncTheThird/rIOt/internal/server	5.227s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/auth	1.031s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ca	1.042s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/commands	11.810s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/db	1.056s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/events	1.062s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/handlers	33.693s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ingest	1.010s
+?   	github.com/DesyncTheThird/rIOt/internal/server/logstore	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/internal/server/middleware	1.819s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/notify	1.064s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/oidc	8.464s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/partition	1.028s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/probes	1.045s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/quota	1.024s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/scoring	1.029s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/storage	1.016s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/summary	1.022s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	1.035s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	1.124s
+?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/scripts	1.018s
+
+=== Corrected signed installer and real sudo allow/deny fixtures; EXIT 0 ===
+test_AC011_changed_signed_asset_preserves_running_install (__main__.InstallerFixtures.test_AC011_changed_signed_asset_preserves_running_install) ... ok
+test_AC011_invalid_signature_preserves_running_install (__main__.InstallerFixtures.test_AC011_invalid_signature_preserves_running_install) ... ok
+test_AC011_missing_helper_preserves_running_install (__main__.InstallerFixtures.test_AC011_missing_helper_preserves_running_install) ... ok
+test_AC012_active_worker_refuses_before_stop (__main__.InstallerFixtures.test_AC012_active_worker_refuses_before_stop) ... ok
+test_AC012_candidate_policy_failure_preserves_old_policy (__main__.InstallerFixtures.test_AC012_candidate_policy_failure_preserves_old_policy) ... ok
+test_AC012_duplicate_status_keys_refuse_before_stop (__main__.InstallerFixtures.test_AC012_duplicate_status_keys_refuse_before_stop) ... ok
+test_AC012_effective_policy_failure_restores_old_policy_before_stop (__main__.InstallerFixtures.test_AC012_effective_policy_failure_restores_old_policy_before_stop) ... ok
+test_AC012_invalid_signed_unit_preserves_binary_unit_policy (__main__.InstallerFixtures.test_AC012_invalid_signed_unit_preserves_binary_unit_policy) ... ok
+test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity (__main__.InstallerFixtures.test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity) ... ok
+test_AC012_multilink_root_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_multilink_root_lock_refuses_before_stop) ... ok
+test_AC012_native_dpkg_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_native_dpkg_lock_refuses_before_stop) ... ok
+test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation (__main__.InstallerFixtures.test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation) ... ok
+test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection (__main__.InstallerFixtures.test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection) ... ok
+test_AC012_root_lock_contention_preserves_running_install (__main__.InstallerFixtures.test_AC012_root_lock_contention_preserves_running_install) ... ok
+test_AC012_symlink_helper_directory_refuses_before_stop (__main__.InstallerFixtures.test_AC012_symlink_helper_directory_refuses_before_stop) ... ok
+test_AC012_unfinished_root_record_refuses_before_stop (__main__.InstallerFixtures.test_AC012_unfinished_root_record_refuses_before_stop) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 3.050s
+
+OK
+
+=== Harmless legacy hold configuration-injection proof, isolated Debian12; EXIT 0 ===
+riot-test-needs was already not on hold.
+riot-test-needs set on hold.
+fixture root execution reached
+
+Corrected go vet ./...: no diagnostics; EXIT 0.

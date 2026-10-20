@@ -38,7 +38,7 @@ func trustedMaintenanceFile(path string, executable bool) error {
 }
 
 func maintenanceReadiness(ctx context.Context, run collectors.CommandRunner) error {
-	for _, path := range []string{maintenance.HelperPath, applyBinPath, "/usr/bin/systemctl", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/bin/dpkg-query", "/usr/bin/apt-mark"} {
+	for _, path := range []string{maintenance.HelperPath, applyBinPath, "/usr/bin/systemctl", "/usr/bin/sudo", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/bin/dpkg-query", "/usr/bin/apt-mark"} {
 		if err := trustedMaintenanceFile(path, true); err != nil {
 			return err
 		}
@@ -51,6 +51,13 @@ func maintenanceReadiness(ctx context.Context, run collectors.CommandRunner) err
 	protocol, err := run(probe, applyBinPath, "--maintenance-protocol")
 	if err != nil || strings.TrimSpace(string(protocol)) != "1" {
 		return fmt.Errorf("signed apply helper lacks maintenance exclusion protocol")
+	}
+	sudoVersion, err := run(probe, "/usr/bin/sudo", "--version")
+	if err != nil {
+		return fmt.Errorf("cannot verify sudo argument-regex support: %w", err)
+	}
+	if err := maintenanceSudoVersion(string(sudoVersion)); err != nil {
+		return err
 	}
 	apt, err := run(probe, "/usr/bin/apt-get", "--version")
 	fields := strings.Fields(string(apt))
@@ -98,7 +105,7 @@ func maintenanceReadiness(ctx context.Context, run collectors.CommandRunner) err
 }
 
 func maintenanceDeniedPrivileges(ctx context.Context, run collectors.CommandRunner) error {
-	probes := [][]string{{"/bin/sh", "-c", "true"}, {"/usr/bin/systemd-run", "--unit=riot-agent-update", "sh", "-c", "true"}, {"/usr/bin/apt-get", "-o", "APT::Update::Pre-Invoke::=/bin/true", "update"}}
+	probes := [][]string{{"/bin/sh", "-c", "true"}, {"/usr/bin/systemd-run", "--unit=riot-agent-update", "sh", "-c", "true"}, {"/usr/bin/apt-get", "-o", "APT::Update::Pre-Invoke::=/bin/true", "update"}, {"/usr/bin/apt-mark", "hold", "-oDir::Bin::dpkg=/tmp/riot-maintenance-denied-probe", "riot-policy-probe"}, {"/usr/bin/apt-mark", "unhold", "-oDir::Bin::dpkg=/tmp/riot-maintenance-denied-probe", "riot-policy-probe"}}
 	for _, args := range probes {
 		if _, err := run(ctx, "sudo", append([]string{"-n", "-l"}, args...)...); err == nil {
 			return fmt.Errorf("unsafe legacy privilege remains: %s", args[0])
@@ -139,8 +146,51 @@ func maintenanceAgentPolicy(text string) error {
 }
 
 var broadMaintenanceSudo = regexp.MustCompile(`(?m)^\s*\([^)]*\)\s*(?:NOPASSWD:\s*)?ALL\s*(?:,|$)`)
+var maintenanceSudoVersionPattern = regexp.MustCompile(`^Sudo version ([0-9]+)\.([0-9]+)\.([0-9]+)(?:p[0-9]+)?(?:\s|$)`)
+
+func maintenanceSudoVersion(text string) error {
+	parts := maintenanceSudoVersionPattern.FindStringSubmatch(text)
+	if len(parts) != 4 {
+		return fmt.Errorf("cannot verify sudo version; sudo 1.9.10+ required for constrained apt holds")
+	}
+	version := [3]int{}
+	for i := range version {
+		value, err := strconv.Atoi(parts[i+1])
+		if err != nil {
+			return fmt.Errorf("invalid sudo version")
+		}
+		version[i] = value
+	}
+	if version[0] > 1 || version[0] == 1 && (version[1] > 9 || version[1] == 9 && version[2] >= 10) {
+		return nil
+	}
+	return fmt.Errorf("sudo 1.9.10+ required for constrained apt holds; upgrade sudo explicitly before root installation")
+}
+
+const maintenanceHoldArgs = `[a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$`
+
+func maintenanceAptMarkPolicy(policy string) error {
+	// sudo -l may combine multiple commands on one line. Inspect each actual
+	// apt-mark argument expression, not the stars inside an approved regex.
+	for _, line := range strings.Split(policy, "\n") {
+		for _, command := range strings.Split(line, ",") {
+			_, args, found := strings.Cut(command, "/usr/bin/apt-mark")
+			if !found {
+				continue
+			}
+			args = strings.TrimSpace(args)
+			if args != "^hold "+maintenanceHoldArgs && args != "^unhold "+maintenanceHoldArgs && args != "showhold" {
+				return fmt.Errorf("effective sudo policy permits unconstrained apt-mark arguments; reinstall constrained hold rules")
+			}
+		}
+	}
+	return nil
+}
 
 func maintenanceSudoPolicy(policy string) error {
+	if err := maintenanceAptMarkPolicy(policy); err != nil {
+		return err
+	}
 	if broadMaintenanceSudo.MatchString(policy) {
 		return fmt.Errorf("effective agent sudo policy grants unrestricted root commands")
 	}

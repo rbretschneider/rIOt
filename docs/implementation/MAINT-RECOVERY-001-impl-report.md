@@ -4,7 +4,7 @@ Date: 2026-10-20. Base: `ba02585`. Branch: `codex/maintenance-recovery`.
 
 ## Stack and scope
 
-Go 1.24 agent/server, Linux systemd and apt/dpkg, Bash installer, existing Ed25519 release signing. The unchanged dashboard uses React 19.2, TypeScript 5.9, Tailwind 4.2, Vite 6.4 and Vitest 4. No Go/npm dependency, server endpoint, database schema or UI change is introduced. Existing `golang.org/x/sys/unix` supplies Linux no-follow IO/flock operations. The root installer requires preinstalled Python 3 for native apt/dpkg lock exclusion and either OpenSSL 3 or Python cryptography to authenticate release assets. It never installs its own verifier or runs an implicit package transaction.
+Go 1.24 agent/server, Linux systemd and apt/dpkg, Bash installer, existing Ed25519 release signing. The unchanged dashboard uses React 19.2, TypeScript 5.9, Tailwind 4.2, Vite 6.4 and Vitest 4. No Go/npm dependency, server endpoint, database schema or UI change is introduced. Existing `golang.org/x/sys/unix` supplies Linux no-follow IO/flock operations. Apt installation requires preinstalled sudo 1.9.10+ for safe hold argument matching, Python 3 for native apt/dpkg lock exclusion and either OpenSSL 3 or Python cryptography to authenticate release assets. It never installs its own verifier or runs an implicit package transaction.
 
 Implementation follows the paired FRD/ADD and approved security review. Source baseline `go test ./...` passed before development. Linux-only behavior remains behind build tags; DNF retains its existing supported command plan.
 
@@ -22,13 +22,13 @@ Startup reattaches the exact maintenance command, reserves active host work and 
 
 Manual and automatic signed-update handoffs persist the expected SHA-256 and request timestamp before launching the verifier. An accepted handoff has a terminal watcher, so a later failure before agent stop releases the reservation and reports failure. A different update cannot complete an earlier command. Host reservation ignores an old terminal current UUID when a new worker is activating. Hold reconciliation is drained behind a mutex barrier after host reservation and suppressed until the transaction ends. Post-patch reboot claims are durable and never replayed; a host reservation covers the delay and a fresh maintenance check suppresses reboot if work became active.
 
-The release workflow signs and publishes both helpers for all five Linux architectures plus the fixed service asset. Exact basename verification and agent-first manifest ordering preserve old agent lookup compatibility. Installer failure fixtures demonstrate preservation of the existing binary, unit, config/identity and managed policy; unrelated administrator rules are not removed.
+The release workflow signs and publishes both helpers for all five Linux architectures plus the fixed service asset. Exact basename verification and agent-first manifest ordering preserve old agent lookup compatibility. Installer failure fixtures demonstrate preservation of the existing binary, unit, config/identity and managed policy; unrelated administrator rules are not removed. Retained hold/unhold privileges now use anchored package-operand regexes rather than wildcard arguments. Direct sudo invocations cannot supply apt configuration/options or select a root executable; unsupported sudo versions fail before installation changes.
 
 The new CI boundary job runs root IO/process/flock fixtures in an unprivileged Linux container, signed installer fixtures with real OS validators in a separate Debian container, and real apt recovery fixtures in another network-disabled container. Repository/module mounts are read-only and no host Docker socket or privileged cgroup mount is exposed.
 
 ## Verification and evidence
 
-The complete command outputs are retained in the accompanying validation text and [packaging evidence](MAINT-RECOVERY-001-packaging-evidence.md). Packaging evidence includes fourteen installer scenarios, real OpenSSL/visudo/systemd-analyze validators, manifest ordering and eighteen actual cross-builds.
+The complete command outputs are retained in the accompanying validation text and [packaging evidence](MAINT-RECOVERY-001-packaging-evidence.md). Packaging evidence includes sixteen installer scenarios, real OpenSSL/visudo/systemd-analyze validators, actual agent-user sudo allow/deny matching, manifest ordering and eighteen actual cross-builds.
 
 Acceptance coverage:
 
@@ -51,6 +51,8 @@ The Linux container exercises real descriptors, process groups, observer death, 
 Package maintainer scripts can still restart services, migrate applications or change mounts. No-removal is not rollback. Host OOM, power loss and root administrator intervention can interrupt work. Existing exact reboot capability remains an explicitly separate privilege; agent coordination does not prevent a privileged administrator or a compromised account already granted reboot from forcing a reboot.
 
 Two local environment artifacts were diagnosed rather than treated as product regressions: Windows sandbox restrictions blocked test-server sockets/cache renames; those tests passed outside that sandbox. An early Linux run crossed a wall-clock minute in the unchanged quota sampling test; the complete subsequent suite passed. Mid-edit interface compilation failures were rerun after integration settled.
+
+Final adversarial review found that the retained legacy `apt-mark hold *` sudo grant accepted an apt option selecting a root executable. A marker-only proof ran successfully inside the disposable Debian container; no production probe occurred. The original QA verdict was withdrawn. The approved narrow correction adds a sudo version prerequisite, anchored operand matching and read-only doctor denial probes, with real sudo regression tests for normal/multiarch/multiple names and option/path/shell/newline injection. Independent QA must reissue its verdict against that correction.
 
 ## Handoff
 

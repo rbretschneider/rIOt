@@ -79,6 +79,13 @@ LOCK
   *) exit 3;;
 esac
 ''')
+        if not Path('/usr/bin/sudo.fixture-real').exists():
+            shutil.copy2('/usr/bin/sudo', '/usr/bin/sudo.fixture-real')
+        Path('/usr/bin/sudo.fixture-real').chmod(0o4755)
+        write('/usr/bin/sudo', '''#!/bin/sh
+if [ "$1" = --version ] && [ -f /fixture/old-sudo ]; then echo 'Sudo version 1.9.9'; exit 0; fi
+exec /usr/bin/sudo.fixture-real "$@"
+''')
         if not Path('/usr/sbin/visudo.fixture-real').exists():
             shutil.copyfile('/usr/sbin/visudo', '/usr/sbin/visudo.fixture-real')
         Path('/usr/sbin/visudo.fixture-real').chmod(0o755)
@@ -96,7 +103,7 @@ exec /usr/sbin/visudo.fixture-real "$@"
             p = Path(path)
             if p.is_symlink(): p.unlink()
             elif p.exists(): shutil.rmtree(p)
-        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof']:
+        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo']:
             Path(path).unlink(missing_ok=True)
         write(ROOT / 'trace', '', 0o600)
         write(ROOT / 'active', 'inactive\n', 0o600)
@@ -154,6 +161,48 @@ exec /usr/sbin/visudo.fixture-real "$@"
     def test_AC012_candidate_policy_failure_preserves_old_policy(self):
         write(ROOT / 'fail-policy', '', 0o600)
         self.assert_refused_without_replacement(self.install())
+
+    def test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation(self):
+        write(ROOT / 'old-sudo', '', 0o600)
+        result = self.install()
+        self.assert_refused_without_replacement(result)
+        self.assertIn('sudo1.9.10+', result.stderr)
+
+    def test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        prefix = ['runuser', '-u', 'riot', '--', '/usr/bin/sudo.fixture-real', '-n', '-l', '--']
+        listing = subprocess.run(prefix[:-1], capture_output=True, text=True)
+        self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+        self.assertIn('/usr/bin/apt-mark ^hold ', listing.stdout)
+        self.assertIn('/usr/bin/apt-mark ^unhold ', listing.stdout)
+        self.assertNotIn('/usr/bin/apt-mark hold *', listing.stdout)
+        self.assertNotIn('/usr/bin/apt-mark unhold *', listing.stdout)
+        positives = [
+            ['linux-image-amd64'], ['libc6:amd64'], ['linux-image-6.1.0-42-amd64'],
+            ['g++-12'], ['0ad'], ['systemd', 'libc6:amd64', 'linux-image-amd64'],
+        ]
+        negatives = [
+            [], ['-oDir::Bin::dpkg=/tmp/evil', 'linux-image-amd64'],
+            ['linux-image-amd64', '-oDir::Bin::dpkg=/tmp/evil'],
+            ['--file', '/tmp/state', 'linux-image-amd64'], ['linux-image-amd64', '--file=/tmp/state'],
+            ['APT_CONFIG=/tmp/evil', 'linux-image-amd64'], ['/tmp/package'],
+            ['linux-image-amd64;'], ['linux-image-amd64\n'], ['linux-image-amd64\nevil'],
+            [''], ['--', 'linux-image-amd64'],
+        ]
+        for operation in ('hold', 'unhold'):
+            for args in positives:
+                with self.subTest(operation=operation, allowed=args):
+                    probe = subprocess.run(prefix + ['/usr/bin/apt-mark', operation] + args, capture_output=True, text=True)
+                    self.assertEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+            for args in negatives:
+                with self.subTest(operation=operation, denied=args):
+                    probe = subprocess.run(prefix + ['/usr/bin/apt-mark', operation] + args, capture_output=True, text=True)
+                    self.assertNotEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+            probe = subprocess.run(prefix + ['/usr/bin/apt-mark', '-oDir::Bin::dpkg=/tmp/evil', operation, 'linux-image-amd64'], capture_output=True, text=True)
+            self.assertNotEqual(probe.returncode, 0, probe.stdout + probe.stderr)
+        env_wrapper = subprocess.run(prefix + ['/usr/bin/env', 'APT_CONFIG=/tmp/evil', '/usr/bin/apt-mark', 'hold', 'linux-image-amd64'], capture_output=True, text=True)
+        self.assertNotEqual(env_wrapper.returncode, 0, env_wrapper.stdout + env_wrapper.stderr)
 
     def test_AC012_effective_policy_failure_restores_old_policy_before_stop(self):
         write(ROOT / 'fail-merged-policy', '', 0o600)

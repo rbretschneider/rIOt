@@ -12,7 +12,7 @@ Deliver one constrained apt transaction runner independent of agent lifetime, se
 
 ## 2. Scope and limits
 
-- New detached maintenance path: Linux, apt 2.x+, systemd 241+ with existing release architectures. Target Debian 11+/Ubuntu 20.04+ class hosts; installer/doctor must verify actual prerequisites. Unsupported apt installations fail closed with an upgrade/install explanation; no unsafe legacy apt fallback.
+- New detached maintenance path: Linux, apt 2.x+, systemd 241+, sudo 1.9.10+ with existing release architectures. Distribution labels do not establish compatibility: installer/doctor must verify actual prerequisites. Older sudo requires an explicit operator upgrade before installing this apt privilege policy; monitoring can continue, with no unsafe legacy apt fallback or automatic dependency installation.
 - Existing DNF update behavior remains supported, including existing hold/reboot semantics. This story does not promise dpkg-style recovery or detached execution on DNF, macOS or Windows. Cross-path auto-update serialization applies wherever supported.
 - Retain `os_update` and its existing parameters; accept closed `mode` values `full`, `security`, `repair` on the new apt path. Missing mode remains `full`; wrong types/unknown values fail before privilege escalation. Repair is available through the existing authenticated command API, without a new endpoint or UI requirement.
 - Existing apt `security` uses conservative `apt-get upgrade`, which does not guarantee security-origin-only selection. Preserve that compatibility and document it accurately. Designing true distro-specific security-origin filtering is outside this story.
@@ -40,6 +40,7 @@ Deliver one constrained apt transaction runner independent of agent lifetime, se
 | FR-015 | Install/upgrade verifies helper release signature/checksum before root-owned installation. The signed agent apply verifier remains the sole binary-replacement authority; no root shell, arbitrary `systemd-run`, shell wildcard or blind ExecStartPre copy is permitted. |
 | FR-016 | Installer publishes validated sudoers/unit/helper changes safely, retaining the last working policy on failure. `visudo` and read-only `doctor` checks verify exact rules, ownership, supported versions, independent service and active maintenance without running a package repair/update. |
 | FR-017 | Explicit migration instructions cover current and legacy units/sudoers, agent-only upgrades, missing helper and incompatible service/policy. Updating only the unprivileged agent cannot silently grant the new privilege path. No automatic removal of unknown administrator policies. |
+| FR-018 | Apt hold/unhold privileges must enforce package-name grammar at the root policy boundary, including direct invocation by a compromised agent. Replace managed `apt-mark hold *` / `unhold *` sudo wildcards with anchored sudo argument regex on sudo 1.9.10+. Permit only the fixed verb plus one or more space-separated names beginning lowercase alphanumeric and continuing `[a-z0-9+._:-]`; reject leading options, equals, slashes, config overrides, control characters and extra verbs. Unsupported sudo or policy validation failure aborts apt installation before mutation. Doctor/readiness rejects old wildcards and only lists dangerous argv to prove denial; it never executes them. |
 
 ## 4. Acceptance criteria and security matrix
 
@@ -58,7 +59,7 @@ New tests carry `[MAINT-RECOVERY AC-xxx]` names. No real package changes or serv
 | AC-009 | Before/after and reboot/outbox regressions remain green; repair/failed/unknown results never reboot. Restart/repeated report delivery never reissues reboot. |
 | AC-010 | Symlink, FIFO/device, writable helper/unit/parent, file swap, oversized input/output and forged status are refused or bounded. No root write targets agent-selected paths; persisted output is redacted/capped before server reporting. |
 | AC-011 | Packaging covers all Linux release architectures with exact-basename signed checksums and preserves legacy checksum ordering. Invalid signature, missing asset or invalid sudoers/unit leaves the active install/policy intact. |
-| AC-012 | Installer/doctor fixture tests distinguish current, missing, legacy-broad and unsupported apt/service setups. Doctor uses privilege-list/status inspection only and never starts maintenance. Existing DNF/non-Linux and command API tests remain green. |
+| AC-012 | Installer/doctor fixture tests distinguish current, missing, legacy-broad and unsupported apt/service/sudo setups. Real sudo-list fixtures admit valid single/multiple/multiarch package names and deny apt-mark option/config injection, leading hyphen, slash, equals and newline inputs. Old sudo fails before lifecycle/policy mutation. Doctor uses privilege-list/status inspection only and never starts maintenance or an injected command. Existing DNF/non-Linux and command API tests remain green. |
 
 ## 5. Delivery gates
 
