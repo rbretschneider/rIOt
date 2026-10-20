@@ -170,7 +170,7 @@ export default function CommandPalette() {
             setQuery(e.target.value)
             setIndex(0)
           }}
-          placeholder="Find a host, container, stack or Docker page…"
+          placeholder="Find a device, container, stack or Docker page…"
           className="w-full bg-surface border border-border rounded p-3"
         />
         {!query && (

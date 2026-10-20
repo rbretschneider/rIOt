@@ -6,6 +6,7 @@ import DisconnectedBanner from './dashboard/DisconnectedBanner'
 import PerDeviceCharts from './dashboard/PerDeviceCharts'
 import ContainerLeaderboard from './dashboard/ContainerLeaderboard'
 import ActivityRiver from './dashboard/ActivityRiver'
+import { PageHeader } from '../components/ui'
 
 /**
  * Fleet dashboard at /dashboard. Three sections:
@@ -31,7 +32,8 @@ export default function Dashboard() {
   const { perDeviceSeries, heartbeatsLoading } = useFleetMetrics(devices, events)
 
   return (
-    <div className="space-y-6" data-testid="dashboard-page">
+    <div className="min-w-0 space-y-6" data-testid="dashboard-page">
+      <PageHeader title="Overview" description="Performance, workloads and recent activity across your devices." />
       {!wsConnected && <DisconnectedBanner />}
 
       <section aria-labelledby="charts-heading">

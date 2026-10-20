@@ -1,3 +1,4 @@
+import { PageHeader } from '../../components/ui'
 import { useState, useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
@@ -40,13 +41,8 @@ export default function FeatureSettings() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h2 className="text-lg font-semibold text-white">Dashboard Features</h2>
-        <p className="text-sm text-gray-400 mt-1">
-          Toggle visibility of features across the dashboard. Disabled features are hidden from all views.
-          Data collection continues regardless of these settings. Per-device overrides may be supported in a future release.
-        </p>
-      </div>
+      <PageHeader title="Features" eyebrow="Settings" description="Choose which features appear throughout your workspace. Data collection continues when a feature is hidden." />
+
 
       {/* Search / filter */}
       <div className="mb-4">

@@ -5,7 +5,8 @@ import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import SeverityBadge from '../components/SeverityBadge'
-import { Timestamp, enumLabel } from '../components/ui'
+import { PageHeader, Timestamp, enumLabel } from '../components/ui'
+import { containerPath } from '../utils/dockerUrlState'
 
 const PAGE_SIZE = 25
 
@@ -63,8 +64,7 @@ export default function Alerts() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h1 className="text-xl font-bold text-white">Events & Alerts</h1>
+      <PageHeader title="Events & Alerts" description="Fleet events, workload changes and alerts that need attention." actions={
         <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
             <input
@@ -86,13 +86,14 @@ export default function Alerts() {
           )}
           <input
             type="text"
+            aria-label="Filter events"
             placeholder="Filter events..."
             value={filter}
             onChange={(e) => { setFilter(e.target.value); setPage(0) }}
             className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
           />
         </div>
-      </div>
+      } />
 
       <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto scrollbar-thin">
         {isLoading ? (
@@ -126,7 +127,7 @@ export default function Alerts() {
                     <td className="px-4 py-3"><SeverityBadge severity={e.severity} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {device ? (
-                        <Link to={`/devices/${device.id}`} className="text-blue-400 hover:text-blue-300 text-sm">
+                        <Link to={`/devices/${encodeURIComponent(device.id)}`} className="text-blue-400 hover:text-blue-300 text-sm">
                           {device.hostname}
                         </Link>
                       ) : (
@@ -135,9 +136,9 @@ export default function Alerts() {
                       {showContainer && e.container_name && (
                         <>
                           <span className="text-gray-600 mx-1.5">:</span>
-                          {device && e.container_id ? (
+                          {device ? (
                             <Link
-                              to={`/devices/${device.id}/containers/${e.container_id}`}
+                              to={containerPath(device.id, e.container_name)}
                               className="text-blue-400 hover:text-blue-300 text-sm"
                             >
                               {e.container_name.replace(/^\//, '')}

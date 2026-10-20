@@ -5,7 +5,7 @@ import { settingsApi } from '../../api/settings'
 import { api } from '../../api/client'
 import { useFeatures } from '../../hooks/useFeatures'
 import type { AlertRule, AlertTemplate } from '../../types/models'
-import { Badge, Button, ConfirmDialog, Modal, enumLabel } from '../../components/ui'
+import { PageHeader, Badge, Button, ConfirmDialog, Modal, enumLabel } from '../../components/ui'
 import { formatDuration } from '../../utils/format'
 
 const METRICS = [
@@ -176,8 +176,9 @@ export default function AlertRuleSettings() {
 
   return (
     <div>
+      <PageHeader title="Alert Rules" eyebrow="Administration" description="Configure thresholds, targets and notification rules." />
       {/* Global Alert Rules */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-lg font-semibold text-white">Global Alert Rules</h2>
         <div className="flex gap-2">
           <button
@@ -206,7 +207,7 @@ export default function AlertRuleSettings() {
       />
 
       {/* Granular Alert Rules — scoped to specific devices and/or containers */}
-      <div className="flex items-center justify-between mb-4 mt-8">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 mt-8">
         <h2 className="text-lg font-semibold text-white">Granular Alert Rules</h2>
         <button
           onClick={() => { setEditing({ ...emptyRule }); setIsNew(true) }}

@@ -27,7 +27,7 @@ const json = (body: unknown, status = 200) =>
 beforeEach(() => localStorage.clear())
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-describe('[DOCKER-UX-001 / OIDC AC-005] Authentication gates protected navigation queries', () => {
+describe('[APP-WORKSPACE AC-004] Authentication gates protected navigation queries', () => {
   it('keeps the logged-out login and OIDC button stable without protected requests or reloads', async () => {
     const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
     const fetcher = vi.fn(async (url: RequestInfo | URL) => {
@@ -62,7 +62,10 @@ describe('[DOCKER-UX-001 / OIDC AC-005] Authentication gates protected navigatio
     await act(async () => { resolveAuth(json({ authenticated: true, needs_setup: false })) })
     await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url) === '/api/v1/settings/features')).toBe(true))
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Docker' })).not.toBeInTheDocument())
-    expect(screen.getByRole('link', { name: 'Fleet' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Devices' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open command palette' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Account' })).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: 'Alerts' })).toHaveLength(2)
   })
 
   it('does not fetch protected settings during first-run setup', async () => {

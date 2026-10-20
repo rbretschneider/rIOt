@@ -13,6 +13,7 @@ import {
   EmptyState,
   ErrorPanel,
   Modal,
+  PageHeader,
   QueryState,
   Timestamp,
   Popover,
@@ -485,17 +486,15 @@ export default function ContainersPage() {
   })
   return (
     <div className="min-w-0 space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Containers</h1>
-          <p className="mt-1 text-sm text-text-muted">
-            Runtime state, resource usage and logs across your hosts.
-          </p>
-        </div>
-        <span className="text-xs tabular-nums text-text-muted">
-          {filtered.length} of {fleet.data?.length ?? 0} containers
-        </span>
-      </header>
+      <PageHeader
+        title="Containers"
+        description="Runtime state, resource usage and logs across your hosts."
+        actions={
+          <span className="text-xs tabular-nums text-text-muted">
+            {filtered.length} of {fleet.data?.length ?? 0} containers
+          </span>
+        }
+      />
       <div className="flex flex-wrap gap-2 items-center">
         <input
           aria-label="Search containers"
@@ -508,10 +507,12 @@ export default function ContainersPage() {
           label="Hosts"
           selected={state.host}
           onChange={(values) => write('host', values.join(','))}
-          options={(hosts.data ?? []).map((h) => ({
-            value: h.device_id,
-            label: h.hostname,
-          }))}
+          options={(hosts.data ?? [])
+            .filter((h) => h.docker_available === true)
+            .map((h) => ({
+              value: h.device_id,
+              label: h.hostname,
+            }))}
         />
         <MultiSelectFilter
           label="Stacks"
@@ -584,6 +585,7 @@ export default function ContainersPage() {
             try {
               await Promise.all(
                 (hosts.data ?? [])
+                  .filter((h) => h.docker_available === true)
                   .filter(
                     (h) =>
                       !state.host.length || state.host.includes(h.device_id),

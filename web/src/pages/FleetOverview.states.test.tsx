@@ -52,6 +52,20 @@ beforeEach(() => {
   vi.mocked(api.getAgentVersions).mockResolvedValue([])
 })
 
+describe('[APP-WORKSPACE AC-008] Devices remains the complete machine collection', () => {
+  it('retains machines without Docker and offline Docker hosts alongside online Docker hosts', async () => {
+    vi.mocked(api.getDevices).mockResolvedValue([
+      { ...device('plain', 'plain-machine'), docker_available: false },
+      { ...device('docker-live', 'docker-online'), docker_available: true },
+      { ...device('docker-down', 'docker-offline'), docker_available: true, status: 'offline' },
+    ] as never)
+    renderWithProviders(<FleetOverview />)
+    expect(await screen.findByRole('link', { name: 'plain-machine' })).toHaveAttribute('href', '/devices/plain')
+    expect(screen.getByRole('link', { name: 'docker-online' })).toHaveAttribute('href', '/devices/docker-live')
+    expect(screen.getByRole('link', { name: 'docker-offline' })).toHaveAttribute('href', '/devices/docker-down')
+  })
+})
+
 describe('[UIF AC-090] fetch error shows error panel, not SetupGuide', () => {
   it('shows "Couldn\'t load devices", the message and a Retry button', async () => {
     vi.mocked(api.getDevices).mockRejectedValue(new Error('HTTP 500: Internal Server Error'))

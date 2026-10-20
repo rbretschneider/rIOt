@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
-import { Timestamp } from '../../components/ui'
+import { PageHeader, Timestamp } from '../../components/ui'
 
 interface DeviceCert {
   id: number
@@ -71,6 +71,7 @@ export default function CertificateSettings() {
 
   return (
     <div className="space-y-8">
+      <PageHeader title="Certificates" eyebrow="Settings" description="Manage device trust, certificates and bootstrap keys." />
       {/* CA Info */}
       <section>
         <h2 className="text-lg font-semibold text-white mb-3">Certificate Authority</h2>

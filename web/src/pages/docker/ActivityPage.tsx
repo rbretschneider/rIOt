@@ -6,6 +6,7 @@ import {
   Button,
   EmptyState,
   Modal,
+  PageHeader,
   QueryState,
   Timestamp,
   enumLabel,
@@ -63,7 +64,14 @@ export default function ActivityPage({
   }
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Activity</h2>
+      {deviceId || container || stack ? (
+        <h2 className="text-lg font-semibold">Activity</h2>
+      ) : (
+        <PageHeader
+          title="Activity"
+          description="Docker commands and observed events across your hosts."
+        />
+      )}
       <div className="flex flex-wrap gap-3">
         {!deviceId && (
           <select
@@ -82,7 +90,7 @@ export default function ActivityPage({
           >
             <option value="">All hosts</option>
             {hosts.data
-              ?.filter((host) => host.docker_available)
+              ?.filter((host) => host.docker_available === true)
               .map((host) => (
                 <option key={host.device_id} value={host.device_id}>
                   {host.hostname}

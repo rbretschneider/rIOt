@@ -11,7 +11,7 @@ import GaugeBar from '../components/GaugeBar'
 import BatteryGauge from '../components/BatteryGauge'
 import MetricChart from '../components/MetricChart'
 import DeviceQueryFallback from '../components/DeviceQueryFallback'
-import { Badge, Button, ConfirmDialog, Timestamp, enumLabel, useToast } from '../components/ui'
+import { Badge, Button, ConfirmDialog, PageHeader, Timestamp, enumLabel, useToast } from '../components/ui'
 import { useTimePreference } from '../contexts/TimePreferenceProvider'
 import { chartColors } from '../theme/chartColors'
 import { formatBytes, formatDuration } from '../utils/format'
@@ -238,14 +238,68 @@ export default function DeviceDetail() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {data?.latest_telemetry?.data?.trimmed && <p role="status" className="rounded border border-warn-fg p-3 text-sm text-warn-fg">Stored telemetry is downsampled by the storage quota. Omitted sections are unavailable; last known data may be shown.</p>}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-        {/* Left: name, status, summary menu, subtitle, navigation links */}
+      <Link to="/" className="inline-flex text-sm text-text-muted hover:text-text">← Devices</Link>
+      <PageHeader
+        eyebrow="Device"
+        title={device.hostname}
+        actions={
+        <div className="flex flex-wrap items-center gap-3">
+          {isEnabled('security_score') && securityScore && (
+            <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
+          )}
+          {device.status === 'online' && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <button
+                onClick={() => setConfirmAction('agent_update')}
+                disabled={!agentOutdated || commandMutation.isPending || agentUpdateSent}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                  agentOutdated
+                    ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
+                    : 'text-gray-600 border border-gray-700/50'
+                }`}
+              >
+                {agentUpdateSent ? 'Update Sent' : 'Update Agent'}
+              </button>
+              {tel?.updates && tel.updates.pending_updates > 0 && (
+                <button
+                  onClick={() => setConfirmAction('os_update')}
+                  disabled={commandMutation.isPending}
+                  className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Patch ({tel.updates.pending_updates})
+                </button>
+              )}
+              <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
+                <span className="text-xs text-gray-500">Auto-patch</span>
+                <button
+                  role="switch"
+                  aria-checked={device.auto_patch}
+                  onClick={() => autoPatchMutation.mutate(!device.auto_patch)}
+                  disabled={autoPatchMutation.isPending}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                    device.auto_patch ? 'bg-cyan-600' : 'bg-gray-700'
+                  }`}
+                >
+                  <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                    device.auto_patch ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`} />
+                </button>
+              </label>
+            </div>
+          )}
+          {/* Destructive action: kept apart from the navigation links and the agent actions. */}
+          <div className="border-l border-border pl-3">
+            <Button variant="danger" size="sm" onClick={() => setDeleteScope({ uninstall: device.status === 'online' })}>
+              Delete
+            </Button>
+          </div>
+        </div>
+        }
+      >
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-white truncate">{device.hostname}</h1>
+          <div className="flex flex-wrap items-center gap-2">
             {/* Summary export dropdown */}
             <div className="relative" ref={summaryMenuRef}>
               <button
@@ -354,7 +408,7 @@ export default function DeviceDetail() {
               </>
             )}
           </p>
-          <nav aria-label="Device sections" className="flex items-center gap-4 mt-2">
+          <nav aria-label="Device sections" className="flex flex-wrap items-center gap-4 mt-2">
             {isEnabled('docker') && tel?.docker?.available && (
               <span className="flex items-center gap-2">
                 <Link
@@ -395,59 +449,7 @@ export default function DeviceDetail() {
             )}
           </nav>
         </div>
-        {/* Right: security gauge + agent actions */}
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {isEnabled('security_score') && securityScore && (
-            <SecurityScoreGauge score={securityScore} onClick={() => setShowSecurityModal(true)} />
-          )}
-          {device.status === 'online' && (
-            <div className="flex gap-2 items-center">
-              <button
-                onClick={() => setConfirmAction('agent_update')}
-                disabled={!agentOutdated || commandMutation.isPending || agentUpdateSent}
-                className={`px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                  agentOutdated
-                    ? 'text-amber-400 hover:text-amber-300 border border-amber-600/50 hover:border-amber-500/50'
-                    : 'text-gray-600 border border-gray-700/50'
-                }`}
-              >
-                {agentUpdateSent ? 'Update Sent' : 'Update Agent'}
-              </button>
-              {tel?.updates && tel.updates.pending_updates > 0 && (
-                <button
-                  onClick={() => setConfirmAction('os_update')}
-                  disabled={commandMutation.isPending}
-                  className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Patch ({tel.updates.pending_updates})
-                </button>
-              )}
-              <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
-                <span className="text-xs text-gray-500">Auto-patch</span>
-                <button
-                  role="switch"
-                  aria-checked={device.auto_patch}
-                  onClick={() => autoPatchMutation.mutate(!device.auto_patch)}
-                  disabled={autoPatchMutation.isPending}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-                    device.auto_patch ? 'bg-cyan-600' : 'bg-gray-700'
-                  }`}
-                >
-                  <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
-                    device.auto_patch ? 'translate-x-3.5' : 'translate-x-0.5'
-                  }`} />
-                </button>
-              </label>
-            </div>
-          )}
-          {/* Destructive action: kept apart from the navigation links and the agent actions. */}
-          <div className="border-l border-border pl-3">
-            <Button variant="danger" size="sm" onClick={() => setDeleteScope({ uninstall: device.status === 'online' })}>
-              Delete
-            </Button>
-          </div>
-        </div>
-      </div>
+      </PageHeader>
 
       {/* Location & Tags */}
       <div className="flex items-center gap-4 flex-wrap">

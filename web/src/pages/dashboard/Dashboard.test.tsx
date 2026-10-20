@@ -161,6 +161,12 @@ beforeEach(async () => {
 })
 
 describe('Dashboard — route renders at /dashboard', () => {
+  it('[APP-WORKSPACE AC-007] gives the performance workspace one Overview heading above its device charts', async () => {
+    renderDashboard()
+    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(await screen.findByTestId('per-device-charts')).toBeInTheDocument()
+  })
   it('renders the dashboard page root', async () => {
     renderDashboard()
     expect(await screen.findByTestId('dashboard-page')).toBeInTheDocument()

@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { makeTestQueryClient, renderWithProviders } from '../../test/renderWithProviders'
+import {
+  makeTestQueryClient,
+  renderWithProviders,
+} from '../../test/renderWithProviders'
 import ContainersPage from './ContainersPage'
 import ContainerPage from './ContainerPage'
 import InventoryPage from './InventoryPage'
 import StacksPage from './StacksPage'
+import ActivityPage from './ActivityPage'
 import StackPage from './StackPage'
 import LegacyRedirect from './LegacyRedirect'
 import LogView from '../../components/docker/LogView'
@@ -182,38 +186,57 @@ describe('Docker fleet', () => {
     const user = userEvent.setup()
     let view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
-    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Image' }),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Columns' }))
     await user.click(screen.getByRole('checkbox', { name: 'Image' }))
-    expect(screen.getByRole('columnheader', { name: 'Image' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('columnheader', { name: 'Image' }),
+    ).toBeInTheDocument()
     view.unmount()
 
     view = renderWithProviders(<ContainersPage />)
-    expect(await screen.findByRole('columnheader', { name: 'Image' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('columnheader', { name: 'Image' }),
+    ).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Columns' }))
     await user.click(screen.getByRole('checkbox', { name: 'Image' }))
-    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Image' }),
+    ).not.toBeInTheDocument()
     view.unmount()
 
     view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
-    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Image' }),
+    ).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Columns' }))
     await user.click(screen.getByRole('checkbox', { name: 'Image' }))
     await user.click(screen.getByRole('button', { name: 'Reset columns' }))
-    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
-    expect(screen.getByRole('columnheader', { name: 'CPU' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Image' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('columnheader', { name: 'CPU' }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Name' })).toBeDisabled()
     view.unmount()
 
     renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
-    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
-    expect(screen.getByRole('columnheader', { name: 'CPU' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('columnheader', { name: 'Image' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('columnheader', { name: 'CPU' }),
+    ).toBeInTheDocument()
   })
   it('opens canonical container logs directly and returns to the filtered collection', async () => {
     const user = userEvent.setup()
-    const collection = '/docker/containers?host=host-1&status=running&q=web&sort=cpu%3Adesc'
+    const collection =
+      '/docker/containers?host=host-1&status=running&q=web&sort=cpu%3Adesc'
     const queryClient = makeTestQueryClient()
     queryClient.setQueryDefaults(['feature-toggles'], { gcTime: Infinity })
     queryClient.setQueryData(['feature-toggles'], {})
@@ -226,22 +249,38 @@ describe('Docker fleet', () => {
     renderWithProviders(<ContainersPage />, {
       route: collection,
       path: '/docker/containers',
-      routes: [{ path: '/docker/containers/:deviceId/:name', element: <ContainerPage /> }],
+      routes: [
+        {
+          path: '/docker/containers/:deviceId/:name',
+          element: <ContainerPage />,
+        },
+      ],
       showLocation: true,
       queryClient,
     })
     const shortcut = await screen.findByRole('link', { name: 'Logs for web' })
-    expect(shortcut).toHaveAttribute('href', '/docker/containers/host-1/web?tab=logs')
+    expect(shortcut).toHaveAttribute(
+      'href',
+      '/docker/containers/host-1/web?tab=logs',
+    )
     await user.click(shortcut)
-    expect(await screen.findByRole('heading', { name: 'web' })).toBeInTheDocument()
-    expect(screen.getByTestId('location')).toHaveTextContent('/docker/containers/host-1/web?tab=logs')
-    expect(await screen.findByText('hello', { exact: false })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'web' }),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      '/docker/containers/host-1/web?tab=logs',
+    )
+    expect(
+      await screen.findByText('hello', { exact: false }),
+    ).toBeInTheDocument()
     const back = screen.getByRole('link', { name: '← Containers' })
     expect(back).toHaveAttribute('href', collection)
     await user.click(back)
     expect(await screen.findByRole('link', { name: 'web' })).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent(collection)
-    expect(screen.getByRole('textbox', { name: 'Search containers' })).toHaveValue('web')
+    expect(
+      screen.getByRole('textbox', { name: 'Search containers' }),
+    ).toHaveValue('web')
     expect(screen.queryByRole('link', { name: 'db' })).not.toBeInTheDocument()
   })
   it('shows fleet columns, links by host and name, and persists a status filter', async () => {
@@ -562,4 +601,81 @@ describe('Inventory cleanup', () => {
       screen.getByRole('button', { name: 'Preview unused cleanup' }),
     ).toBeDisabled()
   })
+})
+
+describe('[APP-WORKSPACE AC-008] Docker host options', () => {
+  const offline = {
+    ...host,
+    device_id: 'host-offline',
+    hostname: 'offline-docker',
+    status: 'offline',
+  }
+  const unavailable = {
+    ...host,
+    device_id: 'host-unavailable',
+    hostname: 'no-docker',
+    docker_available: false,
+  }
+  beforeEach(() => {
+    mock.hosts.mockResolvedValue([host, offline, unavailable])
+  })
+  it('includes offline Docker hosts in container filters and excludes other machines', async () => {
+    const user = userEvent.setup()
+    const client = makeTestQueryClient()
+    renderWithProviders(<ContainersPage />, {
+      route: '/docker/containers',
+      queryClient: client,
+    })
+    await screen.findByRole('link', { name: 'web' })
+    await user.click(screen.getByRole('button', { name: 'Hosts: All' }))
+    expect(
+      screen.getByRole('checkbox', { name: 'host-one' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('checkbox', { name: 'offline-docker' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('checkbox', { name: 'no-docker' }),
+    ).not.toBeInTheDocument()
+    expect(client.getQueryData(['docker-hosts'])).toEqual([
+      host,
+      offline,
+      unavailable,
+    ])
+  })
+  it.each([
+    ['stacks', 'Stack host'],
+    ['inventory', 'Inventory host'],
+    ['activity', 'Activity host'],
+  ])(
+    'filters %s host options using availability rather than online state',
+    async (page, label) => {
+      mock.stacks.mockResolvedValue([])
+      mock.activity.mockResolvedValue({ entries: [] })
+      mock.inventory.mockResolvedValue({
+        hosts: [host, offline, unavailable].map((h) => ({ ...h, state: 'ok' })),
+        items: [],
+      })
+      renderWithProviders(
+        page === 'stacks' ? (
+          <StacksPage />
+        ) : page === 'activity' ? (
+          <ActivityPage />
+        ) : (
+          <InventoryPage kind="images" />
+        ),
+        { route: '/docker/' + page },
+      )
+      const select = screen.getByRole('combobox', { name: label })
+      expect(
+        await within(select).findByRole('option', { name: 'host-one' }),
+      ).toBeInTheDocument()
+      expect(
+        within(select).getByRole('option', { name: 'offline-docker' }),
+      ).toBeInTheDocument()
+      expect(
+        within(select).queryByRole('option', { name: 'no-docker' }),
+      ).not.toBeInTheDocument()
+    },
+  )
 })

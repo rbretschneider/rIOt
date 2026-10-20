@@ -136,6 +136,17 @@ describe('[AC-007] Page structure: Server Probes above Device Probes', () => {
   })
 })
 
+describe('[APP-WORKSPACE AC-007] probes share the workspace header', () => {
+  it('keeps a single page heading, collection description and separate probe creation controls', async () => {
+    renderProbes()
+    await screen.findByRole('heading', { level: 1, name: 'Probes' })
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByText('Service checks from the server and your managed devices.')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Add Probe' })).toHaveLength(2)
+    expect(screen.getByRole('link', { name: 'Google HTTP' })).toHaveAttribute('href', '/probes/1')
+  })
+})
+
 // ===================================================================
 // [AC-001] Server Probes section renders all columns and actions
 // ===================================================================

@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom'
 import { useState } from 'react'
-import { enumLabel } from '../components/ui'
+import { PageHeader, enumLabel } from '../components/ui'
 
 // ── Copy button for code blocks ──────────────────────────────────────────────
 
@@ -1174,30 +1174,22 @@ export default function LearnMore() {
 
   if (!finding) {
     return (
-      <div className="max-w-3xl mx-auto py-12 px-6">
-        <h1 className="text-2xl font-bold text-white mb-4">Article Not Found</h1>
-        <p className="text-gray-400 mb-6">The requested security guide could not be found.</p>
-        <Link to="/" className="text-blue-400 hover:text-blue-300 text-sm">&larr; Back to Fleet</Link>
+      <div className="max-w-3xl mx-auto space-y-5">
+        <PageHeader title="Article Not Found" eyebrow="Security guide" description="The requested security guide could not be found." />
+        <Link to="/security" className="text-blue-400 hover:text-blue-300 text-sm">&larr; Back to Security</Link>
       </div>
     )
   }
 
   return (
-    <div className="max-w-3xl mx-auto py-8 px-6">
+    <div className="min-w-0 max-w-3xl mx-auto space-y-6">
       {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-1 text-xs text-gray-500">
-          <Link to="/" className="hover:text-gray-300 transition-colors">&larr; Back to Fleet</Link>
-          <span>/</span>
-          <span>Security Guide</span>
-          <span>/</span>
-          <span>{finding.category}</span>
-        </div>
-        <h1 className="text-2xl font-bold text-white mt-3 mb-2">{finding.title}</h1>
+      <Link to="/security" className="inline-flex text-sm text-text-muted hover:text-text">&larr; Back to Security</Link>
+      <PageHeader title={finding.title} eyebrow={`Security guide · ${finding.category}`}>
         <span className={`inline-block px-2 py-0.5 text-xs font-medium uppercase rounded border ${severityStyle(finding.severity)}`}>
           {enumLabel('severity', finding.severity)}
         </span>
-      </div>
+      </PageHeader>
 
       {/* Content */}
       <div className="prose prose-invert max-w-none">

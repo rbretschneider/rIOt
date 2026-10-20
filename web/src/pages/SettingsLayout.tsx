@@ -13,8 +13,7 @@ export default function SettingsLayout() {
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 mb-6">
-        <h1 className="text-2xl font-bold text-white shrink-0">Settings</h1>
-        <nav className="flex gap-1 overflow-x-auto scrollbar-hide">
+        <nav aria-label="Settings sections" className="flex gap-1 overflow-x-auto scrollbar-hide">
           {tabs.map(t => (
             <NavLink
               key={t.to}

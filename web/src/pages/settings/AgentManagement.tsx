@@ -6,7 +6,7 @@ import { useFeatures } from '../../hooks/useFeatures'
 import { isVersionOlder } from '../../utils/version'
 import { formatDuration } from '../../utils/format'
 import type { AutomationConfig, MaintenanceWindow } from '../../types/models'
-import { ConfirmDialog } from '../../components/ui'
+import { PageHeader, ConfirmDialog } from '../../components/ui'
 
 export default function AgentManagement() {
   const qc = useQueryClient()
@@ -35,6 +35,7 @@ export default function AgentManagement() {
 
   return (
     <div className="space-y-6">
+      <PageHeader title="Agents" eyebrow="Settings" description="Manage agent versions, update policy and automation." />
       <h2 className="text-lg font-semibold text-white">Agent Version Management</h2>
 
       {/* Version Distribution */}

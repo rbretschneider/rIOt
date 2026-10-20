@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import type { DeviceProbeWithResultEnriched, ProbeWithResult } from '../types/models'
 import ProbeModal, { emptyProbe, probeToForm, getTarget, type ProbeForm } from '../components/ProbeModal'
 import DeviceProbeModal, { type DeviceProbeForm } from '../components/DeviceProbeModal'
-import { ConfirmDialog, RelativeTime } from '../components/ui'
+import { ConfirmDialog, PageHeader, RelativeTime } from '../components/ui'
 
 export default function Probes() {
   const qc = useQueryClient()
@@ -113,11 +113,11 @@ export default function Probes() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Probes</h1>
+      <PageHeader title="Probes" description="Service checks from the server and your managed devices." />
 
       {/* Server Probes Section */}
       <div>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-semibold text-white">Server Probes</h2>
           <button
             onClick={() => { setEditingServer({ ...emptyProbe }); setIsNewServer(true) }}
@@ -241,7 +241,7 @@ export default function Probes() {
 
       {/* Device Probes Section */}
       <div className="mt-8">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-semibold text-white">Device Probes</h2>
           <div className="relative" ref={devicePickerRef}>
             <button
@@ -262,7 +262,7 @@ export default function Probes() {
                         key={device.id}
                         onClick={() => {
                           setShowDevicePicker(false)
-                          navigate(`/devices/${device.id}/probes`)
+                          navigate(`/devices/${encodeURIComponent(device.id)}/probes`)
                         }}
                         className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
                       >
@@ -320,7 +320,7 @@ export default function Probes() {
                     <td className="px-4 py-3 text-gray-400 uppercase text-xs">{probe.type}</td>
                     <td className="px-4 py-3">
                       <Link
-                        to={`/devices/${probe.device_id}`}
+                        to={`/devices/${encodeURIComponent(probe.device_id)}`}
                         className="text-blue-400 hover:text-blue-300 transition-colors"
                       >
                         {probe.device_hostname || probe.device_id}

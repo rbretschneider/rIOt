@@ -1,3 +1,4 @@
+import { PageHeader } from '../../components/ui'
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
@@ -15,7 +16,7 @@ export default function GeneralSettings() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white mb-4">General Settings</h2>
+      <PageHeader title="General Settings" eyebrow="Settings" description="Manage access, registration and server configuration." />
       <div className="bg-gray-900 rounded-lg border border-gray-800 p-6 space-y-6">
         {/* Password Change */}
         <PasswordChangeSection />

@@ -24,6 +24,7 @@ import {
   EmptyState,
   ErrorPanel,
   Modal,
+  PageHeader,
   QueryState,
 } from '../../components/ui'
 import ContainerStatusBadge from '../../components/ContainerStatusBadge'
@@ -323,141 +324,140 @@ export default function ContainerPage() {
           </select>
         )}
       </div>
-      <header className="flex min-w-0 flex-wrap justify-between gap-4 border-b border-border pb-4">
-        <div className="min-w-0 flex-1">
-          <p className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
-            Container
-          </p>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="break-all text-2xl font-semibold text-text">
-              {c.riot?.icon} {displayName(c.riot, c.name)}
-            </h1>
-            <ContainerStatusBadge state={c.state} />
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
-            <Link
-              className="text-link"
-              to={`/docker/containers?host=${encodeURIComponent(deviceId!)}`}
-            >
-              Host: {device.data.device.hostname}
-            </Link>
-            {project && (
-              <Link className="text-link" to={stackPath(deviceId!, project)}>
-                Stack: {project}
-              </Link>
+      <PageHeader
+        eyebrow="Container"
+        title={
+          <>
+            {c.riot?.icon} {displayName(c.riot, c.name)}
+          </>
+        }
+        actions={
+          <div className="flex flex-wrap items-start gap-2">
+            {primary && (
+              <Button disabled={tracker.isBusy} onClick={() => choose(primary)}>
+                {primary[0].toUpperCase() + primary.slice(1)}
+              </Button>
             )}
-            <span className="break-all font-mono" title={c.image}>
-              {c.image}
-            </span>
-            <span className="font-mono">{c.short_id}</span>
-            {self && <span className="text-warn-fg">rIOt infrastructure</span>}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-start gap-2">
-          {primary && (
-            <Button disabled={tracker.isBusy} onClick={() => choose(primary)}>
-              {primary[0].toUpperCase() + primary.slice(1)}
-            </Button>
-          )}
-          {tracker.isBusy && (
-            <span role="status" className="text-sm text-info-fg">
-              {tracker.label} {tracker.command?.step}
-            </span>
-          )}
-          {c.state === 'running' && primary !== 'restart' && (
-            <Button
-              variant="secondary"
-              disabled={tracker.isBusy}
-              onClick={() => choose('restart')}
-            >
-              Restart
-            </Button>
-          )}
-          {['running', 'exited', 'created', 'dead'].includes(c.state) && (
-            <Button
-              variant="secondary"
-              disabled={tracker.isBusy}
-              onClick={() => {
-                void tracker.track(() =>
-                  api.sendCommand(deviceId!, 'docker_check_updates', {}),
-                )
-              }}
-            >
-              Check updates
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            onClick={() => {
-              const p = new URLSearchParams(params)
-              p.set('tab', 'logs')
-              setParams(p)
-            }}
-          >
-            Logs
-          </Button>
-          {isEnabled('docker_terminal') && c.state === 'running' && (
+            {tracker.isBusy && (
+              <span role="status" className="text-sm text-info-fg">
+                {tracker.label} {tracker.command?.step}
+              </span>
+            )}
+            {c.state === 'running' && primary !== 'restart' && (
+              <Button
+                variant="secondary"
+                disabled={tracker.isBusy}
+                onClick={() => choose('restart')}
+              >
+                Restart
+              </Button>
+            )}
+            {['running', 'exited', 'created', 'dead'].includes(c.state) && (
+              <Button
+                variant="secondary"
+                disabled={tracker.isBusy}
+                onClick={() => {
+                  void tracker.track(() =>
+                    api.sendCommand(deviceId!, 'docker_check_updates', {}),
+                  )
+                }}
+              >
+                Check updates
+              </Button>
+            )}
             <Button
               variant="ghost"
               onClick={() => {
                 const p = new URLSearchParams(params)
-                p.set('tab', 'terminal')
+                p.set('tab', 'logs')
                 setParams(p)
               }}
             >
-              Terminal
+              Logs
             </Button>
-          )}
-          <DropdownMenu
-            items={[
-              {
-                label: 'Copy container ID',
-                onSelect: () => {
-                  void navigator.clipboard.writeText(c.id)
-                },
-              },
-              {
-                label: 'Copy image reference',
-                onSelect: () => {
-                  void navigator.clipboard.writeText(c.image)
-                },
-              },
-              ...(safeUrl(c.repo_url)
-                ? [
-                    {
-                      label: 'Open source repository',
-                      onSelect: () => {
-                        window.open(
-                          safeUrl(c.repo_url),
-                          '_blank',
-                          'noopener,noreferrer',
-                        )
-                      },
-                    },
-                  ]
-                : []),
-              {
-                label: 'Auto-update settings',
-                onSelect: () => {
+            {isEnabled('docker_terminal') && c.state === 'running' && (
+              <Button
+                variant="ghost"
+                onClick={() => {
                   const p = new URLSearchParams(params)
-                  p.set('tab', 'overview')
+                  p.set('tab', 'terminal')
                   setParams(p)
+                }}
+              >
+                Terminal
+              </Button>
+            )}
+            <DropdownMenu
+              items={[
+                {
+                  label: 'Copy container ID',
+                  onSelect: () => {
+                    void navigator.clipboard.writeText(c.id)
+                  },
                 },
-              },
-              ...(['running', 'paused', 'restarting'].includes(c.state)
-                ? [
-                    {
-                      label: 'Stop',
-                      danger: true,
-                      disabled: tracker.isBusy,
-                      onSelect: () => choose('stop'),
-                    },
-                  ]
-                : []),
-            ]}
-          />{' '}
+                {
+                  label: 'Copy image reference',
+                  onSelect: () => {
+                    void navigator.clipboard.writeText(c.image)
+                  },
+                },
+                ...(safeUrl(c.repo_url)
+                  ? [
+                      {
+                        label: 'Open source repository',
+                        onSelect: () => {
+                          window.open(
+                            safeUrl(c.repo_url),
+                            '_blank',
+                            'noopener,noreferrer',
+                          )
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  label: 'Auto-update settings',
+                  onSelect: () => {
+                    const p = new URLSearchParams(params)
+                    p.set('tab', 'overview')
+                    setParams(p)
+                  },
+                },
+                ...(['running', 'paused', 'restarting'].includes(c.state)
+                  ? [
+                      {
+                        label: 'Stop',
+                        danger: true,
+                        disabled: tracker.isBusy,
+                        onSelect: () => choose('stop'),
+                      },
+                    ]
+                  : []),
+              ]}
+            />{' '}
+          </div>
+        }
+      >
+        <ContainerStatusBadge state={c.state} />
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
+          <Link
+            className="text-link"
+            to={`/docker/containers?host=${encodeURIComponent(deviceId!)}`}
+          >
+            Host: {device.data.device.hostname}
+          </Link>
+          {project && (
+            <Link className="text-link" to={stackPath(deviceId!, project)}>
+              Stack: {project}
+            </Link>
+          )}
+          <span className="break-all font-mono" title={c.image}>
+            {c.image}
+          </span>
+          <span className="font-mono">{c.short_id}</span>
+          {self && <span className="text-warn-fg">rIOt infrastructure</span>}
         </div>
-      </header>
+      </PageHeader>
       {tracker.command && (
         <CommandProgress deviceId={deviceId!} commandId={tracker.command.id} />
       )}{' '}
