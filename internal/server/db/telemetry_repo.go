@@ -291,6 +291,8 @@ func (r *TelemetryRepo) GetGPUDeviceIDs(ctx context.Context) ([]string, error) {
 func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]FleetContainerProjection, error) {
 	// Build the allowlist in SQL: env, mounts, network attachments and arbitrary
 	// labels never cross the database connection or enter Go memory.
+	// Pick one row per device with an index lookup before projecting JSON; a
+	// global DISTINCT ON would inspect Docker JSON across the full history.
 	rows, err := r.db.Pool.Query(ctx, `SELECT device_id,
  COALESCE((SELECT jsonb_agg(jsonb_build_object(
  'id', left(c->>'id',128),
@@ -326,9 +328,10 @@ func (r *TelemetryRepo) GetFleetContainerLeaderboard(ctx context.Context) ([]Fle
  ) ORDER BY ord)
  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(data#>'{docker,containers}')='array' THEN data#>'{docker,containers}' ELSE '[]'::jsonb END) WITH ORDINALITY AS containers(c,ord)
  WHERE c->>'state' IN ('running','restarting','exited','paused','created','dead')),'[]'::jsonb) AS containers
- FROM (SELECT DISTINCT ON (device_id) device_id,data FROM telemetry_snapshots
- WHERE `+notFutureDatedSQL+` AND data->'docker' IS NOT NULL AND data->'docker'<>'null'::jsonb
- ORDER BY device_id, timestamp DESC) latest`)
+ FROM devices d CROSS JOIN LATERAL (
+ SELECT device_id,data FROM telemetry_snapshots
+ WHERE device_id=d.id AND `+notFutureDatedSQL+` AND data->'docker' IS NOT NULL AND data->'docker'<>'null'::jsonb
+ ORDER BY timestamp DESC LIMIT 1) latest ORDER BY device_id`)
 
 	if err != nil {
 		return nil, err

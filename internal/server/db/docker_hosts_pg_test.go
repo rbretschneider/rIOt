@@ -22,3 +22,30 @@ func TestDUX_AC064_HostProjectionRetainsOmittedDockerCapabilities(t *testing.T) 
 	require.False(t, *rows[0].ContainerLogsEnabled)
 	require.Equal(t, "server", rows[0].SelfRole)
 }
+
+func TestDockerProjectionsLatestValidPerHost(t *testing.T) {
+	e := newPGEnv(t, 0)
+	for _, id := range []string{"docker-host", "cleared-host", "no-history"} {
+		e.seedDevice(id)
+	}
+	e.Exec(`INSERT INTO telemetry_snapshots(device_id,timestamp,data) VALUES
+	('docker-host',now()-interval '2 minutes','{"docker":{"available":true,"capabilities":["current"],"containers":[{"name":"current","state":"running"}]}}'),
+	('docker-host',now()-interval '1 minute','{"trimmed":true,"dropped_sections":["docker"]}'),
+	('docker-host',now()+interval '1 day','{"docker":{"available":true,"capabilities":["future"],"containers":[{"name":"future","state":"running"}]}}'),
+	('cleared-host',now()-interval '2 minutes','{"docker":{"available":true,"containers":[{"name":"old","state":"running"}]}}'),
+	('cleared-host',now()-interval '1 minute','{"docker":{"available":false,"containers":[]}}')`)
+	r := NewTelemetryRepo(&DB{Pool: e.Pool})
+	hosts, err := r.GetDockerHostProjection(context.Background())
+	require.NoError(t, err)
+	require.Len(t, hosts, 2)
+	require.Equal(t, "cleared-host", hosts[0].DeviceID)
+	require.False(t, hosts[0].Available)
+	require.Equal(t, "docker-host", hosts[1].DeviceID)
+	require.Equal(t, []string{"current"}, hosts[1].Capabilities)
+	fleet, err := r.GetFleetContainerLeaderboard(context.Background())
+	require.NoError(t, err)
+	require.Len(t, fleet, 2)
+	require.Empty(t, fleet[0].Containers)
+	require.Len(t, fleet[1].Containers, 1)
+	require.Equal(t, "current", fleet[1].Containers[0].Name)
+}
