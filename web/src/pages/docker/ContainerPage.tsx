@@ -4,7 +4,13 @@ import { containerPrimaryAction } from '../../utils/dockerActions'
 import { safeUrl } from '../../utils/safeUrl'
 import UpdateConfirmModal from '../../components/UpdateConfirmModal'
 import { useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
 import { dockerApi } from '../../api/docker'
@@ -35,7 +41,7 @@ import {
   targetKeyForContainer,
 } from '../../utils/commandLifecycle'
 import { displayName, formatBytes } from '../../utils/docker'
-import { stackPath } from '../../utils/dockerUrlState'
+import { containerPath, stackPath } from '../../utils/dockerUrlState'
 import type { ContainerInfo } from '../../types/models'
 function Inspect({ deviceId, name }: { deviceId: string; name: string }) {
   const [enabled, setEnabled] = useState(false)
@@ -166,6 +172,16 @@ function Stats({
 }
 export default function ContainerPage() {
   const { deviceId, name } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const collection = (location.state as { dockerCollection?: unknown } | null)
+    ?.dockerCollection
+  const backTo =
+    typeof collection === 'string' &&
+    (collection === '/docker/containers' ||
+      collection.startsWith('/docker/containers?'))
+      ? collection
+      : `/docker/containers?host=${encodeURIComponent(deviceId!)}`
   const [params, setParams] = useSearchParams()
   const { isEnabled } = useFeatures()
   const device = useQuery({
@@ -178,6 +194,12 @@ export default function ContainerPage() {
     queryFn: dockerApi.hosts,
   })
   const last = useRef<ContainerInfo | null>(null)
+  const resourceKey = `${deviceId}/${name}`
+  const lastKey = useRef(resourceKey)
+  if (lastKey.current !== resourceKey) {
+    last.current = null
+    lastKey.current = resourceKey
+  }
   const found = device.data?.latest_telemetry?.data?.docker?.containers?.find(
     (c) => c.name.replace(/^\//, '') === name,
   )
@@ -269,39 +291,69 @@ export default function ContainerPage() {
     } else setAction(a)
   }
   return (
-    <div className="space-y-5">
-      <div className="flex gap-2 text-sm text-text-muted">
-        <Link to={`/docker/containers?host=${encodeURIComponent(deviceId!)}`}>
-          Containers
+    <div className="min-w-0 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link className="text-sm text-text-muted hover:text-text" to={backTo}>
+          ← Containers
         </Link>
-        <span>/</span>
-        <Link to={`/devices/${encodeURIComponent(deviceId!)}`}>
-          {device.data.device.hostname}
-        </Link>
-        <span>/</span>
-        <span>{c.name}</span>
+        {!!fleet.data?.length && (
+          <select
+            aria-label="Switch container"
+            value={containerPath(deviceId!, name!)}
+            onChange={(event) =>
+              navigate(
+                `${event.target.value}${params.has('tab') ? `?tab=${encodeURIComponent(params.get('tab')!)}` : ''}`,
+                { state: location.state },
+              )
+            }
+            className="max-w-full rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text"
+          >
+            {fleet.data.map((resource) => (
+              <option
+                key={containerPath(resource.device_id, resource.container_name)}
+                value={containerPath(
+                  resource.device_id,
+                  resource.container_name,
+                )}
+              >
+                {resource.hostname} /{' '}
+                {resource.container_name.replace(/^\//, '')}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
-      <header className="border border-border rounded-lg p-5 bg-surface flex flex-wrap justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-semibold">
-            {c.riot?.icon} {displayName(c.riot, c.name)}
-          </h2>
-          <div className="flex gap-3 items-center text-xs mt-2">
+      <header className="flex min-w-0 flex-wrap justify-between gap-4 border-b border-border pb-4">
+        <div className="min-w-0 flex-1">
+          <p className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
+            Container
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="break-all text-2xl font-semibold text-text">
+              {c.riot?.icon} {displayName(c.riot, c.name)}
+            </h1>
             <ContainerStatusBadge state={c.state} />
-            <span>{c.short_id}</span>
-            <span>{c.image}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
+            <Link
+              className="text-link"
+              to={`/docker/containers?host=${encodeURIComponent(deviceId!)}`}
+            >
+              Host: {device.data.device.hostname}
+            </Link>
+            {project && (
+              <Link className="text-link" to={stackPath(deviceId!, project)}>
+                Stack: {project}
+              </Link>
+            )}
+            <span className="break-all font-mono" title={c.image}>
+              {c.image}
+            </span>
+            <span className="font-mono">{c.short_id}</span>
             {self && <span className="text-warn-fg">rIOt infrastructure</span>}
           </div>
-          {project && (
-            <Link
-              className="text-link text-sm"
-              to={stackPath(deviceId!, project)}
-            >
-              {project}
-            </Link>
-          )}
         </div>
-        <div className="flex gap-2 items-start">
+        <div className="flex flex-wrap items-start gap-2">
           {primary && (
             <Button disabled={tracker.isBusy} onClick={() => choose(primary)}>
               {primary[0].toUpperCase() + primary.slice(1)}

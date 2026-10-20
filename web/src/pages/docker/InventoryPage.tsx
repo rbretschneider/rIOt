@@ -198,7 +198,7 @@ export default function InventoryPage({
         : ''
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <header className="border-b border-border pb-4"><h1 className="text-2xl font-semibold">{title}</h1><p className="mt-1 text-sm text-text-muted">Inspect usage across hosts. Cleanup always starts with an exact preview.</p></header>
       <div className="flex flex-wrap gap-3">
         <input
           aria-label={`Search ${kind}`}

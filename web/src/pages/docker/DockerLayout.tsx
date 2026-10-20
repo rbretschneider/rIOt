@@ -1,9 +1,30 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
-import { EmptyState, QueryState } from '../../components/ui'
+import { EmptyState } from '../../components/ui'
 import { useFeatures } from '../../hooks/useFeatures'
-import { DOCKER_SHIPPED } from './phases'
+import DockerIcon from '../../components/docker/DockerIcon'
+
+const groups = [
+  {
+    label: 'Workloads',
+    items: [
+      ['containers', 'Containers'],
+      ['stacks', 'Stacks'],
+      ['hosts', 'Hosts'],
+    ],
+  },
+  {
+    label: 'Resources',
+    items: [
+      ['images', 'Images'],
+      ['volumes', 'Volumes'],
+      ['networks', 'Networks'],
+    ],
+  },
+  { label: 'History', items: [['activity', 'Activity']] },
+]
+
 export default function DockerLayout() {
   const { isEnabled } = useFeatures()
   const hosts = useQuery({
@@ -19,51 +40,51 @@ export default function DockerLayout() {
         description="Enable Docker in Settings to view this area."
       />
     )
+  const available = hosts.data?.filter((h) => h.docker_available) ?? []
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-text">Docker</h1>
-        <p className="text-sm text-text-muted">
-          Containers, stacks and resources across your fleet
-        </p>
-      </div>
-      <nav
-        aria-label="Docker"
-        className="flex flex-wrap gap-2 border-b border-border pb-3"
-      >
-        {[
-          ['containers', 'Containers', DOCKER_SHIPPED.containers],
-          ['stacks', 'Stacks', DOCKER_SHIPPED.stacks],
-          ['images', 'Images', DOCKER_SHIPPED.inventory],
-          ['volumes', 'Volumes', DOCKER_SHIPPED.inventory],
-          ['networks', 'Networks', DOCKER_SHIPPED.inventory],
-          ['activity', 'Activity', DOCKER_SHIPPED.activity],
-        ]
-          .filter(([, , shipped]) => shipped)
-          .map(([path, label]) => (
-            <NavLink
-              key={String(path)}
-              to={`/docker/${path}`}
-              className={({ isActive }) =>
-                `rounded px-3 py-2 text-sm ${isActive ? 'bg-raised-2 text-text' : 'text-text-muted hover:text-text'}`
-              }
-            >
-              {label}
-            </NavLink>
+    <div className="docker-workspace grid min-w-0 gap-6 lg:grid-cols-[184px_minmax(0,1fr)]">
+      <aside className="min-w-0 lg:sticky lg:top-5 lg:self-start">
+        <div className="mb-4 flex items-center gap-2 px-3 text-sm font-semibold tracking-wide text-text">
+          <DockerIcon kind="containers" /> Docker
+        </div>
+        <nav
+          aria-label="Docker"
+          className="flex gap-4 overflow-x-auto pb-2 lg:flex-col lg:gap-5"
+        >
+          {groups.map((group) => (
+            <div key={group.label} className="shrink-0 space-y-1">
+              <p className="mb-2 hidden px-3 text-[11px] font-medium uppercase tracking-wider text-text-muted lg:block">
+                {group.label}
+              </p>
+              <div className="flex gap-1 lg:flex-col">
+                {group.items.map(([path, label]) => (
+                  <NavLink
+                    key={path}
+                    to={`/docker/${path}`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-colors ${isActive ? 'border-border-strong bg-raised-2 font-medium text-text' : 'border-transparent text-text-muted hover:bg-raised hover:text-text'}`
+                    }
+                  >
+                    <DockerIcon kind={path} />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
-      </nav>
-      <QueryState
-        query={hosts}
-        isEmpty={(h) => !h.some((x) => x.docker_available)}
-        empty={
-          <EmptyState
-            title="No host reports Docker"
-            description="Enable the Docker collector on a host to get started."
-          />
-        }
-      >
-        {() => <Outlet />}
-      </QueryState>
+        </nav>
+        <div className="mt-6 hidden border-t border-border px-3 pt-4 text-xs text-text-muted lg:block">
+          {hosts.error
+            ? 'Host status unavailable'
+            : hosts.data
+              ? `${available.filter((h) => h.status === 'online').length} / ${available.length} Docker hosts online`
+              : 'Loading host status…'}
+          <p className="mt-1">Stored history + live logs</p>
+        </div>
+      </aside>
+      <section aria-label="Docker workspace" className="min-w-0">
+        <Outlet />
+      </section>
     </div>
   )
 }
