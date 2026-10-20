@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsApi } from '../../api/settings'
 import type { NotificationChannel } from '../../types/models'
-import { Button, ConfirmDialog, Modal } from '../../components/ui'
+import { PageHeader, Button, ConfirmDialog, Modal } from '../../components/ui'
 import SecretInput from '../../components/SecretInput'
 import { isRedacted, isSecretSet } from '../../utils/secrets'
 
@@ -137,15 +137,15 @@ export default function NotificationSettings() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Notification Channels</h2>
+      <PageHeader title="Notifications" eyebrow="Settings" description="Manage channels and delivery settings for alerts." actions={<>
         <button
           onClick={() => { setEditing({ ...emptyChannel }); setIsNew(true); setOriginal(null) }}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
         >
           Add Channel
         </button>
-      </div>
+      </>} />
+
 
       <div className="space-y-3">
         {channels.map(ch => (

@@ -1,6 +1,6 @@
 # rIOt UI primitives and design tokens
 
-This guide is for developers building or changing screens in the rIOt web dashboard (`web/`). It covers the shared building blocks introduced by UI-FOUNDATION-001: design tokens, a z-index scale, UI primitives, toasts, honest loading and error states, and the one place where times, durations, and enum labels are formatted.
+This guide is for developers building or changing screens in the rIOt web dashboard (`web/`). It covers the shared building blocks introduced by UI-FOUNDATION-001 and APP-WORKSPACE-001: application navigation, resource headers, design tokens, a z-index scale, UI primitives, toasts, honest loading and error states, and shared time/duration/enum formatting.
 
 **The rule:** new UI uses these primitives and tokens. Do not copy a primitive's Tailwind classes into a page, and do not write a new modal, button, badge, or timestamp format by hand. If a primitive cannot do what a screen needs, extend the primitive.
 
@@ -10,11 +10,12 @@ Import everything from the barrel file:
 import { Button, Card, Badge, Modal, ConfirmDialog, EmptyState, Skeleton, QueryState, useToast } from '../components/ui'
 ```
 
-`Timestamp`, `RelativeTime`, `ToastProvider`, `ErrorPanel`, `Spinner`, `focusRing`, `enumLabel`, and the label arrays are exported there too.
+`PageHeader`, `PageHeaderProps`, `Timestamp`, `RelativeTime`, `ToastProvider`, `ErrorPanel`, `Spinner`, `focusRing`, `enumLabel`, and the label arrays are exported there too. The application shell is imported separately from `components/layout/AppShell`.
 
 ## Contents
 
 - [Design tokens](#design-tokens)
+- [Application shell and navigation](#application-shell-and-navigation)
 - [z-index scale](#z-index-scale)
 - [Primitives](#primitives)
 - [Toasts](#toasts)
@@ -37,6 +38,8 @@ Wide tables must scroll inside their own container, not widen the page. Give den
 
 Tokens are declared once, in the `@theme inline` block of `web/src/index.css`. Each one aliases an existing Tailwind palette color, so the token name is the only thing a component references. Tailwind v4 turns each `--color-<name>` into the utilities `bg-<name>`, `text-<name>`, `border-<name>`, `ring-<name>`, and so on, including opacity forms such as `bg-danger-hover/20`.
 
+The root stylesheet overrides the four gray surface/border palette steps globally: gray-950 `#101114`, gray-900 `#17181b`, gray-800 `#292b30`, and gray-700 `#3f4249`. Semantic aliases and existing gray surface classes inherit those neutral values across the application. Do not recreate a Docker-only palette. Status, chart and focus hues retain their existing semantic roles. The alias table below describes token relationships; browser checks are needed to verify rendered contrast and layout.
+
 | Token | Utility examples | Aliases | Use for |
 |-------|------------------|---------|---------|
 | `surface` | `bg-surface` | gray-950 | Page background |
@@ -57,10 +60,20 @@ Tokens are declared once, in the `@theme inline` block of `web/src/index.css`. E
 Notes:
 
 - The `-fg` tokens are for text on the dark surfaces. Tests check their contrast ratio.
-- `web/src/theme/tokens.ts` mirrors the table for tests. `web/src/theme/tokens.test.ts` fails if `index.css` and the mirror drift apart. Change the palette in both files.
+- `web/src/theme/tokens.ts` mirrors the aliases for tests. `web/src/theme/tokens.test.ts` checks alias consistency and contrast against its literal color table; it does not compute inherited CSS overrides. Keep that mirror current when changing colors and verify actual rendered surfaces in a browser.
 - Existing pages still use raw palette classes such as `bg-gray-900`. Migrate a screen to tokens when you change it. Do not mix both styles in a new component.
 - `web/src/index.css` also defines `animate-toast-in`, used by toasts. Toast motion is wrapped in `motion-safe:`, and Skeleton uses `motion-reduce:animate-none`.
-- Use the `scrollbar-thin` class on every scrollable element.
+- Thin scrollbars are global; new scrolling elements need no opt-in class. Keep tables, logs and editors locally scrollable rather than widening the page.
+
+## Application shell and navigation
+
+`AppShell` lives in `web/src/components/layout/AppShell.tsx`. It accepts `children` (page routes), optional `brand`, `utilities` and `banners` React nodes, and required `dockerEnabled: boolean`. It provides the single application navigation, responsive disclosure, topbar, skip link and `<main id="main-content">`. App supplies the existing search, account, notification and clock controls through the utility slot.
+
+The desktop sidebar is persistent from the `xl` breakpoint (1280px). Below it, navigation is an in-flow disclosure with `aria-expanded`; selecting a route or pressing Escape closes it, and Escape returns focus to the toggle. The skip link focuses main content without rewriting the location hash. Do not mount a second application sidebar in a page or layout. Settings subsection tabs and resource tabs remain local navigation.
+
+Keep canonical routes: Devices `/` includes `/devices/:id` descendants; Overview is `/dashboard`; Docker resources retain `/docker/*`; probe details select Probes; security guidance selects Security. Agents `/settings/agents` selects its dedicated item while other settings routes select Settings. Activity stays under Observe but follows the Docker feature gate. Normalize accepted trailing slashes and match complete route segments so exactly one application item has `aria-current="page"`.
+
+AppShell and PageHeader are presentation components and must not fetch. Mount AppShell, CommandPalette, protected utility queries and WebSocket consumers only after App's authentication/setup guards; retain `useFeatures(authenticated && !loading && !needsSetup)`. DockerLayout keeps its disabled-feature boundary and outlet only. Derive Docker host choices with `docker_available === true` without requiring online status or changing the shared cache/complete Devices collection. Navigation must never dispatch an infrastructure action or preconnect a terminal.
 
 ## z-index scale
 
@@ -79,6 +92,24 @@ Toasts sit above modals so an error is never hidden behind a dialog. Tooltips si
 ## Primitives
 
 All primitives live in `web/src/components/ui/`. Props are documented in the source with TypeScript types and short comments. This section states each one's purpose and minimal usage.
+
+### PageHeader
+
+Use one shared header for a top-level page or resource. `title` is required and renders an h1. Optional `description`, `eyebrow`, `actions` and `children` all accept `ReactNode`; `children` is the metadata/status/relationship row. Long titles and controls wrap. The component has no `className`, routing, fetching or action logic.
+
+```tsx
+<PageHeader
+  eyebrow="Device"
+  title={device.hostname}
+  description="System health and configuration"
+  actions={<Button onClick={openSettings}>Settings</Button>}
+>
+  <StatusBadge status={device.status} />
+  <Link to="/">Devices</Link>
+</PageHeader>
+```
+
+Preserve the original pending/disabled state and confirmation handlers in action slots. Use validated internal relationship links and render labels as React text. Avoid stacked shell/page/resource h1 headings. An embedded activity or other scoped panel must not add another page header. Keep status colors, capability warnings and retained/live log controls visible when integrating a resource.
 
 ### Button
 

@@ -1,0 +1,675 @@
+APP-WORKSPACE-001 final validation output (2026-10-20)
+
+=== focused ===
+
+> web@1.0.0 test:run
+> vitest run src/App.auth.test.tsx src/components/layout/AppShell.test.tsx src/pages/settings/NotificationSettings.test.tsx src/pages/settings/LogSettings.test.tsx
+
+
+ RUN  v4.0.18 D:/Repos/rIOt/web
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > opens a danger dialog titled "Delete all server logs" whose message says it cannot be undone
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > does not call clearLogs when cancelled
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > clears the logs and raises a success toast on confirm
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > shows a failure inline and keeps the dialog open
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > keeps the trigger button label "Clear" and disables it when there are no logs
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+ ✓ src/pages/settings/LogSettings.test.tsx (5 tests) 561ms
+ ✓ src/pages/settings/NotificationSettings.test.tsx (6 tests) 749ms
+ ✓ src/components/layout/AppShell.test.tsx (19 tests) 861ms
+ ✓ src/App.auth.test.tsx (3 tests) 142ms
+
+ Test Files  4 passed (4)
+      Tests  33 passed (33)
+   Start at  10:47:35
+   Duration  2.11s (transform 1.43s, setup 590ms, import 2.30s, tests 2.31s, environment 1.16s)
+
+
+=== full ===
+
+> web@1.0.0 test:run
+> vitest run
+
+
+ RUN  v4.0.18 D:/Repos/rIOt/web
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > includes nginx_5xx_count, nginx_4xx_count, nginx_request_count in the metric select
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > includes nginx_5xx_count, nginx_4xx_count, nginx_request_count in the metric select
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > includes nginx_5xx_count, nginx_4xx_count, nginx_request_count in the metric select
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > shows nginx labels "Nginx 5xx Errors", "Nginx 4xx Errors", "Nginx Request Count" in options
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > shows nginx labels "Nginx 5xx Errors", "Nginx 4xx Errors", "Nginx Request Count" in options
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-013] nginx metrics in AlertRuleSettings > shows nginx labels "Nginx 5xx Errors", "Nginx 4xx Errors", "Nginx Request Count" in options
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-030] log_errors template visible in TemplatePicker > renders "Log Errors Detected" button under the system section
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-030] log_errors template visible in TemplatePicker > renders "Log Errors Detected" button under the system section
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-030] log_errors template visible in TemplatePicker > renders "Log Errors Detected" button under the system section
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-030] log_errors template visible in TemplatePicker > renders "Log Errors Detected" button under the system section
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-023] security category appears in TemplatePicker > renders a "security" section header for auth_failure template
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-023] security category appears in TemplatePicker > renders a "security" section header for auth_failure template
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-023] security category appears in TemplatePicker > renders a "security" section header for auth_failure template
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-023] security category appears in TemplatePicker > renders a "security" section header for auth_failure template
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-021] auth_failure template selection produces global scope (empty include_devices) > rule form opens with "Create Alert Rule" heading after template selection (global scope)
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-022] cooldown_seconds is editable after template selection > cooldown input reflects template default and accepts new value
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-022] cooldown_seconds is editable after template selection > cooldown input reflects template default and accepts new value
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-022] cooldown_seconds is editable after template selection > cooldown input reflects template default and accepts new value
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-022] cooldown_seconds is editable after template selection > cooldown input reflects template default and accepts new value
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-022] cooldown_seconds is editable after template selection > cooldown input reflects template default and accepts new value
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [AC-025] severity is editable after template selection > severity select can be changed to critical
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > opens a danger ConfirmDialog naming the rule
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > opens a danger ConfirmDialog naming the rule
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > opens a danger ConfirmDialog naming the rule
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+ ✓ src/components/ui/Modal.test.tsx (35 tests) 1133ms
+ ✓ src/pages/settings/AgentManagement.test.tsx (10 tests) 949ms
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-069] delete rule (global table) uses danger dialog > confirming deletes by id and raises the "Rule deleted" toast
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > opens the same danger dialog for a granular rule and deletes that rule on confirm
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-070] delete rule (granular table) uses danger dialog > cancelling does not call the API
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the create dialog by its title, closes on Escape and restores focus to the opener
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the create dialog by its title, closes on Escape and restores focus to the opener
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the create dialog by its title, closes on Escape and restores focus to the opener
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the template picker dialog
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the template picker dialog
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-030] alert rule edit modal and template picker are named dialogs > names the template picker dialog
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > renders the severity as a mapped "Warning" badge, not the raw token
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > renders the severity as a mapped "Warning" badge, not the raw token
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > renders a one hour cooldown through formatDuration
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > renders a one hour cooldown through formatDuration
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > labels the severity options in the editor with mapped text and keeps the raw values
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > labels the severity options in the editor with mapped text and keeps the raw values
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+stderr | src/pages/settings/AlertRuleSettings.test.tsx > [UIF AC-014] rule severity and cooldown use the shared label and duration formatters > labels the severity options in the editor with mapped text and keeps the raw values
+[["feature-toggles"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+ ✓ src/pages/settings/AlertRuleSettings.test.tsx (17 tests) 1332ms
+ ✓ src/pages/Security.test.tsx (27 tests) 1383ms
+ ✓ src/components/layout/AppShell.test.tsx (21 tests) 1686ms
+     ✓ [APP-WORKSPACE AC-003] closes the disclosure on Escape and route selection  423ms
+ ✓ src/pages/ContainerDetailPage.test.tsx (15 tests) 1580ms
+     ✓ renders "Couldn't load device", the message and Retry  1068ms
+ ✓ src/components/ActivityLog.test.tsx (23 tests) 1782ms
+ ✓ src/pages/settings/NotificationSettings.secrets.test.tsx (21 tests) 1745ms
+stderr | src/pages/DeviceDetail.test.tsx > DeviceDetail > [AC-014] GPU Temp Alert button opens alert dialog pre-filled with gpu_temp > clicking GPU Temp Alert button shows metric label "GPU Temperature" in dialog
+An update to DeviceDetail inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | src/pages/DeviceDetail.test.tsx > DeviceDetail > [AC-014] GPU Temp Alert button opens alert dialog pre-filled with gpu_temp > clicking GPU Temp Alert button shows metric label "GPU Temperature" in dialog
+[["devices"]]: No queryFn was passed as an option, and no default queryFn was found. The queryFn parameter is only optional when using a default queryFn. More info here: https://tanstack.com/query/latest/docs/framework/react/guides/default-query-function
+
+ ✓ src/components/ContainerDetail.test.tsx (21 tests) 1822ms
+ ✓ src/pages/Probes.test.tsx (36 tests) 2540ms
+ ✓ src/components/ui/ConfirmDialog.test.tsx (45 tests) 3051ms
+ ✓ src/pages/docker/DockerWorkspace.test.tsx (6 tests) 892ms
+     ✓ searches hostnames without case sensitivity and addresses, with a recoverable no-match state  670ms
+ ✓ src/components/docker/DataTable.test.tsx (6 tests) 1099ms
+   ✓ uses a roving row stop and moves keyboard focus across the virtualized boundary to row 45  874ms
+ ✓ src/pages/settings/NotificationSettings.test.tsx (6 tests) 873ms
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > opens a danger dialog titled "Delete all server logs" whose message says it cannot be undone
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+ ✓ src/api/demo-settings.test.ts (3 tests) 826ms
+     ✓ [HARDEN-002][AC-040] create and update echo redacted config, like the real server  815ms
+ ✓ src/pages/settings/NotificationSettings.qa.test.tsx (11 tests) 1037ms
+ ✓ src/pages/DeviceProbes.test.tsx (6 tests) 752ms
+ ✓ src/pages/FleetOverview.test.tsx (45 tests) 3649ms
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > does not call clearLogs when cancelled
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > clears the logs and raises a success toast on confirm
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+ ✓ src/pages/FleetOverview.states.test.tsx (12 tests) 775ms
+ ✓ src/pages/Alerts.test.tsx (8 tests) 798ms
+     ✓ keeps one page title and usable filter and acknowledgement actions  538ms
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > shows a failure inline and keeps the dialog open
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+stderr | src/pages/settings/LogSettings.test.tsx > [UIF AC-071] clear logs danger dialog says cannot be undone > keeps the trigger button label "Clear" and disables it when there are no logs
+Query data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["server-error-alert"]
+
+ ✓ src/pages/settings/LogSettings.test.tsx (5 tests) 681ms
+ ✓ src/components/ComposeStackSection.test.tsx (14 tests) 702ms
+ ✓ src/hooks/useCommandTracker.test.tsx (35 tests) 343ms
+ ✓ src/components/ui/Button.test.tsx (26 tests) 513ms
+ ✓ src/components/HeaderClock.test.tsx (14 tests) 372ms
+ ✓ src/components/ConfirmModal.test.tsx (10 tests) 329ms
+ ✓ src/pages/DeviceContainers.test.tsx (7 tests) 376ms
+ ✓ src/pages/ProbeDetail.test.tsx (2 tests) 309ms
+ ✓ src/pages/docker/DockerPages.test.tsx (20 tests) 4238ms
+     ✓ remembers visible columns across visits and restores the default columns  1048ms
+     ✓ opens canonical container logs directly and returns to the filtered collection  322ms
+     ✓ previews skipped targets and requires the typed count before a bulk stop  634ms
+     ✓ sends the compose project separately from the typed host for a self-stack Down  412ms
+     ✓ previews first, leaves named volumes unchecked and requires host confirmation  521ms
+ ✓ src/pages/dashboard/Dashboard.test.tsx (17 tests) 672ms
+ ✓ src/utils/logBuffer.test.ts (6 tests) 277ms
+ ✓ src/pages/Login.test.tsx (12 tests) 337ms
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netRxPoints[0].value equals net_rx_bytes_sec from the REST seed
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netRxPoints[0].value equals net_rx_bytes_sec from the REST seed
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netTxPoints[0].value equals net_tx_bytes_sec from the REST seed
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netTxPoints[0].value equals net_tx_bytes_sec from the REST seed
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > netTxPoints[0].value equals net_tx_bytes_sec from the REST seed
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+ ✓ src/pages/DeviceDetail.test.tsx (38 tests) 4972ms
+     ✓ Copied! label reverts to Copy Summary after 2 seconds (FRD max 3s)  2157ms
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [AC-016] missing net fields default to 0 (old-agent compatibility)
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+stderr | src/hooks/useFleetMetrics.test.ts > [AC-014] netRxPoints/netTxPoints populated from heartbeat data > [SEC-FLEET-NET-001] Infinity and negative values are clamped to 0 by finiteOrZero
+Maximum update depth exceeded. This can happen when a component calls setState inside useEffect, but useEffect either doesn't have a dependency array, or one of the dependencies changes on every render.
+
+ ✓ src/hooks/useFleetMetrics.test.ts (4 tests) 271ms
+ ✓ src/components/ui/DockerPrimitives.test.tsx (2 tests) 278ms
+ ✓ src/components/ui/Toast.test.tsx (24 tests) 228ms
+ ✓ src/components/UpdateConfirmModal.test.tsx (6 tests) 304ms
+ ✓ src/pages/LearnMore.test.tsx (3 tests) 300ms
+ ✓ src/App.auth.test.tsx (3 tests) 498ms
+     ✓ waits for authentication before fetching toggles, then applies the authenticated result  300ms
+ ✓ src/pages/settings/CertificateSettings.test.tsx (3 tests) 186ms
+ ✓ src/contexts/TimePreferenceProvider.test.tsx (25 tests) 207ms
+ ✓ src/pages/dashboard/ContainerLeaderboard.test.tsx (16 tests) 270ms
+ ✓ src/api/demo-parity.test.ts (71 tests) 139ms
+ ✓ src/pages/dashboard/ActivityRiver.test.tsx (21 tests) 221ms
+ ✓ src/components/ui/QueryState.test.tsx (15 tests) 225ms
+ ✓ src/components/ui/EmptyState.test.tsx (6 tests) 119ms
+ ✓ src/pages/DeviceTerminal.test.tsx (1 test) 168ms
+ ✓ src/pages/dashboard/PerDeviceCharts.test.tsx (15 tests) 197ms
+ ✓ src/components/ui/RelativeTime.test.tsx (10 tests) 96ms
+ ✓ src/components/ui/Timestamp.test.tsx (10 tests) 101ms
+stderr | src/pages/DeviceDetail.flows.test.tsx > [UIF SEC-003] QA: a Reboot that fails after the page was left is still reported once > raises exactly one persistent error toast naming the action and the reason
+No routes matched location "/devices/dev-1/probes" 
+
+ ✓ src/pages/DeviceDetail.flows.test.tsx (38 tests) 7226ms
+     ✓ shows no "Command sent:" banner after a successful command and no error banner after a failed one  643ms
+     ✓ uses the requested action label even if the server echoes another  349ms
+     ✓ a rejected Reboot shows its message once, inside the dialog, and nowhere else  341ms
+     ✓ raises exactly one persistent error toast naming the action and the reason  423ms
+ ✓ src/hooks/useDevices.test.ts (34 tests) 115ms
+ ✓ src/components/CompactContainerTile.test.tsx (9 tests) 53ms
+stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: MetricChart passes the zone-aware formatters to recharts > uses UTC for the tick and tooltip by default
+The tag <stop> is unrecognized in this browser. If you meant to render a React component, start its name with an uppercase letter.
+<linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
+The tag <linearGradient> is unrecognized in this browser. If you meant to render a React component, start its name with an uppercase letter.
+The tag <defs> is unrecognized in this browser. If you meant to render a React component, start its name with an uppercase letter.
+
+stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: MetricChart passes the zone-aware formatters to recharts > shows local time of day on ticks and a zone-labelled tooltip under the Local preference
+<linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
+
+stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: ContainerMetricChart passes the zone-aware formatters to recharts > uses UTC for the tick and tooltip by default
+<linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
+
+stderr | src/components/chartTimeWiring.test.tsx > [UIF AC-118] QA: ContainerMetricChart passes the zone-aware formatters to recharts > shows local time of day on ticks and a zone-labelled tooltip under the Local preference
+<linearGradient /> is using incorrect casing. Use PascalCase for React components, or lowercase for HTML elements.
+
+ ✓ src/components/chartTimeWiring.test.tsx (4 tests) 69ms
+ ✓ src/components/ui/PageHeader.test.tsx (2 tests) 54ms
+ ✓ src/components/ui/Card.test.tsx (7 tests) 60ms
+ ✓ src/utils/format.test.ts (73 tests) 43ms
+ ✓ src/components/ui/Badge.test.tsx (12 tests) 53ms
+ ✓ src/components/GaugeBar.test.tsx (5 tests) 42ms
+ ✓ src/utils/cron.test.ts (27 tests) 37ms
+ ✓ src/utils/rebootEta.test.ts (33 tests) 39ms
+ ✓ src/components/ui/Skeleton.test.tsx (6 tests) 39ms
+ ✓ src/components/RebootClassBadge.test.tsx (4 tests) 37ms
+ ✓ src/components/StatusBadge.test.tsx (3 tests) 39ms
+ ✓ src/hooks/useMinuteTick.test.tsx (3 tests) 30ms
+ ✓ src/api/client.test.ts (28 tests) 30ms
+ ✓ src/utils/paletteRank.test.ts (3 tests) 29ms
+ ✓ src/contexts/DemoWebSocketProvider.test.tsx (2 tests) 31ms
+ ✓ src/utils/commandLifecycle.test.ts (64 tests) 24ms
+ ✓ src/api/dockerDemo.test.ts (2 tests) 13ms
+ ✓ src/components/ui/labels.test.ts (107 tests) 27ms
+ ✓ src/utils/filesystem.test.ts (39 tests) 14ms
+ ✓ src/utils/dockerUrlState.test.ts (6 tests) 11ms
+ ✓ src/hooks/telemetryMerge.test.ts (13 tests) 11ms
+ ✓ src/api/docker.test.ts (3 tests) 10ms
+ ✓ src/utils/secrets.test.ts (20 tests) 10ms
+ ✓ src/theme/tokens.test.ts (51 tests) 12ms
+ ✓ src/utils/security.test.ts (18 tests) 6ms
+ ✓ src/utils/logMask.test.ts (19 tests) 7ms
+ ✓ src/api/errors.test.ts (13 tests) 5ms
+ ✓ src/utils/eventCategory.test.ts (11 tests) 5ms
+ ✓ src/utils/dockerActions.test.ts (10 tests) 4ms
+ ✓ src/utils/recentResources.test.ts (3 tests) 6ms
+ ✓ src/utils/safeUrl.test.ts (2 tests) 4ms
+ ✓ src/test/static-guards.test.ts (52 tests) 54ms
+
+ Test Files  85 passed (85)
+      Tests  1541 passed (1541)
+   Start at  10:55:43
+   Duration  12.78s (transform 12.01s, setup 20.59s, import 24.94s, tests 55.88s, environment 48.35s)
+
+
+=== typecheck ===
+
+=== build ===
+
+> web@1.0.0 build
+> tsc && vite build
+
+vite v6.4.1 building for production...
+transforming...
+✓ 862 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                     0.87 kB │ gzip:   0.45 kB
+dist/assets/index-C_XQPyhv.css     72.25 kB │ gzip:  13.49 kB
+dist/assets/index-D3vjPWk4.js   1,551.24 kB │ gzip: 433.71 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.72s
+
+=== demo_build ===
+vite v6.4.1 building for production...
+
+(!) outDir C:\Users\Ryan\AppData\Local\Temp\riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2 is not inside project root and will not be emptied.
+Use --emptyOutDir to override.
+
+transforming...
+✓ 864 modules transformed.
+rendering chunks...
+computing gzip size...
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/index.html                     0.91 kB │ gzip:   0.45 kB
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/assets/index-C_XQPyhv.css     72.25 kB │ gzip:  13.49 kB
+C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_65d924df5a674f259398e06c86c53cf2/assets/index-DZuyFkLJ.js   1,593.98 kB │ gzip: 445.77 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.76s
+
+=== auth_final ===
+
+> web@1.0.0 test:run
+> vitest run src/App.auth.test.tsx
+
+
+ RUN  v4.0.18 D:/Repos/rIOt/web
+
+ ✓ src/App.auth.test.tsx (3 tests) 140ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  10:52:24
+   Duration  2.05s (transform 927ms, setup 145ms, import 1.37s, tests 140ms, environment 273ms)
+
+
+=== theme ===
+
+> web@1.0.0 test:run
+> vitest run src/theme/tokens.test.ts
+
+
+ RUN  v4.0.18 D:/Repos/rIOt/web
+
+ ✓ src/theme/tokens.test.ts (51 tests) 7ms
+
+ Test Files  1 passed (1)
+      Tests  51 passed (51)
+   Start at  10:55:24
+   Duration  567ms (transform 40ms, setup 138ms, import 25ms, tests 7ms, environment 272ms)
+

@@ -7,6 +7,7 @@ import {
   EmptyState,
   ErrorPanel,
   Modal,
+  PageHeader,
   QueryState,
 } from '../../components/ui'
 import DataTable, { type Column } from '../../components/docker/DataTable'
@@ -198,7 +199,10 @@ export default function InventoryPage({
         : ''
   return (
     <div className="space-y-4">
-      <header className="border-b border-border pb-4"><h1 className="text-2xl font-semibold">{title}</h1><p className="mt-1 text-sm text-text-muted">Inspect usage across hosts. Cleanup always starts with an exact preview.</p></header>
+      <PageHeader
+        title={title}
+        description="Inspect usage across hosts. Cleanup always starts with an exact preview."
+      />
       <div className="flex flex-wrap gap-3">
         <input
           aria-label={`Search ${kind}`}
@@ -214,11 +218,19 @@ export default function InventoryPage({
           className="bg-surface rounded p-2"
         >
           <option value="">All hosts</option>
-          {query.data?.hosts.map((h) => (
-            <option key={h.device_id} value={h.device_id}>
-              {h.hostname}
-            </option>
-          ))}
+          {query.data?.hosts
+            .filter((h) =>
+              hosts.data?.some(
+                (host) =>
+                  host.device_id === h.device_id &&
+                  host.docker_available === true,
+              ),
+            )
+            .map((h) => (
+              <option key={h.device_id} value={h.device_id}>
+                {h.hostname}
+              </option>
+            ))}
         </select>
         <select
           aria-label="Inventory usage"
@@ -258,6 +270,13 @@ export default function InventoryPage({
           <>
             <div className="grid md:grid-cols-3 gap-3">
               {data.hosts
+                .filter((h) =>
+                  hosts.data?.some(
+                    (dockerHost) =>
+                      dockerHost.device_id === h.device_id &&
+                      dockerHost.docker_available === true,
+                  ),
+                )
                 .filter((h) => !host || h.device_id === host)
                 .map((h) => (
                   <section

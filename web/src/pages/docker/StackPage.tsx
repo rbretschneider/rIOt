@@ -16,6 +16,7 @@ import {
   EmptyState,
   ErrorPanel,
   Modal,
+  PageHeader,
   QueryState,
 } from '../../components/ui'
 import AutoUpdateToggle from '../../components/docker/AutoUpdateToggle'
@@ -328,40 +329,10 @@ export default function StackPage() {
             >
               ← Stacks
             </Link>
-            <header className="border-b border-border pb-4">
-              <div className="flex min-w-0 flex-wrap justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Compose stack
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h1 className="break-all text-2xl font-semibold text-text">
-                      {s.project}
-                    </h1>
-                    <span className="rounded-full border border-border bg-raised-2 px-2 py-0.5 text-xs text-text-muted">
-                      {s.state}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
-                    <Link
-                      className="text-link"
-                      to={`/docker/stacks?host=${encodeURIComponent(s.device_id)}`}
-                    >
-                      Host: {s.hostname}
-                    </Link>
-                    <span>
-                      {s.running}/{s.total} services running
-                    </span>
-                    {s.updates > 0 && (
-                      <span className="text-info-fg">
-                        {s.updates} updates available
-                      </span>
-                    )}
-                    {self && (
-                      <span className="text-warn-fg">rIOt infrastructure</span>
-                    )}
-                  </div>
-                </div>
+            <PageHeader
+              eyebrow="Compose stack"
+              title={s.project}
+              actions={
                 <div className="flex flex-wrap items-start gap-2">
                   {primary && (
                     <Button
@@ -439,13 +410,36 @@ export default function StackPage() {
                     ]}
                   />{' '}
                 </div>
+              }
+            >
+              <span className="rounded-full border border-border bg-raised-2 px-2 py-0.5 text-xs text-text-muted">
+                {s.state}
+              </span>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
+                <Link
+                  className="text-link"
+                  to={`/docker/stacks?host=${encodeURIComponent(s.device_id)}`}
+                >
+                  Host: {s.hostname}
+                </Link>
+                <span>
+                  {s.running}/{s.total} services running
+                </span>
+                {s.updates > 0 && (
+                  <span className="text-info-fg">
+                    {s.updates} updates available
+                  </span>
+                )}
+                {self && (
+                  <span className="text-warn-fg">rIOt infrastructure</span>
+                )}
               </div>
               {!caps.includes('stack_actions_v1') && (
                 <p className="text-warn-fg">
                   Requires agent update for stack actions
                 </p>
               )}
-            </header>
+            </PageHeader>
             {s.path_state !== 'agreed' && (
               <Paths stack={s} refresh={() => query.refetch()} />
             )}

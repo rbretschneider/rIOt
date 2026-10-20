@@ -1,7 +1,7 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
-import { EmptyState, QueryState } from '../../components/ui'
+import { EmptyState, PageHeader, QueryState } from '../../components/ui'
 import DataTable, { type Column } from '../../components/docker/DataTable'
 import type { DockerStack } from '../../types/docker'
 import { stackPath } from '../../utils/dockerUrlState'
@@ -13,16 +13,18 @@ export default function StacksPage() {
     queryFn: dockerApi.stacks,
     refetchInterval: 15000,
   })
+  const hosts = useQuery({
+    queryKey: ['docker-hosts'],
+    queryFn: dockerApi.hosts,
+  })
   const search = params.get('q') ?? ''
   const host = params.get('host') ?? ''
   return (
     <div className="space-y-4">
-      <header className="border-b border-border pb-4">
-        <h1 className="text-2xl font-semibold">Stacks</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Compose projects, services and combined logs across your hosts.
-        </p>
-      </header>
+      <PageHeader
+        title="Stacks"
+        description="Compose projects, services and combined logs across your hosts."
+      />
       <div className="flex flex-wrap gap-3">
         <input
           aria-label="Search stacks"
@@ -46,15 +48,13 @@ export default function StacksPage() {
           className="bg-surface rounded p-2"
         >
           <option value="">All hosts</option>
-          {[
-            ...new Map(
-              query.data?.map((s) => [s.device_id, s.hostname]),
-            ).entries(),
-          ].map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
+          {hosts.data
+            ?.filter((h) => h.docker_available === true)
+            .map((h) => (
+              <option key={h.device_id} value={h.device_id}>
+                {h.hostname}
+              </option>
+            ))}
         </select>
       </div>
       <QueryState

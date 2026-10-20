@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { settingsApi, type ServerErrorAlertConfig } from '../../api/settings'
-import { ConfirmDialog, Timestamp } from '../../components/ui'
+import { PageHeader, ConfirmDialog, Timestamp } from '../../components/ui'
 
 export default function LogSettings() {
   const qc = useQueryClient()
@@ -46,10 +46,8 @@ export default function LogSettings() {
 
   return (
     <div>
-      <ServerErrorAlertBar />
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Server Logs</h2>
-        <div className="flex items-center gap-3">
+      <PageHeader title="Server Logs" eyebrow="Settings" description="Review server activity and configure error reporting." actions={<>
+        <div className="flex flex-wrap items-center gap-3">
           <select
             value={level}
             onChange={e => { setLevel(e.target.value); resetPagination() }}
@@ -83,7 +81,9 @@ export default function LogSettings() {
             Clear
           </button>
         </div>
-      </div>
+      </>} />
+      <ServerErrorAlertBar />
+
 
       <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-x-auto scrollbar-thin">
         {isLoading ? (

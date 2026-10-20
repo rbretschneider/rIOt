@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
-import { EmptyState, QueryState } from '../../components/ui'
+import { EmptyState, PageHeader, QueryState } from '../../components/ui'
 import DockerIcon from '../../components/docker/DockerIcon'
 
 export default function HostsPage() {
@@ -14,13 +14,10 @@ export default function HostsPage() {
   })
   return (
     <div className="space-y-5">
-      <header className="border-b border-border pb-4">
-        <h1 className="text-2xl font-semibold">Hosts</h1>
-        <p className="mt-1 text-sm text-text-muted">
-          Docker availability, log collection and supported operations across
-          your fleet.
-        </p>
-      </header>
+      <PageHeader
+        title="Hosts"
+        description="Docker availability, log collection and supported operations across your Docker hosts."
+      />
       <input
         aria-label="Search Docker hosts"
         placeholder="Find a host…"
@@ -30,20 +27,27 @@ export default function HostsPage() {
       />
       <QueryState
         query={hosts}
-        isEmpty={(data) => !data.length}
+        isEmpty={(data) => !data.some((host) => host.docker_available === true)}
         empty={
           <EmptyState
-            title="No hosts registered"
-            description="Register an agent to connect your first Docker host."
+            title="No Docker hosts"
+            description="Machines that report Docker availability appear here. View all registered machines in Devices."
+            children={
+              <Link className="text-link" to="/">
+                View Devices
+              </Link>
+            }
           />
         }
       >
         {(data) => {
-          const visible = data.filter((h) =>
-            `${h.hostname} ${h.primary_ip ?? ''}`
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-          )
+          const visible = data
+            .filter((h) => h.docker_available === true)
+            .filter((h) =>
+              `${h.hostname} ${h.primary_ip ?? ''}`
+                .toLowerCase()
+                .includes(search.toLowerCase()),
+            )
           if (!visible.length)
             return (
               <EmptyState

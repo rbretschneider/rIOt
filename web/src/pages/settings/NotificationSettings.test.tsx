@@ -35,6 +35,15 @@ async function clickDelete() {
   await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
 }
 
+it('[APP-WORKSPACE AC-007] presents one settings title while preserving channel creation', async () => {
+  renderWithProviders(<NotificationSettings />)
+  expect(await screen.findByRole('heading', { level: 1, name: 'Notifications' })).toBeInTheDocument()
+  expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  await userEvent.click(screen.getByRole('button', { name: 'Add Channel' }))
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+  expect(settingsApi.createNotificationChannel).not.toHaveBeenCalled()
+})
+
 describe('[UIF AC-072] delete channel toasts Channel deleted', () => {
   it('opens a danger dialog naming the channel', async () => {
     await clickDelete()

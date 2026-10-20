@@ -1,4 +1,5 @@
 export { focusRing } from './focusRing'
+export { PageHeader, type PageHeaderProps } from './PageHeader'
 export { Tabs,type ResourceTab } from './Tabs'
 export { DropdownMenu,type MenuItem } from './DropdownMenu'
 export { Popover } from './Popover'

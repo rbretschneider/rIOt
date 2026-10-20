@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { DeviceProbeWithResult, DeviceProbeResult } from '../types/models'
 import DeviceProbeModal, { emptyDeviceProbe, type DeviceProbeForm } from '../components/DeviceProbeModal'
-import { ConfirmDialog, Timestamp } from '../components/ui'
+import { Button, ConfirmDialog, PageHeader, Timestamp } from '../components/ui'
 
 export default function DeviceProbes() {
   const { id } = useParams<{ id: string }>()
@@ -77,22 +77,16 @@ export default function DeviceProbes() {
   const device = deviceData?.device
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <Link to={`/devices/${id}`} className="text-sm text-gray-400 hover:text-white transition-colors">
-          &larr; Back to <span>{device?.hostname ?? id}</span>
-        </Link>
-        <div className="flex items-center justify-between mt-2">
-          <h1 className="text-2xl font-bold text-white">Device Probes</h1>
-          <button
-            onClick={() => { setEditing({ ...emptyDeviceProbe }); setIsNew(true) }}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-md transition-colors"
-          >
-            Add Probe
-          </button>
-        </div>
-      </div>
+    <div className="min-w-0 space-y-6">
+      <Link to={`/devices/${id}`} className="inline-flex text-sm text-text-muted hover:text-text transition-colors">
+        &larr; Back to <span className="ml-1 break-all">{device?.hostname ?? id}</span>
+      </Link>
+      <PageHeader
+        eyebrow="Device monitoring"
+        title="Device Probes"
+        description="Checks run by this device's agent."
+        actions={<Button variant="primary" onClick={() => { setEditing({ ...emptyDeviceProbe }); setIsNew(true) }}>Add Probe</Button>}
+      />
 
       {/* Probe List */}
       {probes.length === 0 ? (

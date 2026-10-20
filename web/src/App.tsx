@@ -39,21 +39,7 @@ import LearnMore from './pages/LearnMore'
 import DeviceProbes from './pages/DeviceProbes'
 import HeaderClock from './components/HeaderClock'
 import { Button, Modal } from './components/ui'
-
-function NavLink({ to, children }: { to: string; children: React.ReactNode }) {
-  const location = useLocation()
-  const active = location.pathname === to || (to !== '/' && location.pathname.startsWith(to))
-  return (
-    <Link
-      to={to}
-      className={`px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-        active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
-      }`}
-    >
-      {children}
-    </Link>
-  )
-}
+import { AppShell } from './components/layout/AppShell'
 
 function AlertsBell() {
   const location = useLocation()
@@ -72,6 +58,7 @@ function AlertsBell() {
         active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
       }`}
       title="Alerts"
+      aria-label={count ? `Alerts (${count} unread)` : 'Alerts'}
     >
       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
         <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
@@ -99,13 +86,15 @@ function UserMenu({ logout }: { logout: () => void }) {
   }, [open])
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative" ref={ref} onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); ref.current?.querySelector('button')?.focus() } }}>
       <button
         onClick={() => setOpen(v => !v)}
         className={`p-1.5 rounded-md transition-colors ${
           open ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
         }`}
         title="Account"
+        aria-label="Account"
+        aria-expanded={open}
       >
         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
@@ -254,30 +243,8 @@ function ServerVersion() {
   )
 }
 
-function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="sm:hidden p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
-      aria-label="Toggle menu"
-    >
-      {open ? (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-        </svg>
-      ) : (
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
-        </svg>
-      )}
-    </button>
-  )
-}
-
 export default function App() {
-  const dockerWorkspace = useLocation().pathname.startsWith('/docker')
   const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { isEnabled } = useFeatures(authenticated && !loading && !needsSetup)
 
   if (loading) {
@@ -298,78 +265,19 @@ export default function App() {
 
   return (
     <WebSocketProvider>
-    <div className="min-h-screen bg-gray-950">
       <ScrollToTop />
       <GlobalWSHandler />
       <CommandPalette />
-      <nav className="bg-gray-900 border-b border-gray-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-14">
-            <div className="flex items-center gap-4 min-w-0">
-              <Link to="/" className="flex items-center gap-2 text-xl font-bold text-white tracking-tight shrink-0">
-                <img src={`${import.meta.env.BASE_URL}android-chrome-192x192.png`} alt="rIOt" className="w-6 h-6" />
-                rIOt
-                <ServerVersion />
-              </Link>
-              {/* Desktop nav */}
-              <div className="hidden sm:flex gap-1">
-                <NavLink to="/">Fleet</NavLink>
-                <NavLink to="/dashboard">Dashboard</NavLink>
-                {isEnabled('docker') && <NavLink to="/docker">Docker</NavLink>}
-                <NavLink to="/alert-rules">Alert Rules</NavLink>
-                <NavLink to="/probes">Probes</NavLink>
-                <NavLink to="/security">Security</NavLink>
-                <NavLink to="/settings">Settings</NavLink><button type="button" className="px-3 py-2 text-sm text-gray-400 hover:text-white" aria-label="Open command palette" onClick={() => window.dispatchEvent(new Event('riot-palette-open'))}>Search · Ctrl K</button>
-                <a
-                  href="https://github.com/rbretschneider/rIOt"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-                  title="View on GitHub"
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
-                </a>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <HeaderClock />
-              <AlertsBell />
-              <div className="hidden sm:block">
-                <UserMenu logout={logout} />
-              </div>
-              <MobileMenuButton open={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)} />
-            </div>
-          </div>
-        </div>
-        {/* Mobile nav dropdown */}
-        {mobileMenuOpen && (
-          <div className="sm:hidden border-t border-gray-800 px-4 py-2 space-y-1" onClick={() => setMobileMenuOpen(false)}>
-            <NavLink to="/">Fleet</NavLink>
-            <NavLink to="/dashboard">Dashboard</NavLink>
-                {isEnabled('docker') && <NavLink to="/docker">Docker</NavLink>}
-            <NavLink to="/alert-rules">Alert Rules</NavLink>
-            <NavLink to="/probes">Probes</NavLink>
-            <NavLink to="/security">Security</NavLink>
-            <NavLink to="/settings">Settings</NavLink><button type="button" className="px-3 py-2 text-sm text-gray-400 hover:text-white" aria-label="Open command palette" onClick={() => window.dispatchEvent(new Event('riot-palette-open'))}>Search · Ctrl K</button>
-            <a
-              href="https://github.com/rbretschneider/rIOt"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" /></svg>
-              GitHub
-            </a>
-            <NavLink to="/settings/general">Change Password</NavLink>
-            <button
-              onClick={logout}
-              className="w-full text-left px-3 py-2 rounded-md text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-            >
-              Logout
-            </button>
-          </div>
-        )}
-      </nav>
+      <AppShell
+        dockerEnabled={isEnabled('docker')}
+        brand={<Link to="/" className="flex min-w-0 items-center gap-2 text-xl font-bold tracking-tight text-text"><img src={import.meta.env.BASE_URL + 'android-chrome-192x192.png'} alt="" className="h-6 w-6" />rIOt<span className="hidden sm:inline"><ServerVersion /></span></Link>}
+        utilities={<>
+          <button type="button" className="rounded-md px-2 py-2 text-sm text-text-muted hover:bg-raised-2 hover:text-text focus-visible:ring-2 focus-visible:ring-accent" aria-label="Open command palette" onClick={() => window.dispatchEvent(new Event('riot-palette-open'))}><span className="sm:hidden">Search</span><span className="hidden sm:inline">Search · Ctrl K</span></button>
+          <HeaderClock />
+          <AlertsBell />
+          <UserMenu logout={logout} />
+        </>}
+        banners={<>
       {import.meta.env.VITE_DEMO === 'true' && (
         <div className="bg-violet-900/40 border-b border-violet-800/50">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-1.5 flex items-center justify-center gap-2 text-sm text-violet-300">
@@ -381,7 +289,8 @@ export default function App() {
         </div>
       )}
       <UpdateBanner />
-      <main className={`${dockerWorkspace ? 'docker-page max-w-[1920px] lg:px-6 xl:px-8' : 'max-w-7xl lg:px-8'} mx-auto px-4 sm:px-6 py-6`}>
+        </>}
+      >
         <Routes>
           <Route path="/" element={<FleetOverview />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -419,8 +328,7 @@ export default function App() {
             <Route path="general" element={<GeneralSettings />} />
           </Route>
         </Routes>
-      </main>
-    </div>
+      </AppShell>
     </WebSocketProvider>
   )
 }

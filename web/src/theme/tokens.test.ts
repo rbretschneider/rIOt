@@ -53,6 +53,13 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+it('[APP-WORKSPACE AC-010] checks contrast against the effective global neutral surfaces', () => {
+  const rootVars = Object.assign({}, ...Array.from(css.matchAll(/:root\s*\{([^}]+)\}/g), match => declaredVars(match[1]))) as Record<string, string>
+  for (const token of ['surface', 'raised', 'raised-2', 'border', 'border-strong'] as const) {
+    expect(rootVars[`--color-${TOKEN_PALETTE[token]}`]).toBe(TOKEN_HEX[token])
+  }
+})
+
 describe('[UIF AC-001] color tokens defined in @theme', () => {
   const vars = declaredVars(blockBody(css, '@theme inline'))
 

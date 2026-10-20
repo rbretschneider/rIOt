@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
     getDevice: (...args: unknown[]) => mockGetDevice(...args),
     getEvents: vi.fn().mockResolvedValue([]),
     getServerUpdate: vi.fn().mockResolvedValue({ latest_version: '2.0.5' }),
+    getPatchStatus: vi.fn().mockResolvedValue([]),
     getDeviceAlertRules: vi.fn().mockResolvedValue([]),
     getDeviceCommands: vi.fn().mockResolvedValue([]),
     getDeviceSummary: (...args: unknown[]) => mockGetDeviceSummary(...args),
@@ -24,6 +25,10 @@ vi.mock('../hooks/useDevices', () => ({
 
 vi.mock('../hooks/useWebSocket', () => ({
   useWebSocket: () => ({ connected: false }),
+}))
+
+vi.mock('../hooks/useFeatures', () => ({
+  useFeatures: () => ({ isEnabled: () => true }),
 }))
 
 function renderWithProviders() {
@@ -63,6 +68,16 @@ const baseDevice = {
 describe('DeviceDetail', () => {
   beforeEach(() => {
     mockGetDevice.mockResolvedValue({ ...baseDevice })
+  })
+
+  it('[APP-WORKSPACE AC-007] presents one device resource header with canonical collection and section links', async () => {
+    renderWithProviders()
+    expect(await screen.findByRole('heading', { level: 1, name: 'test-host' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('link', { name: '← Devices' })).toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: 'Probes' })).toHaveAttribute('href', '/devices/dev-1/probes')
+    expect(screen.getByRole('button', { name: 'Device power actions' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
   })
 
   it('renders without crashing (smoke test)', async () => {

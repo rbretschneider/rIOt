@@ -10,7 +10,7 @@ import { rebootEtaTooltip } from '../utils/rebootEta'
 
 import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
-import { Button, Card, ConfirmDialog, Modal, QueryState, RelativeTime, Skeleton, useToast } from '../components/ui'
+import { Button, Card, ConfirmDialog, Modal, PageHeader, QueryState, RelativeTime, Skeleton, useToast } from '../components/ui'
 
 type SortKey = 'hostname' | 'status' | 'arch' | 'last_heartbeat' | 'short_id' | 'agent_version'
 type SortDir = 'asc' | 'desc'
@@ -159,7 +159,12 @@ export default function FleetOverview() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
+      <PageHeader
+        title="Devices"
+        description="All registered machines, their health and available updates."
+        actions={<Button variant="primary" onClick={() => setShowGuide(true)}>+ Add Device</Button>}
+      />
       {summary && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
           <StatCard label="Total Devices" value={summary.total_devices} />
@@ -178,7 +183,7 @@ export default function FleetOverview() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-3">
           {outdatedCount > 0 && (
             <button
               onClick={() => setShowUpdateConfirm(true)}
@@ -195,12 +200,6 @@ export default function FleetOverview() {
               Review Patches ({patchMap.size})
             </button>
           )}
-          <button
-            onClick={() => setShowGuide(true)}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
-          >
-            + Add Device
-          </button>
         </div>
       </div>
 

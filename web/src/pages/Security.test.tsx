@@ -104,6 +104,17 @@ function renderWithProviders() {
   )
 }
 
+describe('[APP-WORKSPACE AC-007] security uses the workspace header', () => {
+  it('keeps a single title above the existing device findings and device link', async () => {
+    renderWithProviders()
+    await screen.findByRole('heading', { level: 1, name: 'Security' })
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByText('Security posture, findings and outstanding updates across your devices.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'alpha' })).toHaveAttribute('href', '/devices/dev-1')
+    expect(screen.getByRole('heading', { name: 'Per-Device Security' })).toBeInTheDocument()
+  })
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetSecurityOverview.mockResolvedValue(baseOverview)

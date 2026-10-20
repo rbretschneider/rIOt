@@ -25,7 +25,7 @@ export default function DeviceQueryFallback({ isPending, error, onRetry }: Props
         description="This device no longer exists, or the link is wrong."
       >
         <Link to="/" className="mt-3 text-sm font-medium text-link hover:text-info-fg">
-          Back to Fleet
+          Back to Devices
         </Link>
       </EmptyState>
     )

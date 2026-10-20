@@ -48,6 +48,17 @@ beforeEach(() => {
 
 const rowDelete = () => screen.getByRole('button', { name: 'Delete' })
 
+describe('[APP-WORKSPACE AC-007] device monitoring resource context', () => {
+  it('keeps the device relationship and probe creation action beside a single page heading', async () => {
+    renderPage()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Device Probes' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('link', { name: '← Back to Web-01.lan' })).toHaveAttribute('href', '/devices/dev-1')
+    expect(screen.getByRole('button', { name: 'Add Probe' })).toBeInTheDocument()
+    expect(api.createDeviceProbe).not.toHaveBeenCalled()
+  })
+})
+
 describe('[UIF AC-065] delete probe confirm names probe; cancel skips API', () => {
   it('opens a danger ConfirmDialog whose message contains the probe name', async () => {
     renderPage()

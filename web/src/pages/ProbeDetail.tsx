@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { Timestamp } from '../components/ui'
+import { PageHeader, Timestamp } from '../components/ui'
 import ProbeModal, { probeToForm, type ProbeForm } from '../components/ProbeModal'
 
 export default function ProbeDetail() {
@@ -51,19 +51,18 @@ export default function ProbeDetail() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="space-y-3">
         <Link to="/probes" className="text-sm text-gray-400 hover:text-white transition-colors">
           &larr; Back to Probes
         </Link>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-2 gap-2">
-          <div>
-            <h1 className="text-2xl font-bold text-white">{probe.name}</h1>
-            <p className="text-sm text-gray-500">
+        <PageHeader
+          title={probe.name}
+          eyebrow="Probe"
+          description={<>
               {probe.type.toUpperCase()} &middot; every {probe.interval_seconds}s &middot; timeout {probe.timeout_seconds}s
               {!probe.enabled && <span className="ml-2 text-amber-500">(disabled)</span>}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          </>}
+          actions={<div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => setEditing(probeToForm(probe))}
               className="px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-md transition-colors"
@@ -77,8 +76,8 @@ export default function ProbeDetail() {
             >
               {runMutation.isPending ? 'Running...' : 'Run Now'}
             </button>
-          </div>
-        </div>
+          </div>}
+        />
       </div>
 
       {/* Stats */}

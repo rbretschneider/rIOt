@@ -392,7 +392,7 @@ describe('[UIF AC-094] 404 shows Device not found', () => {
     vi.mocked(api.getDevice).mockRejectedValue(new ApiError(404, 'HTTP 404: Not Found'))
     renderPage()
     expect(await screen.findByRole('heading', { name: 'Device not found' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Back to Fleet' })).toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: 'Back to Devices' })).toHaveAttribute('href', '/')
     expect(screen.queryByText("Couldn't load device")).toBeNull()
     expect(api.getDevice).toHaveBeenCalledTimes(1)
   })

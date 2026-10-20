@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { gradeColor, gradeFromScore, gradeStrokeColor } from '../utils/security'
 import { type SecurityScoreResult } from '../types/models'
 import SecurityScoreModal from '../components/SecurityScoreModal'
+import { PageHeader } from '../components/ui'
 
 type SortKey = 'score' | 'failed_logins' | 'security_updates'
 type SortDir = 'asc' | 'desc'
@@ -39,7 +40,7 @@ export default function Security() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-white">Security</h1>
+      <PageHeader title="Security" description="Security posture, findings and outstanding updates across your devices." />
 
       {/* Overview Cards */}
       {overview && (
@@ -234,7 +235,7 @@ function SortableSecurityTable({ devices, sortKey, sortDir, toggleSort, onShowMo
           {sorted.map(d => (
             <tr key={d.device_id} className="text-gray-300">
               <td className="px-4 py-3">
-                <Link to={`/devices/${d.device_id}`} className="text-blue-400 hover:text-blue-300 font-medium">
+                <Link to={`/devices/${encodeURIComponent(d.device_id)}`} className="text-blue-400 hover:text-blue-300 font-medium">
                   {d.hostname}
                 </Link>
               </td>

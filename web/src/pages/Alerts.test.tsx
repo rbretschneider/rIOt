@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import Alerts from './Alerts'
 import { api } from '../api/client'
 import { renderWithProviders } from '../test/renderWithProviders'
@@ -35,7 +36,33 @@ const event = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   vi.mocked(api.getEvents).mockResolvedValue([event()] as never)
+})
+
+describe('[APP-WORKSPACE AC-007] alert header preserves filtering and acknowledgement', () => {
+  it('keeps one page title and usable filter and acknowledgement actions', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.acknowledgeAllEvents).mockResolvedValue(undefined)
+    renderWithProviders(<Alerts />)
+    await screen.findByText('Disk / is 91% full')
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'Events & Alerts' })).toBeInTheDocument()
+    const search = screen.getByRole('textbox', { name: 'Filter events' })
+    await user.type(search, 'no matching message')
+    expect(screen.getByText('No events found')).toBeInTheDocument()
+    await user.clear(search)
+    await user.click(screen.getByRole('button', { name: 'Acknowledge All' }))
+    await waitFor(() => expect(api.acknowledgeAllEvents).toHaveBeenCalledOnce())
+  })
+})
+
+describe('[APP-WORKSPACE AC-009] alerts link to the named Docker resource', () => {
+  it('uses the canonical scoped name even when the old container ID is absent', async () => {
+    vi.mocked(api.getEvents).mockResolvedValue([event({ container_name: '/web?blue', container_id: undefined })] as never)
+    renderWithProviders(<Alerts />)
+    expect(await screen.findByRole('link', { name: 'web?blue' })).toHaveAttribute('href', '/docker/containers/dev-1/web%3Fblue')
+  })
 })
 
 describe('[UIF AC-021] alerts show mapped labels', () => {

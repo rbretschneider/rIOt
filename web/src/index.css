@@ -98,15 +98,11 @@ html, body, #root {
   background: var(--color-text-muted);
 }
 
-/* Neutral Docker workspace surfaces keep dense operational views legible. */
-.docker-workspace {
+/* Neutral application surfaces keep dense operational views legible. */
+:root {
   /* Semantic tokens are inline aliases of these palette variables. */
   --color-gray-950: #101114;
   --color-gray-900: #17181b;
   --color-gray-800: #292b30;
   --color-gray-700: #3f4249;
-}
-.docker-page {
-  background: #101114;
-  min-height: calc(100vh - 56px);
 }

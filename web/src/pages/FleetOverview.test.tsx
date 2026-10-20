@@ -8,6 +8,10 @@ import { api } from '../api/client'
 import { useDevices } from '../hooks/useDevices'
 import { ToastProvider } from '../components/ui'
 
+vi.mock('../hooks/useFeatures', () => ({
+  useFeatures: () => ({ isEnabled: () => true }),
+}))
+
 vi.mock('../api/client', () => ({
   api: {
     getDevices: vi.fn().mockResolvedValue([
@@ -81,6 +85,13 @@ function renderWithProviders() {
 }
 
 describe('FleetOverview', () => {
+  it('[APP-WORKSPACE AC-007] identifies the complete machine collection as Devices with its registration action', async () => {
+    renderWithProviders()
+    expect(screen.getByRole('heading', { level: 1, name: 'Devices' })).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: '+ Add Device' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'node-1' })).toHaveAttribute('href', '/devices/dev-1')
+  })
   it('renders without crashing (smoke test)', async () => {
     renderWithProviders()
     expect(await screen.findByText('node-1')).toBeInTheDocument()
