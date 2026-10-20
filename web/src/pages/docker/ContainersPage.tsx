@@ -421,11 +421,11 @@ export default function ContainersPage() {
       render: (r) => (
         <Link
           state={collectionState}
-          className="rounded border border-border-strong px-2 py-1 text-xs text-text-muted hover:bg-raised-2 hover:text-text"
+          className="text-xs text-link hover:underline"
           aria-label={`Logs for ${r.container_name}`}
           to={`${containerPath(r.device_id, r.container_name)}?tab=logs`}
         >
-          Logs ↗
+          Logs
         </Link>
       ),
     },
@@ -451,16 +451,16 @@ export default function ContainersPage() {
     },
   ]
   const widths: Record<string, number> = {
-    name: 200,
-    status: 112,
-    host: 120,
-    stack: 128,
+    name: 184,
+    status: 100,
+    host: 104,
+    stack: 112,
     image: 240,
     ports: 208,
-    cpu: 72,
-    mem: 172,
+    cpu: 64,
+    mem: 160,
     uptime: 200,
-    links: 88,
+    links: 64,
   }
   const orderedColumns = [
     'name',
@@ -478,6 +478,7 @@ export default function ContainersPage() {
     return {
       ...column,
       width: widths[key],
+      grow: key === 'name',
       pinned: key === 'name',
       align: key === 'cpu' || key === 'mem' ? ('right' as const) : undefined,
     }

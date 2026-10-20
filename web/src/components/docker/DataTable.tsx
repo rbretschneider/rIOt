@@ -12,6 +12,7 @@ export interface Column<T> {
   render: (row: T) => ReactNode
   sortable?: boolean
   width?: number
+  grow?: boolean
   pinned?: boolean
   align?: 'right'
 }
@@ -141,7 +142,12 @@ export default function DataTable<T>({
               key={c.key}
               style={{
                 width:
-                  sized && index === columns.length - 1 ? undefined : c.width,
+                  c.grow ||
+                  (sized &&
+                    !columns.some((column) => column.grow) &&
+                    index === columns.length - 1)
+                    ? undefined
+                    : c.width,
               }}
             />
           ))}

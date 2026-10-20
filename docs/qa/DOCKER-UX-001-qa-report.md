@@ -1,5 +1,11 @@
 # DOCKER-UX-001 QA report
 
+## Portrait table fit — 2026-10-20
+
+The product-owner screenshot at 1200 px exposed a small horizontal overflow in the default container table. Narrow desktop workspace spacing is now tighter, default column minimums total 832 px instead of 936 px, and spare table width goes to Name rather than the trailing Open column. Logs uses a compact text link. Wider-screen sidebar spacing and optional-column scrolling remain available.
+
+Browser measurements with the default columns: at 1080 px, the table and viewport both measure 834 px; at 1200 px, both measure 954 px and Name grows to 306 px. No horizontal overflow at either width. Tested with the existing simulated data; no production deployment is claimed. The 30 focused Docker/table/workspace regressions and production TypeScript/Vite build pass.
+
 ## Resource workspace redesign — 2026-10-20
 
 Product direction supersedes the earlier nested fleet-tab layout: use Komodo's resource-oriented navigation and neutral, dense presentation, integrated with rIOt diagnostics. Compared against the official public Komodo demo (`https://demo.komo.do`, v2.3.3 at review) and [resource documentation](https://komo.do/docs/resources). This is an independently implemented adaptation; no Komodo source was copied.
