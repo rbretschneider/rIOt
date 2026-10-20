@@ -2,7 +2,13 @@ import { Tabs } from '../../components/ui/Tabs'
 import { DropdownMenu } from '../../components/ui/DropdownMenu'
 import { stackPrimaryAction } from '../../utils/dockerActions'
 import { useEffect, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
 import {
@@ -222,6 +228,15 @@ function Paths({
   )
 }
 export default function StackPage() {
+  const location = useLocation()
+  const collection = (location.state as { dockerCollection?: unknown } | null)
+    ?.dockerCollection
+  const backTo =
+    typeof collection === 'string' &&
+    (collection === '/docker/stacks' ||
+      collection.startsWith('/docker/stacks?'))
+      ? collection
+      : '/docker/stacks'
   const { deviceId, project } = useParams()
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
@@ -306,19 +321,48 @@ export default function StackPage() {
           }
         }
         return (
-          <div className="space-y-5">
-            <Link className="text-link text-sm" to="/docker/stacks">
-              Stacks
+          <div className="min-w-0 space-y-4">
+            <Link
+              className="inline-flex text-sm text-text-muted hover:text-text"
+              to={backTo}
+            >
+              ← Stacks
             </Link>
-            <header className="rounded border border-border bg-surface p-5">
-              <div className="flex flex-wrap justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold">{s.project}</h2>
-                  <p>
-                    {s.hostname} · {s.state} · {s.running}/{s.total} running
+            <header className="border-b border-border pb-4">
+              <div className="flex min-w-0 flex-wrap justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
+                    Compose stack
                   </p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h1 className="break-all text-2xl font-semibold text-text">
+                      {s.project}
+                    </h1>
+                    <span className="rounded-full border border-border bg-raised-2 px-2 py-0.5 text-xs text-text-muted">
+                      {s.state}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
+                    <Link
+                      className="text-link"
+                      to={`/docker/stacks?host=${encodeURIComponent(s.device_id)}`}
+                    >
+                      Host: {s.hostname}
+                    </Link>
+                    <span>
+                      {s.running}/{s.total} services running
+                    </span>
+                    {s.updates > 0 && (
+                      <span className="text-info-fg">
+                        {s.updates} updates available
+                      </span>
+                    )}
+                    {self && (
+                      <span className="text-warn-fg">rIOt infrastructure</span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex gap-2 items-start">
+                <div className="flex flex-wrap items-start gap-2">
                   {primary && (
                     <Button
                       disabled={!allowed || commandActive}
@@ -402,14 +446,9 @@ export default function StackPage() {
                 </p>
               )}
             </header>
-            <AutoUpdateToggle
-              deviceId={deviceId!}
-              target={project!}
-              stack
-              workingDir={s.agreed_working_dir}
-              disabled={!allowed}
-            />
-            <Paths stack={s} refresh={() => query.refetch()} />
+            {s.path_state !== 'agreed' && (
+              <Paths stack={s} refresh={() => query.refetch()} />
+            )}
             {tracker.error && <ErrorPanel error={tracker.error} />}
             {command && (
               <>
@@ -441,6 +480,15 @@ export default function StackPage() {
               }}
             >
               {' '}
+              {tab === 'services' && (
+                <AutoUpdateToggle
+                  deviceId={deviceId!}
+                  target={project!}
+                  stack
+                  workingDir={s.agreed_working_dir}
+                  disabled={!allowed}
+                />
+              )}
               {tab === 'services' &&
                 (s.services?.length ? (
                   <DataTable
@@ -487,17 +535,23 @@ export default function StackPage() {
               {tab === 'activity' && (
                 <ActivityPage deviceId={deviceId} stack={project} />
               )}{' '}
-              {tab === 'compose' &&
-                (caps.includes('compose_read_v1') &&
-                s.path_state === 'agreed' ? (
-                  <Compose deviceId={deviceId!} project={project!} />
-                ) : (
-                  <p>
-                    {s.path_state !== 'agreed'
-                      ? 'Compose reads are blocked until paths are agreed.'
-                      : 'Requires agent update'}
-                  </p>
-                ))}
+              {tab === 'compose' && (
+                <div className="space-y-4">
+                  {s.path_state === 'agreed' && (
+                    <Paths stack={s} refresh={() => query.refetch()} />
+                  )}
+                  {caps.includes('compose_read_v1') &&
+                  s.path_state === 'agreed' ? (
+                    <Compose deviceId={deviceId!} project={project!} />
+                  ) : (
+                    <p>
+                      {s.path_state !== 'agreed'
+                        ? 'Compose reads are blocked until paths are agreed.'
+                        : 'Requires agent update'}
+                    </p>
+                  )}
+                </div>
+              )}
             </Tabs>
             <Modal
               open={!!action}

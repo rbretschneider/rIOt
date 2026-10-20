@@ -1,5 +1,19 @@
 # DOCKER-UX-001 QA report
 
+## Resource workspace redesign — 2026-10-20
+
+Product direction supersedes the earlier nested fleet-tab layout: use Komodo's resource-oriented navigation and neutral, dense presentation, integrated with rIOt diagnostics. Compared against the official public Komodo demo (`https://demo.komo.do`, v2.3.3 at review) and [resource documentation](https://komo.do/docs/resources). This is an independently implemented adaptation; no Komodo source was copied.
+
+The candidate replaces repeated Docker headings/tabs/breadcrumbs with persistent grouped navigation, a wider content area and one resource header. Hosts exposes stored/live log support and inventory state, with links scoped to each host. Containers have a compact default column set, persisted column chooser, fixed widths, pinned identity, resource meters and direct Logs shortcuts. Detail return links preserve collection filters; switching containers retains the diagnostic tab. Stack path settings are on Compose and auto-update is on Services; unsafe path warnings remain visible. The shell renders the selected route without waiting for host-status data.
+
+Stored/live log implementation, retention, gap markers, stream filtering, download, masking, action confirmation and cleanup previews are preserved. Compose remains read-only under the settled product requirement. Git-backed deployment, mutable desired-state deployment definitions, builds, registries, resource sync and Swarm are not introduced by this frontend pass; those require new backend/product design rather than cosmetic parity controls.
+
+Browser checks used simulated data at 390, 1280 and 1920 px: the page remains within the viewport, wide data scrolls inside the table, selection stays 44 px, pinned Name stays 200 px with a 44 px offset, and actual row height is 44 px. Browser computed scrollbar width is `thin`. Container Logs retains stored history and its Live toggle in the redesigned frame. These checks do not claim a production deployment or a live agent streaming test.
+
+New regressions cover virtual scroll/filter/resize and keyboard behavior, nested controls, saved column choices, filter-preserving direct Logs navigation, host capabilities/search/scoped links, feature gating, and child-route rendering during host status loading/failure.
+
+Validation: **80 frontend files / 1,499 tests pass**. Production TypeScript/Vite build passes; the existing bundle-size advisory remains. Anonymous login regressions are included. Preview uses the repository's simulated data, with no production lifecycle or cleanup action invoked.
+
 ## Post-deployment Docker query timeout
 
 Hawaii exposed another gap in the small-fixture/demo validation: `/api/v1/docker/hosts` returned 500 after 30.49–30.52 seconds, while `/api/v1/fleet/containers` returned 200 after 53.80 seconds. These reads do not contact agents. The global `DISTINCT ON` latest-snapshot queries inspected historical JSON before selecting one row per device; the hosts read exceeded its 30-second transaction timeout.

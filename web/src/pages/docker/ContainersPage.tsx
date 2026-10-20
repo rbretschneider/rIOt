@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
 import { api } from '../../api/client'
@@ -10,6 +15,7 @@ import {
   Modal,
   QueryState,
   Timestamp,
+  Popover,
 } from '../../components/ui'
 import MultiSelectFilter from '../../components/docker/MultiSelectFilter'
 import TilesView from '../../components/docker/TilesView'
@@ -28,10 +34,23 @@ import { formatBytes } from '../../utils/docker'
 import { publishedPortUrl } from '../../utils/safeUrl'
 import { formatDuration } from '../../utils/format'
 import { useTimePreference } from '../../contexts/TimePreferenceProvider'
+const defaultColumns = [
+  'name',
+  'host',
+  'stack',
+  'status',
+  'cpu',
+  'mem',
+  'links',
+]
 export default function ContainersPage() {
   const { now } = useTimePreference()
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const collectionState = {
+    dockerCollection: location.pathname + location.search,
+  }
   const [preferredView] = useState(() => {
     try {
       return localStorage.getItem('riot-docker-view') ?? 'table'
@@ -39,6 +58,27 @@ export default function ContainersPage() {
       return 'table'
     }
   })
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem('riot-docker-columns') ?? 'null',
+      )
+      return Array.isArray(saved) &&
+        saved.every((key) => typeof key === 'string')
+        ? [...new Set(['name', ...saved])]
+        : defaultColumns
+    } catch {
+      return defaultColumns
+    }
+  })
+  const chooseColumns = (keys: string[]) => {
+    setVisibleColumns(keys)
+    try {
+      localStorage.setItem('riot-docker-columns', JSON.stringify(keys))
+    } catch {
+      /* Session-only preference when browser storage is unavailable. */
+    }
+  }
   const state = parseDockerState(params.toString(), preferredView)
   const [search, setSearch] = useState(state.q)
   const [selected, setSelected] = useState<Set<string>>(
@@ -216,22 +256,23 @@ export default function ContainersPage() {
         <span
           className={
             r.health_status === 'unhealthy'
-              ? 'text-red-400'
+              ? 'rounded bg-danger/10 px-2 py-1 text-xs text-danger-fg'
               : r.state === 'running'
-                ? 'text-emerald-400'
-                : 'text-text-muted'
+                ? 'rounded bg-success/10 px-2 py-1 text-xs text-success-fg'
+                : 'rounded bg-raised-2 px-2 py-1 text-xs text-text-muted'
           }
         >
-          {{
-            running: 'Running',
-            exited: 'Stopped',
-            created: 'Created',
-            dead: 'Dead',
-            paused: 'Paused',
-            restarting: 'Restarting',
-            removing: 'Removing',
-          }[r.state] ?? r.state}
-          {r.health_status === 'unhealthy' ? ', unhealthy' : ''}
+          {r.health_status === 'unhealthy'
+            ? 'Unhealthy'
+            : ({
+                running: 'Running',
+                exited: 'Stopped',
+                created: 'Created',
+                dead: 'Dead',
+                paused: 'Paused',
+                restarting: 'Restarting',
+                removing: 'Removing',
+              }[r.state] ?? r.state)}
         </span>
       ),
     },
@@ -240,8 +281,10 @@ export default function ContainersPage() {
       title: 'Name',
       render: (r) => (
         <Link
-          className="text-link"
+          className="font-medium text-text hover:text-link"
+          title={`${r.container_name} · ${r.image}`}
           to={containerPath(r.device_id, r.container_name)}
+          state={collectionState}
         >
           {r.riot_icon} {r.riot_name || r.container_name}
           {r.self_role ? ` · rIOt ${r.self_role}` : ''}
@@ -264,7 +307,7 @@ export default function ContainersPage() {
       key: 'host',
       title: 'Host',
       render: (r) => (
-        <Link to={`/devices/${encodeURIComponent(r.device_id)}`}>
+        <Link to={`/docker/containers?host=${encodeURIComponent(r.device_id)}`}>
           {r.hostname}
         </Link>
       ),
@@ -273,7 +316,7 @@ export default function ContainersPage() {
       key: 'image',
       title: 'Image',
       render: (r) => (
-        <span>
+        <span title={r.image}>
           {r.image}
           {applicable('update', r) && (
             <span className="ml-2 rounded bg-warn/15 px-1.5 py-0.5 text-xs text-warn-fg">
@@ -323,15 +366,68 @@ export default function ContainersPage() {
       key: 'cpu',
       title: 'CPU',
       render: (r) =>
-        r.state === 'running' ? `${r.cpu_percent.toFixed(1)}%` : '—',
+        r.state === 'running' ? (
+          <div>
+            <span>{r.cpu_percent.toFixed(1)}%</span>
+            <div aria-hidden="true" className="mt-1 h-0.5 rounded bg-border">
+              <div
+                className="h-full rounded bg-info"
+                style={{
+                  width: `${Math.min(100, Math.max(0, r.cpu_percent))}%`,
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          '—'
+        ),
     },
     {
       key: 'mem',
       title: 'Memory',
       render: (r) =>
-        r.state === 'running'
-          ? `${formatBytes(r.mem_usage)} / ${r.mem_limit_configured === false ? '∞' : formatBytes(r.mem_limit)}${r.mem_limit > 0 && r.mem_limit_configured !== false ? ` (${Math.round((100 * r.mem_usage) / r.mem_limit)}%)` : ''}`
-          : '—',
+        r.state === 'running' ? (
+          <div
+            title={`${formatBytes(r.mem_usage)} used · ${r.mem_limit_configured === false ? 'no configured limit' : `${formatBytes(r.mem_limit)} limit`}`}
+          >
+            <span>
+              {formatBytes(r.mem_usage)}{' '}
+              <span className="text-text-muted">
+                /{' '}
+                {r.mem_limit_configured === false
+                  ? '∞'
+                  : formatBytes(r.mem_limit)}
+              </span>
+            </span>
+            {r.mem_limit > 0 && r.mem_limit_configured !== false && (
+              <div aria-hidden="true" className="mt-1 h-0.5 rounded bg-border">
+                <div
+                  className={`h-full rounded ${r.mem_usage / r.mem_limit > 0.9 ? 'bg-warn' : 'bg-success'}`}
+                  style={{
+                    width: `${Math.min(100, Math.max(0, (r.mem_usage / r.mem_limit) * 100))}%`,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          '—'
+        ),
+    },
+    {
+      key: 'links',
+      title: 'Open',
+      sortable: false,
+      render: (r) => (
+        <Link
+          state={collectionState}
+          className="rounded border border-border-strong px-2 py-1 text-xs text-text-muted hover:bg-raised-2 hover:text-text"
+          aria-label={`Logs for ${r.container_name}`}
+          to={`${containerPath(r.device_id, r.container_name)}?tab=logs`}
+        >
+          Logs ↗
+        </Link>
+      ),
     },
     {
       key: 'uptime',
@@ -354,12 +450,52 @@ export default function ContainersPage() {
                   : (r.status ?? '—'),
     },
   ]
+  const widths: Record<string, number> = {
+    name: 200,
+    status: 112,
+    host: 120,
+    stack: 128,
+    image: 240,
+    ports: 208,
+    cpu: 72,
+    mem: 172,
+    uptime: 200,
+    links: 88,
+  }
+  const orderedColumns = [
+    'name',
+    'host',
+    'stack',
+    'status',
+    'image',
+    'cpu',
+    'mem',
+    'ports',
+    'uptime',
+    'links',
+  ].map((key) => {
+    const column = columns.find((c) => c.key === key)!
+    return {
+      ...column,
+      width: widths[key],
+      pinned: key === 'name',
+      align: key === 'cpu' || key === 'mem' ? ('right' as const) : undefined,
+    }
+  })
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-3 items-center">
-        <h2 className="text-lg font-semibold">
-          Containers <span className="text-text-muted">{filtered.length}</span>
-        </h2>
+    <div className="min-w-0 space-y-4">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Containers</h1>
+          <p className="mt-1 text-sm text-text-muted">
+            Runtime state, resource usage and logs across your hosts.
+          </p>
+        </div>
+        <span className="text-xs tabular-nums text-text-muted">
+          {filtered.length} of {fleet.data?.length ?? 0} containers
+        </span>
+      </header>
+      <div className="flex flex-wrap gap-2 items-center">
         <input
           aria-label="Search containers"
           placeholder="Search name, image, host or tag…"
@@ -404,6 +540,41 @@ export default function ContainersPage() {
         >
           {state.view === 'table' ? 'Tiles' : 'Table'}
         </Button>
+        {state.view === 'table' && (
+          <Popover label="Columns">
+            <p className="mb-2 text-xs text-text-muted">
+              Choose what to show. Name stays pinned.
+            </p>
+            {orderedColumns.map((column) => (
+              <label
+                key={column.key}
+                className="flex items-center gap-2 py-1 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  checked={visibleColumns.includes(column.key)}
+                  disabled={column.key === 'name'}
+                  onChange={() =>
+                    chooseColumns(
+                      visibleColumns.includes(column.key)
+                        ? visibleColumns.filter((key) => key !== column.key)
+                        : [...visibleColumns, column.key],
+                    )
+                  }
+                />
+                {column.title}
+              </label>
+            ))}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-2"
+              onClick={() => chooseColumns(defaultColumns)}
+            >
+              Reset columns
+            </Button>
+          </Popover>
+        )}
         <Button
           variant="secondary"
           disabled={busy}
@@ -534,7 +705,9 @@ export default function ContainersPage() {
             ) : (
               <DataTable
                 rows={rows}
-                columns={columns}
+                columns={orderedColumns.filter((column) =>
+                  visibleColumns.includes(column.key),
+                )}
                 sort={{ key: state.sort, direction: state.direction }}
                 rowKey={rowKey}
                 selection={selected}
@@ -552,7 +725,9 @@ export default function ContainersPage() {
                   )
                 }
                 onActivate={(r) =>
-                  navigate(containerPath(r.device_id, r.container_name))
+                  navigate(containerPath(r.device_id, r.container_name), {
+                    state: collectionState,
+                  })
                 }
                 onSort={(key) => {
                   if (key !== 'ports')

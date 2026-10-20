@@ -78,22 +78,35 @@ html, body, #root {
   display: none;
 }
 
-/* Thin dark scrollbar for data grids */
-.scrollbar-thin {
+/* Repo default: thin, theme-aware scrollbars on every scrolling surface. */
+* {
   scrollbar-width: thin;
-  scrollbar-color: #374151 transparent;
+  scrollbar-color: var(--color-border-strong) transparent;
 }
-.scrollbar-thin::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-.scrollbar-thin::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #374151;
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
   border-radius: 3px;
 }
-.scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Neutral Docker workspace surfaces keep dense operational views legible. */
+.docker-workspace {
+  /* Semantic tokens are inline aliases of these palette variables. */
+  --color-gray-950: #101114;
+  --color-gray-900: #17181b;
+  --color-gray-800: #292b30;
+  --color-gray-700: #3f4249;
+}
+.docker-page {
+  background: #101114;
+  min-height: calc(100vh - 56px);
 }

@@ -11,6 +11,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Fixed
 
+- [DOCKER-UX-001] Rework Docker into a Komodo-inspired resource workspace with persistent side navigation, Hosts capability views, compact detail headers, saved column choices, pinned names, direct Logs links and filter-preserving return navigation. Thin theme-aware scrollbars are now the repository-wide UI default. Large tables keep virtual scrolling and keyboard navigation aligned after filtering and resizing.
 - [DOCKER-UX-001] Use indexed latest-snapshot lookups per host for Docker hosts and containers, preventing full-history scans that caused slow page loads and 30-second host API timeouts.
 - [DOCKER-UX-001] Wait for a confirmed authenticated session before fetching navigation feature settings. Logged-out visits no longer loop through protected-setting 401 responses and page reloads, allowing the password form and OIDC button to finish rendering.
 

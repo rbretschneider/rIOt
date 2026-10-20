@@ -15,6 +15,7 @@ import LegacyRedirect from './pages/docker/LegacyRedirect'
 import StacksPage from './pages/docker/StacksPage'
 import StackPage from './pages/docker/StackPage'
 import InventoryPage from './pages/docker/InventoryPage'
+import DockerHostsPage from './pages/docker/HostsPage'
 import ActivityPage from './pages/docker/ActivityPage'
 import CommandPalette from './components/CommandPalette'
 import { useFeatures } from './hooks/useFeatures'
@@ -274,6 +275,7 @@ function MobileMenuButton({ open, onClick }: { open: boolean; onClick: () => voi
 }
 
 export default function App() {
+  const dockerWorkspace = useLocation().pathname.startsWith('/docker')
   const { authenticated, needsSetup, loading, login, logout, recheckAuth } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { isEnabled } = useFeatures(authenticated && !loading && !needsSetup)
@@ -379,7 +381,7 @@ export default function App() {
         </div>
       )}
       <UpdateBanner />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className={`${dockerWorkspace ? 'docker-page max-w-[1920px]' : 'max-w-7xl'} mx-auto px-4 sm:px-6 lg:px-8 py-6`}>
         <Routes>
           <Route path="/" element={<FleetOverview />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -391,6 +393,7 @@ export default function App() {
             <Route path="containers" element={<ContainersPage />} />
             <Route path="containers/:deviceId/:name" element={<ContainerPage />} />
             <Route path="stacks" element={<StacksPage />} />
+            <Route path="hosts" element={<DockerHostsPage />} />
             <Route path="stacks/:deviceId/:project" element={<StackPage />} />
             <Route path="images" element={<InventoryPage key="images" kind="images" />} />
             <Route path="volumes" element={<InventoryPage key="volumes" kind="volumes" />} />

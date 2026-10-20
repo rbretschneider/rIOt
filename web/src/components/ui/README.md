@@ -29,6 +29,12 @@ import { Button, Card, Badge, Modal, ConfirmDialog, EmptyState, Skeleton, QueryS
 
 ## Design tokens
 
+### Scrolling and data tables
+
+Thin scrollbars are the dashboard default, applied globally in `web/src/index.css` using theme tokens and both standard and WebKit rules. New scrolling areas inherit this style; do not add page-specific scrollbar colors or widths. Keep the existing `scrollbar-hide` exception for navigation strips only.
+
+Wide tables must scroll inside their own container, not widen the page. Give dense tables explicit column widths, truncate long values with the full text available, keep identifying columns visible while scrolling, and right-align numerical values with tabular numerals. Optional columns should have a discoverable chooser. Shared Docker `DataTable` supports widths, pinned columns and numerical alignment, and virtualizes rows for larger fleets.
+
 Tokens are declared once, in the `@theme inline` block of `web/src/index.css`. Each one aliases an existing Tailwind palette color, so the token name is the only thing a component references. Tailwind v4 turns each `--color-<name>` into the utilities `bg-<name>`, `text-<name>`, `border-<name>`, `ring-<name>`, and so on, including opacity forms such as `bg-danger-hover/20`.
 
 | Token | Utility examples | Aliases | Use for |
