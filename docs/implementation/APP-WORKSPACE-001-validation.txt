@@ -617,3 +617,19 @@ C:/Users/Ryan/AppData/Local/Temp/riot_app_workspace_demo_5e465a56a4554e67839d67b
 - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
 - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
 ✓ built in 4.64s
+
+=== QA-requested authentication assertion strengthening ===
+
+> web@1.0.0 test:run
+> vitest run src/App.auth.test.tsx
+
+
+ RUN  v4.0.18 D:/Repos/rIOt/web
+
+ ✓ src/App.auth.test.tsx (3 tests) 140ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  10:52:24
+   Duration  2.05s (transform 927ms, setup 145ms, import 1.37s, tests 140ms, environment 273ms)
+
