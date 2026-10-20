@@ -27,13 +27,13 @@ export const TOKEN_PALETTE = {
 
 export type TokenName = keyof typeof TOKEN_PALETTE
 
-/** sRGB hex of each palette step. Used only by the contrast test. */
+/** Effective sRGB values, including the application's neutral root overrides. */
 export const TOKEN_HEX: Record<TokenName, string> = {
-  surface: '#030712',
-  raised: '#111827',
-  'raised-2': '#1f2937',
-  border: '#1f2937',
-  'border-strong': '#374151',
+  surface: '#101114',
+  raised: '#17181b',
+  'raised-2': '#292b30',
+  border: '#292b30',
+  'border-strong': '#3f4249',
   text: '#f3f4f6',
   'text-muted': '#9ca3af',
   accent: '#2563eb',

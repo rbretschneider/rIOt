@@ -9,6 +9,10 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ## [Unreleased]
 
+### Changed
+
+- [APP-WORKSPACE-001] Unified Devices, Overview, Docker, monitoring and settings under one grouped application sidebar and compact search/notifications/account bar. Shared resource headers, global neutral surfaces and thin scrollbars keep the layout consistent; navigation collapses below 1280px. Devices retains every machine, while Docker hosts and filters exclude machines without Docker and keep offline Docker hosts. Existing URLs, authentication, stored/live logs, terminals and action confirmations are preserved.
+
 ### Fixed
 
 - [DOCKER-UX-001] Fit the default container table on portrait desktop screens by tightening column minimums and narrower-screen workspace spacing. Spare width goes to container names; Logs remains directly accessible.

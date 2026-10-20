@@ -23,7 +23,8 @@
 - **Rich telemetry** — CPU, memory, disk, network, services, processes, Docker containers, pending updates, security status, journal logs, NUT UPS monitoring, reverse proxy/web server inspection, USB device inventory, hardware details (PCI devices, disk drives, serial ports, GPUs), cron jobs and scheduled tasks, NVIDIA GPU runtime metrics (temperature, utilization, memory, fan speed, power draw)
 - **Device summary export** — export a device's hardware and software inventory as a Markdown file or copy it to the clipboard directly from the device detail page; the export covers system identity, OS, CPU, memory, storage, GPUs, network interfaces, USB devices, Docker containers, and UPS — generated on demand from the most recent telemetry snapshot
 - **Docker container management** — fleet-wide searchable table and optional grouped tiles, bulk actions, stable container links, stored and live logs, Inspect, Activity, I/O charts, first-class Compose stacks, inventory and previewed cleanup, plus optional remote terminals
-- **Real-time dashboard** — dark-mode React UI with live WebSocket updates; click the header clock to switch every timestamp between UTC and your browser's local time ([details](#time-display))
+- **Unified workspace** — grouped application sidebar, compact search/notifications/account bar, consistent resource headers and neutral surfaces across Devices, Overview, Docker, monitoring and settings; thin scrollbars are the UI default
+- **Real-time dashboard** — dark-mode React UI with live WebSocket updates; click the utility-bar clock to switch every timestamp between UTC and your browser's local time ([details](#time-display))
 - **Offline resilience** — agent buffers telemetry locally when the server is unreachable; resilient DNS caching with disk persistence for surviving DNS outages
 - **Zero-config setup** — a setup wizard configures the admin password, TLS, and mTLS on first visit; agents auto-pin the server certificate (SSH-like TOFU)
 - **Simple deployment** — single `docker compose up` for the server, one-liner install for agents
@@ -53,8 +54,23 @@
 - **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
-- **Reboot ETA tooltip** — hover a reboot-required device on the Fleet Overview page to see an estimate of when it will reboot (the next OS-patch maintenance-window start, in UTC), or an honest "no time" / "manual reboot required" message when the server cannot stand behind a time ([details](#reboot-eta-tooltip))
+- **Reboot ETA tooltip** — hover a reboot-required device on the Devices page to see an estimate of when it will reboot (the next OS-patch maintenance-window start, in UTC), or an honest "no time" / "manual reboot required" message when the server cannot stand behind a time ([details](#reboot-eta-tooltip))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
+
+## Dashboard navigation
+
+The application sidebar groups the existing pages into one workspace:
+
+| Group | Pages |
+|---|---|
+| Infrastructure | **Overview** (`/dashboard`) for performance and recent activity; **Devices** (`/`) for every registered machine |
+| Docker | **Containers**, **Stacks**, **Hosts**, **Images**, **Volumes**, **Networks** |
+| Observe | **Probes**, **Alerts**, **Security**, **Activity** (Docker command and event history) |
+| Administration | **Alert Rules**, **Agents**, **Settings** |
+
+Navigation stays visible on desktop screens at least 1280px wide. On narrower screens, use the navigation toggle; selecting a page or pressing Escape closes it. Search, notifications and account controls remain in the compact utility bar. Search also opens with **Ctrl+K** or **Cmd+K**, except while typing in a terminal. Use **Skip to content** when navigating by keyboard.
+
+**Devices** is the complete machine list, including machines without Docker. **Docker > Hosts** and Docker host filters show only machines known to support Docker, including offline Docker hosts. Turning off the Docker feature hides its navigation and Activity; it does not remove machines from Devices. Resource pages keep their existing URLs, and their owning collection stays selected in the sidebar. Settings keeps its subsection links.
 
 ## Architecture
 
@@ -585,7 +601,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `docker.compose_roots` | not enforced | List of absolute directories, for example `[/opt/stacks]`. When set, compose updates run only in a project directory inside one of them. An entry that is empty or relative makes every compose update fail until it is fixed. Required on Windows. Restart the agent after changing it. See [Compose directory trust](#compose-directory-trust) |
-| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard. The agent also reports this value to the server (display-only) so the Fleet Overview reboot-ETA tooltip can say "Manual reboot required" — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
+| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard. The agent also reports this value to the server (display-only) so the Devices reboot-ETA tooltip can say "Manual reboot required" — see [Reboot ETA tooltip](#reboot-eta-tooltip) |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
@@ -656,7 +672,7 @@ Monitor service, network, process, USB, and UPS state changes:
 
 ### Alert Templates
 
-Pre-built templates are available in Settings > Alert Rules > "Create from Template" for common scenarios. Templates pre-fill the metric, operator, threshold, and severity — just add a target name if needed.
+Pre-built templates are available in Administration > Alert Rules > "Create from Template" for common scenarios. Templates pre-fill the metric, operator, threshold, and severity — just add a target name if needed.
 
 ### Alert Scoping (Include / Exclude)
 
@@ -730,7 +746,7 @@ The `hardware` collector provides static GPU identity (vendor, model, PCI slot, 
 
 ### GPU Alerts
 
-Two alert templates are available in **Settings > Alert Rules > Create from Template** under the `gpu` category:
+Two alert templates are available in **Administration > Alert Rules > Create from Template** under the `gpu` category:
 
 | Template | Metric | Default Threshold | Severity | Cooldown |
 |---|---|---|---|---|
@@ -819,7 +835,7 @@ Only aggregate counts leave the agent. No IP addresses, URIs, user-agent strings
 
 ### Creating Nginx Alert Rules
 
-Go to **Settings > Alert Rules** and click **Create from Template**. Two pre-built templates are available under the `webserver` category:
+Go to **Administration > Alert Rules** and click **Create from Template**. Two pre-built templates are available under the `webserver` category:
 
 | Template | Metric | Default Threshold | Severity | Cooldown |
 |---|---|---|---|---|
@@ -880,7 +896,7 @@ On the first telemetry push after agent start, `failed_logins_interval` is alway
 
 ### Setting up the Auth Failure alert rule
 
-1. Go to **Settings > Alert Rules** and click **Create from Template**.
+1. Go to **Administration > Alert Rules** and click **Create from Template**.
 2. Select **Auth Failure** under the **security** category.
 3. Review the default settings: metric `failed_logins_interval`, operator `>`, threshold `0`, severity `warning`, cooldown `300s`.
 4. On internet-facing hosts with public SSH, routine bot traffic will trigger this at every cooldown window at the default threshold. Either raise the threshold (e.g. `> 5`) or narrow the **Include Devices** scope to internal hosts before saving.
@@ -1786,7 +1802,7 @@ This does **not** reclaim disk space already lost to bloat from before the conve
 
 ## Docker Container Management
 
-Open **Docker** in the main navigation for containers across every host. The default table supports search, host and stack filters, status chips, sorting and selection. **Tiles** keeps the existing Compose, network and standalone grouping. Filters and selection can be shared in a URL; opening a link never starts an action. Older per-device Docker links redirect into the fleet section.
+Open **Containers** under **Docker** in the application sidebar for containers across every Docker host. The default table supports search, host and stack filters, status chips, sorting and selection. **Tiles** keeps the existing Compose, network and standalone grouping. Filters and selection can be shared in a URL; opening a link never starts an action. Older per-device Docker links redirect into the fleet section. Docker shares the application navigation and resource header pattern; it has no additional sidebar.
 
 Container pages use host ID and container name, so a recreate keeps the same link. Overview keeps network and mount information; Logs combines stored history and an opt-in Live tail; Activity records commands and observed events; Inspect shows redacted Docker configuration; Stats includes CPU, memory and network/block I/O. Terminal still needs its existing feature and agent settings. **Ctrl+K** opens the resource search palette; terminal keystrokes are exempt.
 
@@ -2334,7 +2350,7 @@ Every telemetry cycle the agent reports a `hold_enforcement` state:
 
 ## Reboot ETA tooltip
 
-When a device needs a reboot to activate installed updates, the Fleet Overview page (`/`) shows an estimate of when that reboot will happen. Hover the indicator to read it. The estimate is the next start of the OS-patch maintenance window, shown as an absolute UTC time. It is advisory only: the tooltip always says it is an estimate, not a guarantee.
+When a device needs a reboot to activate installed updates, the Devices page (`/`) shows an estimate of when that reboot will happen. Hover the indicator to read it. The estimate is the next start of the OS-patch maintenance window, shown as an absolute UTC time. It is advisory only: the tooltip always says it is an estimate, not a guarantee.
 
 No setup is required beyond the maintenance window you already manage in **Settings > Agents**. The feature adds no environment variable, no agent collector, and no database migration.
 
@@ -2429,7 +2445,7 @@ The error response is unchanged: `500 {"error":"failed to get telemetry"}`.
 
 The `/dashboard` route provides a fleet-wide health view. It is separate from the `/` Devices route, which is a sortable per-device management table. The dashboard answers "is my fleet healthy right now?" without requiring you to click into individual devices.
 
-Navigate to it via the **Dashboard** link in the header, or go directly to `http://<server>:7331/dashboard`.
+Navigate to it via **Infrastructure > Overview** in the application sidebar, or go directly to `http://<server>:7331/dashboard`.
 
 ### Sections
 
