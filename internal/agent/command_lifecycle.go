@@ -197,7 +197,7 @@ func (a *Agent) submitCommand(payload models.CommandPayload, via string) {
 	// FR-019 / C-4: the marker is durable before the command starts.
 	marker := inflightMarker{Action: payload.Action, Target: markerTarget(payload), StartedAt: a.clock().Now()}
 	if err := a.inflight.Put(id, marker); err != nil {
-		if isDockerMutation(payload.Action) {
+		if isDockerMutation(payload.Action) || payload.Action == models.ActionOSUpdate || payload.Action == models.ActionAgentUpdate {
 			slog.Error("command: in-flight marker unavailable, refusing to run", "id", id, "action", payload.Action, "error", err)
 			if rerr := a.inflight.Remove(id); rerr != nil {
 				slog.Warn("command: could not discard unwritable marker", "id", id, "error", rerr)
@@ -471,7 +471,11 @@ func (a *Agent) executeCommand(cr *cmdRun) {
 // runAction invokes the executor with panic recovery and guaranteed lock
 // release.
 func (a *Agent) runAction(cr *cmdRun) (res commandExecResult) {
-	defer cr.releaseLocks()
+	defer func() {
+		if !res.Detached {
+			cr.releaseLocks()
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("command: panic", "id", cr.id, "action", cr.action, "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
@@ -491,6 +495,9 @@ func (a *Agent) runAction(cr *cmdRun) (res commandExecResult) {
 
 // completeCommand turns an action result into the wire result and queues it.
 func (a *Agent) completeCommand(cr *cmdRun, res commandExecResult) {
+	if res.Detached {
+		return
+	}
 	res.Message, _ = redact.MaskText(res.Message, "<redacted>")
 	res.Output, _ = redact.MaskText(res.Output, "<redacted>")
 	res.Stderr, _ = redact.MaskText(res.Stderr, "<redacted>")
@@ -544,6 +551,9 @@ func (a *Agent) completeCommand(cr *cmdRun, res commandExecResult) {
 
 	if err := a.out.Add(result); err != nil {
 		slog.Error("command: result not persisted, held in memory", "id", cr.id, "error", err)
+		if cr.action == models.ActionOSUpdate || cr.action == models.ActionAgentUpdate {
+			return
+		}
 	}
 	if err := a.inflight.Remove(cr.id); err != nil {
 		slog.Warn("command: could not clear in-flight marker", "id", cr.id, "error", err)
@@ -621,6 +631,12 @@ func (a *Agent) recoverInterruptedCommands(ctx context.Context) {
 
 	for _, entry := range a.inflight.All() {
 		m := entry.Marker
+		if m.Action == models.ActionOSUpdate && a.recoverMaintenanceCommand(entry.ID, m) {
+			continue
+		}
+		if m.Action == models.ActionAgentUpdate && a.recoverSignedAgentUpdate(entry.ID, m) {
+			continue
+		}
 		switch m.Action {
 		case models.ActionAgentUpdate, models.ActionReboot, models.ActionShutdown:
 			if err := a.inflight.Remove(entry.ID); err != nil {

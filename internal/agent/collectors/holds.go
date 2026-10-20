@@ -82,9 +82,34 @@ type HoldManager struct {
 
 	run CommandRunner
 
-	status     string   // "", HoldStatusActive, HoldStatusNoPrivilege, HoldStatusUnsupported
-	held       []string // sorted rIOt-managed holds as of the last reconcile (only when active)
-	warnedDNF4 bool     // one WARN per process lifetime (AD-005)
+	status           string   // "", HoldStatusActive, HoldStatusNoPrivilege, HoldStatusUnsupported
+	held             []string // sorted rIOt-managed holds as of the last reconcile (only when active)
+	warnedDNF4       bool     // one WARN per process lifetime (AD-005)
+	maintenanceGuard func(context.Context) bool
+}
+
+// SetMaintenanceGuard prevents the agent's periodic/startup convergence from
+// racing the independent worker's durable release/reapply transaction.
+func (hm *HoldManager) SetMaintenanceGuard(guard func(context.Context) bool) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	hm.maintenanceGuard = guard
+}
+
+// MaintenanceBarrier drains a collector pass that began before the host
+// reservation. The guard rejects later passes until the independent job ends.
+func (hm *HoldManager) MaintenanceBarrier(ctx context.Context) error {
+	for !hm.mu.TryLock() {
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	hm.mu.Unlock()
+	return nil
 }
 
 // NewHoldManager builds a HoldManager. enabled comes from the agent's
@@ -172,6 +197,9 @@ func (hm *HoldManager) DNF5Supported(ctx context.Context) bool {
 func (hm *HoldManager) Reconcile(ctx context.Context, pm string, installed []string) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
+	if hm.maintenanceGuard != nil && hm.maintenanceGuard(ctx) {
+		return
+	}
 	hm.reconcileLocked(ctx, pm, installed, false)
 }
 
@@ -182,6 +210,9 @@ func (hm *HoldManager) Reconcile(ctx context.Context, pm string, installed []str
 func (hm *HoldManager) ReconcileStartup(ctx context.Context) {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
+	if hm.maintenanceGuard != nil && hm.maintenanceGuard(ctx) {
+		return
+	}
 
 	st, _ := hm.loadState()
 	pm := st.PM

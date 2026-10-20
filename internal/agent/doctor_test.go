@@ -429,7 +429,7 @@ func installerUnit(t *testing.T) string {
 		t.Fatalf("read install.sh: %v", err)
 	}
 	script := strings.ReplaceAll(string(data), "\r\n", "\n")
-	const start = "cat > /etc/systemd/system/riot-agent.service <<EOF\n"
+	const start = "cat > \"$STAGE/riot-agent.service\" <<EOF\n"
 	i := strings.Index(script, start)
 	if i < 0 {
 		t.Fatal("install.sh no longer writes the riot-agent unit with the expected heredoc")

@@ -1,0 +1,24 @@
+[Unit]
+Description=rIOt bounded OS maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/lib/riot/riot-maintenance
+User=root
+Group=root
+WorkingDirectory=/
+UMask=0027
+Restart=no
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+RuntimeMaxSec=35min
+TimeoutStopSec=90s
+KillSignal=SIGTERM
+KillMode=control-group
+
+# Deliberately independent of riot-agent.service: an agent restart or its
+# memory limit must not terminate package scripts. Start only on an explicit
+# maintenance request; this service is not enabled as a boot-time job.

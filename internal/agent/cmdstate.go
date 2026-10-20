@@ -304,12 +304,14 @@ type dockerRecord struct {
 
 // inflightMarker records a command that has started executing.
 type inflightMarker struct {
-	Action    string         `json:"action"`
-	Target    string         `json:"target,omitempty"`
-	Step      string         `json:"step,omitempty"`
-	StartedAt time.Time      `json:"started_at"`
-	Reported  bool           `json:"reported,omitempty"`
-	Docker    []dockerRecord `json:"docker,omitempty"`
+	Action            string         `json:"action"`
+	Target            string         `json:"target,omitempty"`
+	Step              string         `json:"step,omitempty"`
+	StartedAt         time.Time      `json:"started_at"`
+	Reported          bool           `json:"reported,omitempty"`
+	UpdateSHA256      string         `json:"update_sha256,omitempty"`
+	UpdateRequestedAt time.Time      `json:"update_requested_at,omitempty"`
+	Docker            []dockerRecord `json:"docker,omitempty"`
 }
 
 func (m inflightMarker) clone() inflightMarker {
@@ -334,6 +336,21 @@ type inflightStore struct {
 	mu   sync.Mutex
 	file *atomicJSONFile
 	m    map[string]*inflightMarker
+}
+
+func (s *inflightStore) SetUpdateHandoff(id, digest string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.m[id]
+	if !ok {
+		return fmt.Errorf("agent update has no durable command marker")
+	}
+	if len(digest) != 64 || at.IsZero() {
+		return fmt.Errorf("invalid signed update handoff")
+	}
+	m.UpdateSHA256 = digest
+	m.UpdateRequestedAt = at
+	return s.saveLocked()
 }
 
 func newInflightStore(path string, fs stateFS) *inflightStore {

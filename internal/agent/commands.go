@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,6 +28,9 @@ const truncateHeadTailBytes = 64 * 1024
 
 // commandExecResult holds the outcome of an executed command including timing and output.
 type commandExecResult struct {
+	// Detached keeps the durable in-flight marker and host reservation while
+	// an independent root service owns the operation; no terminal report yet.
+	Detached      bool
 	TargetResults []models.DockerTargetResult
 	Status        string
 	Message       string
@@ -39,6 +43,7 @@ type commandExecResult struct {
 	// reboot-class outcome is carried in Message (FR-026).
 	RebootClassApplied []string
 	RebootPending      bool
+	RebootCommandID    string
 
 	// CMD-LIFECYCLE-001: the failing (or last) step, the closed-enum reason and
 	// the error text a failed result carries. Status stays success/error on the
@@ -86,6 +91,9 @@ func (a *Agent) runUpgradeCommand(ctx context.Context, name string, args ...stri
 // acknowledged the command; the result goes to the outbox from there.
 func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	payload, ctx := cr.payload, cr.ctx
+	if hostKeyFor(payload.Action) != nil && a.maintenanceBusy(ctx) && !a.canRequestMaintenanceRecovery(ctx, payload.Action) {
+		return commandExecResult{Status: models.ResultStatusError, Step: models.StepPrecheck, Reason: models.ReasonConflict, Message: "independent OS maintenance is active or requires recovery; refusing conflicting host action"}
+	}
 
 	// Host-scoped actions share one device-level lock (FR-054). agent_update and
 	// agent_uninstall restart or remove the agent and so must never run while a
@@ -157,10 +165,14 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 		status, message = a.handleShutdown(payload)
 	case "os_update":
 		r := a.handleOSUpdateWithOutput(ctx, payload)
+		r.RebootCommandID = payload.CommandID
 		r.postResult = func() { a.maybeRebootAfterPatch(r) }
 		return r
 	case "agent_update":
-		status, message = a.handleTriggerUpdate(ctx)
+		status, message = a.handleTriggerUpdate(context.WithValue(ctx, updateCommandIDKey{}, payload.CommandID))
+		if status == "pending" {
+			return commandExecResult{Detached: true, Message: message}
+		}
 	case "agent_uninstall":
 		status, message = a.handleUninstall()
 	case "fetch_logs":
@@ -187,6 +199,20 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 		return
 	}
 	if a.config.Commands.AllowReboot {
+		if a.locks == nil || a.maintenanceBusy(a.commandContext()) {
+			a.triggerTelemetry()
+			return
+		}
+		reservation := "patch-reboot:" + r.RebootCommandID
+		if _, _, ok := a.locks.TryLockAll([]string{models.TargetKeyHost}, reservation, models.ActionReboot); !ok {
+			a.triggerTelemetry()
+			return
+		}
+		if !a.claimPatchReboot(r.RebootCommandID) {
+			a.locks.Unlock([]string{models.TargetKeyHost}, reservation)
+			a.triggerTelemetry()
+			return
+		}
 		slog.Info("os_update: reboot-class packages applied, rebooting host",
 			"packages", r.RebootClassApplied)
 		delay := a.rebootDelay
@@ -194,7 +220,24 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 			delay = 2 * time.Second
 		}
 		go func() {
-			time.Sleep(delay)
+			defer a.locks.Unlock([]string{models.TargetKeyHost}, reservation)
+			if a.pause != nil {
+				if !a.pause(a.commandContext(), delay) {
+					return
+				}
+			} else {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-a.commandContext().Done():
+					return
+				}
+			}
+			if a.shuttingDown.Load() || a.maintenanceBusy(a.commandContext()) {
+				a.triggerTelemetry()
+				return
+			}
 			if err := a.execReboot(); err != nil {
 				slog.Warn("os_update: post-patch reboot failed", "error", err)
 			}
@@ -322,9 +365,15 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 		return commandExecResult{Status: "error", Message: "os_update is only supported on Linux"}
 	}
 
-	mode, _ := payload.Params["mode"].(string)
+	mode, modeOK := payload.Params["mode"].(string)
+	if value, present := payload.Params["mode"]; present && (!modeOK || value == nil) {
+		return precheckFailure("OS update mode must be a string")
+	}
 	if mode == "" {
 		mode = "full"
+	}
+	if mode != "full" && mode != "security" && mode != "repair" {
+		return precheckFailure("OS update mode must be full, security or repair")
 	}
 	// Absent ⇒ false (FR-020 validation rule). Only in-window automated
 	// dispatches ever carry this param (server strips manual dispatches).
@@ -344,27 +393,12 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 
 	switch {
 	case aptErr == nil:
-		plan.PM = "apt"
-		plan.RefreshArgs = []string{"sudo", aptPath, "update"}
-		// Self-heal step: finish any dpkg transaction a previous run (or a
-		// reboot/power-loss) left half-configured. Without this, apt refuses
-		// every subsequent upgrade with exit 100 "dpkg was interrupted" until
-		// a human intervenes. Path resolved separately from apt-get.
-		dpkgPath, dpkgErr := exec.LookPath("dpkg")
-		if dpkgErr != nil {
-			dpkgPath = "/usr/bin/dpkg"
-		}
-		plan.RepairArgs = []string{"sudo", dpkgPath, "--configure", "-a"}
-		if mode == "security" {
-			plan.UpgradeArgs = []string{"sudo", aptPath, "-y", "upgrade",
-				"-o", "Dpkg::Options::=--force-confold",
-				"-o", "Dpkg::Options::=--force-confdef"}
-		} else {
-			plan.UpgradeArgs = []string{"sudo", aptPath, "-y", "dist-upgrade",
-				"-o", "Dpkg::Options::=--force-confold",
-				"-o", "Dpkg::Options::=--force-confdef"}
-		}
+		_ = aptPath
+		return a.runDetachedMaintenance(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled)
 	case dnfErr == nil:
+		if mode == "repair" {
+			return precheckFailure("bounded repair is supported only on apt/systemd hosts")
+		}
 		plan.PM = "dnf"
 		plan.RefreshArgs = []string{"sudo", dnfPath, "makecache"}
 		if mode == "security" {
@@ -484,6 +518,7 @@ func (a *Agent) runOSUpdate(updateCtx context.Context, commandID string, plan os
 		Output:             combinedOut,
 		RebootClassApplied: applied,
 		RebootPending:      len(applied) > 0 && a.config.Commands.AllowReboot,
+		RebootCommandID:    commandID,
 	}
 }
 
@@ -918,6 +953,9 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
 
 	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
+		if errors.Is(err, errUpdateScheduled) {
+			return "pending", "signed update accepted; privileged installation and restart are pending"
+		}
 		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
 			fmt.Sprintf("Agent update failed: %v", err))
 		return "error", fmt.Sprintf("update failed: %v", err)
