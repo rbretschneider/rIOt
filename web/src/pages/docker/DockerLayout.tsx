@@ -42,7 +42,7 @@ export default function DockerLayout() {
     )
   const available = hosts.data?.filter((h) => h.docker_available) ?? []
   return (
-    <div className="docker-workspace grid min-w-0 gap-6 lg:grid-cols-[184px_minmax(0,1fr)]">
+    <div className="docker-workspace grid min-w-0 gap-4 lg:grid-cols-[160px_minmax(0,1fr)] xl:gap-6 xl:grid-cols-[184px_minmax(0,1fr)]">
       <aside className="min-w-0 lg:sticky lg:top-5 lg:self-start">
         <div className="mb-4 flex items-center gap-2 px-3 text-sm font-semibold tracking-wide text-text">
           <DockerIcon kind="containers" /> Docker

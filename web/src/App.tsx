@@ -381,7 +381,7 @@ export default function App() {
         </div>
       )}
       <UpdateBanner />
-      <main className={`${dockerWorkspace ? 'docker-page max-w-[1920px]' : 'max-w-7xl'} mx-auto px-4 sm:px-6 lg:px-8 py-6`}>
+      <main className={`${dockerWorkspace ? 'docker-page max-w-[1920px] lg:px-6 xl:px-8' : 'max-w-7xl lg:px-8'} mx-auto px-4 sm:px-6 py-6`}>
         <Routes>
           <Route path="/" element={<FleetOverview />} />
           <Route path="/dashboard" element={<Dashboard />} />
