@@ -21,6 +21,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Changed
 
+- [DOCKER-STACK-005] Highlight positive stack update counts with an amber `Update (N)` button and a singular/plural Updates pill. Zero/nonpositive counts keep the neutral Update control and numeric value without implying freshness. Existing compact table layout, confirmation and progress behavior are unchanged.
 - [APP-WORKSPACE-001] Unified Devices, Overview, Docker, monitoring and settings under one grouped application sidebar and compact search/notifications/account bar. Shared resource headers, global neutral surfaces and thin scrollbars keep the layout consistent; navigation collapses below 1280px. Devices retains every machine, while Docker hosts and filters exclude machines without Docker and keep offline Docker hosts. Existing URLs, authentication, stored/live logs, terminals and action confirmations are preserved.
 
 ### Fixed
