@@ -469,7 +469,7 @@ export default function ContainersPage() {
     stack: 112,
     image: 240,
     ports: 208,
-    cpu: 64,
+    cpu: 160,
     mem: 160,
     uptime: 200,
     links: 64,
@@ -490,7 +490,7 @@ export default function ContainersPage() {
     return {
       ...column,
       width: widths[key],
-      grow: key === 'links',
+      grow: key === 'name',
       pinned: key === 'name',
       align: key === 'cpu' || key === 'mem' ? ('right' as const) : undefined,
     }
