@@ -11,6 +11,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Added
 
+- [DOCKER-STACK-003] Update Compose stacks directly from a Stacks row with in-place confirmation and command progress. Stack details keep Update available at zero known updates and for down/partial stacks. Fresh capability/agreed-path checks gate collection confirmation; the dialog explains pull/up, service recreation/start and rIOt connection impact. Closing accepted work does not cancel it, conflicts adopt existing progress, and retries stay explicit. Existing API, server authorization and other-action confirmations are unchanged.
 - [MAINT-RECOVERY-001] Independent signed apt maintenance worker with configure-first recovery, one bounded no-removal dependency repair, explicit `os_update` repair mode through the existing API, root-owned durable results and same-command recovery after agent restart. Repair preserves holds and never refreshes/upgrades/reboots. Existing apt security mode remains conservative upgrade behavior, not security-origin filtering.
 
 ### Maintenance deployment

@@ -621,6 +621,50 @@ describe('Stacks', () => {
     )
     expect(screen.getByText('down')).toBeInTheDocument()
   })
+  it('[AC-001][AC-007] opens stack update in place and preserves collection filters', async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<StacksPage />, { route: '/docker/stacks?host=host-1&q=app', showLocation: true })
+    await user.click(await screen.findByRole('button', { name: 'Update app on host-one' }))
+    expect(await screen.findByRole('dialog', { name: 'Update app' })).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('/docker/stacks?host=host-1&q=app')
+    expect(mock.stackAction).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Search stacks' })).toHaveValue('app')
+  })
+  it.each([
+    { state: 'running', running: 2, total: 2, updates: 1 },
+    { state: 'running', running: 2, total: 2, updates: 0 },
+    { state: 'partial', running: 1, total: 2, updates: 1 },
+    { state: 'down', running: 0, total: 2, updates: 0 },
+  ])('[AC-002] exposes exactly one detail Update for $state with $updates updates', async (state) => {
+    mock.stack.mockResolvedValue({ ...(await mock.stacks())[0], ...state })
+    renderWithProviders(<StackPage />, { route: '/docker/stacks/host-1/app', path: '/docker/stacks/:deviceId/:project' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Update' })).toBeEnabled())
+    expect(screen.getAllByRole('button', { name: 'Update' })).toHaveLength(1)
+    if (state.state !== 'running') expect(screen.getByRole('button', { name: 'Up' })).toBeInTheDocument()
+  })
+  it('[AC-007] isolates identical project names on different hosts while an old read resolves late', async () => {
+    const user = userEvent.setup()
+    const first = (await mock.stacks())[0]
+    const second = { ...first, device_id: 'host-2', hostname: 'host-two', agreed_working_dir: '/srv/other' }
+    mock.stacks.mockResolvedValue([first, second])
+    mock.hosts.mockResolvedValue([host, { ...host, device_id: 'host-2', hostname: 'host-two' }])
+    let resolveFirst!: (value: typeof first) => void
+    mock.stack.mockImplementation((id: string) => id === 'host-1' ? new Promise((done) => { resolveFirst = done }) : Promise.resolve(second))
+    mock.stackAction.mockResolvedValue({ id: 'cmd-2', device_id: 'host-2', action: 'docker_update', status: 'running', params: {}, updated_at: '2026-10-20T10:00:00Z' })
+    mock.getCommand.mockResolvedValue({ id: 'cmd-2', device_id: 'host-2', action: 'docker_update', status: 'running', params: {}, updated_at: '2026-10-20T10:00:00Z' })
+    renderWithProviders(<StacksPage />)
+    await user.click(await screen.findByRole('button', { name: 'Update app on host-one' }))
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await user.click(screen.getByRole('button', { name: 'Update app on host-two' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm update' })).toBeEnabled())
+    await act(async () => { resolveFirst(first) })
+    expect(within(screen.getByRole('dialog')).getByText('host-two')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm update' }))
+    await waitFor(() => expect(mock.stackAction).toHaveBeenCalledExactlyOnceWith('host-2', 'app', { action: 'update' }))
+    await waitFor(() => expect(mock.getCommand).toHaveBeenCalledWith('host-2', 'cmd-2'))
+  })
   it('blocks stack actions when compose paths changed and requires acknowledgement', async () => {
     const user = userEvent.setup()
     const s = (await mock.stacks())[0]
