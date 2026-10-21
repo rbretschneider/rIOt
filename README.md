@@ -1041,7 +1041,7 @@ Agents check for a new release 30 seconds after start and every 6 hours after th
 
 ### How an update is verified
 
-1. The agent asks the server whether a newer version exists. The server only tells the agent where the files are. The agent never trusts the server to say the files are genuine.
+1. The agent asks the server whether a newer version exists. The server selects only the exact `riot-agent-<platform>` asset (`.exe` on Windows), excluding helpers and sidecars regardless of asset order. If that binary is absent, it supplies no substitute. The server only tells the agent where the files are; the agent never trusts the server to say they are genuine.
 2. The agent downloads the binary, `checksums.txt`, and `checksums.txt.sig` from the GitHub release. The two small files are capped at 1 MiB and 30 seconds each.
 3. The agent verifies the ed25519 signature in `checksums.txt.sig` over the exact bytes of `checksums.txt`. The public key is compiled into the agent binary. No config file, environment variable, or server response can replace it.
 4. The agent checks that the SHA-256 of the downloaded binary equals the `riot-agent-<platform>` line in the now-trusted `checksums.txt`.

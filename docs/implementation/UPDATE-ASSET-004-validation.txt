@@ -1,0 +1,567 @@
+Run: baseline
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent-apply	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-maintenance	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-server	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/agent	20.833s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent/collectors	15.010s
+ok  	github.com/DesyncTheThird/rIOt/internal/logbudget	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/maintenance	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/models	0.605s
+ok  	github.com/DesyncTheThird/rIOt/internal/redact	0.547s
+ok  	github.com/DesyncTheThird/rIOt/internal/releasekey	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/resilient	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server	3.109s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/auth	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ca	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/commands	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/db	1.152s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/events	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/handlers	11.020s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ingest	(cached)
+?   	github.com/DesyncTheThird/rIOt/internal/server/logstore	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/internal/server/middleware	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/notify	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/oidc	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/partition	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/probes	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/quota	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/scoring	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/storage	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/summary	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	(cached)
+?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/scripts	0.864s
+Run: red
+--- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders (0.00s)
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-amd64 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-amd64":"https://example.com/riot-agent-linux-amd64"}
+            	            	actual  : map[string]string{"linux-amd64":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-amd64": (string) (len=42) "https://example.com/riot-agent-linux-amd64"
+            	            	+ (string) (len=11) "linux-amd64": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-amd64
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-amd64":"https://example.com/riot-agent-linux-amd64"}
+            	            	actual  : map[string]string{"linux-amd64":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-amd64": (string) (len=42) "https://example.com/riot-agent-linux-amd64"
+            	            	+ (string) (len=11) "linux-amd64": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-amd64
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-386 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-386":"https://example.com/riot-agent-linux-386"}
+            	            	actual  : map[string]string{"linux-386":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=9) "linux-386": (string) (len=40) "https://example.com/riot-agent-linux-386"
+            	            	+ (string) (len=9) "linux-386": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-386
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-386":"https://example.com/riot-agent-linux-386"}
+            	            	actual  : map[string]string{"linux-386":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=9) "linux-386": (string) (len=40) "https://example.com/riot-agent-linux-386"
+            	            	+ (string) (len=9) "linux-386": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-386
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-arm64 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-arm64":"https://example.com/riot-agent-linux-arm64"}
+            	            	actual  : map[string]string{"linux-arm64":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-arm64": (string) (len=42) "https://example.com/riot-agent-linux-arm64"
+            	            	+ (string) (len=11) "linux-arm64": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-arm64
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-arm64":"https://example.com/riot-agent-linux-arm64"}
+            	            	actual  : map[string]string{"linux-arm64":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-arm64": (string) (len=42) "https://example.com/riot-agent-linux-arm64"
+            	            	+ (string) (len=11) "linux-arm64": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-arm64
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv7 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-armv7":"https://example.com/riot-agent-linux-armv7"}
+            	            	actual  : map[string]string{"linux-armv7":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-armv7": (string) (len=42) "https://example.com/riot-agent-linux-armv7"
+            	            	+ (string) (len=11) "linux-armv7": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv7
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-armv7":"https://example.com/riot-agent-linux-armv7"}
+            	            	actual  : map[string]string{"linux-armv7":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-armv7": (string) (len=42) "https://example.com/riot-agent-linux-armv7"
+            	            	+ (string) (len=11) "linux-armv7": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv7
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv6 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-armv6":"https://example.com/riot-agent-linux-armv6"}
+            	            	actual  : map[string]string{"linux-armv6":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-armv6": (string) (len=42) "https://example.com/riot-agent-linux-armv6"
+            	            	+ (string) (len=11) "linux-armv6": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv6
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"linux-armv6":"https://example.com/riot-agent-linux-armv6"}
+            	            	actual  : map[string]string{"linux-armv6":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=11) "linux-armv6": (string) (len=42) "https://example.com/riot-agent-linux-armv6"
+            	            	+ (string) (len=11) "linux-armv6": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv6
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-amd64 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"darwin-amd64":"https://example.com/riot-agent-darwin-amd64"}
+            	            	actual  : map[string]string{"darwin-amd64":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=12) "darwin-amd64": (string) (len=43) "https://example.com/riot-agent-darwin-amd64"
+            	            	+ (string) (len=12) "darwin-amd64": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-amd64
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"darwin-amd64":"https://example.com/riot-agent-darwin-amd64"}
+            	            	actual  : map[string]string{"darwin-amd64":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=12) "darwin-amd64": (string) (len=43) "https://example.com/riot-agent-darwin-amd64"
+            	            	+ (string) (len=12) "darwin-amd64": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-amd64
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-arm64 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"darwin-arm64":"https://example.com/riot-agent-darwin-arm64"}
+            	            	actual  : map[string]string{"darwin-arm64":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=12) "darwin-arm64": (string) (len=43) "https://example.com/riot-agent-darwin-arm64"
+            	            	+ (string) (len=12) "darwin-arm64": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-arm64
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"darwin-arm64":"https://example.com/riot-agent-darwin-arm64"}
+            	            	actual  : map[string]string{"darwin-arm64":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=12) "darwin-arm64": (string) (len=43) "https://example.com/riot-agent-darwin-arm64"
+            	            	+ (string) (len=12) "darwin-arm64": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-arm64
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+    --- FAIL: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/windows-amd64 (0.00s)
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"windows-amd64":"https://example.com/riot-agent-windows-amd64.exe"}
+            	            	actual  : map[string]string{"windows-amd64":"https://example.com/sidecar"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=13) "windows-amd64": (string) (len=48) "https://example.com/riot-agent-windows-amd64.exe"
+            	            	+ (string) (len=13) "windows-amd64": (string) (len=27) "https://example.com/sidecar"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/windows-amd64
+            	Messages:   	[AC-001][AC-002] order [0 1 2 3] must select only the canonical agent
+        checker_test.go:162: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:162
+            	Error:      	Not equal: 
+            	            	expected: map[string]string{"windows-amd64":"https://example.com/riot-agent-windows-amd64.exe"}
+            	            	actual  : map[string]string{"windows-amd64":"https://example.com/maintenance"}
+            	            	
+            	            	Diff:
+            	            	--- Expected
+            	            	+++ Actual
+            	            	@@ -1,3 +1,3 @@
+            	            	 (map[string]string) (len=1) {
+            	            	- (string) (len=13) "windows-amd64": (string) (len=48) "https://example.com/riot-agent-windows-amd64.exe"
+            	            	+ (string) (len=13) "windows-amd64": (string) (len=31) "https://example.com/maintenance"
+            	            	 }
+            	Test:       	TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/windows-amd64
+            	Messages:   	[AC-001][AC-002] order [1 0 3 2] must select only the canonical agent
+--- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets (0.00s)
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-maintenance-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-maintenance-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/other-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/other-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/prefix-riot-agent-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/prefix-riot-agent-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64-old (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64-old
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sig (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sig
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sha256 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sha256
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.tar.gz (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.tar.gz
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.exe (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.exe
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir/riot-agent-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir/riot-agent-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/../riot-agent-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/../riot-agent-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir\riot-agent-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir\riot-agent-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/RIOT-AGENT-linux-amd64 (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/RIOT-AGENT-linux-amd64
+            	Messages:   	[AC-003]
+    --- FAIL: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64_ (0.00s)
+        checker_test.go:179: 
+            	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:179
+            	Error:      	Should be false
+            	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64_
+            	Messages:   	[AC-003]
+    checker_test.go:184: 
+        	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:184
+        	Error:      	Should be false
+        	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets
+        	Messages:   	[AC-003] riot-agent-windows-amd64
+    checker_test.go:184: 
+        	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:184
+        	Error:      	Should be false
+        	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets
+        	Messages:   	[AC-003] riot-agent-windows-amd64.EXE
+    checker_test.go:184: 
+        	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:184
+        	Error:      	Should be false
+        	Test:       	TestUpdateAsset004_AC003_RejectNoncanonicalAssets
+        	Messages:   	[AC-003] riot-agent-windows-amd64.exe.sig
+--- FAIL: TestUpdateAsset004_AC003_AC004_HelperOnlyKeepsMetadataWithoutAgentURL (0.00s)
+    checker_test.go:209: 
+        	Error Trace:	D:/Repos/rIOt/internal/server/updates/checker_test.go:209
+        	Error:      	Should be empty, but was map[linux-amd64:https://example.com/decoy]
+        	Test:       	TestUpdateAsset004_AC003_AC004_HelperOnlyKeepsMetadataWithoutAgentURL
+        	Messages:   	[AC-003] no helper/decoy fallback
+FAIL
+FAIL	github.com/DesyncTheThird/rIOt/internal/server/updates	0.630s
+FAIL
+Run: focused
+=== RUN   TestNormalizeVersion
+=== RUN   TestNormalizeVersion/v1.2.3
+=== RUN   TestNormalizeVersion/1.2.3
+=== RUN   TestNormalizeVersion/v0.1.0
+=== RUN   TestNormalizeVersion/#00
+--- PASS: TestNormalizeVersion (0.00s)
+    --- PASS: TestNormalizeVersion/v1.2.3 (0.00s)
+    --- PASS: TestNormalizeVersion/1.2.3 (0.00s)
+    --- PASS: TestNormalizeVersion/v0.1.0 (0.00s)
+    --- PASS: TestNormalizeVersion/#00 (0.00s)
+=== RUN   TestAssetSuffix
+=== RUN   TestAssetSuffix/linux_amd64
+=== RUN   TestAssetSuffix/linux_arm64
+=== RUN   TestAssetSuffix/linux_armv7
+=== RUN   TestAssetSuffix/linux_armv6
+=== RUN   TestAssetSuffix/darwin_amd64
+=== RUN   TestAssetSuffix/goarm_zero_treated_as_no_arm
+--- PASS: TestAssetSuffix (0.00s)
+    --- PASS: TestAssetSuffix/linux_amd64 (0.00s)
+    --- PASS: TestAssetSuffix/linux_arm64 (0.00s)
+    --- PASS: TestAssetSuffix/linux_armv7 (0.00s)
+    --- PASS: TestAssetSuffix/linux_armv6 (0.00s)
+    --- PASS: TestAssetSuffix/darwin_amd64 (0.00s)
+    --- PASS: TestAssetSuffix/goarm_zero_treated_as_no_arm (0.00s)
+=== RUN   TestAgentUpdateInfo_NoRelease
+--- PASS: TestAgentUpdateInfo_NoRelease (0.00s)
+=== RUN   TestAgentUpdateInfo_WithRelease
+--- PASS: TestAgentUpdateInfo_WithRelease (0.00s)
+=== RUN   TestAC002_AgentUpdateInfo_AdvertisesSignatureURL
+--- PASS: TestAC002_AgentUpdateInfo_AdvertisesSignatureURL (0.00s)
+=== RUN   TestAC002_AgentUpdateInfo_UnsignedReleaseHasNoSignatureURL
+--- PASS: TestAC002_AgentUpdateInfo_UnsignedReleaseHasNoSignatureURL (0.00s)
+=== RUN   TestAC005_AgentUpdateInfo_VerifierAssetIsNeverServedAsTheAgentBinary
+--- PASS: TestAC005_AgentUpdateInfo_VerifierAssetIsNeverServedAsTheAgentBinary (0.00s)
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-amd64
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-386
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-arm64
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv7
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv6
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-amd64
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-arm64
+=== RUN   TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/windows-amd64
+--- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-386 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-arm64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv7 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/linux-armv6 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/darwin-arm64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders/windows-amd64 (0.00s)
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-maintenance-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-apply-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/other-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/prefix-riot-agent-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64-old
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.txt
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sig
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sha256
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.tar.gz
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.exe
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-arm64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir/riot-agent-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/../riot-agent-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir\riot-agent-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/RIOT-AGENT-linux-amd64
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64_
+=== RUN   TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-windows-amd64.exe
+--- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-maintenance-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-apply-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/other-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/prefix-riot-agent-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64-old (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.txt (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sig (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.sha256 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.tar.gz (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64.exe (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-arm64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir/riot-agent-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/../riot-agent-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/dir\riot-agent-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/RIOT-AGENT-linux-amd64 (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-linux-amd64_ (0.00s)
+    --- PASS: TestUpdateAsset004_AC003_RejectNoncanonicalAssets/riot-agent-windows-amd64.exe (0.00s)
+=== RUN   TestUpdateAsset004_AC003_HelperOnlyAndDecoyOnlyFeeds
+--- PASS: TestUpdateAsset004_AC003_HelperOnlyAndDecoyOnlyFeeds (0.00s)
+=== RUN   TestUpdateAsset004_AC003_AC004_HelperOnlyKeepsMetadataWithoutAgentURL
+--- PASS: TestUpdateAsset004_AC003_AC004_HelperOnlyKeepsMetadataWithoutAgentURL (0.00s)
+=== RUN   TestAgentUpdateInfo_DevVersion
+--- PASS: TestAgentUpdateInfo_DevVersion (0.00s)
+=== RUN   TestServerUpdateInfo_NoRelease
+--- PASS: TestServerUpdateInfo_NoRelease (0.00s)
+=== RUN   TestAgentUpdateInfo_NoReleaseLeavesLatestEmpty
+--- PASS: TestAgentUpdateInfo_NoReleaseLeavesLatestEmpty (0.00s)
+=== RUN   TestServerUpdateInfo_UpdateAvailable
+--- PASS: TestServerUpdateInfo_UpdateAvailable (0.00s)
+=== RUN   TestAgentUpdateInfo_NoDowngrade
+--- PASS: TestAgentUpdateInfo_NoDowngrade (0.00s)
+=== RUN   TestAwaitFirstSuccess_ReturnsImmediatelyOnFirstSuccess
+--- PASS: TestAwaitFirstSuccess_ReturnsImmediatelyOnFirstSuccess (0.00s)
+=== RUN   TestAwaitFirstSuccess_RetriesUntilSuccess
+--- PASS: TestAwaitFirstSuccess_RetriesUntilSuccess (0.00s)
+=== RUN   TestAwaitFirstSuccess_StopsOnContextCancel
+--- PASS: TestAwaitFirstSuccess_StopsOnContextCancel (0.02s)
+=== RUN   TestIsNewer
+=== RUN   TestIsNewer/2.6.7_vs_2.6.5
+=== RUN   TestIsNewer/2.6.5_vs_2.6.6
+=== RUN   TestIsNewer/2.6.5_vs_2.6.5
+=== RUN   TestIsNewer/3.0.0_vs_2.9.9
+=== RUN   TestIsNewer/1.1.0_vs_1.0.9
+=== RUN   TestIsNewer/1.0.0_vs_1.0.0
+--- PASS: TestIsNewer (0.00s)
+    --- PASS: TestIsNewer/2.6.7_vs_2.6.5 (0.00s)
+    --- PASS: TestIsNewer/2.6.5_vs_2.6.6 (0.00s)
+    --- PASS: TestIsNewer/2.6.5_vs_2.6.5 (0.00s)
+    --- PASS: TestIsNewer/3.0.0_vs_2.9.9 (0.00s)
+    --- PASS: TestIsNewer/1.1.0_vs_1.0.9 (0.00s)
+    --- PASS: TestIsNewer/1.0.0_vs_1.0.0 (0.00s)
+PASS
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	0.872s
+Run: full
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent-apply	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-maintenance	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-server	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/agent	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/agent/collectors	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/logbudget	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/maintenance	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/models	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/redact	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/releasekey	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/resilient	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server	1.826s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/auth	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ca	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/commands	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/db	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/events	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/handlers	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ingest	(cached)
+?   	github.com/DesyncTheThird/rIOt/internal/server/logstore	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/internal/server/middleware	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/notify	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/oidc	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/partition	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/probes	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/quota	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/scoring	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/storage	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/summary	(cached)
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	0.294s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	(cached)
+?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/scripts	(cached)
+Run: vet

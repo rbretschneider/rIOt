@@ -274,15 +274,13 @@ func CurrentArch() string {
 	return runtime.GOOS + "-" + runtime.GOARCH
 }
 
-// verifierAssetPrefix names the privileged update verifier release assets
-// (riot-agent-apply-<suffix>). They contain the platform suffix too, so they
-// must never be mistaken for the agent binary an agent downloads.
-const verifierAssetPrefix = "riot-agent-apply-"
-
 // isAgentBinaryAsset reports whether a release asset is the agent binary for
-// the given platform suffix.
+// the given platform suffix. Helpers and sidecars share platform suffixes,
+// so only the canonical basename can identify the executable family.
 func isAgentBinaryAsset(name, suffix string) bool {
-	return strings.Contains(name, suffix) &&
-		!strings.HasSuffix(name, ".txt") &&
-		!strings.HasPrefix(name, verifierAssetPrefix)
+	expected := "riot-agent-" + suffix
+	if strings.HasPrefix(suffix, "windows-") {
+		expected += ".exe"
+	}
+	return name == expected
 }

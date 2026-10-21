@@ -132,6 +132,106 @@ func TestAC005_AgentUpdateInfo_VerifierAssetIsNeverServedAsTheAgentBinary(t *tes
 	}
 }
 
+func TestUpdateAsset004_AC001_AC002_ExactAgentAcrossPlatformsAndAssetOrders(t *testing.T) {
+	platforms := []struct{ os, arch, arm, suffix, extension string }{
+		{"linux", "amd64", "", "linux-amd64", ""},
+		{"linux", "386", "", "linux-386", ""},
+		{"linux", "arm64", "", "linux-arm64", ""},
+		{"linux", "arm", "7", "linux-armv7", ""},
+		{"linux", "arm", "6", "linux-armv6", ""},
+		{"darwin", "amd64", "", "darwin-amd64", ""},
+		{"darwin", "arm64", "", "darwin-arm64", ""},
+		{"windows", "amd64", "", "windows-amd64", ".exe"},
+	}
+	for _, platform := range platforms {
+		t.Run(platform.suffix, func(t *testing.T) {
+			name := "riot-agent-" + platform.suffix + platform.extension
+			assets := []GitHubAsset{
+				{Name: name, BrowserDownloadURL: "https://example.com/" + name},
+				{Name: "riot-agent-apply-" + platform.suffix, BrowserDownloadURL: "https://example.com/apply"},
+				{Name: "riot-maintenance-" + platform.suffix, BrowserDownloadURL: "https://example.com/maintenance"},
+				{Name: name + ".sig", BrowserDownloadURL: "https://example.com/sidecar"},
+			}
+			for _, order := range [][]int{{0, 1, 2, 3}, {3, 2, 1, 0}, {1, 0, 3, 2}} {
+				c := NewChecker("test/repo", "2.73.1")
+				c.latest = &GitHubRelease{TagName: "v2.74.0"}
+				for _, index := range order {
+					c.latest.Assets = append(c.latest.Assets, assets[index])
+				}
+				info := c.AgentUpdateInfo("2.73.0", platform.os, platform.arch, platform.arm)
+				assert.Equal(t, map[string]string{platform.suffix: "https://example.com/" + name}, info.Assets,
+					"[AC-001][AC-002] order %v must select only the canonical agent", order)
+			}
+		})
+	}
+}
+
+func TestUpdateAsset004_AC003_RejectNoncanonicalAssets(t *testing.T) {
+	for _, name := range []string{
+		"riot-maintenance-linux-amd64", "riot-agent-apply-linux-amd64",
+		"other-linux-amd64", "prefix-riot-agent-linux-amd64", "riot-agent-linux-amd64-old",
+		"riot-agent-linux-amd64.txt", "riot-agent-linux-amd64.sig", "riot-agent-linux-amd64.sha256",
+		"riot-agent-linux-amd64.tar.gz", "riot-agent-linux-amd64.exe", "riot-agent-linux-arm64",
+		"dir/riot-agent-linux-amd64", "../riot-agent-linux-amd64", "dir\\riot-agent-linux-amd64",
+		"RIOT-AGENT-linux-amd64", "riot-agent-linux-amd64 ", "riot-agent-windows-amd64.exe",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.False(t, isAgentBinaryAsset(name, "linux-amd64"), "[AC-003]")
+		})
+	}
+	assert.True(t, isAgentBinaryAsset("riot-agent-windows-amd64.exe", "windows-amd64"), "[AC-001]")
+	for _, name := range []string{"riot-agent-windows-amd64", "riot-agent-windows-amd64.EXE", "riot-agent-windows-amd64.exe.sig"} {
+		assert.False(t, isAgentBinaryAsset(name, "windows-amd64"), "[AC-003] %s", name)
+	}
+}
+
+func TestUpdateAsset004_AC003_HelperOnlyAndDecoyOnlyFeeds(t *testing.T) {
+	for _, names := range [][]string{
+		{"riot-maintenance-linux-amd64", "riot-agent-apply-linux-amd64"},
+		{"prefix-riot-agent-linux-amd64", "riot-agent-linux-amd64.sig", "dir/riot-agent-linux-amd64"},
+	} {
+		c := NewChecker("test/repo", "2.73.1")
+		c.latest = &GitHubRelease{TagName: "v2.74.0"}
+		for _, name := range names {
+			c.latest.Assets = append(c.latest.Assets, GitHubAsset{Name: name, BrowserDownloadURL: "https://example.com/decoy"})
+		}
+		assert.Empty(t, c.AgentUpdateInfo("2.73.0", "linux", "amd64", "").Assets, "[AC-003] %v", names)
+	}
+}
+
+func TestUpdateAsset004_AC003_AC004_HelperOnlyKeepsMetadataWithoutAgentURL(t *testing.T) {
+	for _, includeAgent := range []bool{false, true} {
+		c := NewChecker("test/repo", "2.73.1")
+		published := time.Date(2026, 10, 21, 1, 37, 6, 0, time.UTC)
+		c.latest = &GitHubRelease{
+			TagName: "v2.74.0", HTMLURL: "https://example.com/release", Published: published,
+			Assets: []GitHubAsset{
+				{Name: "checksums.txt", BrowserDownloadURL: "https://example.com/checksums.txt"},
+				{Name: "checksums.txt.sig", BrowserDownloadURL: "https://example.com/checksums.txt.sig"},
+				{Name: "riot-maintenance-linux-amd64", BrowserDownloadURL: "https://example.com/maintenance"},
+				{Name: "riot-agent-apply-linux-amd64", BrowserDownloadURL: "https://example.com/apply"},
+				{Name: "riot-agent-linux-amd64.sig", BrowserDownloadURL: "https://example.com/decoy"},
+			},
+		}
+		if includeAgent {
+			c.latest.Assets = append(c.latest.Assets, GitHubAsset{Name: "riot-agent-linux-amd64", BrowserDownloadURL: "https://example.com/agent"})
+		}
+		info := c.AgentUpdateInfo("2.73.0", "linux", "amd64", "")
+		if includeAgent {
+			assert.Equal(t, map[string]string{"linux-amd64": "https://example.com/agent"}, info.Assets, "[AC-003]")
+		} else {
+			assert.Empty(t, info.Assets, "[AC-003] no helper/decoy fallback")
+		}
+		assert.Equal(t, "2.73.0", info.CurrentVersion, "[AC-004]")
+		assert.Equal(t, "2.74.0", info.LatestVersion, "[AC-004]")
+		assert.True(t, info.UpdateAvail, "[AC-004] availability stays version-derived")
+		assert.Equal(t, "https://example.com/release", info.ReleaseURL, "[AC-004]")
+		assert.Equal(t, &published, info.PublishedAt, "[AC-004]")
+		assert.Equal(t, "https://example.com/checksums.txt", info.ChecksumURL, "[AC-004]")
+		assert.Equal(t, "https://example.com/checksums.txt.sig", info.SignatureURL, "[AC-004]")
+	}
+}
+
 func TestAgentUpdateInfo_DevVersion(t *testing.T) {
 	c := NewChecker("test/repo", "1.0.0")
 	c.latest = &GitHubRelease{TagName: "v1.1.0"}
