@@ -82,6 +82,7 @@ type updateFunc func(ctx context.Context, downloadURL, checksumURL, signatureURL
 // collaborators are injected so tests can use temp paths, a test key, and a
 // recording command runner.
 type updatePipeline struct {
+	preflight   func(context.Context) error
 	paths       stagingPaths
 	publicKey   func() (ed25519.PublicKey, error)
 	runner      collectors.CommandRunner
@@ -240,6 +241,7 @@ func (a *Agent) newUpdatePipeline() *updatePipeline {
 		},
 		publicKey: releasekey.PublicKey,
 		runner:    runner,
+		preflight: updateInstallPreflight(runner),
 	}
 }
 
@@ -251,6 +253,12 @@ func execRunner(ctx context.Context, name string, args ...string) ([]byte, error
 // non-authoritative pre-flight: the agent runs as an unprivileged user, so the
 // root verifier re-verifies everything over the bytes it installs.
 func (p *updatePipeline) run(ctx context.Context, downloadURL, checksumURL, signatureURL, suffix string) error {
+	// Refuse legacy installations before touching staging or downloading a release.
+	if p.preflight != nil {
+		if err := p.preflight(ctx); err != nil {
+			return err
+		}
+	}
 	staged := false
 	defer func() {
 		if !staged {
@@ -482,7 +490,7 @@ func (p *updatePipeline) applyStaged(ctx context.Context, expectedDigest string,
 	slog.Debug("privileged verifier unavailable",
 		"error", fmt.Sprintf("%s: %s", err, strings.TrimSpace(string(out))))
 	slog.Warn("could not start the privileged update verifier; update staged for next restart — re-run install.sh to enable automatic updates")
-	return fmt.Errorf("privileged update unavailable; staged for a later verified restart: %w", err)
+	return fmt.Errorf("privileged update unavailable; root installer migration or update-policy repair required (staged bytes are not installation proof): %w", err)
 }
 
 func (a *Agent) restartSelf() {

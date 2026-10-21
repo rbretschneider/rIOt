@@ -63,7 +63,7 @@ export default function Alerts() {
   const hasUnack = events?.some(e => !e.acknowledged_at) ?? false
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <PageHeader title="Events & Alerts" description="Fleet events, workload changes and alerts that need attention." actions={
         <div className="flex items-center gap-3 flex-wrap">
           <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
@@ -95,11 +95,19 @@ export default function Alerts() {
         </div>
       } />
 
-      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto scrollbar-thin">
+      <div className="min-w-0 max-w-full bg-gray-900 border border-gray-800 rounded-lg overflow-x-auto scrollbar-thin">
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : (
-          <table className="w-full min-w-[640px]">
+          <table className="w-full min-w-[720px] table-fixed">
+            <colgroup>
+              <col className="w-[185px]" />
+              <col className="w-[90px]" />
+              <col className="w-[140px] lg:w-[180px]" />
+              <col className="w-[120px]" />
+              <col />
+              <col className="w-12" />
+            </colgroup>
             <thead className="bg-gray-900/50 border-b border-gray-800">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase">Time</th>
@@ -121,11 +129,11 @@ export default function Alerts() {
                       isAcked ? '' : e.severity === 'critical' ? 'border-l-[3px] border-l-danger-fg' : e.severity === 'warning' ? 'border-l-[3px] border-l-warn-fg' : ''
                     }`.trim()}
                   >
-                    <td className="px-4 py-3 text-sm text-gray-400 font-mono whitespace-nowrap">
+                    <td className="px-4 py-3 text-sm text-gray-400 font-mono [overflow-wrap:anywhere]">
                       <Timestamp value={e.created_at} />
                     </td>
                     <td className="px-4 py-3"><SeverityBadge severity={e.severity} /></td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-4 py-3 [overflow-wrap:anywhere]">
                       {device ? (
                         <Link to={`/devices/${encodeURIComponent(device.id)}`} className="text-blue-400 hover:text-blue-300 text-sm">
                           {device.hostname}
@@ -150,7 +158,7 @@ export default function Alerts() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-400">{enumLabel('eventType', e.type)}</td>
-                    <td className="px-4 py-3 text-sm text-gray-200">{e.message}</td>
+                    <td className="px-4 py-3 text-sm text-gray-200 whitespace-pre-wrap [overflow-wrap:anywhere]">{e.message}</td>
                     <td className="px-4 py-3">
                       {!isAcked && (
                         <button
