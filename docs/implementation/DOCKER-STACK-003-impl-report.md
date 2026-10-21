@@ -22,8 +22,9 @@ start, exact Compose context and existing self-infrastructure warning.
 
 ## Validation
 
-Baseline1559tests passed before edits. Focused page/dialog55tests passed,
-then final full86files/1578tests passed including19 new cases. TypeScript and
+Baseline1559tests passed before edits. The initial focused page/dialog run passed
+55tests; final independent QA passed56 (43page and13dialog tests). The final
+full86files/1578tests passed including19 new cases. TypeScript and
 production build pass. No lint script exists; git diff --check passes. Full
 baseline/focused/final-suite/build output is retained in the adjacent
 DOCKER-STACK-003-validation.txt. Initial test selectors used an unsupported
