@@ -103,9 +103,13 @@ export default function StacksPage() {
                   title: 'Actions',
                   sortable: false,
                   render: (s) => (
-                    <Button size="sm" className="h-6" aria-label={`Update ${s.project} on ${s.hostname}`}
+                    <Button size="sm"
+                      variant={s.updates > 0 ? 'ghost' : 'secondary'}
+                      className={s.updates > 0 ? 'h-6 px-2! bg-warn! text-black! hover:bg-warn/85!' : 'h-6'}
+                      title={s.updates > 0 ? `${s.updates} container update${s.updates === 1 ? '' : 's'} available` : undefined}
+                      aria-label={`Update ${s.project} on ${s.hostname}`}
                       onClick={() => setUpdating({ deviceId: s.device_id, project: s.project })}>
-                      Update
+                      {s.updates > 0 ? `Update (${s.updates})` : 'Update'}
                     </Button>
                   ),
                 },
@@ -115,7 +119,14 @@ export default function StacksPage() {
                   title: 'Services',
                   render: (s) => `${s.running}/${s.total} running`,
                 },
-                { key: 'updates', title: 'Updates', render: (s) => s.updates },
+                {
+                  key: 'updates', title: 'Updates',
+                  render: (s) => s.updates > 0 ? (
+                    <span className="rounded bg-warn/15 px-1.5 py-0.5 text-xs font-medium text-warn-fg">
+                      {s.updates} {s.updates === 1 ? 'update' : 'updates'}
+                    </span>
+                  ) : s.updates,
+                },
                 {
                   key: 'auto',
                   title: 'Auto update',
