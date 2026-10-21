@@ -186,28 +186,49 @@ describe('Docker fleet', () => {
     { saved: ['name'] },
     { saved: [] },
     { saved: ['removed-column'] },
-  ])('[AC-001] keeps Name compact when saved preferences leave it as the only column: $saved', async ({ saved }) => {
+  ])('[DOCKER-TABLE-006 AC-002] lets Name fill the workspace with saved columns: $saved', async ({ saved }) => {
     localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
     renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
     const table = screen.getByRole('grid')
-    expect(table).toHaveStyle({ width: '228px' })
-    expect(table.querySelectorAll('col')[1]).toHaveStyle({ width: '184px' })
+    expect(table.style.width).toBe('')
+    expect(table).toHaveStyle({ minWidth: '228px' })
+    expect((table.querySelectorAll('col')[1] as HTMLElement).style.width).toBe('')
     expect(table).toHaveAttribute('aria-colcount', '2')
     expect(screen.getAllByLabelText('Update available')).toHaveLength(2)
   })
-  it('[AC-001] keeps Name compact and pinned with default and restored columns', async () => {
+  it('[DOCKER-TABLE-006 AC-002] keeps growing Name pinned with default and restored columns', async () => {
     let view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
     const nameColumn = () => screen.getByRole('grid').querySelectorAll('col')[1]
-    expect(nameColumn()).toHaveStyle({ width: '184px' })
+    expect((nameColumn() as HTMLElement).style.width).toBe('')
     expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveStyle({ left: '44px' })
     view.unmount()
     localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack']))
     view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
-    expect(nameColumn()).toHaveStyle({ width: '184px' })
+    expect((nameColumn() as HTMLElement).style.width).toBe('')
     expect(screen.queryByRole('columnheader', { name: 'Open' })).not.toBeInTheDocument()
+  })
+  it.each([null, ['name', 'cpu', 'mem', 'links']])('[DOCKER-TABLE-006 AC-001][AC-002] fixes equal metric widths and gives only Name spare space: %j', async (saved) => {
+    if (saved) localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    const table = screen.getByRole('grid')
+    const headers = within(table).getAllByRole('columnheader')
+    const cols = table.querySelectorAll('col')
+    for (const [label, width] of [['CPU', '160px'], ['Memory', '160px'], ['Open', '64px']]) {
+      const index = headers.findIndex((h) => h.textContent === label)
+      expect(cols[index]).toHaveStyle({ width })
+    }
+    const flexible = Array.from(cols).filter((col) => col.style.width === '')
+    expect(flexible).toEqual([cols[1]])
+    const running = screen.getByRole('link', { name: 'web' }).closest('tr')!
+    const cells = within(running).getAllByRole('cell')
+    const cpu = cells[headers.findIndex((h) => h.textContent === 'CPU')]
+    const memory = cells[headers.findIndex((h) => h.textContent === 'Memory')]
+    expect(cpu.querySelector('[aria-hidden] > div')).toHaveStyle({ width: '2%' })
+    expect(memory.querySelector('[aria-hidden] > div')).toHaveStyle({ width: '50%' })
   })
   it('[AC-002][AC-005] keeps updates beside long names with saved hidden Image and without duplicate badges', async () => {
     const user = userEvent.setup()

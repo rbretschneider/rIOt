@@ -21,6 +21,7 @@ Versions correspond to git tags. See [Releases](https://github.com/rbretschneide
 
 ### Changed
 
+- [DOCKER-TABLE-006] Give the container table's pinned Name column remaining space, superseding the earlier compact-Name preference, including Name-only saved columns. CPU and Memory now have equal fixed 160px columns and graph tracks; their existing scales remain unchanged. Open stays fixed at 64px, with contained scrolling on narrow screens. Update badges, sorting, preferences, routes and confirmations are preserved.
 - [DOCKER-STACK-005] Highlight positive stack update counts with an amber `Update (N)` button and a singular/plural Updates pill. Zero/nonpositive counts keep the neutral Update control and numeric value without implying freshness. Existing compact table layout, confirmation and progress behavior are unchanged.
 - [APP-WORKSPACE-001] Unified Devices, Overview, Docker, monitoring and settings under one grouped application sidebar and compact search/notifications/account bar. Shared resource headers, global neutral surfaces and thin scrollbars keep the layout consistent; navigation collapses below 1280px. Devices retains every machine, while Docker hosts and filters exclude machines without Docker and keep offline Docker hosts. Existing URLs, authentication, stored/live logs, terminals and action confirmations are preserved.
 
