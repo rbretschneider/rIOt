@@ -1,7 +1,9 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { dockerApi } from '../../api/docker'
-import { EmptyState, PageHeader, QueryState } from '../../components/ui'
+import { Button, EmptyState, PageHeader, QueryState } from '../../components/ui'
+import StackUpdateDialog from '../../components/docker/StackUpdateDialog'
 import DataTable, { type Column } from '../../components/docker/DataTable'
 import type { DockerStack } from '../../types/docker'
 import { stackPath } from '../../utils/dockerUrlState'
@@ -19,6 +21,7 @@ export default function StacksPage() {
   })
   const search = params.get('q') ?? ''
   const host = params.get('host') ?? ''
+  const [updating, setUpdating] = useState<{ deviceId: string; project: string }>()
   return (
     <div className="space-y-4">
       <PageHeader
@@ -95,6 +98,17 @@ export default function StacksPage() {
                   ),
                 },
                 { key: 'host', title: 'Host', render: (s) => s.hostname },
+                {
+                  key: 'actions',
+                  title: 'Actions',
+                  sortable: false,
+                  render: (s) => (
+                    <Button size="sm" className="h-6" aria-label={`Update ${s.project} on ${s.hostname}`}
+                      onClick={() => setUpdating({ deviceId: s.device_id, project: s.project })}>
+                      Update
+                    </Button>
+                  ),
+                },
                 { key: 'state', title: 'State', render: (s) => s.state },
                 {
                   key: 'services',
@@ -129,6 +143,7 @@ export default function StacksPage() {
                   updates: 100,
                   auto: 128,
                   paths: 160,
+                  actions: 112,
                   last: 208,
                 } as Record<string, number>
               )[column.key],
@@ -137,6 +152,12 @@ export default function StacksPage() {
           />
         )}
       </QueryState>
+      {updating && <StackUpdateDialog
+        key={`${updating.deviceId}:${updating.project}`}
+        deviceId={updating.deviceId}
+        project={updating.project}
+        onClose={() => setUpdating(undefined)}
+      />}
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { Tabs } from '../../components/ui/Tabs'
 import { DropdownMenu } from '../../components/ui/DropdownMenu'
 import { stackPrimaryAction } from '../../utils/dockerActions'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Link,
   useLocation,
@@ -259,6 +259,7 @@ export default function StackPage() {
   const [error, setError] = useState<unknown>()
   const [command, setCommand] = useState('')
   const [commandActive, setCommandActive] = useState(false)
+  const updateSubmitting = useRef(false)
   const tracker = useCommandTracker(
     deviceId,
     query.data?.agreed_working_dir
@@ -291,7 +292,11 @@ export default function StackPage() {
         )
         const allowed =
           s.path_state === 'agreed' && caps.includes('stack_actions_v1')
+        const updateAllowed = allowed && !!s.agreed_working_dir && !query.isFetching && !hosts.isFetching && query.isSuccess && hosts.isSuccess
         async function run() {
+          const updating = action === 'update'
+          if (updating && (!updateAllowed || pending || tracker.isBusy || commandActive || updateSubmitting.current)) return
+          if (updating) updateSubmitting.current = true
           setPending(true)
           setError(undefined)
           try {
@@ -318,6 +323,7 @@ export default function StackPage() {
           } catch (e) {
             setError(e)
           } finally {
+            if (updating) updateSubmitting.current = false
             setPending(false)
           }
         }
@@ -336,7 +342,7 @@ export default function StackPage() {
                 <div className="flex flex-wrap items-start gap-2">
                   {primary && (
                     <Button
-                      disabled={!allowed || commandActive}
+                      disabled={!allowed || commandActive || (primary === 'update' && !updateAllowed)}
                       onClick={() => {
                         setConfirmation('')
                         setAction(primary)
@@ -345,13 +351,13 @@ export default function StackPage() {
                       {primary[0].toUpperCase() + primary.slice(1)}
                     </Button>
                   )}
-                  {['pull', 'redeploy', 'restart']
+                  {['update', 'pull', 'redeploy', 'restart']
                     .filter((a) => a !== primary)
                     .map((a) => (
                       <Button
                         key={a}
                         variant="secondary"
-                        disabled={!allowed || commandActive}
+                        disabled={!allowed || commandActive || (a === 'update' && !updateAllowed)}
                         onClick={() => {
                           setConfirmation('')
                           setAction(a)
@@ -449,7 +455,12 @@ export default function StackPage() {
                 <CommandProgress
                   deviceId={deviceId!}
                   commandId={command}
-                  onTerminal={() => setCommandActive(false)}
+                  onTerminal={() => {
+                    setCommandActive(false)
+                    void qc.invalidateQueries({ queryKey: ['docker-stack', deviceId, project] })
+                    void qc.invalidateQueries({ queryKey: ['docker-stacks'] })
+                    void qc.invalidateQueries({ queryKey: ['docker-containers'] })
+                  }}
                 />
                 <Button
                   size="sm"
@@ -566,7 +577,7 @@ export default function StackPage() {
                     variant={
                       ['down', 'forget'].includes(action) ? 'danger' : 'primary'
                     }
-                    disabled={pending || confirmation !== required}
+                    disabled={pending || confirmation !== required || (action === 'update' && (!updateAllowed || tracker.isBusy || commandActive))}
                     onClick={() => {
                       void run()
                     }}
@@ -591,6 +602,7 @@ export default function StackPage() {
                 </p>
               )}
               {action === 'redeploy' && <p>Recreates the stack services.</p>}
+              {action === 'update' && <p>Pulls images and runs Compose up. Changed services may be recreated and stopped services may start.</p>}
               {self && (
                 <p className="text-warn-fg">
                   This stack contains rIOt infrastructure. The connection may be
