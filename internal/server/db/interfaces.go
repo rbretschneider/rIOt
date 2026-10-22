@@ -163,6 +163,10 @@ type CommandRepository interface {
 	// ListActive returns the device's non-terminal commands, optionally only
 	// those holding targetKey.
 	ListActive(ctx context.Context, deviceID, targetKey string) ([]models.Command, error)
+	// LatestFinishedOSUpdates returns, per device, the newest os_update that
+	// finished as succeeded, failed or timed_out. Expired, cancelled and
+	// unfinished commands are ignored; devices with none are absent.
+	LatestFinishedOSUpdates(ctx context.Context) (map[string]models.Command, error)
 	// ClaimQueued atomically moves up to limit queued, unexpired commands of the
 	// device to dispatched (heartbeat delivery), ordered by created_at.
 	ClaimQueued(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)

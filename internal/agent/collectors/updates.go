@@ -58,9 +58,11 @@ func (c *UpdatesCollector) Collect(ctx context.Context) (interface{}, error) {
 	if _, err := exec.LookPath("apt"); err == nil {
 		info.PackageManager = "apt"
 		c.collectAPT(ctx, info)
+		info.ReleaseUpgrade = defaultReleaseChecker.Check(ctx)
 	} else if _, err := exec.LookPath("dnf"); err == nil {
 		info.PackageManager = "dnf"
 		c.collectDNF(ctx, info)
+		info.ReleaseUpgrade = &models.ReleaseUpgrade{Status: models.FactStatusUnavailable}
 	} else if _, err := exec.LookPath("pacman"); err == nil {
 		info.PackageManager = "pacman"
 	} else if _, err := exec.LookPath("apk"); err == nil {
@@ -87,6 +89,7 @@ func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateIn
 		info.TotalInstalled = len(lines)
 		installedNames = parseDpkgSelections(string(out))
 	}
+	c.collectAptHolds(info, string(out), err)
 
 	c.reconcileHolds(ctx, info, "apt", installedNames)
 
@@ -130,6 +133,7 @@ func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateIn
 	}
 
 	c.reconcileHolds(ctx, info, "dnf", installedNames)
+	c.collectDnfHolds(info)
 
 	// Get all pending updates with package details.
 	// dnf check-update exits 100 when updates are available, 0 when up to date.
@@ -159,6 +163,37 @@ func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateIn
 
 	classifyUpdates(info)
 	c.detectRebootRequiredDNF(ctx, info)
+}
+
+// managedHolds returns the holds rIOt placed. With no hold manager there are
+// none to subtract.
+func (c *UpdatesCollector) managedHolds() ([]string, error) {
+	if c.holdMgr == nil {
+		return nil, nil
+	}
+	return c.holdMgr.ManagedHolds()
+}
+
+// collectAptHolds reports apt holds that rIOt did not place. selectionsErr is
+// the error from `dpkg --get-selections`; when it failed the fact is
+// unavailable.
+func (c *UpdatesCollector) collectAptHolds(info *models.UpdateInfo, selections string, selectionsErr error) {
+	if selectionsErr != nil {
+		info.OtherHolds = &models.OtherHolds{Status: models.FactStatusUnavailable}
+		return
+	}
+	managed, err := c.managedHolds()
+	info.OtherHolds = aptOtherHolds(selections, managed, err)
+}
+
+// collectDnfHolds reports dnf excludes and version locks that rIOt did not place.
+func (c *UpdatesCollector) collectDnfHolds(info *models.UpdateInfo) {
+	managed, err := c.managedHolds()
+	if err != nil {
+		info.OtherHolds = &models.OtherHolds{Status: models.FactStatusUnavailable}
+		return
+	}
+	info.OtherHolds = dnfOtherHolds(osFactFS, managed)
 }
 
 // reconcileHolds runs the per-cycle hold reconciliation (AD-007) and

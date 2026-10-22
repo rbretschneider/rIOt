@@ -6,8 +6,8 @@ import { errorMessage } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
-import { rebootEtaTooltip } from '../utils/rebootEta'
 
+import PatchBadge from '../components/PatchBadge'
 import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
 import { Button, Card, ConfirmDialog, Modal, PageHeader, QueryState, RelativeTime, Skeleton, useToast } from '../components/ui'
@@ -26,17 +26,28 @@ export default function FleetOverview() {
     staleTime: 60 * 60 * 1000,
   })
   const { data: patchStatus } = useQuery({
-    queryKey: ['patch-status'],
-    queryFn: api.getPatchStatus,
+    queryKey: ['patch-status', 'all'],
+    queryFn: () => api.getPatchStatus(true),
     refetchInterval: wsConnected ? 120_000 : 60_000,
   })
 
   const latestVersion = serverUpdate?.latest_version
+  // Every registered device has a row (all=true); patchMap holds them all for the
+  // badge, pendingPatchCount only those with updates or a reboot requirement.
   const patchMap = useMemo(() => {
     const m = new Map<string, DevicePatchInfo>()
     patchStatus?.forEach(p => m.set(p.device_id, p))
     return m
   }, [patchStatus])
+  const pendingPatchCount = useMemo(
+    () => (patchStatus ?? []).filter(p => p.pending_updates > 0 || p.reboot_required).length,
+    [patchStatus],
+  )
+  const needsYouIds = useMemo(
+    () => new Set((patchStatus ?? []).filter(p => p.patch_badge?.kind === 'needs_you').map(p => p.device_id)),
+    [patchStatus],
+  )
+  const [needsYouOnly, setNeedsYouOnly] = useState(false)
   const queryClient = useQueryClient()
   const [showGuide, setShowGuide] = useState(false)
   const [showPatchReview, setShowPatchReview] = useState(false)
@@ -120,6 +131,7 @@ export default function FleetOverview() {
   const filtered = useMemo(() => {
     if (!devices) return []
     let list = devices.filter((d) => {
+      if (needsYouOnly && !needsYouIds.has(d.id)) return false
       const q = search.toLowerCase()
       return d.hostname.toLowerCase().includes(q) ||
         d.short_id.toLowerCase().includes(q) ||
@@ -133,7 +145,7 @@ export default function FleetOverview() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [devices, search, sortKey, sortDir])
+  }, [devices, search, sortKey, sortDir, needsYouOnly, needsYouIds])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -171,7 +183,7 @@ export default function FleetOverview() {
           <StatCard label="Online" value={summary.online_count} color="text-emerald-400" />
           <StatCard label="Offline" value={summary.offline_count} color="text-red-400" />
           <StatCard label="Warnings" value={summary.warning_count} color="text-amber-400" />
-          <StatCard label="OS Updates" value={patchMap.size} color={patchMap.size > 0 ? 'text-cyan-400' : 'text-white'} />
+          <StatCard label="OS Updates" value={pendingPatchCount} color={pendingPatchCount > 0 ? 'text-cyan-400' : 'text-white'} />
         </div>
       )}
 
@@ -184,6 +196,18 @@ export default function FleetOverview() {
           className="flex-1 min-w-0 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
         <div className="flex flex-wrap gap-3">
+          {needsYouIds.size > 0 && (
+            <button
+              type="button"
+              aria-pressed={needsYouOnly}
+              onClick={() => setNeedsYouOnly(v => !v)}
+              className={`px-4 py-2 text-sm border rounded-lg font-medium transition-colors whitespace-nowrap ${
+                needsYouOnly ? 'bg-red-900/40 text-red-200 border-red-700' : 'text-red-300 hover:text-red-200 border-red-800/50'
+              }`}
+            >
+              {needsYouIds.size} {needsYouIds.size === 1 ? 'host needs' : 'hosts need'} you
+            </button>
+          )}
           {outdatedCount > 0 && (
             <button
               onClick={() => setShowUpdateConfirm(true)}
@@ -192,12 +216,12 @@ export default function FleetOverview() {
               Update Agents ({outdatedCount})
             </button>
           )}
-          {patchMap.size > 0 && (
+          {pendingPatchCount > 0 && (
             <button
               onClick={handleOpenPatchReview}
               className="px-4 py-2 text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-lg font-medium transition-colors whitespace-nowrap"
             >
-              Review Patches ({patchMap.size})
+              Review Patches ({pendingPatchCount})
             </button>
           )}
         </div>
@@ -300,22 +324,9 @@ export default function FleetOverview() {
                         return <span className="text-cyan-400">{count}</span>
                       })()}
                       {(() => {
-                        const info = patchMap.get(d.id)
-                        if (!info?.reboot_required) return null
-                        return (
-                          <span
-                            role="img"
-                            aria-label="Reboot required"
-                            className="text-amber-400 text-xs leading-none cursor-help"
-                            title={rebootEtaTooltip(info)}
-                          >
-                            {'↻'}
-                          </span>
-                        )
+                        const badge = patchMap.get(d.id)?.patch_badge
+                        return badge ? <PatchBadge badge={badge} /> : null
                       })()}
-                      {d.auto_patch && (
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-900/40 text-[10px] font-medium text-emerald-400 border border-emerald-800/50" title="OS auto-patch enabled">Auto</span>
-                      )}
                       {isEnabled('docker') && (
                         d.docker_container_count > 0 && d.docker_auto_update_container_count > 0 ? (
                           <span
@@ -476,14 +487,7 @@ function PatchReviewModal({ loading, patches, pending, onConfirm, onClose }: {
                       {d.package_manager && <span className="text-xs text-gray-500">{d.package_manager}</span>}
                     </div>
                     <div className="flex items-center gap-3 text-sm">
-                      {d.reboot_required && (
-                        <span
-                          className="px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400 border border-amber-600/40"
-                          title={rebootEtaTooltip(d)}
-                        >
-                          reboot required
-                        </span>
-                      )}
+                      {d.patch_badge && <PatchBadge badge={d.patch_badge} />}
                       {d.security_count > 0 && (
                         <span className="text-red-400">{d.security_count} security</span>
                       )}

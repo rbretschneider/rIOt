@@ -285,6 +285,41 @@ type UpdateInfo struct {
 	// Display-only: it drives the reboot-ETA tooltip, never a server control
 	// decision. nil means the agent version does not report it.
 	AllowReboot *bool `json:"allow_reboot,omitempty"`
+	// AllowPatching and HoldRebootClass are the agent's commands.allow_patching
+	// and commands.hold_reboot_class. Display-only, self-reported; nil means the
+	// agent version does not report them.
+	AllowPatching   *bool `json:"allow_patching,omitempty"`
+	HoldRebootClass *bool `json:"hold_reboot_class,omitempty"`
+	// OtherHolds lists held or excluded packages that rIOt did not place.
+	// nil means the agent version does not report it.
+	OtherHolds *OtherHolds `json:"other_holds,omitempty"`
+	// ReleaseUpgrade reports an OS release upgrade that needs manual approval.
+	// nil means the agent version does not report it.
+	ReleaseUpgrade *ReleaseUpgrade `json:"release_upgrade,omitempty"`
+}
+
+// Status values for OtherHolds and ReleaseUpgrade.
+const (
+	FactStatusOK          = "ok"
+	FactStatusUnavailable = "unavailable"
+	FactStatusAvailable   = "available"
+	FactStatusNone        = "none"
+)
+
+// OtherHolds is the set of held or excluded packages not created by rIOt.
+// Status is "ok" or "unavailable"; Packages is capped by the agent and Total
+// is the uncapped count.
+type OtherHolds struct {
+	Status   string   `json:"status"`
+	Packages []string `json:"packages,omitempty"`
+	Total    int      `json:"total"`
+}
+
+// ReleaseUpgrade reports whether the OS offers a new release that must be
+// started by hand. Status is "available", "none" or "unavailable".
+type ReleaseUpgrade struct {
+	Status string `json:"status"`
+	Name   string `json:"name,omitempty"`
 }
 
 type PendingUpdate struct {

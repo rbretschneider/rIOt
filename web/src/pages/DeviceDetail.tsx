@@ -17,7 +17,7 @@ import { chartColors } from '../theme/chartColors'
 import { formatBytes, formatDuration } from '../utils/format'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
-import { rebootEtaTooltip } from '../utils/rebootEta'
+import PatchBadge from '../components/PatchBadge'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import ActivityLog from '../components/ActivityLog'
@@ -50,12 +50,10 @@ export default function DeviceDetail() {
     queryFn: api.getServerUpdate,
     staleTime: 60 * 60 * 1000,
   })
-  // Patch status carries the reboot-ETA fields (window, allow_reboot,
-  // reboot-class count) so the reboot-required badge can show the same tooltip
-  // as the Fleet Overview instead of just the pending package list.
+  // Patch status carries the per-host patch badge, shared with the Devices page.
   const { data: patchStatus } = useQuery({
-    queryKey: ['patch-status'],
-    queryFn: api.getPatchStatus,
+    queryKey: ['patch-status', 'all'],
+    queryFn: () => api.getPatchStatus(true),
     refetchInterval: wsConnected ? 120_000 : 60_000,
   })
 
@@ -287,6 +285,7 @@ export default function DeviceDetail() {
                   }`} />
                 </button>
               </label>
+              {patchInfo?.patch_badge && <PatchBadge badge={patchInfo.patch_badge} />}
             </div>
           )}
           {/* Destructive action: kept apart from the navigation links and the agent actions. */}
@@ -382,18 +381,6 @@ export default function DeviceDetail() {
             )}
           </div>
           <StatusBadge status={device.status} />
-          {tel?.updates?.reboot_required && (
-            <span
-              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-600/40"
-              title={patchInfo
-                ? rebootEtaTooltip(patchInfo)
-                : tel.updates.reboot_required_reasons?.length
-                  ? `Pending: ${tel.updates.reboot_required_reasons.join(', ')}`
-                  : 'A reboot is required to activate installed updates'}
-            >
-              Reboot required
-            </span>
-          )}
           <p className="text-sm text-gray-500 font-mono mt-0.5">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (

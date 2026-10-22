@@ -10,7 +10,7 @@ import type {
   AutomationConfig, ContainerLogEntry, DeviceProbeResult, DeviceProbeWithResultEnriched,
   FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
 } from '../types/models'
-import type { DevicePatchInfo } from './client'
+import type { DevicePatchInfo, PatchBadge } from './client'
 import { REDACTED_SECRET } from '../utils/secrets'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -707,6 +707,21 @@ export function getSecurityDevices() {
 
 // ── Patch Status ─────────────────────────────────────────────────────────────
 
+function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, needsYou: PatchBadge['explanation']['needs_you'] = []): PatchBadge {
+  return {
+    kind,
+    label,
+    explanation: {
+      automatic: 'Yes. Any time (within the 360-minute cooldown).',
+      reboot,
+      needs_you: needsYou,
+      needs_you_summary: needsYou.length === 0 ? 'Nothing.' : `${needsYou.length} item${needsYou.length === 1 ? '' : 's'} need${needsYou.length === 1 ? 's' : ''} you.`,
+      as_of: '2026-10-19 02:00 UTC (just now)',
+      notes: [],
+    },
+  }
+}
+
 export function getPatchStatus(): DevicePatchInfo[] {
   const devices = getDevices()
   return [
@@ -714,16 +729,22 @@ export function getPatchStatus(): DevicePatchInfo[] {
       device_id: devices.find(d => d.hostname === 'pi-cameras')!.id,
       hostname: 'pi-cameras', pending_updates: 12, security_count: 3,
       reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
+      patch_badge: demoBadge('auto', 'Auto', 'Not needed.'),
     },
     {
       device_id: devices.find(d => d.hostname === 'backup-server')!.id,
       hostname: 'backup-server', pending_updates: 7, security_count: 2,
       reboot_class_count: 1, reboot_required: true, package_manager: 'apt',
+      patch_badge: demoBadge('auto_reboot_unknown', 'Auto (reboot date Unknown)',
+        'Automatic, date Unknown: the reboot happens on the next automatic patch run and the time is not predicted.'),
     },
     {
       device_id: devices.find(d => d.hostname === 'k3s-worker-01')!.id,
       hostname: 'k3s-worker-01', pending_updates: 4, security_count: 0,
       reboot_class_count: 2, reboot_required: false, package_manager: 'apt',
+      patch_badge: demoBadge('needs_you', 'Needs you', 'Not needed.', [
+        { code: 'auto_patch_off', text: 'Automatic patching is off for this host.', action: 'Turn on Auto-patch for this host.' },
+      ]),
     },
   ]
 }

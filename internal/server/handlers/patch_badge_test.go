@@ -1,0 +1,651 @@
+package handlers
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/DesyncTheThird/rIOt/internal/models"
+)
+
+// badgeNow is the injected clock. With the daily 03:00-05:00 window below, the
+// next window start is 2026-10-25 03:00 UTC.
+var badgeNow = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+
+const badgeFactsVersion = "v9.9.9"
+
+func windowPolicy(rebootClass string) models.MaintenanceWindow {
+	return models.MaintenanceWindow{Mode: "window", StartTime: "03:00", EndTime: "05:00", CooldownMinutes: 60, RebootClass: rebootClass}
+}
+
+func anytimePolicy(rebootClass string) models.MaintenanceWindow {
+	return models.MaintenanceWindow{Mode: "anytime", CooldownMinutes: 45, RebootClass: rebootClass}
+}
+
+// healthyInput is an apt host that reports every fact, with patching on and
+// nothing pending: the plain "Auto" case.
+func healthyInput() patchBadgeInput {
+	at := badgeNow.Add(-2 * time.Hour)
+	return patchBadgeInput{
+		AutoPatch: true,
+		OSPatch:   windowPolicy("gated"),
+		Updates: &models.UpdateInfo{
+			PackageManager:  "apt",
+			AllowReboot:     boolPtr(true),
+			AllowPatching:   boolPtr(true),
+			HoldRebootClass: boolPtr(true),
+			HoldEnforcement: "active",
+			OtherHolds:      &models.OtherHolds{Status: models.FactStatusOK},
+			ReleaseUpgrade:  &models.ReleaseUpgrade{Status: models.FactStatusNone},
+		},
+		UpdatesAt:            &at,
+		AgentFactsMinVersion: badgeFactsVersion,
+	}
+}
+
+func reasonCodes(b patchBadge) []string {
+	codes := []string{}
+	for _, r := range b.Explanation.NeedsYou {
+		codes = append(codes, r.Code)
+	}
+	return codes
+}
+
+func findReason(t *testing.T, b patchBadge, code string) patchBadgeReason {
+	t.Helper()
+	for _, r := range b.Explanation.NeedsYou {
+		if r.Code == code {
+			return r
+		}
+	}
+	require.Failf(t, "reason missing", "expected reason %q in %v", code, reasonCodes(b))
+	return patchBadgeReason{}
+}
+
+func failedRun(id, status, msg string) *models.Command {
+	return &models.Command{ID: id, Action: models.ActionOSUpdate, Status: status, ResultMsg: msg}
+}
+
+// --- Decision table (AC-016..AC-019, AC-020) ---
+
+func TestPatchBadge_DecisionTable_AutoWhenNothingPending(t *testing.T) { // AC-019
+	b := computePatchBadge(healthyInput(), badgeNow)
+	assert.Equal(t, badgeAuto, b.Kind)
+	assert.Equal(t, "Auto", b.Label)
+	assert.Equal(t, "Not needed.", b.Explanation.Reboot)
+	assert.Nil(t, b.RebootAt, "no reboot time on an Auto badge")
+	assert.Empty(t, b.Explanation.NeedsYou)
+	assert.Equal(t, "Nothing.", b.Explanation.NeedsYouSummary)
+}
+
+func TestPatchBadge_DecisionTable_AutoWithPendingUpdatesNoReboot(t *testing.T) { // AC-019
+	in := healthyInput()
+	in.Updates.PendingUpdates = 7
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAuto, b.Kind)
+	assert.Equal(t, "Not needed.", b.Explanation.Reboot)
+}
+
+func TestPatchBadge_DecisionTable_RebootDateInWindowMode(t *testing.T) { // AC-016
+	in := healthyInput()
+	in.Updates.PendingUpdates = 3
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAutoRebootDate, b.Kind)
+	assert.Equal(t, "Auto (reboot on 2026-10-25)", b.Label)
+	assert.Equal(t, "Automatic on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+	require.NotNil(t, b.RebootAt)
+	assert.Equal(t, time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC), *b.RebootAt)
+	assert.Equal(t, "Yes. Next window starts 2026-10-25 03:00 UTC.", b.Explanation.Automatic)
+	assert.Empty(t, b.Explanation.NeedsYou)
+}
+
+func TestPatchBadge_DecisionTable_RebootDateUnknownInAnytimeMode(t *testing.T) { // AC-017
+	in := healthyInput()
+	in.OSPatch = anytimePolicy("gated")
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAutoRebootUnknown, b.Kind)
+	assert.Equal(t, "Auto (reboot date Unknown)", b.Label)
+	assert.Contains(t, b.Explanation.Reboot, "next automatic patch run")
+	assert.Nil(t, b.RebootAt, "an unknown date must not carry a time")
+	assert.Equal(t, "Yes. Any time (within the 45-minute cooldown).", b.Explanation.Automatic)
+}
+
+func TestPatchBadge_DecisionTable_RebootDateUnknownWhenAllowRebootNotReported(t *testing.T) { // AC-018
+	in := healthyInput()
+	in.Updates.AllowReboot = nil
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAutoRebootUnknown, b.Kind)
+	assert.Contains(t, b.Explanation.Reboot, "update the agent")
+	assert.Nil(t, b.RebootAt)
+}
+
+func TestPatchBadge_DecisionTable_RebootDateUnknownCitesBothCausesInAnytimeWithOldAgent(t *testing.T) { // AC-017, AC-018
+	in := healthyInput()
+	in.OSPatch = anytimePolicy("gated")
+	in.Updates.AllowReboot = nil
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+	assert.Contains(t, b.Explanation.Reboot, "next automatic patch run")
+	assert.Contains(t, b.Explanation.Reboot, "update the agent")
+}
+
+func TestPatchBadge_DecisionTable_NoRebootDateOnNeedsYouOrAuto(t *testing.T) { // AC-020
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 1
+	in.AutoPatch = false
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Nil(t, b.RebootAt)
+	assert.NotContains(t, b.Label, "reboot on")
+	assert.NotContains(t, b.Explanation.Reboot, "2026-10-25")
+
+	auto := computePatchBadge(healthyInput(), badgeNow)
+	assert.Nil(t, auto.RebootAt)
+}
+
+func TestPatchBadge_DecisionTable_FullyPatchedOfflineAndWindowsEachGetOneBadge(t *testing.T) { // AC-001
+	patched := healthyInput()
+	assert.Equal(t, badgeAuto, computePatchBadge(patched, badgeNow).Kind)
+
+	windows := healthyInput()
+	windows.Updates = nil
+	windows.UpdatesAt = nil
+	assert.Equal(t, badgeNeedsYou, computePatchBadge(windows, badgeNow).Kind)
+
+	pending := healthyInput()
+	pending.Updates.PendingUpdates = 12
+	assert.Equal(t, badgeAuto, computePatchBadge(pending, badgeNow).Kind)
+
+	for name, in := range map[string]patchBadgeInput{"patched": patched, "windows": windows, "pending": pending} {
+		b := computePatchBadge(in, badgeNow)
+		assert.NotEmpty(t, b.Kind, name)
+		assert.NotEmpty(t, b.Label, name)
+	}
+}
+
+func TestPatchBadge_Explanation_FourLinesAlwaysPopulated(t *testing.T) { // AC-021
+	for name, in := range map[string]patchBadgeInput{
+		"healthy": healthyInput(),
+		"off":     func() patchBadgeInput { i := healthyInput(); i.AutoPatch = false; return i }(),
+		"nodata":  func() patchBadgeInput { i := healthyInput(); i.Updates, i.UpdatesAt = nil, nil; return i }(),
+	} {
+		e := computePatchBadge(in, badgeNow).Explanation
+		assert.NotEmpty(t, e.Automatic, name+": Automatic patching line")
+		assert.NotEmpty(t, e.Reboot, name+": Reboot line")
+		assert.NotEmpty(t, e.NeedsYouSummary, name+": Needs you line")
+		assert.NotEmpty(t, e.AsOf, name+": As of line")
+		assert.NotNil(t, e.NeedsYou, name+": needs_you must serialise as a list")
+		assert.NotNil(t, e.Notes, name+": notes must serialise as a list")
+	}
+}
+
+func TestPatchBadge_Explanation_AsOfShowsUTCTimeAndAge(t *testing.T) { // AC-025
+	in := healthyInput()
+	at := badgeNow.Add(-26 * time.Hour)
+	in.UpdatesAt = &at
+	assert.Equal(t, "2026-10-23 10:00 UTC (26 h ago)", computePatchBadge(in, badgeNow).Explanation.AsOf)
+	in.UpdatesAt = nil
+	assert.Equal(t, "No patch data reported yet.", computePatchBadge(in, badgeNow).Explanation.AsOf)
+}
+
+func TestPatchBadge_Explanation_SameInputSameText(t *testing.T) { // AC-002, AC-022
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 2
+	assert.Equal(t, computePatchBadge(in, badgeNow), computePatchBadge(in, badgeNow))
+}
+
+// --- NY-1 .. NY-10 ---
+
+func TestPatchBadge_AutoPatchOff_NeedsYouWithTurnOnAction(t *testing.T) { // AC-004
+	in := healthyInput()
+	in.AutoPatch = false
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonAutoPatchOff}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonAutoPatchOff).Action, "Turn on Auto-patch")
+	assert.Equal(t, "No.", b.Explanation.Automatic)
+}
+
+func TestPatchBadge_AutoPatchOn_DoesNotRaiseReason(t *testing.T) { // AC-004
+	assert.NotContains(t, reasonCodes(computePatchBadge(healthyInput(), badgeNow)), reasonAutoPatchOff)
+}
+
+func TestPatchBadge_PatchingDisabledServer_DisabledMode(t *testing.T) { // AC-005
+	in := healthyInput()
+	in.OSPatch = models.MaintenanceWindow{Mode: "disabled"}
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonPatchingDisabled}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonPatchingDisabled).Text, "disabled server-wide")
+	assert.Contains(t, findReason(t, b, reasonPatchingDisabled).Action, "Settings > Agents")
+}
+
+func TestPatchBadge_PatchingDisabledServer_WindowWithNoComputableStart(t *testing.T) { // AC-005
+	in := healthyInput()
+	in.OSPatch = models.MaintenanceWindow{Mode: "window", StartTime: "bogus", EndTime: "05:00"}
+	b := computePatchBadge(in, badgeNow)
+	assert.Contains(t, reasonCodes(b), reasonPatchingDisabled)
+	assert.Contains(t, findReason(t, b, reasonPatchingDisabled).Text, "disabled server-wide")
+}
+
+func TestPatchBadge_PatchingDisabledServer_AnytimeAndWindowAreNotDisabled(t *testing.T) { // AC-005
+	assert.NotContains(t, reasonCodes(computePatchBadge(healthyInput(), badgeNow)), reasonPatchingDisabled)
+	in := healthyInput()
+	in.OSPatch = anytimePolicy("")
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonPatchingDisabled)
+}
+
+func TestPatchBadge_AgentPatchingNotAllowed_ReportedFalse(t *testing.T) { // AC-006
+	in := healthyInput()
+	in.Updates.AllowPatching = boolPtr(false)
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{reasonAgentPatchingOff}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonAgentPatchingOff).Text, "does not allow patching")
+	assert.Contains(t, findReason(t, b, reasonAgentPatchingOff).Action, "commands.allow_patching: true")
+}
+
+func TestPatchBadge_AgentPatchingNotAllowed_NotReportedNeverRaises(t *testing.T) { // AC-006, AC-023
+	in := healthyInput()
+	in.Updates.AllowPatching = nil
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonAgentPatchingOff)
+}
+
+func TestPatchBadge_CannotPatchHost_NoPatchData(t *testing.T) { // AC-007
+	in := healthyInput()
+	in.Updates, in.UpdatesAt = nil, nil
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonCannotPatchHost}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonCannotPatchHost).Text, "cannot patch this host")
+}
+
+func TestPatchBadge_CannotPatchHost_UnsupportedPackageManager(t *testing.T) { // AC-007
+	in := healthyInput()
+	in.Updates = &models.UpdateInfo{PackageManager: "pacman"}
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{reasonCannotPatchHost}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonCannotPatchHost).Text, "pacman")
+}
+
+func TestPatchBadge_CannotPatchHost_SkipsHoldAndRebootReasons(t *testing.T) { // AC-007
+	in := healthyInput()
+	in.OSPatch = windowPolicy("")
+	in.Updates = &models.UpdateInfo{
+		PackageManager: "pacman", RebootRequired: true, HoldEnforcement: "no_privilege",
+		HeldPackages:   []string{"linux"},
+		OtherHolds:     &models.OtherHolds{Status: models.FactStatusOK, Packages: []string{"nginx"}, Total: 1},
+		ReleaseUpgrade: &models.ReleaseUpgrade{Status: models.FactStatusAvailable, Name: "26.04"},
+	}
+	assert.Equal(t, []string{reasonCannotPatchHost}, reasonCodes(computePatchBadge(in, badgeNow)),
+		"NY-5..NY-8 and NY-10 must be skipped when the host cannot be patched")
+}
+
+func TestPatchBadge_CannotPatchHost_AptAndDnfAreSupported(t *testing.T) { // AC-007
+	for _, pm := range []string{"apt", "dnf"} {
+		in := healthyInput()
+		in.Updates.PackageManager = pm
+		assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonCannotPatchHost, pm)
+	}
+}
+
+func TestPatchBadge_HeldPackages_NamesTheHeldPackage(t *testing.T) { // AC-008
+	in := healthyInput()
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK, Packages: []string{"nginx"}, Total: 1}
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonHeldPackages}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonHeldPackages).Text, "nginx")
+}
+
+func TestPatchBadge_HeldPackages_ListsTenAndMore(t *testing.T) { // AC-008
+	in := healthyInput()
+	var names []string
+	for i := 0; i < 25; i++ {
+		names = append(names, "pkg"+string(rune('a'+i)))
+	}
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK, Packages: names, Total: 40}
+	text := findReason(t, computePatchBadge(in, badgeNow), reasonHeldPackages).Text
+	assert.Contains(t, text, "pkga, pkgb")
+	assert.Contains(t, text, "pkgj")
+	assert.NotContains(t, text, "pkgk", "only 10 names are shown")
+	assert.Contains(t, text, "and 30 more")
+}
+
+func TestPatchBadge_HeldPackages_RiotManagedHoldsAreIgnored(t *testing.T) { // AC-009
+	in := healthyInput()
+	in.Updates.HeldPackages = []string{"linux-image-generic"}
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK, Packages: []string{"linux-image-generic"}, Total: 1}
+	b := computePatchBadge(in, badgeNow)
+	assert.NotContains(t, reasonCodes(b), reasonHeldPackages)
+	assert.NotContains(t, reasonCodes(b), reasonRebootClassHeld, "gated policy releases rIOt holds")
+	assert.Equal(t, badgeAuto, b.Kind)
+}
+
+func TestPatchBadge_HeldPackages_UnavailableOrNotReportedNeverRaises(t *testing.T) { // AC-023
+	in := healthyInput()
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusUnavailable, Packages: []string{"nginx"}, Total: 1}
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonHeldPackages)
+	in.Updates.OtherHolds = nil
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonHeldPackages)
+}
+
+func TestPatchBadge_HeldPackages_RejectsUnsafeAgentNames(t *testing.T) { // security: agent data is re-validated
+	in := healthyInput()
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK,
+		Packages: []string{"<script>alert(1)</script>", "good-pkg", "bad name", strings.Repeat("a", 129)}, Total: 4}
+	text := findReason(t, computePatchBadge(in, badgeNow), reasonHeldPackages).Text
+	assert.Contains(t, text, "good-pkg")
+	assert.NotContains(t, text, "script")
+	assert.NotContains(t, text, "bad name")
+}
+
+func TestPatchBadge_HeldPackages_HostileStatusIsIgnored(t *testing.T) { // security
+	in := healthyInput()
+	in.Updates.OtherHolds = &models.OtherHolds{Status: "<b>ok</b>", Packages: []string{"nginx"}, Total: 1}
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonHeldPackages)
+}
+
+func TestPatchBadge_RebootClassHeldNoRelease_HoldsActivePolicyOff(t *testing.T) { // AC-010
+	in := healthyInput()
+	in.OSPatch = windowPolicy("")
+	in.Updates.HeldPackages = []string{"linux-image-generic"}
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{reasonRebootClassHeld}, reasonCodes(b))
+	r := findReason(t, b, reasonRebootClassHeld)
+	assert.Contains(t, r.Text, "Kernel and GPU")
+	assert.Contains(t, r.Action, "reboot_class to gated")
+}
+
+func TestPatchBadge_RebootClassHeldNoRelease_NotRaisedWithoutActiveHolds(t *testing.T) { // AC-010
+	in := healthyInput()
+	in.OSPatch = windowPolicy("")
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonRebootClassHeld, "no rIOt holds")
+	in.Updates.HeldPackages = []string{"linux-image-generic"}
+	in.Updates.HoldEnforcement = "no_privilege"
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonRebootClassHeld, "enforcement not active")
+}
+
+func TestPatchBadge_HoldEnforcementBroken_NoPrivilege(t *testing.T) { // AC-011
+	in := healthyInput()
+	in.Updates.HoldEnforcement = "no_privilege"
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{reasonHoldEnforcementBroke}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonHoldEnforcementBroke).Action, "Re-run the agent installer")
+}
+
+func TestPatchBadge_HoldEnforcementBroken_ActiveOrOffIsFine(t *testing.T) { // AC-011
+	for _, state := range []string{"active", "", "unsupported"} {
+		in := healthyInput()
+		in.Updates.HoldEnforcement = state
+		assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonHoldEnforcementBroke, "state %q", state)
+	}
+}
+
+func TestPatchBadge_ManualApprovalUpdate_NamesTheRelease(t *testing.T) { // AC-012
+	in := healthyInput()
+	in.Updates.ReleaseUpgrade = &models.ReleaseUpgrade{Status: models.FactStatusAvailable, Name: "26.04 LTS"}
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonManualApproval}, reasonCodes(b))
+	assert.Contains(t, findReason(t, b, reasonManualApproval).Text, "26.04 LTS")
+}
+
+func TestPatchBadge_ManualApprovalUpdate_UnsafeNameIsDropped(t *testing.T) { // security
+	in := healthyInput()
+	in.Updates.ReleaseUpgrade = &models.ReleaseUpgrade{Status: models.FactStatusAvailable, Name: "<img src=x>"}
+	text := findReason(t, computePatchBadge(in, badgeNow), reasonManualApproval).Text
+	assert.NotContains(t, text, "<img")
+	assert.Contains(t, text, "OS release upgrade")
+}
+
+func TestPatchBadge_ManualApprovalUpdate_UnavailableDoesNotRaiseAndNeverClaimsNone(t *testing.T) { // AC-012
+	in := healthyInput()
+	in.Updates.ReleaseUpgrade = &models.ReleaseUpgrade{Status: models.FactStatusUnavailable}
+	b := computePatchBadge(in, badgeNow)
+	assert.NotContains(t, reasonCodes(b), reasonManualApproval)
+	joined := strings.Join(b.Explanation.Notes, " ")
+	assert.Contains(t, joined, "could not be checked")
+	assert.NotContains(t, strings.ToLower(joined), "no manual")
+	assert.NotContains(t, strings.ToLower(b.Explanation.NeedsYouSummary), "manual")
+}
+
+func TestPatchBadge_ManualApprovalUpdate_NotReportedNeverRaises(t *testing.T) { // AC-012, AC-023
+	in := healthyInput()
+	in.Updates.ReleaseUpgrade = nil
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonManualApproval)
+}
+
+func TestPatchBadge_LastRunFailed_FailedRunWithMessageAndLink(t *testing.T) { // AC-013
+	in := healthyInput()
+	in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "failed", "apt exited with status 100")
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	r := findReason(t, b, reasonLastRunFailed)
+	assert.Contains(t, r.Text, "failed: apt exited with status 100")
+	assert.Equal(t, "0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", r.CommandID)
+}
+
+func TestPatchBadge_LastRunFailed_TimedOutRaises(t *testing.T) { // AC-013
+	in := healthyInput()
+	in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "timed_out", "")
+	r := findReason(t, computePatchBadge(in, badgeNow), reasonLastRunFailed)
+	assert.Contains(t, r.Text, "timed out")
+	assert.Contains(t, r.Text, "no message was recorded")
+}
+
+func TestPatchBadge_LastRunFailed_SucceededOrNoRunClears(t *testing.T) { // AC-013
+	in := healthyInput()
+	in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "succeeded", "")
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonLastRunFailed)
+	in.LastRun = nil
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonLastRunFailed)
+}
+
+func TestPatchBadge_LastRunFailed_ExpiredAndCancelledDoNotRaise(t *testing.T) { // AC-013
+	for _, status := range []string{"expired", "cancelled", "running"} {
+		in := healthyInput()
+		in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", status, "x")
+		assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonLastRunFailed, status)
+	}
+}
+
+func TestPatchBadge_LastRunFailed_MessageIsSanitisedAndCut(t *testing.T) { // security, AC-013
+	in := healthyInput()
+	hostile := "\x1b[31mred\x1b[0m ‮evil⁩ line1\nline2\x07" + strings.Repeat("x", 400)
+	in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "failed", hostile)
+	text := findReason(t, computePatchBadge(in, badgeNow), reasonLastRunFailed).Text
+	for _, bad := range []string{"\x1b", "‮", "⁩", "\x07", "\n"} {
+		assert.NotContains(t, text, bad, "unsafe character %q must be stripped", bad)
+	}
+	assert.Contains(t, text, "red evil line1 line2")
+	msg := strings.TrimPrefix(text, "The last patch run failed: ")
+	assert.LessOrEqual(t, len([]rune(msg)), maxBadgeRunMessage+3, "message is cut to 200 characters")
+}
+
+func TestPatchBadge_LastRunFailed_InvalidCommandIDIsNotLinked(t *testing.T) { // security
+	in := healthyInput()
+	in.LastRun = failedRun("../../etc/passwd", "failed", "boom")
+	assert.Equal(t, "", findReason(t, computePatchBadge(in, badgeNow), reasonLastRunFailed).CommandID)
+}
+
+func TestPatchBadge_ManualRebootNeeded_NoRebootClassUpdatePending(t *testing.T) { // AC-014
+	in := healthyInput()
+	in.Updates.RebootRequired = true
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Equal(t, []string{reasonManualReboot}, reasonCodes(b))
+	r := findReason(t, b, reasonManualReboot)
+	assert.Contains(t, r.Text, "no kernel or GPU update is pending")
+	assert.Equal(t, "Reboot this host by hand.", r.Action)
+	assert.Equal(t, "Manual: you must reboot this host.", b.Explanation.Reboot)
+}
+
+func TestPatchBadge_ManualRebootNeeded_AllowRebootOffCitesAllowReboot(t *testing.T) { // AC-015
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 2
+	in.Updates.AllowReboot = boolPtr(false)
+	r := findReason(t, computePatchBadge(in, badgeNow), reasonManualReboot)
+	assert.Contains(t, r.Text, "allow_reboot is off")
+	assert.NotContains(t, r.Text, "no kernel or GPU update is pending")
+}
+
+func TestPatchBadge_ManualRebootNeeded_PolicyNotGatedCitesPolicy(t *testing.T) { // AC-015
+	in := healthyInput()
+	in.OSPatch = windowPolicy("off")
+	in.Updates.PendingRebootClassCount = 1
+	r := findReason(t, computePatchBadge(in, badgeNow), reasonManualReboot)
+	assert.Contains(t, r.Text, "reboot_class policy is not gated")
+}
+
+func TestPatchBadge_ManualRebootNeeded_AgentHoldRebootClassOffCitesAgent(t *testing.T) { // extension: agent never reboots without it
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 1
+	in.Updates.HoldRebootClass = boolPtr(false)
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	assert.Contains(t, findReason(t, b, reasonManualReboot).Text, "hold_reboot_class is off")
+}
+
+func TestPatchBadge_ManualRebootNeeded_HoldRebootClassNotReportedCountsAsOK(t *testing.T) { // extension: unknown counts as true
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 1
+	in.Updates.HoldRebootClass = nil
+	assert.Equal(t, badgeAutoRebootDate, computePatchBadge(in, badgeNow).Kind)
+}
+
+func TestPatchBadge_ManualRebootNeeded_AutoPatchOffCitesSetup(t *testing.T) { // AC-015
+	in := healthyInput()
+	in.AutoPatch = false
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{reasonAutoPatchOff, reasonManualReboot}, reasonCodes(b), "reasons are listed in NY order")
+	assert.Contains(t, findReason(t, b, reasonManualReboot).Text, "automatic patching is not set up")
+}
+
+func TestPatchBadge_ManualRebootNeeded_NotRaisedWhenAutomaticRebootIsSetUp(t *testing.T) { // AC-016
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 1
+	assert.NotContains(t, reasonCodes(computePatchBadge(in, badgeNow)), reasonManualReboot)
+}
+
+func TestPatchBadge_ManualRebootNeeded_RebootRequiredWithPendingClassAndGatedIsAutomatic(t *testing.T) { // AC-016
+	in := healthyInput()
+	in.Updates.RebootRequired = true
+	in.Updates.PendingRebootClassCount = 1
+	assert.Equal(t, badgeAutoRebootDate, computePatchBadge(in, badgeNow).Kind)
+}
+
+// --- Cross-cutting ---
+
+func TestPatchBadge_Reasons_ListedInCodeOrder(t *testing.T) { // AC-021
+	in := healthyInput()
+	in.AutoPatch = false
+	in.OSPatch = windowPolicy("")
+	in.Updates.AllowPatching = boolPtr(false)
+	in.Updates.HoldEnforcement = "no_privilege"
+	in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK, Packages: []string{"nginx"}, Total: 1}
+	in.Updates.ReleaseUpgrade = &models.ReleaseUpgrade{Status: models.FactStatusAvailable}
+	in.Updates.RebootRequired = true
+	in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "failed", "x")
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, []string{
+		reasonAutoPatchOff, reasonAgentPatchingOff, reasonHeldPackages, reasonHoldEnforcementBroke,
+		reasonManualApproval, reasonLastRunFailed, reasonManualReboot,
+	}, reasonCodes(b))
+	assert.Equal(t, "7 items need you.", b.Explanation.NeedsYouSummary)
+}
+
+func TestPatchBadge_NewerAgentNote_AgentReportingNoNewFacts(t *testing.T) { // AC-023
+	in := healthyInput()
+	in.Updates.AllowPatching, in.Updates.OtherHolds, in.Updates.ReleaseUpgrade = nil, nil, nil
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAuto, b.Kind, "unknown facts must not raise needs-you reasons")
+	assert.Contains(t, b.Explanation.Notes, "Some checks need a newer agent (v9.9.9 or later).")
+}
+
+func TestPatchBadge_NewerAgentNote_AbsentWhenAllFactsReported(t *testing.T) { // AC-023
+	b := computePatchBadge(healthyInput(), badgeNow)
+	for _, n := range b.Explanation.Notes {
+		assert.NotContains(t, n, "newer agent")
+	}
+}
+
+func TestPatchBadge_NewerAgentNote_AbsentWithoutPatchData(t *testing.T) { // AC-023
+	in := healthyInput()
+	in.Updates, in.UpdatesAt = nil, nil
+	assert.Empty(t, computePatchBadge(in, badgeNow).Explanation.Notes)
+}
+
+func TestPatchBadge_UnattendedUpgradesNote_AutoPatchOff(t *testing.T) { // AC-024
+	in := healthyInput()
+	in.AutoPatch = false
+	in.Updates.UnattendedUpgrades = true
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+	joined := strings.Join(b.Explanation.Notes, " ")
+	assert.Contains(t, joined, "unattended-upgrades")
+	assert.Contains(t, joined, "cannot see what it applies or whether it reboots")
+}
+
+func TestPatchBadge_UnattendedUpgradesNote_AbsentWhenNotReported(t *testing.T) { // AC-024
+	for _, n := range computePatchBadge(healthyInput(), badgeNow).Explanation.Notes {
+		assert.NotContains(t, n, "unattended-upgrades")
+	}
+}
+
+func TestPatchBadge_OfflineHost_KeepsLastBadgeWithItsAge(t *testing.T) { // AC-025
+	in := healthyInput()
+	at := badgeNow.Add(-72 * time.Hour)
+	in.UpdatesAt = &at
+	b := computePatchBadge(in, badgeNow)
+	assert.Equal(t, badgeAuto, b.Kind)
+	assert.Equal(t, "2026-10-21 12:00 UTC (3 d ago)", b.Explanation.AsOf)
+}
+
+func TestPatchBadge_ReasonDependencies_DoNotUseClockInternally(t *testing.T) { // AC-028 (purity)
+	in := healthyInput()
+	in.Updates.PendingRebootClassCount = 1
+	early := computePatchBadge(in, badgeNow)
+	later := computePatchBadge(in, badgeNow.Add(24*time.Hour))
+	require.NotNil(t, early.RebootAt)
+	require.NotNil(t, later.RebootAt)
+	assert.Equal(t, time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC), *early.RebootAt)
+	assert.Equal(t, time.Date(2026, 10, 26, 3, 0, 0, 0, time.UTC), *later.RebootAt, "the date follows the injected clock")
+}
+
+// TestPatchBadge_EveryReasonCodeHasATest proves each reason code is raised by a
+// named scenario (AC-028).
+func TestPatchBadge_EveryReasonCodeHasATest(t *testing.T) {
+	scenarios := map[string]func(*patchBadgeInput){
+		reasonAutoPatchOff:     func(in *patchBadgeInput) { in.AutoPatch = false },
+		reasonPatchingDisabled: func(in *patchBadgeInput) { in.OSPatch = models.MaintenanceWindow{Mode: "disabled"} },
+		reasonAgentPatchingOff: func(in *patchBadgeInput) { in.Updates.AllowPatching = boolPtr(false) },
+		reasonCannotPatchHost:  func(in *patchBadgeInput) { in.Updates = nil },
+		reasonHeldPackages: func(in *patchBadgeInput) {
+			in.Updates.OtherHolds = &models.OtherHolds{Status: "ok", Packages: []string{"nginx"}, Total: 1}
+		},
+		reasonRebootClassHeld:      func(in *patchBadgeInput) { in.OSPatch = windowPolicy(""); in.Updates.HeldPackages = []string{"linux"} },
+		reasonHoldEnforcementBroke: func(in *patchBadgeInput) { in.Updates.HoldEnforcement = "no_privilege" },
+		reasonManualApproval:       func(in *patchBadgeInput) { in.Updates.ReleaseUpgrade = &models.ReleaseUpgrade{Status: "available"} },
+		reasonLastRunFailed: func(in *patchBadgeInput) {
+			in.LastRun = failedRun("0b7a53a6-1f2e-4b6a-9d1d-2d3f5c6a7b8c", "failed", "x")
+		},
+		reasonManualReboot: func(in *patchBadgeInput) { in.Updates.RebootRequired = true },
+	}
+	require.Len(t, scenarios, len(patchBadgeReasonCodes), "every reason code needs exactly one scenario")
+	for _, code := range patchBadgeReasonCodes {
+		scenario, ok := scenarios[code]
+		require.True(t, ok, "reason code %q has no scenario", code)
+		in := healthyInput()
+		scenario(&in)
+		b := computePatchBadge(in, badgeNow)
+		assert.Equal(t, badgeNeedsYou, b.Kind, code)
+		assert.Contains(t, reasonCodes(b), code, "scenario for %q must raise it", code)
+	}
+}

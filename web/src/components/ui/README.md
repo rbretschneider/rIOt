@@ -278,7 +278,7 @@ Rules:
 | `formatRelative(value, nowMs)` | `just now`, `5m ago`, `in 3h`. The clock is passed in |
 | `formatTimestamp(value, zoneOpts, precision)` | `2026-10-17 14:03:22 UTC`. 24-hour, always zone-labelled |
 | `formatChartTick`, `formatChartTooltip` | `HH:mm` axis tick; full timestamp for tooltips |
-| `formatUtc(iso)` | `YYYY-MM-DD HH:MM UTC`, always UTC. Used by the reboot ETA and maintenance windows |
+| `formatUtc(iso)` | `YYYY-MM-DD HH:MM UTC`, always UTC. Used by maintenance windows |
 | `parseInstant(value)` | `Date` or `null` for an ISO string, epoch milliseconds, or `Date` |
 
 `precision` is `second` (default), `minute`, or `time` (time of day only). Missing or unparseable input renders `—`. The pure functions take the clock and zone as arguments, so tests are deterministic.

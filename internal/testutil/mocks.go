@@ -389,6 +389,10 @@ func (m *MockTelemetryRepo) GetAllLatestSummaries(_ context.Context) ([]db.Snaps
 			Updates:  s.Data.Updates,
 			Security: s.Data.Security,
 		}
+		if s.Data.Updates != nil {
+			ts := s.Timestamp
+			summary.UpdatesAt = &ts
+		}
 		if s.Data.WebServers != nil {
 			for _, srv := range s.Data.WebServers.Servers {
 				summary.WebCerts = append(summary.WebCerts, srv.Certs...)
@@ -1131,6 +1135,32 @@ func (m *MockCommandRepo) ListByDeviceFiltered(_ context.Context, deviceID strin
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+// LatestFinishedOSUpdates mirrors the SQL: the newest os_update per device that
+// finished as succeeded, failed or timed_out. Expired, cancelled and unfinished
+// commands are ignored.
+func (m *MockCommandRepo) LatestFinishedOSUpdates(_ context.Context) (map[string]models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("LatestFinishedOSUpdates"); err != nil {
+		return nil, err
+	}
+	out := map[string]models.Command{}
+	for _, c := range m.Commands {
+		if c.Action != models.ActionOSUpdate {
+			continue
+		}
+		switch models.CommandState(c.Status) {
+		case models.CommandSucceeded, models.CommandFailed, models.CommandTimedOut:
+		default:
+			continue
+		}
+		if prev, ok := out[c.DeviceID]; !ok || c.CreatedAt.After(prev.CreatedAt) {
+			out[c.DeviceID] = copyCommand(c)
+		}
+	}
+	return out, nil
 }
 
 func (m *MockCommandRepo) ListActive(_ context.Context, deviceID, targetKey string) ([]models.Command, error) {

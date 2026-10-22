@@ -210,8 +210,8 @@ function pad2(n: number): string {
  * Formats an ISO instant as an absolute UTC string (YYYY-MM-DD HH:MM UTC).
  * UTC getters only — never converts to local time. Returns null for an
  * unparseable input so callers can fall back honestly instead of rendering a
- * partial or placeholder time. Moved verbatim from utils/rebootEta.ts; reboot
- * ETA and maintenance-window strings ignore the time-zone preference.
+ * partial or placeholder time. Maintenance-window and
+ * reboot-date strings ignore the time-zone preference.
  */
 export function formatUtc(iso: string): string | null {
   const d = new Date(iso)

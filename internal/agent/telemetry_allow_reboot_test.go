@@ -66,3 +66,44 @@ func TestCollectAll_AC012_NilUpdateInfoDoesNotPanic(t *testing.T) {
 		assert.Nil(t, data.Updates)
 	})
 }
+
+func collectWithPatchFlags(t *testing.T, cmds CommandsConfig) *models.UpdateInfo {
+	t.Helper()
+	reg := collectors.NewRegistry()
+	reg.Register(&fakeUpdatesCollector{result: &models.UpdateInfo{PendingUpdates: 1}})
+	a := &Agent{config: &Config{Commands: cmds}, registry: reg}
+	return a.collectAll(context.Background()).Updates
+}
+
+func TestCollectAll_StampsAllowPatchingAndHoldRebootClass(t *testing.T) {
+	info := collectWithPatchFlags(t, CommandsConfig{AllowPatching: true, HoldRebootClass: false})
+	require.NotNil(t, info.AllowPatching, "allow_patching must be reported")
+	assert.True(t, *info.AllowPatching)
+	require.NotNil(t, info.HoldRebootClass, "an explicit false must be reported, not omitted")
+	assert.False(t, *info.HoldRebootClass)
+
+	raw, err := json.Marshal(info)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"hold_reboot_class":false`)
+}
+
+func TestUpdateInfo_OldPayloadDecodesWithNilFacts(t *testing.T) {
+	var info models.UpdateInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"pending_updates":2,"allow_reboot":true}`), &info))
+	assert.Nil(t, info.AllowPatching)
+	assert.Nil(t, info.HoldRebootClass)
+	assert.Nil(t, info.OtherHolds)
+	assert.Nil(t, info.ReleaseUpgrade)
+}
+
+func TestUpdateInfo_NewPayloadDecodesIntoOldShape(t *testing.T) {
+	type oldShape struct {
+		PendingUpdates int   `json:"pending_updates"`
+		AllowReboot    *bool `json:"allow_reboot"`
+	}
+	raw := `{"pending_updates":2,"allow_reboot":true,"allow_patching":true,"hold_reboot_class":false,` +
+		`"other_holds":{"status":"ok","packages":["nginx"],"total":1},"release_upgrade":{"status":"none"}}`
+	var old oldShape
+	require.NoError(t, json.Unmarshal([]byte(raw), &old), "unknown keys must be ignored by an older decoder")
+	assert.Equal(t, 2, old.PendingUpdates)
+}

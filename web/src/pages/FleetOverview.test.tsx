@@ -104,8 +104,8 @@ describe('FleetOverview', () => {
   })
 })
 
-describe('[AC-021] Reboot-required and reboot-class surfaced in patch review', () => {
-  it('shows a reboot-required badge and reboot-class count for the device', async () => {
+describe('[AC-021] Reboot-class surfaced in patch review', () => {
+  it('shows the reboot-class count for the device', async () => {
     vi.mocked(api.getPatchStatus).mockResolvedValueOnce([
       { device_id: 'dev-1', hostname: 'node-1', pending_updates: 3, security_count: 1, reboot_class_count: 2, reboot_required: true },
     ])
@@ -114,8 +114,7 @@ describe('[AC-021] Reboot-required and reboot-class surfaced in patch review', (
     const reviewButton = await screen.findByText(/Review Patches/)
     fireEvent.click(reviewButton)
 
-    expect(await screen.findByText('reboot required')).toBeInTheDocument()
-    expect(screen.getByText('2 reboot-class')).toBeInTheDocument()
+    expect(await screen.findByText('2 reboot-class')).toBeInTheDocument()
   })
 
   it('badges reboot-class packages in the expanded package list', async () => {
@@ -154,212 +153,151 @@ describe('[AC-001] Score column removed from Fleet Overview', () => {
   })
 })
 
-// REBOOT-ETA-001: reboot-required indicators + estimated-reboot tooltip.
-const ETA_ROW = {
+// Patch badge on the Devices rows, the needs-you filter and the Review Patches panel.
+function badge(kind: 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you', label: string) {
+  return {
+    kind,
+    label,
+    explanation: {
+      automatic: 'No.',
+      reboot: 'Not needed.',
+      needs_you: [],
+      needs_you_summary: 'Nothing.',
+      as_of: '2026-10-19 02:00 UTC (just now)',
+      notes: [],
+    },
+  }
+}
+
+const BADGE_ROW = {
   device_id: 'dev-1',
   hostname: 'node-1',
   pending_updates: 3,
   security_count: 1,
   reboot_class_count: 2,
   reboot_required: true,
-  os_patch_mode: 'window' as const,
-  next_window_start: '2026-10-19T02:00:00Z',
-  os_patch_cooldown_minutes: 360,
-  allow_reboot: true,
+  patch_badge: badge('auto_reboot_date', 'Auto (reboot on 2026-10-25)'),
 }
 
-describe('[AC-001] panel badge renders when reboot required', () => {
-  it('shows the reboot required badge in the Pending OS Patches panel', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([ETA_ROW])
+function mockDevices(ids: string[]) {
+  vi.mocked(useDevices).mockReturnValue({
+    data: ids.map(id => ({
+      id, hostname: `host-${id}`, short_id: id, arch: 'amd64', status: 'online',
+      agent_version: '2.0.4', primary_ip: '10.0.0.1', tags: [], last_heartbeat: new Date().toISOString(),
+    })),
+    isLoading: false,
+    wsConnected: false,
+  } as never)
+}
+
+describe('patch badge on the Devices rows', () => {
+  it('shows the server label in the device row', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([BADGE_ROW])
     renderWithProviders()
 
-    fireEvent.click(await screen.findByText(/Review Patches/))
-
-    expect(await screen.findByText('reboot required')).toBeInTheDocument()
+    const el = await screen.findByTestId('patch-badge')
+    expect(el).toHaveTextContent('Auto (reboot on 2026-10-25)')
+    expect(el.closest('tr')!.textContent).toContain('node-1')
   })
-})
 
-describe('[AC-002] main-grid indicator renders when reboot required', () => {
-  it('shows a reboot indicator in the device row', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
+  it('requests one row per device', async () => {
+    vi.mocked(api.getPatchStatus).mockClear()
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([BADGE_ROW])
     renderWithProviders()
 
-    expect(await screen.findByRole('img', { name: 'Reboot required' })).toBeInTheDocument()
+    await screen.findByTestId('patch-badge')
+    expect(api.getPatchStatus).toHaveBeenCalledWith(true)
   })
 
-  it('leaves the existing pending-update count in the row intact', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
+  it('keeps the pending-update count in the row', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([BADGE_ROW])
     renderWithProviders()
 
-    await screen.findByRole('img', { name: 'Reboot required' })
+    await screen.findByTestId('patch-badge')
     const row = screen.getByText('node-1').closest('tr')!
     expect(row.textContent, 'the count of pending updates must still render in the row').toContain('3')
-    expect(row.textContent).toContain('192.168.1.1')
-  })
-})
-
-describe('[AC-003] no indicator when reboot not required', () => {
-  it('renders no grid indicator when reboot_required is false', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([{ ...ETA_ROW, reboot_required: false }])
-    renderWithProviders()
-
-    await screen.findByText(/Review Patches/)
-    expect(screen.queryByRole('img', { name: 'Reboot required' })).not.toBeInTheDocument()
   })
 
-  it('renders no grid indicator when the device has no patch-status row', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([{ ...ETA_ROW, device_id: 'some-other-device' }])
+  it('shows no badge for a device without a row', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([{ ...BADGE_ROW, device_id: 'some-other-device' }])
     renderWithProviders()
 
-    await screen.findByText(/Review Patches/)
-    expect(screen.queryByRole('img', { name: 'Reboot required' })).not.toBeInTheDocument()
+    await screen.findByText('node-1')
+    expect(screen.queryByTestId('patch-badge')).not.toBeInTheDocument()
   })
 
-  it('renders no panel badge when reboot_required is false', async () => {
-    const row = { ...ETA_ROW, reboot_required: false }
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([row])
+  it('shows the same label in the Review Patches panel as in the row', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([BADGE_ROW])
+    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([BADGE_ROW])
     renderWithProviders()
 
+    const rowLabel = (await screen.findByTestId('patch-badge')).textContent
     fireEvent.click(await screen.findByText(/Review Patches/))
     await screen.findByText('2 reboot-class')
-    expect(screen.queryByText('reboot required')).not.toBeInTheDocument()
+    const labels = screen.getAllByTestId('patch-badge').map(e => e.textContent)
+    expect(labels).toEqual([rowLabel, rowLabel])
+  })
+
+  it('does not count fully patched devices as having OS updates', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([
+      { ...BADGE_ROW, pending_updates: 0, reboot_required: false, patch_badge: badge('auto', 'Auto') },
+    ])
+    renderWithProviders()
+
+    await screen.findByTestId('patch-badge')
+    expect(screen.queryByText(/Review Patches/)).not.toBeInTheDocument()
   })
 })
 
-describe('[AC-004] identical tooltip text in both placements', () => {
-  it('gives the grid indicator and the panel badge the same title for one device', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([ETA_ROW])
-    renderWithProviders()
-
-    const gridTitle = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')
-    fireEvent.click(await screen.findByText(/Review Patches/))
-    const panelTitle = (await screen.findByText('reboot required')).getAttribute('title')
-
-    expect(gridTitle, 'grid indicator must carry a title').toBeTruthy()
-    expect(panelTitle).toBe(gridTitle)
+describe('needs-you filter', () => {
+  afterEach(() => {
+    vi.mocked(useDevices).mockReset()
   })
 
-  it('shows the same manual-reboot text in both placements when allow_reboot is false', async () => {
-    const row = { ...ETA_ROW, allow_reboot: false }
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([row])
+  function rows() {
+    return ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({
+      device_id: id, hostname: `host-${id}`, pending_updates: 0, security_count: 0,
+      reboot_class_count: 0, reboot_required: false,
+      patch_badge: i < 3 ? badge('needs_you', 'Needs you') : badge('auto', 'Auto'),
+    }))
+  }
+
+  it('counts and lists exactly the hosts whose badge needs you', async () => {
+    mockDevices(['a', 'b', 'c', 'd', 'e'])
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce(rows())
     renderWithProviders()
 
-    const gridTitle = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')
-    fireEvent.click(await screen.findByText(/Review Patches/))
-    const panelTitle = (await screen.findByText('reboot required')).getAttribute('title')
+    const toggle = await screen.findByRole('button', { name: '3 hosts need you' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getAllByRole('row')).toHaveLength(1 + 5)
 
-    expect(panelTitle).toBe(gridTitle)
-    expect(gridTitle).toContain('Manual reboot required')
-  })
-})
+    fireEvent.click(toggle)
 
-describe('[AC-005] native title attribute in both placements', () => {
-  it('delivers the explanatory text through the title attribute on both indicators', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([ETA_ROW])
-    renderWithProviders()
-
-    const grid = await screen.findByRole('img', { name: 'Reboot required' })
-    expect(grid).toHaveAttribute('title')
-    fireEvent.click(await screen.findByText(/Review Patches/))
-    expect(await screen.findByText('reboot required')).toHaveAttribute('title')
-  })
-})
-
-describe('[AC-006] window mode shows Est. reboot in the rendered tooltip', () => {
-  it('renders the UTC estimate in the grid indicator title', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    renderWithProviders()
-
-    const grid = await screen.findByRole('img', { name: 'Reboot required' })
-    expect(grid.getAttribute('title')).toContain('Est. reboot: 2026-10-19 02:00 UTC')
-  })
-})
-
-describe('[AC-019] fallback tooltip when no next start was computed', () => {
-  it('renders reboot-required with no time in the grid indicator', async () => {
-    const { next_window_start: _omit, ...noStart } = ETA_ROW
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([noStart])
-    renderWithProviders()
-
-    const grid = await screen.findByRole('img', { name: 'Reboot required' })
-    expect(grid.getAttribute('title')).toBe('A reboot is required to activate the installed updates.')
-  })
-})
-
-describe('[AC-020] no additional network request from the page', () => {
-  it('drives the grid indicator from the single existing patch-status query', async () => {
-    vi.mocked(api.getPatchStatus).mockClear()
-    vi.mocked(api.getPatchStatusDetail).mockClear()
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    renderWithProviders()
-
-    await screen.findByRole('img', { name: 'Reboot required' })
-
-    expect(api.getPatchStatus).toHaveBeenCalledTimes(1)
-    expect(api.getPatchStatusDetail, 'the detail request is only made when the panel is opened').not.toHaveBeenCalled()
-  })
-})
-
-describe('[AC-022] existing badge non-regression', () => {
-  it('still renders the "reboot required" badge text next to the reboot-class count', async () => {
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([ETA_ROW])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([ETA_ROW])
-    renderWithProviders()
-
-    fireEvent.click(await screen.findByText(/Review Patches/))
-
-    const badge = await screen.findByText('reboot required')
-    expect(badge.textContent).toBe('reboot required')
-    expect(badge.getAttribute('title')).toContain('reboot')
-    expect(screen.getByText('2 reboot-class')).toBeInTheDocument()
-  })
-})
-
-// Added by QA Engineer (REBOOT-ETA-001).
-describe('[AC-012] agent that never reported allow_reboot degrades to conditional wording', () => {
-  // Covers AC-012, AC-004: unknown (absent) allow_reboot must NOT read as a false "manual"
-  // and must NOT be an unconditional guarantee; both placements stay identical.
-  it('shows conditional (not manual, not guaranteed) text identically in both placements', async () => {
-    const { allow_reboot: _omit, ...unknown } = ETA_ROW
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([unknown])
-    vi.mocked(api.getPatchStatusDetail).mockResolvedValueOnce([unknown])
-    renderWithProviders()
-
-    const gridTitle = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')!
-    fireEvent.click(await screen.findByText(/Review Patches/))
-    const panelTitle = (await screen.findByText('reboot required')).getAttribute('title')
-
-    expect(gridTitle).toContain('Est. reboot: 2026-10-19 02:00 UTC')
-    expect(gridTitle).toContain('if this device permits automatic reboot')
-    expect(gridTitle).not.toContain('Manual reboot required')
-    expect(panelTitle).toBe(gridTitle)
-  })
-})
-
-describe('[AC-007] anytime mode renders cooldown wording in the grid indicator', () => {
-  // Covers AC-007, AC-008: mode wiring from the row to the rendered title
-  it('renders anytime wording with no clock time', async () => {
-    const row = { ...ETA_ROW, os_patch_mode: 'anytime' as const, next_window_start: undefined }
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
-    renderWithProviders()
-
-    const title = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')!
-    expect(title).toContain('next automatic patch run (within the ~360 min cooldown)')
-    expect(title).not.toContain('Est. reboot:')
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    const names = screen.getAllByRole('link').map(l => l.textContent).filter(t => t?.startsWith('host-'))
+    expect(names.sort()).toEqual(['host-a', 'host-b', 'host-c'])
   })
 
-  it('[AC-008] disabled mode renders reboot-required with no time', async () => {
-    const row = { ...ETA_ROW, os_patch_mode: 'disabled' as const, next_window_start: undefined }
-    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([row])
+  it('shows all hosts again when toggled off', async () => {
+    mockDevices(['a', 'b', 'c', 'd', 'e'])
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce(rows())
     renderWithProviders()
 
-    const title = (await screen.findByRole('img', { name: 'Reboot required' })).getAttribute('title')
-    expect(title).toBe('A reboot is required to activate the installed updates.')
+    const toggle = await screen.findByRole('button', { name: '3 hosts need you' })
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getAllByRole('row')).toHaveLength(1 + 5)
+  })
+
+  it('is absent when no host needs you', async () => {
+    mockDevices(['a'])
+    vi.mocked(api.getPatchStatus).mockResolvedValueOnce([rows()[4]].map(r => ({ ...r, device_id: 'a' })))
+    renderWithProviders()
+
+    await screen.findByTestId('patch-badge')
+    expect(screen.queryByRole('button', { name: /need.* you/ })).not.toBeInTheDocument()
   })
 })
 

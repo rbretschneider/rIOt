@@ -181,9 +181,8 @@ describe('[UIF AC-108] no duplicate formatter definitions', () => {
     expect(sources['utils/format.ts']).toMatch(/export function formatDuration\b/)
   })
 
-  it('utils/docker.ts and utils/rebootEta.ts only re-export from the canonical module', () => {
+  it('utils/docker.ts only re-exports from the canonical module', () => {
     expect(sources['utils/docker.ts']).toMatch(/export \{ formatBytes \} from '\.\/format'/)
-    expect(sources['utils/rebootEta.ts']).toMatch(/export \{ formatUtc \} from '\.\/format'/)
   })
 })
 
