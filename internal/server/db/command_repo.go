@@ -277,6 +277,38 @@ func (r *CommandRepo) ListActive(ctx context.Context, deviceID, targetKey string
 	return scanCommands(rows)
 }
 
+// finishedOSUpdateStatusList names the outcomes that count as a finished
+// os_update run. Expired and cancelled commands never ran to a result, so they
+// are not outcomes.
+var finishedOSUpdateStatusList = models.SQLStatusList(
+	models.CommandSucceeded, models.CommandFailed, models.CommandTimedOut)
+
+// LatestFinishedOSUpdates returns, per device, the newest os_update command
+// that finished as succeeded, failed or timed_out. Devices with no such
+// command are absent from the map. One statement serves the whole fleet; the
+// lateral lookup rides idx_commands_device (device_id, created_at DESC).
+func (r *CommandRepo) LatestFinishedOSUpdates(ctx context.Context) (map[string]models.Command, error) {
+	rows, err := r.db.Pool.Query(ctx, `SELECT `+commandColumns+` FROM devices d
+		CROSS JOIN LATERAL (
+			SELECT `+commandColumns+` FROM commands
+			WHERE device_id = d.id AND action = 'os_update' AND status IN (`+finishedOSUpdateStatusList+`)
+			ORDER BY created_at DESC LIMIT 1
+		) latest`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cmds, err := scanCommands(rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]models.Command, len(cmds))
+	for _, c := range cmds {
+		out[c.DeviceID] = c
+	}
+	return out, nil
+}
+
 // ClaimQueued is the heartbeat delivery claim: one statement moves up to limit
 // queued, unexpired commands of the device to dispatched and stamps their
 // deadline. FOR UPDATE SKIP LOCKED plus the repeated outer guard make each

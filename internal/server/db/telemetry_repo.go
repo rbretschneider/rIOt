@@ -30,6 +30,9 @@ const notFutureDatedSQL = "timestamp <= NOW() + interval '5 minutes'"
 type SnapshotSummary struct {
 	DeviceID string
 	Updates  *models.UpdateInfo
+	// UpdatesAt is the timestamp of the snapshot that supplied Updates; nil
+	// when there is none.
+	UpdatesAt *time.Time
 	Security *models.SecurityInfo
 	WebCerts []models.ProxyCert // flattened from WebServers.Servers[].Certs
 }
@@ -135,10 +138,11 @@ func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSu
 	rows, err := r.db.Pool.Query(ctx,
 		`SELECT device_id,
 			CASE WHEN data->'dropped_sections' ? 'updates' THEN (SELECT s.data->'updates' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'updates' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'updates' END AS updates,
+			CASE WHEN data->'dropped_sections' ? 'updates' THEN (SELECT s.timestamp FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'updates' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE CASE WHEN data ? 'updates' THEN latest.timestamp END END AS updates_at,
 			CASE WHEN data->'dropped_sections' ? 'security' THEN (SELECT s.data->'security' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'security' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'security' END AS security,
 			CASE WHEN data->'dropped_sections' ? 'web_servers' THEN (SELECT s.data->'web_servers'->'servers' FROM telemetry_snapshots s WHERE s.device_id=latest.device_id AND s.data ? 'web_servers' AND s.timestamp <= now()+interval '5 minutes' ORDER BY s.timestamp DESC LIMIT 1) ELSE data->'web_servers'->'servers' END AS servers
 		 FROM (
-			SELECT DISTINCT ON (device_id) device_id, data
+			SELECT DISTINCT ON (device_id) device_id, timestamp, data
 			FROM telemetry_snapshots
 			WHERE `+notFutureDatedSQL+`
 			ORDER BY device_id, timestamp DESC
@@ -152,7 +156,7 @@ func (r *TelemetryRepo) GetAllLatestSummaries(ctx context.Context) ([]SnapshotSu
 	for rows.Next() {
 		var s SnapshotSummary
 		var updatesJSON, securityJSON, serversJSON []byte
-		if err := rows.Scan(&s.DeviceID, &updatesJSON, &securityJSON, &serversJSON); err != nil {
+		if err := rows.Scan(&s.DeviceID, &updatesJSON, &s.UpdatesAt, &securityJSON, &serversJSON); err != nil {
 			return nil, err
 		}
 		if len(updatesJSON) > 0 && string(updatesJSON) != "null" {
