@@ -285,8 +285,9 @@ var finishedOSUpdateStatusList = models.SQLStatusList(
 
 // LatestFinishedOSUpdates returns, per device, the newest os_update command
 // that finished as succeeded, failed or timed_out. Devices with no such
-// command are absent from the map. One statement serves the whole fleet; the
-// lateral lookup rides idx_commands_device (device_id, created_at DESC).
+// command are absent from the map. One statement serves the whole fleet;
+// DISTINCT ON (device_id) matches idx_commands_device (device_id, created_at
+// DESC) and uses no join, so no column name can be ambiguous.
 func (r *CommandRepo) LatestFinishedOSUpdates(ctx context.Context) (map[string]models.Command, error) {
 	rows, err := r.db.Pool.Query(ctx, `SELECT DISTINCT ON (device_id) `+commandColumns+` FROM commands
 		WHERE action = 'os_update' AND status IN (`+finishedOSUpdateStatusList+`)
