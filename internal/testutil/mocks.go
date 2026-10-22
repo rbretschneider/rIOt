@@ -1890,6 +1890,12 @@ type MockAutoUpdateRepo struct {
 	Policies map[string][]models.AutoUpdatePolicy // deviceID → policies
 	NextID   int
 	Err      error
+	// ListAllErr, when set, is returned by ListAll only.
+	ListAllErr error
+	// ListAllCalls and ListByDeviceCalls count the list queries, so a test can
+	// assert how many queries a request issued.
+	ListAllCalls      int
+	ListByDeviceCalls int
 }
 
 func NewMockAutoUpdateRepo() *MockAutoUpdateRepo {
@@ -1897,10 +1903,60 @@ func NewMockAutoUpdateRepo() *MockAutoUpdateRepo {
 }
 
 func (m *MockAutoUpdateRepo) ListByDevice(_ context.Context, deviceID string) ([]models.AutoUpdatePolicy, error) {
+	m.ListByDeviceCalls++
 	if m.Err != nil {
 		return nil, m.Err
 	}
 	return m.Policies[deviceID], nil
+}
+
+// ListAll returns every device's policies, ordered by device and target like
+// the SQL.
+func (m *MockAutoUpdateRepo) ListAll(_ context.Context) ([]models.AutoUpdatePolicy, error) {
+	m.ListAllCalls++
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if m.ListAllErr != nil {
+		return nil, m.ListAllErr
+	}
+	var out []models.AutoUpdatePolicy
+	for _, policies := range m.Policies {
+		out = append(out, policies...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeviceID != out[j].DeviceID {
+			return out[i].DeviceID < out[j].DeviceID
+		}
+		return out[i].Target < out[j].Target
+	})
+	return out, nil
+}
+
+// UpsertUnlessKindClash mirrors the conditional upsert: an existing row with
+// the same target is replaced only when it has the same kind or is disabled.
+// A refused save leaves the stored row untouched (including its counters).
+func (m *MockAutoUpdateRepo) UpsertUnlessKindClash(_ context.Context, p *models.AutoUpdatePolicy) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	policies := m.Policies[p.DeviceID]
+	for i := range policies {
+		existing := &policies[i]
+		if existing.Target != p.Target {
+			continue
+		}
+		if existing.IsStack != p.IsStack && existing.Enabled {
+			return false, nil
+		}
+		existing.IsStack, existing.ComposeWorkDir, existing.Enabled = p.IsStack, p.ComposeWorkDir, p.Enabled
+		p.ID = existing.ID
+		return true, nil
+	}
+	p.ID = m.NextID
+	m.NextID++
+	m.Policies[p.DeviceID] = append(m.Policies[p.DeviceID], *p)
+	return true, nil
 }
 
 func (m *MockAutoUpdateRepo) Upsert(_ context.Context, p *models.AutoUpdatePolicy) error {
