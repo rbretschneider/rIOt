@@ -288,12 +288,9 @@ var finishedOSUpdateStatusList = models.SQLStatusList(
 // command are absent from the map. One statement serves the whole fleet; the
 // lateral lookup rides idx_commands_device (device_id, created_at DESC).
 func (r *CommandRepo) LatestFinishedOSUpdates(ctx context.Context) (map[string]models.Command, error) {
-	rows, err := r.db.Pool.Query(ctx, `SELECT `+commandColumns+` FROM devices d
-		CROSS JOIN LATERAL (
-			SELECT `+commandColumns+` FROM commands
-			WHERE device_id = d.id AND action = 'os_update' AND status IN (`+finishedOSUpdateStatusList+`)
-			ORDER BY created_at DESC LIMIT 1
-		) latest`)
+	rows, err := r.db.Pool.Query(ctx, `SELECT DISTINCT ON (device_id) `+commandColumns+` FROM commands
+		WHERE action = 'os_update' AND status IN (`+finishedOSUpdateStatusList+`)
+		ORDER BY device_id, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
