@@ -181,6 +181,10 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 			if v != nil {
 				allow := a.config.Commands.AllowReboot
 				v.AllowReboot = &allow
+				allowPatching := a.config.Commands.AllowPatching
+				v.AllowPatching = &allowPatching
+				holdRebootClass := a.config.Commands.HoldRebootClass
+				v.HoldRebootClass = &holdRebootClass
 			}
 		case []models.ServiceInfo:
 			data.Services = v

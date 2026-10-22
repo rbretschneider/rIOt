@@ -164,6 +164,23 @@ func (hm *HoldManager) HeldPackages() []string {
 	return out
 }
 
+// ManagedHolds returns the package names rIOt recorded as holds it placed,
+// read-only from the state file. A missing file yields no names; an
+// unreadable or unparsable file returns an error so callers can report
+// "unavailable" instead of guessing.
+func (hm *HoldManager) ManagedHolds() ([]string, error) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	st, err := hm.loadState()
+	if err != nil {
+		return nil, err
+	}
+	rec := st.recorded()
+	out := make([]string, len(rec))
+	copy(out, rec)
+	return out, nil
+}
+
 // VerifyPrivileges probes (without executing anything privileged) whether
 // the AD-015 sudoers rules exist for the given package manager, via
 // `sudo -n -l <cmd> <args...>`. Exported so `riot-agent doctor` runs the
