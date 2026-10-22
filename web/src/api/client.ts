@@ -19,6 +19,32 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json()
 }
 
+export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you'
+
+export interface PatchBadgeReason {
+  code: string
+  text: string
+  action: string
+  command_id?: string
+}
+
+export interface PatchBadgeExplanation {
+  automatic: string
+  reboot: string
+  needs_you: PatchBadgeReason[]
+  needs_you_summary: string
+  as_of: string
+  notes: string[]
+}
+
+// PatchBadge is rendered by the server; the web shows its text as-is.
+export interface PatchBadge {
+  kind: PatchBadgeKind
+  label: string
+  explanation: PatchBadgeExplanation
+  reboot_at?: string
+}
+
 export interface DevicePatchInfo {
   device_id: string
   hostname: string
@@ -34,6 +60,8 @@ export interface DevicePatchInfo {
   next_window_start?: string
   os_patch_cooldown_minutes?: number
   allow_reboot?: boolean
+  updates_at?: string
+  patch_badge?: PatchBadge
 }
 
 // SSOAvailability is the response shape of GET /api/v1/auth/oidc
@@ -240,8 +268,9 @@ export const api = {
   getAgentVersions: () =>
     fetchJSON<{ version: string; count: number }[]>(`${BASE}/fleet/agent-versions`),
 
-  getPatchStatus: () =>
-    fetchJSON<DevicePatchInfo[]>(`${BASE}/fleet/patch-status`),
+  // all=true returns one row per registered device, each with its patch badge.
+  getPatchStatus: (all = false) =>
+    fetchJSON<DevicePatchInfo[]>(`${BASE}/fleet/patch-status${all ? '?all=true' : ''}`),
 
   getPatchStatusDetail: () =>
     fetchJSON<DevicePatchInfo[]>(`${BASE}/fleet/patch-status?detail=true`),

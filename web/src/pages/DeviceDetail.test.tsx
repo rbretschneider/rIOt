@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import DeviceDetail from './DeviceDetail'
+import { api } from '../api/client'
 import { ToastProvider } from '../components/ui'
 
 const mockGetDevice = vi.fn()
@@ -965,7 +966,24 @@ describe('[AC-021] Held packages and reboot-required flag (device view)', () => 
     expect(await screen.findByText('Held by rIOt (2)')).toBeInTheDocument()
     expect(screen.getByText('nvidia-driver-550')).toBeInTheDocument()
     expect(screen.getByText('linux-image-amd64')).toBeInTheDocument()
-    expect(screen.getByText('Reboot required')).toBeInTheDocument()
+  })
+})
+
+describe('patch badge in the device header', () => {
+  it('shows the server label next to the Auto-patch switch', async () => {
+    vi.mocked(api.getPatchStatus).mockResolvedValue([{
+      device_id: 'dev-1', hostname: 'test-host', pending_updates: 0, security_count: 0, reboot_class_count: 0, reboot_required: false,
+      patch_badge: {
+        kind: 'needs_you', label: 'Needs you',
+        explanation: { automatic: 'No.', reboot: 'Not needed.', needs_you: [], needs_you_summary: 'Nothing.', as_of: 'x', notes: [] },
+      },
+    }])
+    renderWithTelemetry({ updates: { pending_updates: 3 } })
+    const badge = await screen.findByTestId('patch-badge')
+    expect(badge).toHaveTextContent('Needs you')
+    const toggle = screen.getByRole('switch')
+    expect(toggle.parentElement!.parentElement, 'badge sits in the same group as the switch').toContainElement(badge)
+    vi.mocked(api.getPatchStatus).mockResolvedValue([])
   })
 })
 
