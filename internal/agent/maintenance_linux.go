@@ -37,7 +37,22 @@ func trustedMaintenanceFile(path string, executable bool) error {
 	return nil
 }
 
+// systemBusSocket is where unprivileged systemctl reaches systemd. Root uses
+// systemd's private socket instead, so a root-run probe cannot prove this.
+const systemBusSocket = "/run/dbus/system_bus_socket"
+
+func systemBusReady(path string) error {
+	st, err := os.Stat(path)
+	if err != nil || st.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("D-Bus system bus missing at %s; the riot user cannot query systemd; re-run install.sh to install dbus", path)
+	}
+	return nil
+}
+
 func maintenanceReadiness(ctx context.Context, run collectors.CommandRunner) error {
+	if err := systemBusReady(systemBusSocket); err != nil {
+		return err
+	}
 	for _, path := range []string{maintenance.HelperPath, applyBinPath, "/usr/bin/systemctl", "/usr/bin/sudo", "/usr/bin/apt-get", "/usr/bin/dpkg", "/usr/bin/dpkg-query", "/usr/bin/apt-mark"} {
 		if err := trustedMaintenanceFile(path, true); err != nil {
 			return err

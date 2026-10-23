@@ -44,7 +44,7 @@ func (a *Agent) maintenance() *maintenanceClient {
 				return false, nil
 			}
 			if err != nil {
-				return false, err
+				return false, systemctlProbeError(text, err)
 			}
 			for _, line := range strings.Split(text, "\n") {
 				if state, ok := strings.CutPrefix(line, "ActiveState="); ok {
@@ -84,22 +84,58 @@ func (a *Agent) maintenance() *maintenanceClient {
 	}
 }
 
+// systemctlProbeError keeps systemctl's own diagnosis. Unprivileged systemctl
+// talks to systemd over the D-Bus system bus, which minimal images (DietPi)
+// omit; root uses a private socket, so root-only checks never see this.
+func systemctlProbeError(output string, err error) error {
+	detail := strings.TrimSpace(output)
+	if i := strings.IndexByte(detail, '\n'); i >= 0 {
+		detail = detail[:i]
+	}
+	if strings.Contains(detail, "Failed to connect to bus") {
+		return fmt.Errorf("D-Bus system bus unavailable (%s); re-run install.sh to install dbus: %w", detail, err)
+	}
+	if detail != "" {
+		return fmt.Errorf("%s: %w", detail, err)
+	}
+	return err
+}
+
+const maintenanceRunning = "OS maintenance is running"
+
 // maintenanceBusy is conservative when a previously installed worker cannot be
 // inspected. Monitoring remains available, but host mutations do not race it.
 func (a *Agent) maintenanceBusy(ctx context.Context) bool {
+	return a.maintenanceBlocker(ctx) != ""
+}
+
+// maintenanceBlocker returns why host mutations are blocked, or "" when they
+// are not. The reason reaches command results and logs so a blocked device can
+// be diagnosed from the dashboard.
+func (a *Agent) maintenanceBlocker(ctx context.Context) string {
 	m := a.maintenance()
 	if !m.present() {
-		return false
+		return ""
 	}
 	active, err := m.active(ctx)
-	if err != nil || active {
-		return true
+	if err != nil {
+		return "cannot inspect " + maintenance.UnitName + ": " + err.Error()
+	}
+	if active {
+		return maintenanceRunning
 	}
 	record, err := m.current()
-	if os.IsNotExist(err) {
-		return false
+	switch {
+	case os.IsNotExist(err):
+		return ""
+	case err != nil:
+		return "cannot read maintenance state: " + err.Error()
+	case !record.Terminal():
+		return "previous OS maintenance did not finish; run os_update to recover"
+	case record.HoldsReleased || record.HoldCleanupFailed || record.HoldRestoreError != "":
+		return "package holds were not restored after OS maintenance; run os_update to recover"
 	}
-	return err != nil || !record.Terminal() || record.HoldsReleased || record.HoldCleanupFailed || record.HoldRestoreError != ""
+	return ""
 }
 
 func (a *Agent) runDetachedMaintenance(ctx context.Context, payload models.CommandPayload, mode string, include bool) commandExecResult {

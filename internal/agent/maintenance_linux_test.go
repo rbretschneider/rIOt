@@ -5,6 +5,9 @@ package agent
 import (
 	"context"
 	"errors"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,4 +67,20 @@ func TestMaintenance_AC012_AptHoldWildcardAndOptionGrantsRejected(t *testing.T) 
 	require.NoError(t, maintenanceSudoPolicy(approved))
 	// A safe managed grant cannot hide another unsafe administrator grant.
 	require.Error(t, maintenanceSudoPolicy(approved+"\n    (root) NOPASSWD: /usr/bin/apt-mark hold *"))
+}
+
+func TestMaintenance_DBUS001_AC004_ReadinessRequiresTheSystemBusSocket(t *testing.T) {
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "system_bus_socket")
+	err := systemBusReady(sock)
+	require.ErrorContains(t, err, "D-Bus system bus missing")
+
+	require.NoError(t, os.WriteFile(sock, nil, 0o600))
+	require.Error(t, systemBusReady(sock), "a regular file is not a bus")
+	require.NoError(t, os.Remove(sock))
+
+	l, err := net.Listen("unix", sock)
+	require.NoError(t, err)
+	defer l.Close()
+	require.NoError(t, systemBusReady(sock))
 }

@@ -174,8 +174,12 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 		slog.Warn("no binary available for this platform", "platform", suffix)
 		return
 	}
-	if a.maintenanceBusy(ctx) {
-		slog.Info("agent update deferred during OS maintenance")
+	if blocker := a.maintenanceBlocker(ctx); blocker != "" {
+		level := slog.LevelWarn
+		if blocker == maintenanceRunning {
+			level = slog.LevelInfo
+		}
+		slog.Log(ctx, level, "agent update deferred by OS maintenance", "reason", blocker)
 		return
 	}
 	if a.locks != nil {

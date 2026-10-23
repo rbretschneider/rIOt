@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import unittest
 
@@ -49,6 +50,13 @@ cp "/fixture/assets/${url##*/}" "$dest"
 ''')
         write('/usr/bin/apt-get', '''#!/bin/sh
 if [ "$1" = --version ]; then echo 'apt 2.6.1 (amd64)'; exit 0; fi
+case "$*" in
+  'install -y -q --no-install-recommends dbus')
+    echo "PACKAGE INSTALL dbus" >> /fixture/trace
+    [ ! -f /fixture/fail-dbus ] || exit 100
+    touch /fixture/dbus-installed; exit 0;;
+  'update -q') echo "PACKAGE LISTS update" >> /fixture/trace; exit 0;;
+esac
 echo "UNEXPECTED PACKAGE MUTATION: $*" >> /fixture/trace
 exit 99
 ''')
@@ -75,7 +83,12 @@ with open('/var/lib/dpkg/lock-frontend','a') as f:
         raise SystemExit('installer did not retain native package exclusion')
 LOCK
     ;;
-  start|enable|daemon-reload) ;;
+  enable)
+    if [ "$*" = 'enable --now dbus.socket' ]; then
+      [ -f /fixture/dbus-installed ] || exit 5
+      python3 -c "import socket; socket.socket(socket.AF_UNIX).bind('/run/dbus/system_bus_socket')"
+    fi;;
+  start|daemon-reload) ;;
   *) exit 3;;
 esac
 ''')
@@ -103,8 +116,9 @@ exec /usr/sbin/visudo.fixture-real "$@"
             p = Path(path)
             if p.is_symlink(): p.unlink()
             elif p.exists(): shutil.rmtree(p)
-        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo']:
+        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed']:
             Path(path).unlink(missing_ok=True)
+        self.provide_system_bus()
         write(ROOT / 'trace', '', 0o600)
         write(ROOT / 'active', 'inactive\n', 0o600)
         assets = ROOT / 'assets'
@@ -129,6 +143,14 @@ exec /usr/sbin/visudo.fixture-real "$@"
         self.old_inode = Path('/usr/local/bin/riot-agent').stat().st_ino
         self.old_policy = Path('/etc/sudoers.d/riot-agent').read_bytes()
         self.old_unit = Path('/etc/systemd/system/riot-agent.service').read_bytes()
+
+    def provide_system_bus(self):
+        import socket
+        bus = Path('/run/dbus/system_bus_socket')
+        bus.parent.mkdir(parents=True, exist_ok=True)
+        bus.unlink(missing_ok=True)
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.bind(str(bus))
 
     def install(self):
         return subprocess.run(['bash', str(ROOT / 'install.sh'), '--non-interactive'], capture_output=True, text=True)
@@ -281,6 +303,29 @@ exec /usr/sbin/visudo.fixture-real "$@"
         import fcntl
         with open('/var/lib/dpkg/lock-frontend', 'a') as lock:
             fcntl.lockf(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_DBUS001_AC005_present_system_bus_needs_no_package_operation(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('PACKAGE', (ROOT / 'trace').read_text())
+
+    def test_DBUS001_AC006_missing_system_bus_is_installed_and_started_before_stop(self):
+        Path('/run/dbus/system_bus_socket').unlink()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        trace = (ROOT / 'trace').read_text()
+        self.assertIn('PACKAGE INSTALL dbus', trace)
+        self.assertIn('systemctl enable --now dbus.socket', trace)
+        self.assertLess(trace.index('PACKAGE INSTALL dbus'), trace.index('systemctl stop'))
+        self.assertTrue(stat.S_ISSOCK(os.stat('/run/dbus/system_bus_socket').st_mode))
+
+    def test_DBUS001_AC007_failed_dbus_install_preserves_running_install(self):
+        Path('/run/dbus/system_bus_socket').unlink()
+        write(ROOT / 'fail-dbus', '', 0o600)
+        result = self.install()
+        self.assert_refused_without_replacement(result)
+        self.assertIn('PACKAGE LISTS update', (ROOT / 'trace').read_text(), 'one list refresh before giving up')
+        self.assertIn('Could not install dbus', result.stderr)
 
 
 if __name__ == '__main__':
