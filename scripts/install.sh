@@ -297,6 +297,27 @@ if [ "$OS" = linux ]; then
         secure_file "$(readlink -f "$(command -v python3)")"
         MAINT_SUPPORTED=true
     fi
+    # The agent runs as riot, and unprivileged systemctl reaches systemd only
+    # over the D-Bus system bus (root uses a private socket, so root checks pass
+    # without it). Minimal images such as DietPi omit dbus; without it every
+    # host action is refused. Install it before taking the native package locks.
+    if [ ! -S /run/dbus/system_bus_socket ]; then
+        echo "==> D-Bus system bus missing; installing dbus (required for the unprivileged agent)"
+        if command -v apt-get >/dev/null 2>&1; then
+            apt_install_dbus() { DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends dbus; }
+            apt_install_dbus || { apt-get update -q && apt_install_dbus; } || fail "Could not install dbus; resolve apt/dpkg errors and re-run"
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf -y -q install dbus || fail "Could not install dbus; resolve dnf errors and re-run"
+        else
+            fail "D-Bus system bus is required; install dbus with the host package manager and re-run"
+        fi
+        systemctl enable --now dbus.socket 2>/dev/null || systemctl start dbus.service || fail "Could not start the D-Bus system bus"
+        for _ in {1..50}; do
+            [ ! -S /run/dbus/system_bus_socket ] || break
+            sleep 0.1
+        done
+        [ -S /run/dbus/system_bus_socket ] || fail "D-Bus installed but /run/dbus/system_bus_socket did not appear"
+    fi
     # The lock's root-owned inode lives in the normal sticky root-owned lock dir.
     [ -d /run/lock ] && [ ! -L /run/lock ] && [ "$(stat -c %u /run/lock)" -eq 0 ] || fail "Unsafe lock directory"
     lock_mode=$(stat -c %a /run/lock)
