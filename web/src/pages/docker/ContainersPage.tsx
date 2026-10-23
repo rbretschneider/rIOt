@@ -22,29 +22,33 @@ import MultiSelectFilter from '../../components/docker/MultiSelectFilter'
 import TilesView from '../../components/docker/TilesView'
 import DataTable, { type Column } from '../../components/docker/DataTable'
 import CommandProgress from '../../components/docker/CommandProgress'
+import AutoUpdateSwitch from '../../components/docker/AutoUpdateSwitch'
 import type { DockerRow, BulkResult } from '../../types/docker'
 import {
   applicable,
+  canonicalDockerSearch,
   containerPath,
   filterDockerRows,
   parseDockerState,
   rowKey,
   stackPath,
 } from '../../utils/dockerUrlState'
+import { FRESHNESS_LABEL, freshnessOf } from '../../utils/dockerFreshness'
+import {
+  DEFAULT_DOCKER_COLUMNS,
+  loadDockerColumns,
+  saveDockerColumns,
+} from '../../utils/dockerColumns'
+import { autoUpdateKey, useAutoUpdateSave } from '../../hooks/useAutoUpdateSave'
+import { useDockerUpdateMode } from '../../hooks/useDockerUpdateMode'
 import { formatBytes } from '../../utils/docker'
 import { publishedPortUrl } from '../../utils/safeUrl'
 import { formatDuration } from '../../utils/format'
 import { hasUpdateAvailable } from '../../utils/commandLifecycle'
 import { useTimePreference } from '../../contexts/TimePreferenceProvider'
-const defaultColumns = [
-  'name',
-  'host',
-  'stack',
-  'status',
-  'cpu',
-  'mem',
-  'links',
-]
+// The stack-name rule of the Stacks list; other project labels are named
+// without a link.
+const stackName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
 export default function ContainersPage() {
   const { now } = useTimePreference()
   const [params, setParams] = useSearchParams()
@@ -60,28 +64,16 @@ export default function ContainersPage() {
       return 'table'
     }
   })
-  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem('riot-docker-columns') ?? 'null',
-      )
-      return Array.isArray(saved) &&
-        saved.every((key) => typeof key === 'string')
-        ? [...new Set(['name', ...saved])]
-        : defaultColumns
-    } catch {
-      return defaultColumns
-    }
-  })
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(
+    loadDockerColumns,
+  )
   const chooseColumns = (keys: string[]) => {
     setVisibleColumns(keys)
-    try {
-      localStorage.setItem('riot-docker-columns', JSON.stringify(keys))
-    } catch {
-      /* Session-only preference when browser storage is unavailable. */
-    }
+    saveDockerColumns(keys)
   }
   const state = parseDockerState(params.toString(), preferredView)
+  const autoUpdate = useAutoUpdateSave()
+  const windowDisabled = useDockerUpdateMode() === 'disabled'
   const [search, setSearch] = useState(state.q)
   const [selected, setSelected] = useState<Set<string>>(
     new Set(state.selection),
@@ -108,6 +100,12 @@ export default function ContainersPage() {
     else p.delete(key)
     setParams(p, { replace })
   }
+  useEffect(() => {
+    // Old links used the `updates` status chip; they open with the Out of
+    // date filter. Only the URL changes: opening a link never saves anything.
+    const next = canonicalDockerSearch(params.toString())
+    if (next !== null) setParams(new URLSearchParams(next), { replace: true })
+  }, [params])
   useEffect(() => {
     setSearch(state.q)
   }, [state.q])
@@ -309,6 +307,82 @@ export default function ContainersPage() {
       ),
     },
     {
+      key: 'freshness',
+      title: 'Freshness',
+      sortable: false,
+      render: (r) => {
+        const freshness = freshnessOf(r)
+        return (
+          <span
+            className={
+              freshness === 'out_of_date'
+                ? 'rounded bg-warn/15 px-1.5 py-0.5 text-xs text-warn-fg'
+                : 'rounded bg-raised-2 px-1.5 py-0.5 text-xs text-text-muted'
+            }
+          >
+            {FRESHNESS_LABEL[freshness]}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'auto',
+      title: 'Auto-update',
+      sortable: false,
+      render: (r) => {
+        const policy = r.auto_update_policy
+        const label = `Auto-update ${r.container_name} on ${r.hostname}`
+        if (!policy || !policy.target)
+          return (
+            <AutoUpdateSwitch
+              checked={false}
+              label={label}
+              disabledReason={
+                policy ? 'Name too long to target' : 'Auto-update state unavailable'
+              }
+              onChange={() => {}}
+            />
+          )
+        if (policy.covered_by)
+          return (
+            <AutoUpdateSwitch
+              checked
+              label={label}
+              lockedBy={{
+                project: policy.covered_by,
+                to: stackName.test(policy.covered_by)
+                  ? stackPath(r.device_id, policy.covered_by)
+                  : undefined,
+              }}
+              windowDisabled={windowDisabled}
+              onChange={() => {}}
+            />
+          )
+        const { checked, pending } = autoUpdate.display(
+          autoUpdateKey(r.device_id, false, policy.target),
+          policy.enabled,
+        )
+        return (
+          <AutoUpdateSwitch
+            checked={checked}
+            pending={pending}
+            label={label}
+            windowDisabled={windowDisabled}
+            onChange={(enabled) =>
+              void autoUpdate.save({
+                deviceId: r.device_id,
+                hostname: r.hostname,
+                target: policy.target,
+                stack: false,
+                workingDir: '',
+                enabled,
+              })
+            }
+          />
+        )
+      },
+    },
+    {
       key: 'stack',
       title: 'Stack',
       render: (r) =>
@@ -467,6 +541,8 @@ export default function ContainersPage() {
     status: 100,
     host: 104,
     stack: 112,
+    freshness: 112,
+    auto: 224,
     image: 240,
     ports: 208,
     cpu: 160,
@@ -479,6 +555,8 @@ export default function ContainersPage() {
     'host',
     'stack',
     'status',
+    'freshness',
+    'auto',
     'image',
     'cpu',
     'mem',
@@ -582,7 +660,7 @@ export default function ContainersPage() {
               size="sm"
               variant="ghost"
               className="mt-2"
-              onClick={() => chooseColumns(defaultColumns)}
+              onClick={() => chooseColumns(DEFAULT_DOCKER_COLUMNS)}
             >
               Reset columns
             </Button>
@@ -616,7 +694,7 @@ export default function ContainersPage() {
         </Button>
       </div>
       <div className="flex flex-wrap gap-2">
-        {['running', 'stopped', 'unhealthy', 'updates'].map((s) => (
+        {['running', 'stopped', 'unhealthy'].map((s) => (
           <Button
             key={s}
             size="sm"
@@ -638,10 +716,33 @@ export default function ContainersPage() {
             )
           </Button>
         ))}
+        {(
+          [
+            ['outdated', '1', 'Out of date', 'outOfDate'],
+            ['autoupdate', 'off', 'Auto-update off', 'autoOff'],
+          ] as const
+        ).map(([key, value, title, field]) => (
+          <Button
+            key={key}
+            size="sm"
+            variant={state[field] ? 'primary' : 'secondary'}
+            aria-pressed={state[field]}
+            onClick={() => write(key, state[field] ? '' : value)}
+          >
+            {title} (
+            {
+              filterDockerRows(fleet.data ?? [], { ...state, [field]: true })
+                .length
+            }
+            )
+          </Button>
+        ))}
         {state.q ||
         state.host.length ||
         state.status.length ||
-        state.stack.length ? (
+        state.stack.length ||
+        state.outOfDate ||
+        state.autoOff ? (
           <Button size="sm" variant="ghost" onClick={() => setParams({})}>
             Clear filters
           </Button>
