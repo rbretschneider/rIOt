@@ -232,7 +232,7 @@ This will:
 
 An explicit root installer re-run migrates an existing host, preserving configuration and device identity while backing up managed files. It refuses active or unresolved maintenance before stopping the agent. Use an installer and release that both publish the new privileged assets; see [Upgrading existing agents](#upgrading-existing-agents) and the [maintenance migration guide](docs/ops/os-maintenance.md). The first release containing MAINT-RECOVERY-001 is required; v2.72.0 does not contain these assets.
 
-Apt hosts require apt 2+, systemd 241+, sudo 1.9.10+, Python 3, and either OpenSSL 3 or Python 3 with `cryptography` already installed. The installer does not bootstrap prerequisites through apt or pip. Unsupported versions fail before replacing the install; arrange prerequisite upgrades separately.
+Apt hosts require apt 2+, systemd 241+, sudo 1.9.10+, Python 3, and either OpenSSL 3 or Python 3 with `cryptography` already installed. The installer does not bootstrap prerequisites through apt or pip, with one exception: on any systemd Linux host without a D-Bus system bus (for example DietPi minimal images) it installs and starts `dbus` (apt or dnf) before taking package locks. The agent runs as the unprivileged `riot` user, and non-root `systemctl` needs the system bus; without it every host action (reboot, OS update, agent update) is refused. Unsupported versions fail before replacing the install; arrange prerequisite upgrades separately.
 
 **Optional flags:**
 
