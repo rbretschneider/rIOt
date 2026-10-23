@@ -9,8 +9,11 @@ import type {
   Command, UPSInfo, WebServerInfo, USBInfo, SecurityScoreResult,
   AutomationConfig, ContainerLogEntry, DeviceProbeResult, DeviceProbeWithResultEnriched,
   FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
+  AutoUpdatePolicy,
 } from '../types/models'
 import type { DevicePatchInfo, PatchBadge } from './client'
+import { ApiError } from './errors'
+import { demoAutoUpdateState } from './demoAutoUpdate'
 import { REDACTED_SECRET } from '../utils/secrets'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1013,7 +1016,41 @@ export function getFleetContainers(): FleetContainerRow[] {
     mem_limit: c.mem_limit,
     restart_count: c.restart_count ?? 0,
     update_available: c.update_available ?? null,
+    update_status: c.update_status,
+    auto_update_policy: demoAutoUpdateState(getAutoUpdatePolicies(host.id), c.name, c.labels),
   }))
+}
+
+// ── Auto-update policies ─────────────────────────────────────────────────────
+
+// In-memory so the demo switches round-trip until the page reloads.
+let autoUpdatePolicies: AutoUpdatePolicy[] | undefined
+
+function policyStore(): AutoUpdatePolicy[] {
+  if (!autoUpdatePolicies) {
+    const host = getDevices()[0]
+    autoUpdatePolicies = [
+      { id: 1, device_id: host.id, target: 'plex', is_stack: false, compose_work_dir: '', enabled: true, created_at: ago(10 * DAY) },
+      { id: 2, device_id: host.id, target: 'networking', is_stack: true, compose_work_dir: '/srv/stacks/networking', enabled: true, created_at: ago(5 * DAY) },
+    ]
+  }
+  return autoUpdatePolicies
+}
+
+export function getAutoUpdatePolicies(deviceId: string): AutoUpdatePolicy[] {
+  return policyStore().filter(p => p.device_id === deviceId).map(p => ({ ...p }))
+}
+
+/** Stores a policy with the server's rule: an enabled policy of the other kind under the same name is never replaced. */
+export function setAutoUpdatePolicy(deviceId: string, target: string, isStack: boolean, workDir: string, enabled: boolean) {
+  const store = policyStore()
+  const existing = store.find(p => p.device_id === deviceId && p.target === target)
+  if (existing && existing.is_stack !== isStack && existing.enabled) {
+    const kind = existing.is_stack ? 'stack' : 'container'
+    throw new ApiError(409, `an enabled ${kind} auto-update policy already uses this name`, 'auto_update_name_clash', { existing_kind: kind })
+  }
+  if (existing) Object.assign(existing, { is_stack: isStack, compose_work_dir: workDir, enabled })
+  else store.push({ id: store.length + 1, device_id: deviceId, target, is_stack: isStack, compose_work_dir: workDir, enabled, created_at: new Date().toISOString() })
 }
 
 // ── Device probes ────────────────────────────────────────────────────────────

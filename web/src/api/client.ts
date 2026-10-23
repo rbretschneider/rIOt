@@ -7,6 +7,19 @@ import type { BulkConflict, BulkDockerUpdateResult, CommandConflictBody } from '
 
 const BASE = '/api/v1'
 
+/**
+ * ApiError from a failed response's JSON body. Only string `error` and `code`
+ * fields are used; anything else (a proxy's HTML page, odd types) falls back
+ * to the status.
+ */
+async function bodyError(res: Response): Promise<ApiError> {
+  const body: unknown = await res.json().catch(() => undefined)
+  const detail = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined
+  const message = typeof detail?.error === 'string' && detail.error ? detail.error.slice(0, 300) : `HTTP ${res.status}`
+  const code = typeof detail?.code === 'string' ? detail.code : undefined
+  return new ApiError(res.status, message, code, detail)
+}
+
 async function fetchJSON<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin' })
   if (res.status === 401) {
@@ -376,7 +389,7 @@ export const api = {
       body: JSON.stringify({ target, is_stack: isStack, compose_work_dir: composeWorkDir, enabled }),
     })
     if (res.status === 401) { window.location.reload(); throw new Error('Unauthorized') }
-    if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`)
+    if (!res.ok) throw await bodyError(res)
     return res.json()
   },
 

@@ -89,8 +89,12 @@ export const api: ApiClient = {
   updateDeviceLocation: async (_id: string, location: string) => { await delay(); return { location } },
   setAutoPatch: async (_id: string, enabled: boolean) => { await delay(); return { auto_patch: enabled } },
   getContainerMetricHistory: (_deviceId: string, name: string, hours = 24) => Promise.resolve(Array.from({length:72},(_,index)=>({device_id:_deviceId,container_name:name,container_id:'demo-container',timestamp:new Date(Date.now()-(71-index)*hours*3600000/72).toISOString(),cpu_percent:2+Math.sin(index/8)*1.5,mem_usage:(160+index%20)*1024*1024,mem_limit:4*1024*1024*1024,...(_deviceId===demo.getDevices()[0].id?{net_rx_rate:24000+Math.sin(index/5)*12000,net_tx_rate:8000+Math.cos(index/7)*4000,blk_read_rate:12000+Math.sin(index/3)*8000,blk_write_rate:4000+Math.cos(index/4)*2000}:{})}))),
-  getAutoUpdates: () => Promise.resolve([]),
-  setAutoUpdate: async () => { await delay(); },
+  getAutoUpdates: (deviceId: string) => Promise.resolve(demo.getAutoUpdatePolicies(deviceId)),
+  setAutoUpdate: async (deviceId: string, target: string, isStack: boolean, workDir: string, enabled: boolean) => {
+    await delay()
+    demo.setAutoUpdatePolicy(deviceId, target, isStack, workDir, enabled)
+    return { status: 'ok' }
+  },
   deleteAutoUpdate: async () => { await delay(); },
   bulkDockerUpdate: async () => { await delay(); return { ...demo.getCommands()[0], action: 'docker_bulk_update', status: 'queued' } },
 

@@ -420,3 +420,38 @@ describe('[AC-110] [AC-111] command lookup endpoints', () => {
     await expect(api.cancelCommand('dev-1', 'cmd-1')).rejects.toThrow('command cannot be cancelled after it has been dispatched')
   })
 })
+
+describe('[AC-011] auto-update save errors carry the server code', () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function failing(status: number, json: () => Promise<unknown>) {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status, json }) as unknown as typeof fetch
+  }
+
+  it('reads error, code and existing_kind from a name-clash 409', async () => {
+    const body = { error: 'an enabled stack auto-update policy already uses this name', code: 'auto_update_name_clash', existing_kind: 'stack' }
+    failing(409, () => Promise.resolve(body))
+    const { api } = await import('./client')
+    const error = await api.setAutoUpdate('dev-1', 'app', false, '', true).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 409, message: body.error, code: 'auto_update_name_clash', detail: body })
+  })
+
+  it('falls back to the status for a body that is not JSON', async () => {
+    failing(502, () => Promise.reject(new SyntaxError('Unexpected token <')))
+    const { api } = await import('./client')
+    const error = await api.setAutoUpdate('dev-1', 'web', false, '', true).catch((e: unknown) => e)
+    expect(error).toMatchObject({ status: 502, message: 'HTTP 502', code: undefined })
+  })
+
+  it('ignores error and code values that are not strings', async () => {
+    failing(500, () => Promise.resolve({ error: { nested: true }, code: 7 }))
+    const { api } = await import('./client')
+    const error = await api.setAutoUpdate('dev-1', 'web', false, '', true).catch((e: unknown) => e)
+    expect(error).toMatchObject({ status: 500, message: 'HTTP 500', code: undefined })
+  })
+})

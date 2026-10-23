@@ -43,7 +43,11 @@ export interface DockerStack {
   running: number
   total: number
   updates: number
+  /** Members out of date by the Containers rule. */
+  out_of_date: number
   auto_update: boolean
+  /** Set when the policies could not be loaded; `auto_update` is then unknown. */
+  auto_update_unavailable?: boolean
   self_role?: string
   last_seen_at: string
   path_state: string

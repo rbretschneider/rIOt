@@ -959,4 +959,17 @@ export interface FleetContainerRow {
   mem_limit: number
   restart_count: number
   update_available?: boolean | null
+  update_status?: UpdateStatus
+  /** Absent when the server could not load the policies. */
+  auto_update_policy?: FleetAutoUpdatePolicy
+}
+
+/** Auto-update state of one container row, computed with the dispatcher's rule. */
+export interface FleetAutoUpdatePolicy {
+  /** The exact policy target for this container; "" when it cannot be targeted. */
+  target: string
+  /** An enabled container policy exists under `target`. */
+  enabled: boolean
+  /** The Compose project whose enabled stack policy handles this container. */
+  covered_by?: string
 }
