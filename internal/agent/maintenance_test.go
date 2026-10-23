@@ -301,3 +301,70 @@ func TestMaintenance_AC005_StaleDigestAcknowledgementIsRejected(t *testing.T) {
 	fx.pipeline.wait = func(context.Context) error { return context.DeadlineExceeded }
 	assert.ErrorIs(t, fx.update(), context.DeadlineExceeded, "[MAINT-RECOVERY AC-005] matching hash alone cannot reuse an old acknowledgement")
 }
+
+func TestMaintenance_DBUS001_AC001_MissingSystemBusRefusalNamesTheCause(t *testing.T) {
+	m, _ := maintenanceFixture()
+	m.active = func(context.Context) (bool, error) {
+		return false, systemctlProbeError("Failed to connect to bus: No such file or directory\n", errors.New("exit status 1"))
+	}
+	a := &Agent{maintenanceClient: m}
+	payload := models.CommandPayload{CommandID: idA, Action: models.ActionAgentUpdate}
+	result := a.executeAction(&cmdRun{a: a, ctx: context.Background(), payload: payload, id: idA, action: payload.Action})
+	assert.Equal(t, models.ReasonConflict, result.Reason)
+	assert.Contains(t, result.Message, "D-Bus system bus unavailable")
+	assert.Contains(t, result.Message, "install dbus")
+	assert.Contains(t, result.Message, "refusing conflicting host action")
+}
+
+func TestMaintenance_DBUS001_AC002_EveryBlockerReportsADistinctReason(t *testing.T) {
+	finished := time.Date(2026, 10, 20, 12, 5, 0, 0, time.UTC)
+	terminal := func(r maintenance.Record) maintenance.Record {
+		r.Outcome, r.Phase, r.FinishedAt = "error", "finished", &finished
+		return r
+	}
+	for _, tc := range []struct {
+		name, want string
+		setup      func(*maintenanceClient, maintenance.Record)
+	}{
+		{"not installed", "", func(m *maintenanceClient, _ maintenance.Record) { m.present = func() bool { return false } }},
+		{"no record", "", func(m *maintenanceClient, _ maintenance.Record) {
+			m.current = func() (maintenance.Record, error) { return maintenance.Record{}, os.ErrNotExist }
+		}},
+		{"clean terminal record", "", func(m *maintenanceClient, r maintenance.Record) {
+			m.current = func() (maintenance.Record, error) { return terminal(r), nil }
+		}},
+		{"worker running", maintenanceRunning, func(m *maintenanceClient, _ maintenance.Record) {
+			m.active = func(context.Context) (bool, error) { return true, nil }
+		}},
+		{"unit uninspectable", "cannot inspect " + maintenance.UnitName, func(m *maintenanceClient, _ maintenance.Record) {
+			m.active = func(context.Context) (bool, error) { return false, errors.New("unknown maintenance unit state") }
+		}},
+		{"state unreadable", "cannot read maintenance state", func(m *maintenanceClient, _ maintenance.Record) {
+			m.current = func() (maintenance.Record, error) { return maintenance.Record{}, os.ErrPermission }
+		}},
+		{"unfinished record", "did not finish", func(*maintenanceClient, maintenance.Record) {}},
+		{"holds released", "package holds were not restored", func(m *maintenanceClient, r maintenance.Record) {
+			r = terminal(r)
+			r.HoldsReleased = true
+			m.current = func() (maintenance.Record, error) { return r, nil }
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, rec := maintenanceFixture()
+			tc.setup(m, rec)
+			got := (&Agent{maintenanceClient: m}).maintenanceBlocker(context.Background())
+			if tc.want == "" {
+				assert.Empty(t, got)
+				return
+			}
+			assert.Contains(t, got, tc.want)
+		})
+	}
+}
+
+func TestMaintenance_DBUS001_AC003_ProbeErrorsKeepSystemctlDiagnosis(t *testing.T) {
+	exit := errors.New("exit status 1")
+	assert.ErrorIs(t, systemctlProbeError("Failed to connect to bus: No such file or directory", exit), exit)
+	assert.Equal(t, "Access denied: exit status 1", systemctlProbeError("Access denied\nmore detail", exit).Error())
+	assert.Equal(t, exit, systemctlProbeError("  \n", exit))
+}

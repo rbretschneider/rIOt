@@ -28,7 +28,7 @@ func checkMaintenancePolicy() {
 	}
 	pass("fixed maintenance service, root helper, sudo 1.9.10+ constrained hold rules and lock-aware signed apply protocol verified")
 	probe := &Agent{}
-	if probe.maintenanceBusy(ctx) {
-		warn("independent maintenance is active or requires recovery; conflicting host actions are blocked")
+	if blocker := probe.maintenanceBlocker(ctx); blocker != "" {
+		warn("conflicting host actions are blocked: %s", blocker)
 	}
 }

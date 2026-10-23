@@ -91,8 +91,10 @@ func (a *Agent) runUpgradeCommand(ctx context.Context, name string, args ...stri
 // acknowledged the command; the result goes to the outbox from there.
 func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	payload, ctx := cr.payload, cr.ctx
-	if hostKeyFor(payload.Action) != nil && a.maintenanceBusy(ctx) && !a.canRequestMaintenanceRecovery(ctx, payload.Action) {
-		return commandExecResult{Status: models.ResultStatusError, Step: models.StepPrecheck, Reason: models.ReasonConflict, Message: "independent OS maintenance is active or requires recovery; refusing conflicting host action"}
+	if hostKeyFor(payload.Action) != nil {
+		if blocker := a.maintenanceBlocker(ctx); blocker != "" && !a.canRequestMaintenanceRecovery(ctx, payload.Action) {
+			return commandExecResult{Status: models.ResultStatusError, Step: models.StepPrecheck, Reason: models.ReasonConflict, Message: blocker + "; refusing conflicting host action"}
+		}
 	}
 
 	// Host-scoped actions share one device-level lock (FR-054). agent_update and
