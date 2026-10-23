@@ -5,12 +5,14 @@ All HTTP endpoints below require the existing administrator authentication. Brow
 | Method and path | Purpose |
 |---|---|
 | `GET /api/v1/docker/hosts` | Host capability and Docker availability projection |
-| `GET /api/v1/fleet/containers` | Existing fleet container projection used by the Docker table |
+| `GET /api/v1/fleet/containers` | Existing fleet container projection used by the Docker table. Rows add `auto_update_policy` (`target`, `enabled`, optional `covered_by`), omitted when policies cannot be loaded |
+| `PUT /api/v1/devices/{id}/auto-updates` | Save an auto-update policy (`target`, `is_stack`, `compose_work_dir`, `enabled`). Returns `409` with `code` `auto_update_name_clash` and `existing_kind` (`container` or `stack`) when an enabled policy of the other kind has the same target on the host; nothing is stored or audited |
+| `DELETE /api/v1/devices/{id}/auto-updates/{target}` | Delete an auto-update policy |
 | `POST /api/v1/docker/bulk-actions` | Bounded lifecycle commands, with per-target acceptance/conflict results |
 | `GET /api/v1/devices/{id}/docker/containers/{name}/logs` | Stored, masked history |
 | `GET /api/v1/devices/{id}/docker/stacks/{project}/logs` | Stored history across current or retained stack members |
 | `GET /api/v1/devices/{id}/docker/containers/{name}/inspect` | Masked, read-only agent inspection |
-| `GET /api/v1/docker/stacks` | Fleet stack list, including retained Down stacks |
+| `GET /api/v1/docker/stacks` | Fleet stack list, including retained Down stacks. Each row carries `auto_update` (an enabled stack policy exists), `out_of_date` (members with a known update) and, only when policies could not be loaded, `auto_update_unavailable: true` |
 | `GET /api/v1/docker/stacks/{deviceId}/{project}` | Stack details and agreed/observed paths |
 | `POST /api/v1/devices/{id}/docker/stacks/{project}/actions` | Stack lifecycle operation |
 | `POST /api/v1/devices/{id}/docker/stacks/{project}/paths/acknowledge` | Explicitly acknowledge observed Compose paths |
@@ -25,6 +27,8 @@ All HTTP endpoints below require the existing administrator authentication. Brow
 | `GET /api/v1/docker/activity` | Filtered Docker command history |
 | `GET /api/v1/docker/activity/commands/{commandId}` | Actor, steps and per-target outcomes |
 | `WS /ws/docker/logs/{deviceId}` | Explicit browser live-log session |
+
+Each auto-update policy save and delete writes one `docker_audit` row with kind `policy` and action `auto_update` or `delete_auto_update`. The data holds `target` (sanitized, at most 128 bytes). A save also records `policy_kind` (`container` or `stack`) and `enabled`.
 
 Stored history uses `from`, `to`, `before`, and `limit` query parameters. `after` is accepted for forward catch-up, and takes precedence over `from`. `before` is the opaque cursor returned by the preceding response. Replies include effective retention information. Agent-asserted timestamps outside the allowed window are restamped, with the original retained in `agent_ts`. Log text is masked at ingestion and again at output where required; masking covers known patterns and does not guarantee that arbitrary log text contains no sensitive information.
 
