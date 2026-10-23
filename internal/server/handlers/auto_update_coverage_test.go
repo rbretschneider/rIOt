@@ -164,12 +164,12 @@ func (f *stackCreateFailer) CreateIfNoConflict(ctx context.Context, cmd *models.
 	return f.MockCommandRepo.CreateIfNoConflict(ctx, cmd)
 }
 
-// SEC-001: the dispatcher's stack branch runs once per project per pass. A
+// The dispatcher's stack branch runs once per project per pass. A
 // later member of the same stack then falls through to its own container
 // policy. The list shows such a member as "Controlled by stack". This test
 // records what really happens, with the real command service and its conflict
 // keys, when the stack dispatch succeeds and when it fails.
-func TestAutoUpdateCoverage_SEC001_LaterMemberWithOwnPolicy(t *testing.T) {
+func TestAutoUpdateCoverage_LaterStackMemberWithOwnPolicy(t *testing.T) {
 	setup := func(t *testing.T) (*autoEnv, *models.FullTelemetryData) {
 		e := newAutoEnv(t, anytime(), anytime())
 		e.policy(t, "media", true, nil)
