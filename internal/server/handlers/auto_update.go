@@ -54,13 +54,42 @@ func (h *Handlers) SetAutoUpdate(w http.ResponseWriter, r *http.Request) {
 		ComposeWorkDir: body.ComposeWorkDir,
 		Enabled:        body.Enabled,
 	}
-	if err := h.autoUpdateRepo.Upsert(r.Context(), p); err != nil {
+	// One conditional statement: an enabled policy of the other kind under the
+	// same name is never overwritten, whatever the new enabled value is.
+	stored, err := h.autoUpdateRepo.UpsertUnlessKindClash(r.Context(), p)
+	if err != nil {
 		slog.Error("upsert auto-update policy", "error", err.Error())
 		http.Error(w, `{"error":"failed to save auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
-	h.auditDockerPolicy(r, deviceID, "auto_update", body.Target)
+	if !stored {
+		existing := autoUpdatePolicyKind(!body.IsStack)
+		slog.Info("auto-update policy refused: name clash", "device_id", deviceID, "code", autoUpdateNameClashCode)
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error":         "an enabled " + existing + " auto-update policy already uses this name",
+			"code":          autoUpdateNameClashCode,
+			"existing_kind": existing,
+		})
+		return
+	}
+	h.auditDockerPolicy(r, deviceID, "auto_update", map[string]interface{}{
+		"target":      auditTarget(body.Target),
+		"policy_kind": autoUpdatePolicyKind(body.IsStack),
+		"enabled":     body.Enabled,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// autoUpdateNameClashCode is the 409 code of a save that would overwrite an
+// enabled policy of the other kind.
+const autoUpdateNameClashCode = "auto_update_name_clash"
+
+// autoUpdatePolicyKind names a policy kind in API bodies and the audit.
+func autoUpdatePolicyKind(isStack bool) string {
+	if isStack {
+		return "stack"
+	}
+	return "container"
 }
 
 // DeleteAutoUpdate handles DELETE /api/v1/devices/{id}/auto-updates/{target}.
@@ -72,7 +101,7 @@ func (h *Handlers) DeleteAutoUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to delete auto-update policy"}`, http.StatusInternalServerError)
 		return
 	}
-	h.auditDockerPolicy(r, deviceID, "delete_auto_update", target)
+	h.auditDockerPolicy(r, deviceID, "delete_auto_update", map[string]interface{}{"target": auditTarget(target)})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -594,10 +623,25 @@ func projectsWithSeveralWorkDirs(containers []models.ContainerInfo) map[string]b
 	return out
 }
 
-func (h *Handlers) auditDockerPolicy(r *http.Request, device, action, target string) {
-	if h.dockerRepo == nil {
-		return
+// auditTarget is the target as stored in the audit: valid UTF-8, no NUL, at
+// most 128 bytes.
+func auditTarget(target string) string {
+	return models.TruncateHead(models.SanitizeText(target), 128)
+}
+
+// auditDockerPolicy writes one kind=policy docker_audit row for the acting
+// admin. A failed write is logged without the target or any body.
+func (h *Handlers) auditDockerPolicy(r *http.Request, device, action string, data map[string]interface{}) {
+	audit := h.dockerAudit
+	if audit == nil {
+		if h.dockerRepo == nil {
+			return
+		}
+		audit = h.dockerRepo.Audit
 	}
 	_, sub, _ := dockerActor(r)
-	h.dockerRepo.Audit(r.Context(), device, "policy", action, sub, map[string]interface{}{"target": models.TruncateHead(models.SanitizeText(target), 128)})
+	if err := audit(r.Context(), device, "policy", action, sub, data); err != nil {
+		slog.Warn("docker policy audit write failed", "device_id", device, "action", action,
+			"policy_kind", data["policy_kind"], "error", err.Error())
+	}
 }

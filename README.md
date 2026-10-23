@@ -1463,7 +1463,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents. The response adds `conflicts`, the number of devices skipped because a host command was already in flight |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices. The response adds `conflicts`, as for bulk-update |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
-| `GET` | `/api/v1/fleet/containers` | Flat list of all containers across the fleet with CPU, memory, restart count, update status, and Compose stack name; used by the fleet dashboard leaderboard |
+| `GET` | `/api/v1/fleet/containers` | Flat list of all containers across the fleet with CPU, memory, restart count, update status, Compose stack name, and auto-update state (`auto_update_policy`: `target`, `enabled`, optional `covered_by`; omitted when policies cannot be loaded); used by the fleet dashboard leaderboard and the Containers table |
 | `GET` | `/api/v1/security/overview` | Security overview |
 | `GET` | `/api/v1/security/devices` | Per-device security details |
 | `GET/POST` | `/api/v1/settings/logs` | Server log viewer |
@@ -1785,6 +1785,20 @@ Open **Containers** under **Docker** in the application sidebar for containers a
 The table keeps **Name** pinned and gives it remaining space, while **CPU** and **Memory** each use a fixed 160px column with equal graph-track widths. Their existing percentage and memory-limit scales stay distinct. Known update availability remains beside the name even when **Image** is hidden. Long names truncate; the tooltip retains the full container name and image. Narrow views scroll inside the table without squeezing the metric columns. Missing or invalid sort defaults to **Stack ascending**, keeping Compose members together per host, then ordered by container name; containers without a stack appear together as **Standalone**. Explicit sort URLs, saved columns and table/tiles preferences remain in effect. The update marker is informational: its absence does not prove an image is current, and existing update eligibility and confirmations still apply.
 
 Container pages use host ID and container name, so a recreate keeps the same link. Overview keeps network and mount information; Logs combines stored history and an opt-in Live tail; Activity records commands and observed events; Inspect shows redacted Docker configuration; Stats includes CPU, memory and network/block I/O. Terminal still needs its existing feature and agent settings. **Ctrl+K** opens the resource search palette; terminal keystrokes are exempt.
+
+### Image freshness and auto-update switches
+
+The Containers table has a **Freshness** column and an **Auto-update** column. Freshness shows **Out of date**, **Up to date**, **Pinned** or **Unknown**. A failed or missing update check shows **Unknown**, never **Up to date**. Agents that only report the older true/false update field show **Out of date** or **Up to date**. Existing users get both columns once, even with a saved column set; hide them like any other column afterwards.
+
+Each Containers and Stacks row has an auto-update switch. Flipping it saves at once, with no confirmation. Turning it off stores the policy as disabled; it does not delete it. A container switch saves a policy under the container's name exactly as the dispatcher matches it. A stack switch saves a policy for the Compose project with the stack's agreed working directory. Turning a stack on follows the stack page rules: the Compose paths must be agreed and the host must support stack actions. Turning a stack off always works.
+
+A container is controlled by its stack when it carries both Compose labels (project and working directory) and an enabled stack policy exists for that project on the same host. Its switch then shows on, read-only, with a **Controlled by stack** link. Turning the stack off shows the container's own policy again.
+
+A container policy and a stack policy cannot share a name on the same host while the other one is enabled. Such a save answers `409` with code `auto_update_name_clash` and stores nothing. Turn the other policy off first.
+
+**Out of date** and **Auto-update off** filters on both pages combine with search and the other filters, and are kept in the URL. On Stacks, Out of date means at least one member is out of date. Old Containers links with `status=updates` open with **Out of date** applied; combined with a status such as `running`, the filters now narrow (AND) instead of widening.
+
+While the Docker update window in **Settings > Agents** is **disabled**, enabled policies never run, and every switch that is on shows a notice that links there. If you switch many rows on and later set a window, the first window can start many updates; the stagger setting spaces them out.
 
 ### Stored and live logs
 

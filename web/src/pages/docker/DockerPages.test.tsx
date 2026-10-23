@@ -35,8 +35,18 @@ const mock = vi.hoisted(() => ({
   getAutoUpdates: vi.fn(),
   getActiveCommands: vi.fn(),
   setAutoUpdate: vi.fn(),
+  getAutomationConfig: vi.fn(),
 }))
 vi.mock('../../api/docker', () => ({ dockerApi: mock }))
+vi.mock('../../api/settings', () => ({
+  settingsApi: { getAutomationConfig: mock.getAutomationConfig },
+}))
+// Saved column sets from before the Freshness and Auto-update columns, with the
+// one-time addition already applied, so these tests keep their exact columns.
+const seedColumns = (saved: string[]) => {
+  localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
+  localStorage.setItem('riot-docker-columns-added', JSON.stringify(['freshness', 'auto']))
+}
 vi.mock('../../api/client', () => ({
   api: {
     getDevice: mock.getDevice,
@@ -81,7 +91,12 @@ const row = {
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('riot-docker-columns')
+  localStorage.removeItem('riot-docker-columns-added')
   localStorage.removeItem('riot-docker-view')
+  mock.getAutomationConfig.mockResolvedValue({
+    os_patch: { mode: 'anytime' },
+    docker_update: { mode: 'anytime' },
+  })
   mock.getActiveCommands.mockResolvedValue([])
   mock.getAutoUpdates.mockResolvedValue([])
   mock.setAutoUpdate.mockResolvedValue({})
@@ -187,7 +202,7 @@ describe('Docker fleet', () => {
     { saved: [] },
     { saved: ['removed-column'] },
   ])('[DOCKER-TABLE-006 AC-002] lets Name fill the workspace with saved columns: $saved', async ({ saved }) => {
-    localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
+    seedColumns(saved)
     renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
     const table = screen.getByRole('grid')
@@ -204,14 +219,14 @@ describe('Docker fleet', () => {
     expect((nameColumn() as HTMLElement).style.width).toBe('')
     expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveStyle({ left: '44px' })
     view.unmount()
-    localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack']))
+    seedColumns(['name', 'stack'])
     view = renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
     expect((nameColumn() as HTMLElement).style.width).toBe('')
     expect(screen.queryByRole('columnheader', { name: 'Open' })).not.toBeInTheDocument()
   })
   it.each([null, ['name', 'cpu', 'mem', 'links']])('[DOCKER-TABLE-006 AC-001][AC-002] fixes equal metric widths and gives only Name spare space: %j', async (saved) => {
-    if (saved) localStorage.setItem('riot-docker-columns', JSON.stringify(saved))
+    if (saved) seedColumns(saved)
     renderWithProviders(<ContainersPage />)
     await screen.findByRole('link', { name: 'web' })
     const table = screen.getByRole('grid')
@@ -234,7 +249,7 @@ describe('Docker fleet', () => {
     const user = userEvent.setup()
     const name = 'a-very-long-container-name-that-needs-truncating'
     mock.containers.mockResolvedValue([{ ...row, container_name: name }])
-    localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack', 'links']))
+    seedColumns(['name', 'stack', 'links'])
     renderWithProviders(<ContainersPage />)
     const link = await screen.findByRole('link', { name })
     expect(link).toHaveAttribute('title', `${name} · nginx:latest`)
@@ -863,4 +878,305 @@ describe('[APP-WORKSPACE AC-008] Docker host options', () => {
       ).not.toBeInTheDocument()
     },
   )
+})
+
+describe('Containers auto-update and freshness', () => {
+  const policyRow = (name: string, policy: object | undefined, extra: object = {}) => ({
+    ...row,
+    container_id: 'id-' + name,
+    container_name: name,
+    ...(policy ? { auto_update_policy: policy } : {}),
+    ...extra,
+  })
+  const names = () =>
+    within(screen.getByRole('grid'))
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('link')[0].textContent!.trim())
+  it('[AC-001] gives every row a switch and saves the row target verbatim', async () => {
+    const user = userEvent.setup()
+    mock.containers.mockResolvedValue([
+      policyRow('web', { target: 'web', enabled: true }),
+      policyRow('/legacy', { target: '/legacy', enabled: false }),
+    ])
+    renderWithProviders(<ContainersPage />)
+    const on = await screen.findByRole('switch', { name: 'Auto-update web on host-one' })
+    expect(on).toHaveAttribute('aria-checked', 'true')
+    const off = screen.getByRole('switch', { name: 'Auto-update /legacy on host-one' })
+    expect(off).toHaveAttribute('aria-checked', 'false')
+    await user.click(off)
+    await waitFor(() =>
+      expect(mock.setAutoUpdate).toHaveBeenCalledExactlyOnceWith('host-1', '/legacy', false, '', true),
+    )
+    await user.click(on)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenLastCalledWith('host-1', 'web', false, '', false))
+  })
+  it('[AC-001] disables the switch when the state is unknown or the name cannot be targeted', async () => {
+    mock.containers.mockResolvedValue([
+      policyRow('web', undefined),
+      policyRow('long', { target: '', enabled: false }),
+    ])
+    renderWithProviders(<ContainersPage />)
+    expect(await screen.findByRole('switch', { name: 'Auto-update web on host-one' })).toBeDisabled()
+    expect(screen.getByText('Auto-update state unavailable')).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Auto-update long on host-one' })).toBeDisabled()
+    expect(screen.getByText('Name too long to target')).toBeInTheDocument()
+  })
+  it('[AC-003] reverts and raises a toast naming the container when the save fails', async () => {
+    const user = userEvent.setup()
+    mock.setAutoUpdate.mockRejectedValue(new Error('failed to save auto-update policy'))
+    mock.containers.mockResolvedValue([policyRow('web', { target: 'web', enabled: false })])
+    renderWithProviders(<ContainersPage />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-update web on host-one' })
+    await user.click(toggle)
+    expect(await screen.findByText('Auto-update not changed for container web on host-one')).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+  it('[AC-010] shows a covered row on, read-only and linked to its stack', async () => {
+    mock.containers.mockResolvedValue([
+      policyRow('web', { target: 'web', enabled: false, covered_by: 'app' }),
+    ])
+    renderWithProviders(<ContainersPage />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-update web on host-one' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(toggle).toHaveAttribute('aria-readonly', 'true')
+    expect(toggle).toBeDisabled()
+    expect(toggle.parentElement).toHaveTextContent('Controlled by stack app')
+    expect(within(toggle.parentElement!).getByRole('link', { name: 'app' })).toHaveAttribute('href', '/docker/stacks/host-1/app')
+  })
+  it('[AC-009] shows freshness on every row with the Image column hidden', async () => {
+    mock.containers.mockResolvedValue([
+      policyRow('a', undefined, { update_status: 'update_available' }),
+      policyRow('b', undefined, { update_status: 'up_to_date' }),
+      policyRow('c', undefined, { update_status: 'pinned' }),
+      policyRow('d', undefined, { update_status: 'check_failed', update_available: false }),
+      policyRow('e', undefined, { update_available: undefined }),
+      policyRow('f', undefined, { update_available: false }),
+    ])
+    renderWithProviders(<ContainersPage />, { route: '/docker/containers?sort=name:asc' })
+    await screen.findByRole('link', { name: 'a' })
+    expect(screen.queryByRole('columnheader', { name: 'Image' })).not.toBeInTheDocument()
+    const headers = within(screen.getByRole('grid')).getAllByRole('columnheader')
+    const column = headers.findIndex((h) => h.textContent === 'Freshness')
+    const values = within(screen.getByRole('grid'))
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('cell')[column].textContent)
+    expect(values).toEqual(['Out of date', 'Up to date', 'Pinned', 'Unknown', 'Unknown', 'Up to date'])
+    expect(screen.queryByRole('button', { name: 'Freshness' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Auto-update' })).not.toBeInTheDocument()
+  })
+  it('[AC-005][AC-006][AC-007] combines Out of date and Auto-update off with status by AND in the URL', async () => {
+    const user = userEvent.setup()
+    mock.containers.mockResolvedValue([
+      policyRow('old-off', { target: 'old-off', enabled: false }, { update_status: 'update_available' }),
+      policyRow('old-on', { target: 'old-on', enabled: true }, { update_status: 'update_available' }),
+      policyRow('old-covered', { target: 'old-covered', enabled: false, covered_by: 'app' }, { update_status: 'update_available' }),
+      policyRow('new-off', { target: 'new-off', enabled: false }, { update_status: 'up_to_date' }),
+      policyRow('old-stopped', { target: 'old-stopped', enabled: false }, { update_status: 'update_available', state: 'exited' }),
+    ])
+    renderWithProviders(<ContainersPage />, { route: '/docker/containers?sort=name:asc', showLocation: true })
+    await screen.findByRole('link', { name: 'old-off' })
+    await user.click(screen.getByRole('button', { name: 'Out of date (4)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('outdated=1')
+    expect(names()).toEqual(['old-covered', 'old-off', 'old-on', 'old-stopped'])
+    await user.click(screen.getByRole('button', { name: 'Auto-update off (2)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('autoupdate=off')
+    expect(names()).toEqual(['old-off', 'old-stopped'])
+    await user.click(screen.getByRole('button', { name: /running \(/ }))
+    expect(names()).toEqual(['old-off'])
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('location')).not.toHaveTextContent(/outdated|autoupdate|status/)
+    expect(names()).toHaveLength(5)
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-007] opens an old status=updates link with Out of date applied and saves nothing', async () => {
+    mock.containers.mockResolvedValue([
+      policyRow('old', { target: 'old', enabled: false }, { update_status: 'update_available' }),
+      policyRow('new', { target: 'new', enabled: false }, { update_status: 'up_to_date' }),
+    ])
+    renderWithProviders(<ContainersPage />, { route: '/docker/containers?status=running,updates', showLocation: true })
+    await screen.findByRole('link', { name: 'old' })
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/docker/containers?status=running&outdated=1'))
+    expect(screen.getByRole('button', { name: /Out of date/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('link', { name: 'new' })).not.toBeInTheDocument()
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-007] restores the new filters from a shared URL', async () => {
+    mock.containers.mockResolvedValue([
+      policyRow('off', { target: 'off', enabled: false }),
+      policyRow('on', { target: 'on', enabled: true }),
+    ])
+    renderWithProviders(<ContainersPage />, { route: '/docker/containers?autoupdate=off' })
+    await screen.findByRole('link', { name: 'off' })
+    expect(screen.queryByRole('link', { name: 'on' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Auto-update off/ })).toHaveAttribute('aria-pressed', 'true')
+  })
+  it('[AC-008] notes every on switch while the Docker update window is disabled', async () => {
+    mock.getAutomationConfig.mockResolvedValue({ docker_update: { mode: 'disabled' } })
+    mock.containers.mockResolvedValue([
+      policyRow('on', { target: 'on', enabled: true }),
+      policyRow('covered', { target: 'covered', enabled: false, covered_by: 'app' }),
+      policyRow('off', { target: 'off', enabled: false }),
+    ])
+    renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'on' })
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Settings > Agents' })).toHaveLength(2))
+    expect(screen.getByRole('switch', { name: 'Auto-update on on host-one' })).toHaveAccessibleDescription(
+      'Auto-update is on, but the Docker update window is disabled.',
+    )
+    expect(screen.getByRole('switch', { name: 'Auto-update off on host-one' })).not.toHaveAccessibleDescription()
+  })
+  it.each([
+    ['anytime', () => mock.getAutomationConfig.mockResolvedValue({ docker_update: { mode: 'anytime' } })],
+    ['window', () => mock.getAutomationConfig.mockResolvedValue({ docker_update: { mode: 'window' } })],
+    ['an unavailable setting', () => mock.getAutomationConfig.mockRejectedValue(new Error('down'))],
+  ])('[AC-008] shows no notice with %s and keeps switches working', async (_mode, arrange) => {
+    const user = userEvent.setup()
+    arrange()
+    mock.containers.mockResolvedValue([policyRow('on', { target: 'on', enabled: true })])
+    renderWithProviders(<ContainersPage />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-update on on host-one' })
+    await waitFor(() => expect(mock.getAutomationConfig).toHaveBeenCalled())
+    expect(screen.queryByRole('link', { name: 'Settings > Agents' })).not.toBeInTheDocument()
+    await user.click(toggle)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenCalledWith('host-1', 'on', false, '', false))
+  })
+  it('[AC-013] adds Freshness and Auto-update once to a column set saved before them', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('riot-docker-columns', JSON.stringify(['name', 'stack']))
+    let view = renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    expect(screen.getByRole('columnheader', { name: 'Freshness' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Auto-update' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveStyle({ left: '44px' })
+    await user.click(screen.getByRole('button', { name: 'Columns' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Auto-update' }))
+    expect(screen.queryByRole('columnheader', { name: 'Auto-update' })).not.toBeInTheDocument()
+    view.unmount()
+    view = renderWithProviders(<ContainersPage />)
+    await screen.findByRole('link', { name: 'web' })
+    expect(screen.queryByRole('columnheader', { name: 'Auto-update' })).not.toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Freshness' })).toBeInTheDocument()
+  })
+})
+
+describe('Stacks auto-update switches and filters', () => {
+  const base = {
+    device_id: 'host-1',
+    hostname: 'host-one',
+    project: 'app',
+    state: 'running',
+    running: 1,
+    total: 1,
+    updates: 0,
+    out_of_date: 0,
+    auto_update: false,
+    path_state: 'agreed',
+    agreed_working_dir: '/srv/app',
+    agreed_config_files: ['compose.yaml'],
+    last_seen_at: '2026-10-19T10:00:00Z',
+  }
+  const stackNames = () =>
+    within(screen.getByRole('grid'))
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('link')[0].textContent)
+  it('[AC-002] replaces the text column with a switch that saves the stack policy', async () => {
+    const user = userEvent.setup()
+    mock.stacks.mockResolvedValue([base, { ...base, project: 'media', agreed_working_dir: '/srv/media', auto_update: true }])
+    renderWithProviders(<StacksPage />)
+    const off = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(off).toBeEnabled())
+    expect(off).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByText('Disabled')).not.toBeInTheDocument()
+    await user.click(off)
+    await waitFor(() =>
+      expect(mock.setAutoUpdate).toHaveBeenCalledExactlyOnceWith('host-1', 'app', true, '/srv/app', true),
+    )
+    const on = screen.getByRole('switch', { name: 'Auto-update media on host-one' })
+    expect(on).toHaveAttribute('aria-checked', 'true')
+    await user.click(on)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenLastCalledWith('host-1', 'media', true, '/srv/media', false))
+  })
+  it.each([
+    ['paths are not agreed', { path_state: 'pending_ack' }, [host], 'Compose paths not agreed'],
+    ['the host lacks stack actions', {}, [{ ...host, capabilities: ['logs_live_v1'] }], 'Requires agent update for stack actions'],
+  ])('[AC-002] blocks turning on with a reason when %s, while off still works', async (_case, extra, hosts, reason) => {
+    const user = userEvent.setup()
+    mock.hosts.mockResolvedValue(hosts)
+    mock.stacks.mockResolvedValue([
+      { ...base, ...extra },
+      { ...base, ...extra, project: 'media', agreed_working_dir: '/srv/media', auto_update: true },
+    ])
+    renderWithProviders(<StacksPage />)
+    const off = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(screen.getByText(reason)).toBeInTheDocument())
+    expect(off).toBeDisabled()
+    const on = screen.getByRole('switch', { name: 'Auto-update media on host-one' })
+    expect(on).toBeEnabled()
+    await user.click(on)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenCalledExactlyOnceWith('host-1', 'media', true, '/srv/media', false))
+  })
+  it('[AC-002] disables the switch when the stack policies could not be loaded', async () => {
+    mock.stacks.mockResolvedValue([{ ...base, auto_update_unavailable: true }])
+    renderWithProviders(<StacksPage />)
+    expect(await screen.findByRole('switch', { name: 'Auto-update app on host-one' })).toBeDisabled()
+    expect(screen.getByText('Auto-update state unavailable')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Auto-update off (0)' })).toBeInTheDocument()
+  })
+  it('[AC-011] explains a name clash in a toast and reverts the stack switch', async () => {
+    const user = userEvent.setup()
+    const { ApiError } = await import('../../api/errors')
+    mock.setAutoUpdate.mockRejectedValue(new ApiError(409, 'clash', 'auto_update_name_clash', { existing_kind: 'container' }))
+    mock.stacks.mockResolvedValue([base])
+    renderWithProviders(<StacksPage />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await user.click(toggle)
+    expect(await screen.findByText('Auto-update not changed for stack app on host-one')).toBeInTheDocument()
+    expect(screen.getByText('A container with the same name on this host has auto-update on. Turn that off first.')).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+  it('[AC-005][AC-006][AC-007] filters by Out of date and Auto-update off with AND, stores them in the URL and clears them', async () => {
+    const user = userEvent.setup()
+    mock.stacks.mockResolvedValue([
+      { ...base, project: 'a-old-off', out_of_date: 2 },
+      { ...base, project: 'b-old-on', out_of_date: 1, auto_update: true },
+      { ...base, project: 'c-new-off' },
+    ])
+    renderWithProviders(<StacksPage />, { route: '/docker/stacks', showLocation: true })
+    await screen.findByRole('link', { name: 'a-old-off' })
+    await user.click(screen.getByRole('button', { name: 'Out of date (2)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('outdated=1')
+    expect(stackNames()).toEqual(['a-old-off', 'b-old-on'])
+    await user.click(screen.getByRole('button', { name: 'Auto-update off (1)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('autoupdate=off')
+    expect(stackNames()).toEqual(['a-old-off'])
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/docker\/stacks$/)
+    expect(stackNames()).toEqual(['a-old-off', 'b-old-on', 'c-new-off'])
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-007] restores filters from a shared URL without saving', async () => {
+    mock.stacks.mockResolvedValue([
+      { ...base, project: 'old', out_of_date: 1 },
+      { ...base, project: 'new' },
+    ])
+    renderWithProviders(<StacksPage />, { route: '/docker/stacks?outdated=1&q=o' })
+    await screen.findByRole('link', { name: 'old' })
+    expect(screen.queryByRole('link', { name: 'new' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Out of date/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-008] notes an on stack switch while the Docker update window is disabled', async () => {
+    mock.getAutomationConfig.mockResolvedValue({ docker_update: { mode: 'disabled' } })
+    mock.stacks.mockResolvedValue([{ ...base, auto_update: true }, { ...base, project: 'off' }])
+    renderWithProviders(<StacksPage />)
+    await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Settings > Agents' })).toHaveLength(1))
+    expect(screen.getByRole('switch', { name: 'Auto-update app on host-one' })).toHaveAccessibleDescription(
+      'Auto-update is on, but the Docker update window is disabled.',
+    )
+  })
 })

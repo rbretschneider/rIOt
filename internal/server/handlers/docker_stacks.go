@@ -6,6 +6,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/redact"
 	"github.com/go-chi/chi/v5"
+	"log/slog"
 	"net/http"
 	"path"
 	"reflect"
@@ -53,6 +54,13 @@ func (h *Handlers) dockerStacks(r *http.Request) ([]map[string]interface{}, erro
 	if e != nil {
 		return nil, e
 	}
+	return h.mergeDockerStacks(r.Context(), known)
+}
+
+// mergeDockerStacks combines the stored stacks with the stacks observed in the
+// latest telemetry of every device, and adds each stack's auto-update state
+// and out-of-date member count.
+func (h *Handlers) mergeDockerStacks(ctx context.Context, known []map[string]interface{}) ([]map[string]interface{}, error) {
 	by := map[string]map[string]interface{}{}
 	for _, row := range known {
 		key, _ := row["device_id"].(string)
@@ -61,15 +69,29 @@ func (h *Handlers) dockerStacks(r *http.Request) ([]map[string]interface{}, erro
 		row["total"] = 0
 		row["state"] = "down"
 		row["services"] = []models.ContainerInfo{}
+		row["out_of_date"] = 0
 		by[key+"/"+p] = row
 	}
-	ds, e := h.devices.List(r.Context())
+	ds, e := h.devices.List(ctx)
 	if e != nil {
 		return nil, e
 	}
-	projections, e := h.telemetry.GetFleetContainerLeaderboard(r.Context())
+	projections, e := h.telemetry.GetFleetContainerLeaderboard(ctx)
 	if e != nil {
 		return nil, e
+	}
+	// One query for the policies of every host. On failure every row is marked
+	// unavailable rather than shown as off.
+	var policies autoUpdatePolicyIndex
+	policiesUnavailable := false
+	if h.autoUpdateRepo != nil {
+		all, err := h.autoUpdateRepo.ListAll(ctx)
+		if err != nil {
+			slog.Warn("docker stacks: auto-update policies unavailable", slog.String("err", err.Error()))
+			policiesUnavailable = true
+		} else {
+			policies = indexAutoUpdatePolicies(all)
+		}
 	}
 	byDevice := map[string][]models.ContainerInfo{}
 	for _, projection := range projections {
@@ -82,22 +104,6 @@ func (h *Handlers) dockerStacks(r *http.Request) ([]map[string]interface{}, erro
 		s := &models.TelemetrySnapshot{Timestamp: h.clock(), Data: models.FullTelemetryData{Docker: &models.DockerInfo{Containers: containers}}}
 		if d.LastTelemetry != nil {
 			s.Timestamp = *d.LastTelemetry
-		}
-		policies := map[string]bool{}
-		if h.autoUpdateRepo != nil {
-			if rows, err := h.autoUpdateRepo.ListByDevice(r.Context(), d.ID); err == nil {
-				for _, policy := range rows {
-					if policy.IsStack && policy.Enabled {
-						policies[policy.Target] = true
-					}
-				}
-			}
-		}
-		for key, row := range by {
-			if strings.HasPrefix(key, d.ID+"/") {
-				project, _ := row["project"].(string)
-				row["auto_update"] = policies[project]
-			}
 		}
 		groups := map[string][]models.ContainerInfo{}
 		for _, c := range s.Data.Docker.Containers {
@@ -112,7 +118,23 @@ func (h *Handlers) dockerStacks(r *http.Request) ([]map[string]interface{}, erro
 				continue
 			}
 			by[key] = dockerObservedStack(d, s, project, cs, by[key])
-			by[key]["auto_update"] = policies[project]
+			outOfDate := 0
+			for _, c := range cs {
+				if containerOutOfDate(c) {
+					outOfDate++
+				}
+			}
+			by[key]["out_of_date"] = outOfDate
+		}
+	}
+	for _, row := range by {
+		device, _ := row["device_id"].(string)
+		project, _ := row["project"].(string)
+		row["auto_update"] = policies.stackEnabled(device, project)
+		if policiesUnavailable {
+			row["auto_update_unavailable"] = true
+		} else {
+			delete(row, "auto_update_unavailable")
 		}
 	}
 	out := []map[string]interface{}{}

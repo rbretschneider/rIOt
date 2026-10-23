@@ -152,6 +152,11 @@ type Handlers struct {
 
 	// async runs the detached telemetry post-work (nil means a goroutine).
 	async func(func())
+
+	// dockerAudit writes one docker_audit row. nil (the production default)
+	// means dockerRepo.Audit; tests inject a recorder because DockerRepo needs
+	// PostgreSQL.
+	dockerAudit func(ctx context.Context, device, kind, action, subject string, data interface{}) error
 }
 
 // dashboardHub is the part of websocket.Hub the handlers use. An interface so

@@ -9,6 +9,8 @@ import type {
   ActivityResult,
   ActivityDetail,
 } from '../types/docker'
+import { demoAutoUpdateState } from './demoAutoUpdate'
+import { isOutOfDate } from '../utils/dockerFreshness'
 const caps = [
   'docker_meta_v1',
   'bulk_results_v1',
@@ -27,6 +29,10 @@ const fleet = async (): Promise<DockerRow[]> => {
   const devices = await api.getDevices()
   const rows = await api.getFleetContainers()
   const containers = await api.getDeviceContainers(devices[0].id)
+  const policies = [
+    await api.getAutoUpdates(devices[0].id),
+    await api.getAutoUpdates(devices[1].id),
+  ]
   const current = rows.map((row) => {
     const c = containers.find((c) => c.name === row.container_name)
     return {
@@ -43,12 +49,22 @@ const fleet = async (): Promise<DockerRow[]> => {
       mem_limit_configured: true,
       target_key: `docker:container:${row.container_name}`,
       stack: c?.labels?.['com.docker.compose.project'] ?? row.stack,
+      auto_update_policy: demoAutoUpdateState(
+        policies[0],
+        row.container_name,
+        c?.labels,
+      ),
     }
   })
   const legacy = current.slice(0, 2).map((row) => ({
     ...row,
     device_id: devices[1].id,
     hostname: devices[1].hostname,
+    auto_update_policy: demoAutoUpdateState(
+      policies[1],
+      row.container_name,
+      containers.find((c) => c.name === row.container_name)?.labels,
+    ),
     started_at: undefined,
     finished_at: undefined,
     exit_code: undefined,
@@ -69,6 +85,7 @@ const stacks = async (): Promise<DockerStack[]> => {
       running: 0,
       total: 0,
       updates: 0,
+      out_of_date: 0,
       auto_update: false,
       last_seen_at: now(),
       path_state: 'agreed',
@@ -79,9 +96,16 @@ const stacks = async (): Promise<DockerStack[]> => {
     s.total++
     if (r.state === 'running') s.running++
     if (r.update_available) s.updates++
+    if (isOutOfDate(r)) s.out_of_date++
     s.services!.push(r)
     result.set(key, s)
   }
+  const stackPolicies = new Map<string, boolean>()
+  for (const id of new Set(rows.map((r) => r.device_id)))
+    for (const p of await api.getAutoUpdates(id))
+      if (p.is_stack) stackPolicies.set(id + p.target, p.enabled)
+  for (const stack of result.values())
+    stack.auto_update = stackPolicies.get(stack.device_id + stack.project) ?? false
   for (const stack of result.values())
     stack.state =
       stack.running === 0
@@ -100,6 +124,7 @@ const stacks = async (): Promise<DockerStack[]> => {
       running: 0,
       total: 0,
       updates: 0,
+      out_of_date: 0,
       auto_update: false,
       last_seen_at: now(),
       path_state: 'agreed',

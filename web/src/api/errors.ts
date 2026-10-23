@@ -5,11 +5,17 @@
 
 export class ApiError extends Error {
   readonly status: number
+  /** Machine-readable error code from the response body, when the server sent one. */
+  readonly code?: string
+  /** The parsed error body, for fields beyond `error` and `code`. */
+  readonly detail?: Record<string, unknown>
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string, detail?: Record<string, unknown>) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
+    this.detail = detail
   }
 }
 

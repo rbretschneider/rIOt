@@ -157,6 +157,10 @@ type FleetContainerRow struct {
 	MemLimit        int64   `json:"mem_limit"`
 	RestartCount    int     `json:"restart_count"`
 	UpdateAvailable *bool   `json:"update_available,omitempty"`
+
+	// AutoUpdatePolicy is the row's auto-update state. It is omitted when the
+	// policies could not be loaded, so the list never shows a guessed "off".
+	AutoUpdatePolicy *FleetAutoUpdatePolicy `json:"auto_update_policy,omitempty"`
 }
 
 // FleetHeartbeats handles GET /api/v1/fleet/heartbeats?window=60m.
@@ -250,6 +254,18 @@ func (h *Handlers) FleetContainers(w http.ResponseWriter, r *http.Request) {
 		hostnameByID[d.ID] = d.Hostname
 	}
 
+	// One query for the policies of every host. A failure degrades to rows
+	// without policy state rather than failing the list.
+	var policies autoUpdatePolicyIndex
+	if h.autoUpdateRepo != nil {
+		all, err := h.autoUpdateRepo.ListAll(ctx)
+		if err != nil {
+			slog.Warn("fleet containers: auto-update policies unavailable", slog.String("err", err.Error()))
+		} else {
+			policies = indexAutoUpdatePolicies(all)
+		}
+	}
+
 	var rows []FleetContainerRow
 	for _, proj := range projections {
 		hostname := hostnameByID[proj.DeviceID]
@@ -276,6 +292,10 @@ func (h *Handlers) FleetContainers(w http.ResponseWriter, r *http.Request) {
 				RestartCount:    c.RestartCount,
 				UpdateAvailable: c.UpdateAvailable,
 			})
+			if policies != nil {
+				state := policies.container(proj.DeviceID, c.Name, c.Labels)
+				rows[len(rows)-1].AutoUpdatePolicy = &state
+			}
 		}
 	}
 

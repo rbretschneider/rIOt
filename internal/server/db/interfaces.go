@@ -262,7 +262,12 @@ type ContainerMetricRepository interface {
 // AutoUpdateRepository defines the interface for auto-update policy operations.
 type AutoUpdateRepository interface {
 	ListByDevice(ctx context.Context, deviceID string) ([]models.AutoUpdatePolicy, error)
+	// ListAll returns the policies of every device in one query.
+	ListAll(ctx context.Context) ([]models.AutoUpdatePolicy, error)
 	Upsert(ctx context.Context, p *models.AutoUpdatePolicy) error
+	// UpsertUnlessKindClash stores p unless an enabled policy of the other kind
+	// already uses the same target on the device; stored reports which happened.
+	UpsertUnlessKindClash(ctx context.Context, p *models.AutoUpdatePolicy) (stored bool, err error)
 	Delete(ctx context.Context, deviceID, target string) error
 	// RecordSuccess starts the cooldown at `at` and resets the failure backoff
 	// (AD-007). RecordFailure increments the consecutive-failure count and
