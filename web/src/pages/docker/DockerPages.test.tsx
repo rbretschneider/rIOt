@@ -1060,3 +1060,123 @@ describe('Containers auto-update and freshness', () => {
     expect(screen.getByRole('columnheader', { name: 'Freshness' })).toBeInTheDocument()
   })
 })
+
+describe('Stacks auto-update switches and filters', () => {
+  const base = {
+    device_id: 'host-1',
+    hostname: 'host-one',
+    project: 'app',
+    state: 'running',
+    running: 1,
+    total: 1,
+    updates: 0,
+    out_of_date: 0,
+    auto_update: false,
+    path_state: 'agreed',
+    agreed_working_dir: '/srv/app',
+    agreed_config_files: ['compose.yaml'],
+    last_seen_at: '2026-10-19T10:00:00Z',
+  }
+  const stackNames = () =>
+    within(screen.getByRole('grid'))
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('link')[0].textContent)
+  it('[AC-002] replaces the text column with a switch that saves the stack policy', async () => {
+    const user = userEvent.setup()
+    mock.stacks.mockResolvedValue([base, { ...base, project: 'media', agreed_working_dir: '/srv/media', auto_update: true }])
+    renderWithProviders(<StacksPage />)
+    const off = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(off).toBeEnabled())
+    expect(off).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByText('Disabled')).not.toBeInTheDocument()
+    await user.click(off)
+    await waitFor(() =>
+      expect(mock.setAutoUpdate).toHaveBeenCalledExactlyOnceWith('host-1', 'app', true, '/srv/app', true),
+    )
+    const on = screen.getByRole('switch', { name: 'Auto-update media on host-one' })
+    expect(on).toHaveAttribute('aria-checked', 'true')
+    await user.click(on)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenLastCalledWith('host-1', 'media', true, '/srv/media', false))
+  })
+  it.each([
+    ['paths are not agreed', { path_state: 'pending_ack' }, [host], 'Compose paths not agreed'],
+    ['the host lacks stack actions', {}, [{ ...host, capabilities: ['logs_live_v1'] }], 'Requires agent update for stack actions'],
+  ])('[AC-002] blocks turning on with a reason when %s, while off still works', async (_case, extra, hosts, reason) => {
+    const user = userEvent.setup()
+    mock.hosts.mockResolvedValue(hosts)
+    mock.stacks.mockResolvedValue([
+      { ...base, ...extra },
+      { ...base, ...extra, project: 'media', agreed_working_dir: '/srv/media', auto_update: true },
+    ])
+    renderWithProviders(<StacksPage />)
+    const off = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(screen.getByText(reason)).toBeInTheDocument())
+    expect(off).toBeDisabled()
+    const on = screen.getByRole('switch', { name: 'Auto-update media on host-one' })
+    expect(on).toBeEnabled()
+    await user.click(on)
+    await waitFor(() => expect(mock.setAutoUpdate).toHaveBeenCalledExactlyOnceWith('host-1', 'media', true, '/srv/media', false))
+  })
+  it('[AC-002] disables the switch when the stack policies could not be loaded', async () => {
+    mock.stacks.mockResolvedValue([{ ...base, auto_update_unavailable: true }])
+    renderWithProviders(<StacksPage />)
+    expect(await screen.findByRole('switch', { name: 'Auto-update app on host-one' })).toBeDisabled()
+    expect(screen.getByText('Auto-update state unavailable')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Auto-update off (0)' })).toBeInTheDocument()
+  })
+  it('[AC-011] explains a name clash in a toast and reverts the stack switch', async () => {
+    const user = userEvent.setup()
+    const { ApiError } = await import('../../api/errors')
+    mock.setAutoUpdate.mockRejectedValue(new ApiError(409, 'clash', 'auto_update_name_clash', { existing_kind: 'container' }))
+    mock.stacks.mockResolvedValue([base])
+    renderWithProviders(<StacksPage />)
+    const toggle = await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(toggle).toBeEnabled())
+    await user.click(toggle)
+    expect(await screen.findByText('Auto-update not changed for stack app on host-one')).toBeInTheDocument()
+    expect(screen.getByText('A container with the same name on this host has auto-update on. Turn that off first.')).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+  })
+  it('[AC-005][AC-006][AC-007] filters by Out of date and Auto-update off with AND, stores them in the URL and clears them', async () => {
+    const user = userEvent.setup()
+    mock.stacks.mockResolvedValue([
+      { ...base, project: 'a-old-off', out_of_date: 2 },
+      { ...base, project: 'b-old-on', out_of_date: 1, auto_update: true },
+      { ...base, project: 'c-new-off' },
+    ])
+    renderWithProviders(<StacksPage />, { route: '/docker/stacks', showLocation: true })
+    await screen.findByRole('link', { name: 'a-old-off' })
+    await user.click(screen.getByRole('button', { name: 'Out of date (2)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('outdated=1')
+    expect(stackNames()).toEqual(['a-old-off', 'b-old-on'])
+    await user.click(screen.getByRole('button', { name: 'Auto-update off (1)' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('autoupdate=off')
+    expect(stackNames()).toEqual(['a-old-off'])
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/docker\/stacks$/)
+    expect(stackNames()).toEqual(['a-old-off', 'b-old-on', 'c-new-off'])
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-007] restores filters from a shared URL without saving', async () => {
+    mock.stacks.mockResolvedValue([
+      { ...base, project: 'old', out_of_date: 1 },
+      { ...base, project: 'new' },
+    ])
+    renderWithProviders(<StacksPage />, { route: '/docker/stacks?outdated=1&q=o' })
+    await screen.findByRole('link', { name: 'old' })
+    expect(screen.queryByRole('link', { name: 'new' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Out of date/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(mock.setAutoUpdate).not.toHaveBeenCalled()
+  })
+  it('[AC-008] notes an on stack switch while the Docker update window is disabled', async () => {
+    mock.getAutomationConfig.mockResolvedValue({ docker_update: { mode: 'disabled' } })
+    mock.stacks.mockResolvedValue([{ ...base, auto_update: true }, { ...base, project: 'off' }])
+    renderWithProviders(<StacksPage />)
+    await screen.findByRole('switch', { name: 'Auto-update app on host-one' })
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Settings > Agents' })).toHaveLength(1))
+    expect(screen.getByRole('switch', { name: 'Auto-update app on host-one' })).toHaveAccessibleDescription(
+      'Auto-update is on, but the Docker update window is disabled.',
+    )
+  })
+})

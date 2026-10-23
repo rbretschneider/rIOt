@@ -5,8 +5,27 @@ import { dockerApi } from '../../api/docker'
 import { Button, EmptyState, PageHeader, QueryState } from '../../components/ui'
 import StackUpdateDialog from '../../components/docker/StackUpdateDialog'
 import DataTable, { type Column } from '../../components/docker/DataTable'
-import type { DockerStack } from '../../types/docker'
-import { stackPath } from '../../utils/dockerUrlState'
+import AutoUpdateSwitch from '../../components/docker/AutoUpdateSwitch'
+import type { DockerHost, DockerStack } from '../../types/docker'
+import {
+  filterStackRows,
+  parseStackState,
+  stackPath,
+} from '../../utils/dockerUrlState'
+import { autoUpdateKey, useAutoUpdateSave } from '../../hooks/useAutoUpdateSave'
+import { useDockerUpdateMode } from '../../hooks/useDockerUpdateMode'
+// Why a stack's auto-update cannot be turned on from the list: the same rules
+// as the stack page's actions. Turning off is always allowed.
+function stackOnBlocked(
+  s: DockerStack,
+  hosts: { isSuccess: boolean; data?: DockerHost[] },
+) {
+  if (s.path_state !== 'agreed') return 'Compose paths not agreed'
+  if (!hosts.isSuccess) return 'Checking host'
+  const host = hosts.data?.find((h) => h.device_id === s.device_id)
+  if (!host?.capabilities.includes('stack_actions_v1'))
+    return 'Requires agent update for stack actions'
+}
 export default function StacksPage() {
   const location = useLocation()
   const [params, setParams] = useSearchParams()
@@ -19,8 +38,11 @@ export default function StacksPage() {
     queryKey: ['docker-hosts'],
     queryFn: dockerApi.hosts,
   })
-  const search = params.get('q') ?? ''
-  const host = params.get('host') ?? ''
+  const state = parseStackState(params.toString())
+  const search = state.q
+  const host = state.host
+  const autoUpdate = useAutoUpdateSave()
+  const windowDisabled = useDockerUpdateMode() === 'disabled'
   const [updating, setUpdating] = useState<{ deviceId: string; project: string }>()
   return (
     <div className="space-y-4">
@@ -60,6 +82,34 @@ export default function StacksPage() {
             ))}
         </select>
       </div>
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ['outdated', '1', 'Out of date', 'outOfDate'],
+            ['autoupdate', 'off', 'Auto-update off', 'autoOff'],
+          ] as const
+        ).map(([key, value, title, field]) => (
+          <Button
+            key={key}
+            size="sm"
+            variant={state[field] ? 'primary' : 'secondary'}
+            aria-pressed={state[field]}
+            onClick={() => {
+              const p = new URLSearchParams(params)
+              state[field] ? p.delete(key) : p.set(key, value)
+              setParams(p)
+            }}
+          >
+            {title} (
+            {filterStackRows(query.data ?? [], { ...state, [field]: true }).length})
+          </Button>
+        ))}
+        {search || host || state.outOfDate || state.autoOff ? (
+          <Button size="sm" variant="ghost" onClick={() => setParams({})}>
+            Clear filters
+          </Button>
+        ) : null}
+      </div>
       <QueryState
         query={query}
         isEmpty={(s) => !s.length}
@@ -72,13 +122,7 @@ export default function StacksPage() {
       >
         {(stacks) => (
           <DataTable
-            rows={stacks.filter(
-              (s) =>
-                (!host || s.device_id === host) &&
-                `${s.project} ${s.hostname}`
-                  .toLowerCase()
-                  .includes(search.toLowerCase()),
-            )}
+            rows={filterStackRows(stacks, state)}
             rowKey={(s) => s.device_id + s.project}
             columns={(
               [
@@ -129,8 +173,43 @@ export default function StacksPage() {
                 },
                 {
                   key: 'auto',
-                  title: 'Auto update',
-                  render: (s) => (s.auto_update ? 'Enabled' : 'Disabled'),
+                  title: 'Auto-update',
+                  sortable: false,
+                  render: (s) => {
+                    const label = `Auto-update ${s.project} on ${s.hostname}`
+                    if (s.auto_update_unavailable)
+                      return (
+                        <AutoUpdateSwitch
+                          checked={false}
+                          label={label}
+                          disabledReason="Auto-update state unavailable"
+                          onChange={() => {}}
+                        />
+                      )
+                    const { checked, pending } = autoUpdate.display(
+                      autoUpdateKey(s.device_id, true, s.project),
+                      s.auto_update,
+                    )
+                    return (
+                      <AutoUpdateSwitch
+                        checked={checked}
+                        pending={pending}
+                        label={label}
+                        onDisabledReason={stackOnBlocked(s, hosts)}
+                        windowDisabled={windowDisabled}
+                        onChange={(enabled) =>
+                          void autoUpdate.save({
+                            deviceId: s.device_id,
+                            hostname: s.hostname,
+                            target: s.project,
+                            stack: true,
+                            workingDir: s.agreed_working_dir,
+                            enabled,
+                          })
+                        }
+                      />
+                    )
+                  },
                 },
                 {
                   key: 'paths',
@@ -152,7 +231,7 @@ export default function StacksPage() {
                   state: 112,
                   services: 128,
                   updates: 100,
-                  auto: 128,
+                  auto: 200,
                   paths: 160,
                   actions: 112,
                   last: 208,
