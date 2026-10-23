@@ -501,6 +501,8 @@ func (m *MockTelemetryRepo) GetFleetContainerLeaderboard(_ context.Context) ([]d
 				MemLimit:        c.MemLimit,
 				RestartCount:    c.RestartCount,
 				UpdateAvailable: updateAvail,
+				UpdateStatus:    c.UpdateStatus,
+				UpdateReason:    c.UpdateReason,
 				Labels:          labels,
 			})
 		}
