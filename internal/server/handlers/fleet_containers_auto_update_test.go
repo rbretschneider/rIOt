@@ -157,3 +157,23 @@ func TestAC010_TurningStackOffShowsOwnPolicyAgain(t *testing.T) {
 	assert.Equal(t, map[string]interface{}{"target": "sonarr", "enabled": false}, rows[0]["auto_update_policy"],
 		"[AC-010] with the stack off the container's own (off) policy shows again")
 }
+
+// A policy saved under a trimmed form of the name never fires: the dispatcher
+// compares the telemetry name verbatim, which is why the list hands the client
+// that exact string as the target.
+func TestAC001_TrimmedNameFormDoesNotDispatch(t *testing.T) {
+	updateAvail := true
+	data := &models.FullTelemetryData{Docker: &models.DockerInfo{Containers: []models.ContainerInfo{
+		{ID: "id-1", Name: "/legacy-web", State: "running", UpdateAvailable: &updateAvail},
+	}}}
+	e := fleetEnv(t, data)
+	require.Equal(t, http.StatusOK,
+		putAutoUpdate(e.h, "dev-1", `{"target":"legacy-web","is_stack":false,"compose_work_dir":"","enabled":true}`).Code)
+
+	e.h.checkAutoUpdates(context.Background(), "dev-1", data)
+
+	assert.Empty(t, e.dockerUpdates(), "[AC-001] a policy under the trimmed name does not match /legacy-web")
+	_, rows := getFleetContainers(t, e.h)
+	assert.Equal(t, map[string]interface{}{"target": "/legacy-web", "enabled": false}, rows[0]["auto_update_policy"],
+		"the row shows off, matching what the dispatcher does")
+}
