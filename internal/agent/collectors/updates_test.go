@@ -146,7 +146,7 @@ func TestDetectRebootRequiredAPT_AC017(t *testing.T) {
 		require.NoError(t, os.WriteFile(marker, []byte("*** System restart required ***\n"), 0644))
 		require.NoError(t, os.WriteFile(pkgs, []byte("linux-image-6.8.0-45-generic\nlinux-base\nlinux-image-6.8.0-45-generic\n"), 0644))
 
-		c := &UpdatesCollector{rebootRequiredPath: marker, rebootRequiredPkgsPath: pkgs}
+		c := &UpdatesCollector{rebootRequiredPath: marker, rebootRequiredPkgsPath: pkgs, kernelRoot: t.TempDir()}
 		info := &models.UpdateInfo{}
 		c.detectRebootRequiredAPT(info)
 
@@ -160,6 +160,7 @@ func TestDetectRebootRequiredAPT_AC017(t *testing.T) {
 		c := &UpdatesCollector{
 			rebootRequiredPath:     filepath.Join(dir, "reboot-required"),
 			rebootRequiredPkgsPath: filepath.Join(dir, "reboot-required.pkgs"),
+			kernelRoot:             t.TempDir(),
 		}
 		info := &models.UpdateInfo{}
 		c.detectRebootRequiredAPT(info)
@@ -174,6 +175,7 @@ func TestDetectRebootRequiredAPT_AC017(t *testing.T) {
 		c := &UpdatesCollector{
 			rebootRequiredPath:     marker,
 			rebootRequiredPkgsPath: filepath.Join(dir, "missing.pkgs"),
+			kernelRoot:             t.TempDir(),
 		}
 		info := &models.UpdateInfo{}
 		c.detectRebootRequiredAPT(info)
@@ -226,4 +228,60 @@ func TestParseDpkgSelections(t *testing.T) {
 	assert.Equal(t, []string{"nvidia-driver-550", "libc6"}, names,
 		"install selections kept, arch qualifiers stripped, deinstall dropped")
 	assert.True(t, strings.Contains(output, "deinstall"))
+}
+
+func TestUpdatesCollector_PF_AC005_KernelSourceSetsRebootRequiredAndReason(t *testing.T) {
+	noMarker := func(dir string) *UpdatesCollector {
+		return &UpdatesCollector{
+			rebootRequiredPath:     filepath.Join(dir, "reboot-required"),
+			rebootRequiredPkgsPath: filepath.Join(dir, "reboot-required.pkgs"),
+		}
+	}
+
+	t.Run("[AC-005] newer installed kernel without a marker requires a reboot", func(t *testing.T) {
+		root := kernelTree(t, "6.12.48+deb13-amd64", "6.12.48+deb13-amd64", "7.2.9+deb13-amd64")
+		c := noMarker(t.TempDir())
+		c.kernelRoot = root
+		info := &models.UpdateInfo{}
+		c.detectRebootRequiredAPT(info)
+		assert.True(t, info.RebootRequired, "[AC-005] installed kernel newer than running must set reboot_required")
+		assert.Equal(t, []string{"kernel 7.2.9+deb13-amd64 installed; running 6.12.48+deb13-amd64"}, info.RebootRequiredReasons)
+	})
+
+	t.Run("[AC-005] running kernel is the newest and no marker", func(t *testing.T) {
+		root := kernelTree(t, "7.2.9+deb13-amd64", "6.12.48+deb13-amd64", "7.2.9+deb13-amd64")
+		c := noMarker(t.TempDir())
+		c.kernelRoot = root
+		info := &models.UpdateInfo{}
+		c.detectRebootRequiredAPT(info)
+		assert.False(t, info.RebootRequired)
+		assert.Empty(t, info.RebootRequiredReasons)
+	})
+
+	t.Run("[AC-005] marker and newer kernel list both reasons", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "reboot-required"), nil, 0644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "reboot-required.pkgs"), []byte("linux-base\n"), 0644))
+		c := noMarker(dir)
+		c.kernelRoot = kernelTree(t, "6.12.48+deb13-amd64", "7.2.9+deb13-amd64")
+		info := &models.UpdateInfo{}
+		c.detectRebootRequiredAPT(info)
+		assert.True(t, info.RebootRequired)
+		assert.Equal(t, []string{"linux-base", "kernel 7.2.9+deb13-amd64 installed; running 6.12.48+deb13-amd64"}, info.RebootRequiredReasons)
+	})
+
+	t.Run("[AC-005] the kernel reason is capped", func(t *testing.T) {
+		assert.LessOrEqual(t, len(kernelReason(strings.Repeat("9", 64), strings.Repeat("8", 64))), maxKernelReasonLen)
+	})
+}
+
+func TestUpdatesCollector_PF_AC030_DnfNeverReportsStale(t *testing.T) {
+	c := &UpdatesCollector{
+		exitRun: func(ctx context.Context, name string, args ...string) (int, error) { return 1, nil },
+	}
+	info := &models.UpdateInfo{}
+	c.collectDNF(context.Background(), info)
+	assert.True(t, info.RebootRequired, "precondition: the dnf detection ran")
+	assert.Empty(t, string(info.ListsFreshness), "[AC-030] dnf hosts leave the freshness field absent, never stale")
+	assert.Equal(t, "unknown", info.Freshness(), "[AC-030] absent reads as unknown")
 }
