@@ -59,6 +59,10 @@ func listsFreshness(root string, now, deadline time.Time) (models.ListsFreshness
 
 // listsRefreshedAt returns the last refresh time. A non-empty state is a final
 // answer (missing lists dir is stale, any other stat error is unknown).
+//
+// The directory's own mtime is used because apt renames list files into it on
+// every refresh that changes one. The mtimes of the list files are not: apt
+// sets those to the archive server's Last-Modified time, not to the refresh time.
 func listsRefreshedAt(root string) (time.Time, models.ListsFreshness, string) {
 	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(aptListsRel)))
 	if errors.Is(err, os.ErrNotExist) {
@@ -74,6 +78,10 @@ func listsRefreshedAt(root string) (time.Time, models.ListsFreshness, string) {
 	return refreshed, "", ""
 }
 
+// decideFreshness marks the lists stale when an apt configuration file is newer
+// than the last refresh (FR-029). A file dated more than freshnessClockSkew in
+// the future makes the answer unknown instead: no refresh could ever be newer
+// than it, so a wrong clock would otherwise report stale for ever.
 func decideFreshness(entries []maintenance.AptSourceEntry, refreshedAt, now time.Time) (models.ListsFreshness, string) {
 	stale := false
 	for _, entry := range entries {

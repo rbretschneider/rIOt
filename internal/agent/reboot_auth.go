@@ -226,6 +226,8 @@ func (a *Agent) rebootAfterDelivery(id string) {
 		a.abortAuthorizedReboot(id, "host busy: "+blocker)
 		return
 	}
+	// The operator may turn allow_reboot off between the decision and now. The
+	// agent-side veto is absolute, so it is checked again right before the reboot.
 	if !a.config.Commands.AllowReboot {
 		a.abortAuthorizedReboot(id, "commands.allow_reboot is off")
 		return
@@ -258,6 +260,9 @@ func (a *Agent) awaitResultDelivery(ctx context.Context, id string) bool {
 	}
 	for waited := time.Duration(0); a.out != nil && a.out.Has(id); waited += poll {
 		if waited >= wait {
+			// The result already says "reboot started: yes". An unreachable server must
+			// not turn that into a silent no-op, and the result is durable in the outbox
+			// and is delivered after boot.
 			slog.Warn("result not yet delivered; rebooting with result queued", "command_id", id)
 			return true
 		}
