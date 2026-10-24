@@ -43,7 +43,8 @@ func dockerPaths(c models.ContainerInfo) (string, []string) {
 			}
 		}
 	}
-	sort.Strings(files)
+	// Keep the label's order: it is Compose's -f order, later files override
+	// earlier ones, and the agent requires it exactly.
 	return wd, files
 }
 func (h *Handlers) dockerStacks(r *http.Request) ([]map[string]interface{}, error) {
@@ -506,6 +507,14 @@ func validStackPath(v string) bool {
 	}
 	return true
 }
+// legacySortedPaths reports whether agreed is observed sorted, the form older
+// servers stored. That agreement covers the same files, so it moves to the
+// observed order instead of asking for a new acknowledgement.
+func legacySortedPaths(agreed, observed []string) bool {
+	sorted := append([]string(nil), observed...)
+	sort.Strings(sorted)
+	return !reflect.DeepEqual(agreed, observed) && reflect.DeepEqual(agreed, sorted)
+}
 func dockerObservedStack(d models.Device, s *models.TelemetrySnapshot, project string, cs []models.ContainerInfo, row map[string]interface{}) map[string]interface{} {
 	if row == nil {
 		row = map[string]interface{}{"device_id": d.ID, "hostname": d.Hostname, "project": project, "auto_update": false}
@@ -565,6 +574,9 @@ func dockerObservedStack(d models.Device, s *models.TelemetrySnapshot, project s
 		row["path_state"] = "conflicted"
 	} else {
 		old, _ := row["agreed_working_dir"].(string)
+		if old == wd && legacySortedPaths(dockerStrings(row["agreed_config_files"]), files) {
+			row["agreed_config_files"] = files
+		}
 		if old == "" {
 			row["agreed_working_dir"] = wd
 			row["agreed_config_files"] = files
