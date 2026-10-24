@@ -1,6 +1,8 @@
 package models
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -296,6 +298,67 @@ type UpdateInfo struct {
 	// ReleaseUpgrade reports an OS release upgrade that needs manual approval.
 	// nil means the agent version does not report it.
 	ReleaseUpgrade *ReleaseUpgrade `json:"release_upgrade,omitempty"`
+	// ListsFreshness is apt package-list freshness: "fresh", "stale" or
+	// "unknown". Absent (older agent, dnf, other) reads as "unknown".
+	// Display-only: it never changes a dispatch decision (PATCH-FLOW-001 FR-039).
+	ListsFreshness ListsFreshness `json:"lists_freshness,omitempty"`
+	// SupportsRebootIfRequired says the agent understands os_update's
+	// reboot_if_required param. Only JSON true counts; the server uses it to
+	// reject, never to widen (PATCH-FLOW-001 NFR-003).
+	SupportsRebootIfRequired LenientBool `json:"supports_reboot_if_required,omitempty"`
+}
+
+// Freshness returns the normalized package-list freshness: fresh, stale or
+// unknown. An absent value reads as unknown.
+func (u *UpdateInfo) Freshness() string {
+	if u == nil {
+		return string(ListsUnknown)
+	}
+	switch u.ListsFreshness {
+	case ListsFresh, ListsStale:
+		return string(u.ListsFreshness)
+	default:
+		return string(ListsUnknown)
+	}
+}
+
+// ListsFreshness is the package-list freshness enum. Its decoder never fails,
+// so a hostile or future value cannot reject a telemetry ingest.
+type ListsFreshness string
+
+// Package-list freshness values (PATCH-FLOW-001 FR-031).
+const (
+	ListsFresh   ListsFreshness = "fresh"
+	ListsStale   ListsFreshness = "stale"
+	ListsUnknown ListsFreshness = "unknown"
+)
+
+// UnmarshalJSON keeps the three known values and maps every other non-null
+// JSON value to "unknown". null leaves the field untouched. It never errors.
+func (f *ListsFreshness) UnmarshalJSON(data []byte) error {
+	var v interface{}
+	if err := json.Unmarshal(data, &v); err != nil || v == nil {
+		return nil
+	}
+	if s, ok := v.(string); ok {
+		switch ListsFreshness(s) {
+		case ListsFresh, ListsStale, ListsUnknown:
+			*f = ListsFreshness(s)
+			return nil
+		}
+	}
+	*f = ListsUnknown
+	return nil
+}
+
+// LenientBool decodes only JSON true to true. Every other value, including
+// malformed or wrongly typed ones, decodes to false without an error.
+type LenientBool bool
+
+// UnmarshalJSON implements json.Unmarshaler without ever failing.
+func (b *LenientBool) UnmarshalJSON(data []byte) error {
+	*b = string(bytes.TrimSpace(data)) == "true"
+	return nil
 }
 
 // Status values for OtherHolds and ReleaseUpgrade.
