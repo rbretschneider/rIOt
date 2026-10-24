@@ -75,6 +75,14 @@ func TestKernelReboot_PF_AC005_OtherFlavorIgnored(t *testing.T) {
 	}
 }
 
+func TestKernelReboot_PF_AC005_RealtimeFlavorBesideGenericIgnored(t *testing.T) {
+	root := kernelTree(t, "6.12.48+deb13-amd64", "6.12.48+deb13-amd64", "6.12.48+deb13-rt-amd64", "6.12.48+deb13-cloud-amd64")
+	newer, installed, _, ok := kernelNewerThanRunning(root)
+	if !ok || newer {
+		t.Errorf("[AC-005] an rt or cloud kernel of the same version is another flavor: newer=%v installed=%q ok=%v", newer, installed, ok)
+	}
+}
+
 func TestKernelReboot_PF_AC005_NonKernelAndHostileNamesIgnored(t *testing.T) {
 	root := kernelTree(t, "6.12.48+deb13-amd64", "6.12.48+deb13-amd64")
 	boot := filepath.Join(root, bootDirRel)
@@ -288,8 +296,13 @@ func TestSplitKernelFlavor_PF_AC005(t *testing.T) {
 		{"6.12.48+deb13-amd64", "6.12.48+deb13", "amd64"},
 		{"6.8.0-45-generic", "6.8.0-45", "generic"},
 		{"6.8.0-47", "6.8.0-47", ""},
-		{"5.15.0-rpi-v8", "5.15.0-rpi", "v8"},
+		{"5.15.0-rpi-v8", "5.15.0", "rpi-v8"},
 		{"6.12.48+deb13", "6.12.48+deb13", ""},
+		{"6.12.48+deb13-rt-amd64", "6.12.48+deb13", "rt-amd64"},
+		{"6.12.48+deb13-cloud-amd64", "6.12.48+deb13", "cloud-amd64"},
+		{"6.1.0-25-rt-amd64", "6.1.0-25", "rt-amd64"},
+		{"6.12.47+rpt-rpi-2712", "6.12.47+rpt-rpi-2712", ""},
+		{"6.12.47+rpt-rpi-v8", "6.12.47+rpt", "rpi-v8"},
 	}
 	for _, tc := range cases {
 		base, flavor := splitKernelFlavor(tc.release)

@@ -165,19 +165,28 @@ func listInstalledReleases(root string) ([]string, bool) {
 	}
 }
 
-// splitKernelFlavor separates a trailing flavor token (amd64, generic, v8) from
-// a kernel release. The token after the last "-" is a flavor only when it holds
-// a letter; "6.8.0-47" has no flavor, "6.8.0-47-generic" has "generic".
+// splitKernelFlavor separates the trailing flavor (amd64, rt-amd64, generic,
+// rpi-v8) from a kernel release. The flavor is the run of trailing "-" tokens
+// that hold a letter and no version marker ("." or "+"), so "rt-amd64" is not
+// the same flavor as "amd64". "6.8.0-47" has no flavor, "6.8.0-47-generic" has
+// "generic".
 func splitKernelFlavor(release string) (base, flavor string) {
-	i := strings.LastIndex(release, "-")
-	if i < 0 {
+	cut := len(release)
+	for {
+		i := strings.LastIndex(release[:cut], "-")
+		if i < 0 {
+			break
+		}
+		token := release[i+1 : cut]
+		if strings.IndexFunc(token, unicode.IsLetter) < 0 || strings.ContainsAny(token, ".+") {
+			break
+		}
+		cut = i
+	}
+	if cut == len(release) || cut == 0 {
 		return release, ""
 	}
-	tail := release[i+1:]
-	if strings.IndexFunc(tail, unicode.IsLetter) < 0 {
-		return release, ""
-	}
-	return release[:i], tail
+	return release[:cut], release[cut+1:]
 }
 
 // compareDebVersion orders two Debian version strings (epoch, upstream,
