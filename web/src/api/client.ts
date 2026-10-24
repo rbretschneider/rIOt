@@ -75,6 +75,8 @@ export interface DevicePatchInfo {
   allow_reboot?: boolean
   updates_at?: string
   patch_badge?: PatchBadge
+  // PATCH-FLOW-001: normalized apt package-list freshness; absent from older servers.
+  lists_freshness?: 'fresh' | 'stale' | 'unknown'
 }
 
 // SSOAvailability is the response shape of GET /api/v1/auth/oidc
