@@ -178,14 +178,23 @@ $ git diff --stat 679499e..HEAD -- go.mod go.sum scripts web cmd/riot-server/mig
 
 ## Real-host verification (C-6)
 
-**Pending.** ADD §12 note 11 needs a real host, and this task did not deploy or touch Hawaii. The orchestrator (Clod) will run a cross-compiled probe check on Hawaii (Debian 13, ext4, as the `riot` user) after this work:
+**Done 2026-10-24 on Hawaii** (Debian 13, kernel 6.12, dpkg 1.22.22). The orchestrator cross-compiled a scratch test that was not committed (`//go:build linux && hostverify`, `TestHostVerify_RD_C6`) for linux/amd64. It ran with `timeout 60` as an unprivileged login user (uid 1000). `sudo -u riot` needs a password there, and both users are equally unprivileged with respect to `/proc`. The test read `/proc`, stat'ed files and locked one file it created. It did not touch the installed agent, its config or its state.
 
-1. at rest the probe returns `Free`;
-2. `readlink /proc/self/ns/pid` is `pid:[4026531836]` and `/proc/self/status` `NSpid` has one field;
-3. while `/var/lib/dpkg/lock-frontend` is held for 30 s the probe returns `Held` with comm, pid and `uid 0`;
-4. the `stat` device and inode equal the `/proc/locks` line.
+| Check | Result |
+|-------|--------|
+| `platformDpkgProbe` at rest against the real `/var/lib/dpkg/lock-frontend` and `lock` | `Free` |
+| `readlink /proc/self/ns/pid` | `pid:[4026531836]` (the initial namespace) |
+| `/proc/self/status` `NSpid` | one field |
+| fcntl `F_SETLK` write lock on `/tmp/riot-reboot-dpkg-001/held.lock` (tmpfs): `statFileID` | major 0, minor 35, ino 2256131 |
+| Matching `/proc/locks` line | `POSIX ADVISORY WRITE <pid> 00:23:2256131 0 EOF` (0x23 = 35, so an exact match) |
+| `probeDpkgLock` while held | `Held`, `held by agent_hostverif (pid N, uid 1000)`, `inodeOnly=false` |
+| `probeDpkgLock` after `F_UNLCK` | `Free` |
 
-Only Hawaii's ext4 (device 259:2) has been sampled. **The inode-only (major-0) path is unverified on real hardware.** The anonymous-device fixture in `TestProcLocks_RD_AC002_AnonymousDeviceMatchesOnInodeAndMarksInodeOnly` is synthetic; no managed host with btrfs, ZFS or an overlay root is known. A real major-0 sample should be added as a fixture if one is ever taken. The standalone reboot during a held lock (note 11.3) is Ryan's to trigger.
+The test could not take the real dpkg lock, because that needs root, so check 3 used a scratch file it owned. The stat↔`/proc/locks` device encoding for the root ext4 was confirmed earlier from the real lock file: `stat` dev 66306 = 259:2, and `/proc/locks` prints `103:02:<ino>`. The `Held` path has therefore run end to end through the real kernel on a tmpfs (major-0) file. Because tmpfs reports the same anonymous device to `stat` and `/proc/locks`, the exact match applied and the inode-only fallback was not needed. The Linux-only committed tests (`dpkglock_linux_test.go`) were not run on Hawaii, because they use `t.TempDir` cleanup and Hawaii's no-delete rule forbids that. CI's Linux job runs them.
+
+Files left on Hawaii for Ryan to clear: `/tmp/riot-reboot-dpkg-001/agent_hostverify.test`, `/tmp/riot-reboot-dpkg-001/held.lock`, and the directory `/tmp/riot-reboot-dpkg-001/`.
+
+Hawaii's ext4 (device 259:2) and tmpfs are the only filesystems sampled. **The inode-only (major-0) path is unverified on real hardware.** The anonymous-device fixture in `TestProcLocks_RD_AC002_AnonymousDeviceMatchesOnInodeAndMarksInodeOnly` is synthetic; no managed host with btrfs, ZFS or an overlay root is known. A real major-0 sample should be added as a fixture if one is ever taken. The standalone reboot during a held lock (note 11.3) is Ryan's to trigger.
 
 ## Revision 3 delta
 
