@@ -131,3 +131,40 @@ func TestAC002_StackListBodyCarriesTheNewFields(t *testing.T) {
 	assert.Equal(t, "/srv/media", body["agreed_working_dir"], "the switch saves the agreed working dir")
 	assert.NotContains(t, body, "services", "the list body still has no member details")
 }
+
+func overrideMember(project string) models.ContainerInfo {
+	c := stackMember("a", project, "", nil)
+	c.Labels["com.docker.compose.project.config_files"] = "/srv/" + project + "/docker-compose.yml,/srv/" + project + "/docker-compose.override.yml"
+	return c
+}
+
+func TestStackPathsKeepComposeFileOrder(t *testing.T) {
+	_, files := dockerPaths(overrideMember("riot"))
+
+	assert.Equal(t, []string{"/srv/riot/docker-compose.yml", "/srv/riot/docker-compose.override.yml"}, files, "the override stays last, as Compose and the agent apply it")
+}
+
+func TestStackLegacySortedAgreementMovesToComposeOrder(t *testing.T) {
+	e := stacksEnv(t, overrideMember("riot"))
+	known := []map[string]interface{}{{"device_id": "dev-1", "project": "riot", "hostname": "host", "path_state": "agreed",
+		"agreed_working_dir": "/srv/riot", "agreed_config_files": []interface{}{"/srv/riot/docker-compose.override.yml", "/srv/riot/docker-compose.yml"}}}
+
+	rows, err := e.h.mergeDockerStacks(context.Background(), known)
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "agreed", rows[0]["path_state"], "a sorted agreement of the same files needs no new acknowledgement")
+	assert.Equal(t, []string{"/srv/riot/docker-compose.yml", "/srv/riot/docker-compose.override.yml"}, rows[0]["agreed_config_files"], "the agent receives Compose's order")
+}
+
+func TestStackReorderedAgreementStillNeedsAcknowledgement(t *testing.T) {
+	e := stacksEnv(t, overrideMember("riot"))
+	known := []map[string]interface{}{{"device_id": "dev-1", "project": "riot", "hostname": "host", "path_state": "agreed",
+		"agreed_working_dir": "/srv/riot", "agreed_config_files": []interface{}{"/srv/riot/docker-compose.override.yml", "/srv/riot/docker-compose.yml", "/srv/riot/extra.yml"}}}
+
+	rows, err := e.h.mergeDockerStacks(context.Background(), known)
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "pending_ack", rows[0]["path_state"], "a different file set is still a path change")
+}
