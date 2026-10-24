@@ -318,3 +318,51 @@ func TestCL_SEC002_CompletionEventReasonRuneSafe(t *testing.T) {
 		assert.Equal(t, models.SeverityInfo, eventRepo.Events[1].Severity)
 	})
 }
+
+// [PATCH-FLOW-001 AC-037] The command-sent event shows when the operator
+// authorized a reboot with the patch.
+func TestCommandSent_PF_AC037_EventMentionsAuthorization(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  string
+		params  map[string]interface{}
+		wantMsg string
+	}{
+		{"authorized os_update", "os_update", map[string]interface{}{"mode": "full", "reboot_if_required": true},
+			"OS update initiated on gpu-host (reboot authorized if required)"},
+		{"unauthorized os_update", "os_update", map[string]interface{}{"mode": "full"},
+			"OS update initiated on gpu-host"},
+		{"explicit false", "os_update", map[string]interface{}{"reboot_if_required": false},
+			"OS update initiated on gpu-host"},
+		{"non-boolean value", "os_update", map[string]interface{}{"reboot_if_required": "true"},
+			"OS update initiated on gpu-host"},
+		{"other action never mentions it", "fetch_logs", map[string]interface{}{"reboot_if_required": true},
+			"Log fetch initiated on gpu-host"},
+	}
+	for _, tc := range cases {
+		t.Run("[AC-037] "+tc.name, func(t *testing.T) {
+			gen, eventRepo, _, _ := setupGenerator(t)
+
+			gen.CommandSent(context.Background(), "dev-1", "gpu-host", tc.action, tc.params)
+
+			require.Len(t, eventRepo.Events, 1)
+			assert.Equal(t, models.EventCommandSent, eventRepo.Events[0].Type)
+			assert.Equal(t, tc.wantMsg, eventRepo.Events[0].Message)
+		})
+	}
+}
+
+// [PATCH-FLOW-001 AC-020] An agent that vetoes the authorized reboot reports
+// reboot_required afterwards; the existing PATCH-GATE event still fires once.
+func TestPatchGateEvent_PF_AC020_RebootRequiredEventFires(t *testing.T) {
+	gen, eventRepo, _, _ := setupGenerator(t)
+	ctx := context.Background()
+
+	gen.CheckRebootRequired(ctx, "dev-1", "gpu-host", rebootRequiredInfo(false))
+	gen.CheckRebootRequired(ctx, "dev-1", "gpu-host", rebootRequiredInfo(true, "kernel 7.2.9+deb13-amd64 installed; running 6.12.48+deb13-amd64"))
+	gen.CheckRebootRequired(ctx, "dev-1", "gpu-host", rebootRequiredInfo(true))
+
+	require.Len(t, eventRepo.Events, 1, "[AC-020] exactly one reboot_required event per transition")
+	assert.Equal(t, models.EventRebootRequired, eventRepo.Events[0].Type)
+	assert.Contains(t, eventRepo.Events[0].Message, "kernel 7.2.9+deb13-amd64 installed", "the kernel reason reaches the event")
+}

@@ -253,3 +253,71 @@ func TestPatchStatusBadge_AllTrueFailsWhenDeviceListFails(t *testing.T) {
 	f.h.PatchStatus(rec, req)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
+
+// --- PATCH-FLOW-001: freshness on patch-status rows ---
+
+type freshnessRow struct {
+	DeviceID       string `json:"device_id"`
+	PendingUpdates int    `json:"pending_updates"`
+	SecurityCount  int    `json:"security_count"`
+	RebootRequired bool   `json:"reboot_required"`
+	ListsFreshness string `json:"lists_freshness"`
+}
+
+func (f *badgeFixture) freshnessRows(t *testing.T, query string) map[string]freshnessRow {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/fleet/patch-status"+query, nil)
+	rec := httptest.NewRecorder()
+	f.h.PatchStatus(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var rows []freshnessRow
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rows))
+	byID := map[string]freshnessRow{}
+	for _, r := range rows {
+		byID[r.DeviceID] = r
+	}
+	return byID
+}
+
+func TestPatchStatus_PF_AC027_RowCarriesStaleFreshness(t *testing.T) {
+	f := newBadgeFixture(t, true)
+	stale := f.tel.Snapshots["dev-pending"][0].Data.Updates
+	stale.PendingUpdates, stale.PendingSecurityCount = 38, 3
+	stale.ListsFreshness = models.ListsStale
+	f.tel.Snapshots["dev-patched"][0].Data.Updates.ListsFreshness = models.ListsFresh
+
+	rows := f.freshnessRows(t, "")
+
+	pending, ok := rows["dev-pending"]
+	require.True(t, ok, "[AC-027] a stale host with a raw count stays listed and patchable")
+	assert.Equal(t, "stale", pending.ListsFreshness)
+	assert.Equal(t, 38, pending.PendingUpdates, "[AC-027] the raw count is still served for diagnostics")
+	assert.Equal(t, 3, pending.SecurityCount, "[SEC-007] the raw security count is still served")
+	all := f.freshnessRows(t, "?all=true")
+	assert.Equal(t, "fresh", all["dev-patched"].ListsFreshness)
+}
+
+func TestPatchStatus_PF_AC029_AbsentAndBogusServeUnknown(t *testing.T) {
+	f := newBadgeFixture(t, true)
+	var bogus models.UpdateInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"package_manager":"apt","pending_updates":4,"lists_freshness":"bogus"}`), &bogus))
+	f.tel.Snapshots["dev-pending"][0].Data.Updates = &bogus
+
+	rows := f.freshnessRows(t, "?all=true")
+
+	assert.Equal(t, "unknown", rows["dev-pending"].ListsFreshness, "[AC-029] an unrecognized value is served as unknown")
+	assert.Equal(t, "unknown", rows["dev-patched"].ListsFreshness, "[AC-029] an older agent (no field) is served as unknown")
+	assert.Equal(t, "unknown", rows["dev-nodata"].ListsFreshness, "[AC-029] a host with no telemetry is always present as unknown")
+}
+
+func TestPatchStatus_PF_AC006_PendingOnlyRowIsNotRebootRequired(t *testing.T) {
+	f := newBadgeFixture(t, true)
+	pending := f.tel.Snapshots["dev-pending"][0].Data.Updates
+	pending.PendingRebootClassCount = 1
+	pending.RebootRequired = false
+
+	rows := f.freshnessRows(t, "")
+
+	assert.False(t, rows["dev-pending"].RebootRequired, "[AC-006] a pending kernel update never marks a host reboot_required")
+	assert.True(t, rows["dev-reboot"].RebootRequired)
+}

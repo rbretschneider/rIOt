@@ -51,12 +51,21 @@ func (h *Handlers) SendCommand(w http.ResponseWriter, r *http.Request) {
 	if req.Params == nil {
 		req.Params = make(map[string]interface{})
 	}
-	// Manual dispatches never carry include_reboot_class (PATCH-GATE FR-023,
-	// BR-005): the only release path for reboot-class holds is the in-window
-	// automated run dispatched by checkAutoPatch. Enforced at the API
-	// boundary rather than trusting UI callers.
+	// A client never supplies include_reboot_class (PATCH-GATE FR-023). The
+	// server derives it: from the in-window automated run (checkAutoPatch), or,
+	// since PATCH-FLOW-001 (BR-003 amends PATCH-GATE BR-005), from a validated
+	// reboot_if_required=true on a manual run. Enforced at the API boundary
+	// rather than trusting UI callers; nothing is trusted from the request body.
 	if req.Action == "os_update" {
-		delete(req.Params, "include_reboot_class")
+		rejection, err := h.applyManualOSUpdateAuth(r.Context(), deviceID, req.Params)
+		if err != nil {
+			http.Error(w, `{"error":"failed to create command"}`, http.StatusInternalServerError)
+			return
+		}
+		if rejection != nil {
+			writeAuthRejection(w, rejection)
+			return
+		}
 	}
 
 	if req.Action == "docker_stop" {

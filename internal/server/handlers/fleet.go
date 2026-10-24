@@ -62,6 +62,9 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		UpdatesAt *time.Time `json:"updates_at,omitempty"`
 		// PatchBadge is the display-only per-host badge; see computePatchBadge.
 		PatchBadge *patchBadge `json:"patch_badge,omitempty"`
+		// ListsFreshness is the normalized apt package-list freshness (fresh,
+		// stale or unknown), always present. Display-only (PATCH-FLOW-001 AD-011).
+		ListsFreshness string `json:"lists_freshness"`
 	}
 
 	// Computed once per request, not per device. time.Now() lives here at the
@@ -95,6 +98,7 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		if s != nil {
 			updates = s.Updates
 		}
+		info.ListsFreshness = updates.Freshness()
 		if updates != nil {
 			info.PendingUpdates = updates.PendingUpdates
 			info.SecurityCount = updates.PendingSecurityCount

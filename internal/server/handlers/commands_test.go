@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/DesyncTheThird/rIOt/internal/testutil"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -355,4 +357,249 @@ func TestSendCommand_StripScopedToOSUpdate(t *testing.T) {
 		_, present := cmd.Params["include_reboot_class"]
 		assert.True(t, present, "non-os_update actions are not rewritten")
 	}
+}
+
+// --- PATCH-FLOW-001: manual os_update reboot authorization (AD-004) ---
+
+// noRowsTelemetry reports "no snapshot" the way the real repository does.
+type noRowsTelemetry struct{ *testutil.MockTelemetryRepo }
+
+func (noRowsTelemetry) GetLatestSnapshot(context.Context, string) (*models.TelemetrySnapshot, error) {
+	return nil, pgx.ErrNoRows
+}
+
+// rebootCapableUpdates is the latest telemetry of an agent that allows reboots
+// and understands reboot_if_required.
+func rebootCapableUpdates() *models.UpdateInfo {
+	allow := true
+	return &models.UpdateInfo{PackageManager: "apt", AllowReboot: &allow, SupportsRebootIfRequired: true}
+}
+
+func newAuthTestHandlers(t *testing.T, updates *models.UpdateInfo) (*Handlers, *testutil.MockCommandRepo, *testutil.MockTelemetryRepo) {
+	t.Helper()
+	h, cmdRepo, _ := newCommandTestHandlers(t)
+	tel := testutil.NewMockTelemetryRepo()
+	if updates != nil {
+		tel.Snapshots["dev-1"] = []models.TelemetrySnapshot{{
+			DeviceID: "dev-1", Timestamp: time.Now(), Data: models.FullTelemetryData{Updates: updates},
+		}}
+	}
+	h.telemetry = tel
+	return h, cmdRepo, tel
+}
+
+func postCommand(t *testing.T, h *Handlers, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := chi.NewRouter()
+	r.Post("/api/v1/devices/{id}/commands", h.SendCommand)
+	req := httptest.NewRequest("POST", "/api/v1/devices/dev-1/commands", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
+}
+
+func onlyCommand(t *testing.T, repo *testutil.MockCommandRepo) *models.Command {
+	t.Helper()
+	require.Len(t, repo.Commands, 1)
+	for _, c := range repo.Commands {
+		return c
+	}
+	return nil
+}
+
+func assertNoCommandCreated(t *testing.T, repo *testutil.MockCommandRepo, msg string) {
+	t.Helper()
+	assert.Empty(t, repo.Commands, msg)
+	assert.Zero(t, repo.CallCount("CreateIfNoConflict"), msg+" (no Create call)")
+	assert.Zero(t, repo.CallCount("Create"), msg+" (no Create call)")
+}
+
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Code string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), rec.Body.String())
+	return body.Code
+}
+
+func TestSendCommand_PF_AC012_AuthorizedDispatchSetsIncludeRebootClass(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	cmd := onlyCommand(t, repo)
+	assert.Equal(t, true, cmd.Params["reboot_if_required"], "[AC-012] the command carries the authorization")
+	assert.Equal(t, true, cmd.Params["include_reboot_class"], "[AC-012] the server derives include_reboot_class")
+	assert.Equal(t, "full", cmd.Params["mode"])
+}
+
+func TestSendCommand_PF_AC013_FalseAuthorizationStoredAsAbsent(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, nil)
+	h.telemetry = nil // an unticked dispatch must not even read telemetry
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":false}}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]interface{}{"mode": "full"}, onlyCommand(t, repo).Params, "[AC-013] stored params equal today's")
+}
+
+func TestSendCommand_PF_AC013_AbsentAuthorizationUnchanged(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, nil)
+	h.telemetry = nil
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"security"}}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]interface{}{"mode": "security"}, onlyCommand(t, repo).Params)
+}
+
+func TestSendCommand_PF_AC014_ClientIncludeRebootClassStrippedWithoutAuthorization(t *testing.T) {
+	bodies := map[string]string{
+		"no authorization":    `{"action":"os_update","params":{"mode":"full","include_reboot_class":true}}`,
+		"authorization false": `{"action":"os_update","params":{"mode":"full","include_reboot_class":true,"reboot_if_required":false}}`,
+		"upper case variant":  `{"action":"os_update","params":{"mode":"full","INCLUDE_REBOOT_CLASS":true}}`,
+		"mixed case variant":  `{"action":"os_update","params":{"mode":"full","Include_Reboot_Class":true}}`,
+		"folded letter":       `{"action":"os_update","params":{"mode":"full","include_reboot_claſs":true}}`,
+	}
+	for name, body := range bodies {
+		t.Run("[AC-014] "+name, func(t *testing.T) {
+			h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+			rec := postCommand(t, h, body)
+			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+			for key := range onlyCommand(t, repo).Params {
+				assert.False(t, strings.EqualFold(key, "include_reboot_class"), "[AC-014/C-4] key %q survived the API boundary", key)
+			}
+		})
+	}
+}
+
+func TestSendCommand_PF_C4_ReservedKeyVariantsOfRebootIfRequiredRejected(t *testing.T) {
+	for _, key := range []string{"Reboot_If_Required", "REBOOT_IF_REQUIRED", "reboot_if_requireD"} {
+		t.Run("[C-4] "+key, func(t *testing.T) {
+			h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+			rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","`+key+`":true}}`)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, "invalid_request", errorCode(t, rec))
+			assertNoCommandCreated(t, repo, "[C-4] a case variant must not reach the agent")
+		})
+	}
+}
+
+func TestSendCommand_PF_AC014_AuthorizationValidationIsScopedToOSUpdate(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+
+	rec := postCommand(t, h, `{"action":"fetch_logs","params":{"reboot_if_required":"yes","hours":4}}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "yes", onlyCommand(t, repo).Params["reboot_if_required"], "other actions are not validated or rewritten")
+}
+
+func TestSendCommand_PF_AC015_NonBooleanAuthorizationRejected(t *testing.T) {
+	values := map[string]string{"string": `"true"`, "number": `1`, "null": `null`, "object": `{}`, "array": `[true]`, "zero": `0`}
+	for name, value := range values {
+		t.Run("[AC-015] "+name, func(t *testing.T) {
+			h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+			rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":`+value+`}}`)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, "invalid_request", errorCode(t, rec))
+			assertNoCommandCreated(t, repo, "[AC-015]")
+		})
+	}
+}
+
+func TestSendCommand_PF_AC015_RepairWithAuthorizationRejected(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"repair","reboot_if_required":true}}`)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, "invalid_request", errorCode(t, rec))
+	assertNoCommandCreated(t, repo, "[AC-015] repair never upgrades, so a reboot authorization is meaningless")
+}
+
+func TestSendCommand_PF_AC016_AllowRebootFalseRejectedWithRebootNotAllowed(t *testing.T) {
+	updates := rebootCapableUpdates()
+	off := false
+	updates.AllowReboot = &off
+	h, repo, _ := newAuthTestHandlers(t, updates)
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, models.CodeRebootNotAllowed, errorCode(t, rec), "[AC-016] a distinct code names the reason")
+	assert.Contains(t, rec.Body.String(), "commands.allow_reboot: false")
+	assertNoCommandCreated(t, repo, "[AC-016]")
+}
+
+func TestSendCommand_PF_AC016_MissingCapabilityRejectedWithUnsupported(t *testing.T) {
+	cases := map[string]func(*models.UpdateInfo){
+		"capability absent":  func(u *models.UpdateInfo) { u.SupportsRebootIfRequired = false },
+		"allow_reboot unset": func(u *models.UpdateInfo) { u.AllowReboot = nil },
+	}
+	for name, mutate := range cases {
+		t.Run("[AC-016] "+name, func(t *testing.T) {
+			updates := rebootCapableUpdates()
+			mutate(updates)
+			h, repo, _ := newAuthTestHandlers(t, updates)
+			rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, models.CodeRebootAuthUnsupported, errorCode(t, rec))
+			assert.NotEqual(t, "invalid_request", errorCode(t, rec), "[AC-016] distinct from invalid_request")
+			assertNoCommandCreated(t, repo, "[AC-016] a spoofable agent fact can only reject, never authorize")
+		})
+	}
+}
+
+func TestSendCommand_PF_AC016_NoTelemetryRejectedWithUnsupported(t *testing.T) {
+	const ticked = `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`
+	t.Run("[AC-016] no snapshot at all", func(t *testing.T) {
+		h, repo, tel := newAuthTestHandlers(t, nil)
+		h.telemetry = noRowsTelemetry{tel}
+		rec := postCommand(t, h, ticked)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Equal(t, models.CodeRebootAuthUnsupported, errorCode(t, rec))
+		assertNoCommandCreated(t, repo, "[AC-016]")
+	})
+	t.Run("[AC-016] snapshot without an updates section", func(t *testing.T) {
+		h, repo, tel := newAuthTestHandlers(t, nil)
+		tel.Snapshots["dev-1"] = []models.TelemetrySnapshot{{DeviceID: "dev-1", Timestamp: time.Now()}}
+		rec := postCommand(t, h, ticked)
+		assert.Equal(t, models.CodeRebootAuthUnsupported, errorCode(t, rec))
+		assertNoCommandCreated(t, repo, "[AC-016]")
+	})
+	t.Run("[AC-016] no telemetry source configured", func(t *testing.T) {
+		h, repo, _ := newAuthTestHandlers(t, nil)
+		h.telemetry = nil
+		rec := postCommand(t, h, ticked)
+		assert.Equal(t, models.CodeRebootAuthUnsupported, errorCode(t, rec))
+		assertNoCommandCreated(t, repo, "[AC-016]")
+	})
+}
+
+func TestSendCommand_PF_AC016_TelemetryErrorIs500NoCommand(t *testing.T) {
+	h, repo, tel := newAuthTestHandlers(t, rebootCapableUpdates())
+	tel.Err = errors.New("database down")
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), "failed to create command")
+	assertNoCommandCreated(t, repo, "[AC-016] a fault must not turn into an authorization")
+}
+
+func TestSendCommand_PF_AC037_StoredParamsShowAuthorizationAndIncludeRebootClass(t *testing.T) {
+	h, repo, _ := newAuthTestHandlers(t, rebootCapableUpdates())
+
+	rec := postCommand(t, h, `{"action":"os_update","params":{"mode":"full","reboot_if_required":true}}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var created models.Command
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	assert.Equal(t, true, created.Params["reboot_if_required"], "[AC-037] the response shows the authorization")
+	assert.Equal(t, true, created.Params["include_reboot_class"], "[AC-037] and the derived flag")
+	stored := onlyCommand(t, repo)
+	assert.Equal(t, true, stored.Params["reboot_if_required"])
+	assert.Equal(t, true, stored.Params["include_reboot_class"])
 }

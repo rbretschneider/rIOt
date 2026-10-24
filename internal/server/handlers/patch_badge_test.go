@@ -96,7 +96,7 @@ func TestPatchBadge_DecisionTable_RebootDateInWindowMode(t *testing.T) { // AC-0
 	b := computePatchBadge(in, badgeNow)
 	assert.Equal(t, badgeAutoRebootDate, b.Kind)
 	assert.Equal(t, "Auto (reboot on 2026-10-25)", b.Label)
-	assert.Equal(t, "Automatic on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+	assert.Equal(t, "The pending patch includes a kernel/GPU update; a reboot will be needed after it installs. It will happen automatically on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
 	require.NotNil(t, b.RebootAt)
 	assert.Equal(t, time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC), *b.RebootAt)
 	assert.Equal(t, "Yes. Next window starts 2026-10-25 03:00 UTC.", b.Explanation.Automatic)
@@ -481,23 +481,26 @@ func TestPatchBadge_ManualRebootNeeded_NoRebootClassUpdatePending(t *testing.T) 
 	assert.Equal(t, badgeNeedsYou, b.Kind)
 	assert.Equal(t, []string{reasonManualReboot}, reasonCodes(b))
 	r := findReason(t, b, reasonManualReboot)
-	assert.Contains(t, r.Text, "no kernel or GPU update is pending")
-	assert.Equal(t, "Reboot this host by hand.", r.Action)
-	assert.Equal(t, "Manual: you must reboot this host.", b.Explanation.Reboot)
+	assert.Contains(t, r.Text, "rIOt reboots automatically only after an automatic patch run installs a kernel or GPU update")
+	assert.Equal(t, "Reboot this host now.", r.Action)
+	assert.Equal(t, "Required now: reboot this host now; nothing will reboot it automatically.", b.Explanation.Reboot)
 }
 
 func TestPatchBadge_ManualRebootNeeded_AllowRebootOffCitesAllowReboot(t *testing.T) { // AC-015
 	in := healthyInput()
+	in.Updates.RebootRequired = true // NY-10 fires on a reboot required now (PATCH-FLOW-001)
 	in.Updates.PendingRebootClassCount = 2
 	in.Updates.AllowReboot = boolPtr(false)
 	r := findReason(t, computePatchBadge(in, badgeNow), reasonManualReboot)
 	assert.Contains(t, r.Text, "allow_reboot is off")
-	assert.NotContains(t, r.Text, "no kernel or GPU update is pending")
+	assert.NotContains(t, r.Text, "rIOt reboots automatically only after", "a pending kernel update exists, so that cause does not apply")
+	assert.Equal(t, "Reboot this host now, outside rIOt (commands.allow_reboot is off on the agent).", r.Action)
 }
 
 func TestPatchBadge_ManualRebootNeeded_PolicyNotGatedCitesPolicy(t *testing.T) { // AC-015
 	in := healthyInput()
 	in.OSPatch = windowPolicy("off")
+	in.Updates.RebootRequired = true
 	in.Updates.PendingRebootClassCount = 1
 	r := findReason(t, computePatchBadge(in, badgeNow), reasonManualReboot)
 	assert.Contains(t, r.Text, "reboot_class policy is not gated")
@@ -505,6 +508,7 @@ func TestPatchBadge_ManualRebootNeeded_PolicyNotGatedCitesPolicy(t *testing.T) {
 
 func TestPatchBadge_ManualRebootNeeded_AgentHoldRebootClassOffCitesAgent(t *testing.T) { // extension: agent never reboots without it
 	in := healthyInput()
+	in.Updates.RebootRequired = true
 	in.Updates.PendingRebootClassCount = 1
 	in.Updates.HoldRebootClass = boolPtr(false)
 	b := computePatchBadge(in, badgeNow)
@@ -522,6 +526,7 @@ func TestPatchBadge_ManualRebootNeeded_HoldRebootClassNotReportedCountsAsOK(t *t
 func TestPatchBadge_ManualRebootNeeded_AutoPatchOffCitesSetup(t *testing.T) { // AC-015
 	in := healthyInput()
 	in.AutoPatch = false
+	in.Updates.RebootRequired = true
 	in.Updates.PendingRebootClassCount = 1
 	b := computePatchBadge(in, badgeNow)
 	assert.Equal(t, []string{reasonAutoPatchOff, reasonManualReboot}, reasonCodes(b), "reasons are listed in NY order")
@@ -648,4 +653,256 @@ func TestPatchBadge_EveryReasonCodeHasATest(t *testing.T) {
 		assert.Equal(t, badgeNeedsYou, b.Kind, code)
 		assert.Contains(t, reasonCodes(b), code, "scenario for %q must raise it", code)
 	}
+}
+
+// --- PATCH-FLOW-001: "reboot needed" means required now ---
+
+const (
+	pfKernelLine = "The pending patch includes a kernel/GPU update; a reboot will be needed after it installs."
+	pfStaleNote  = "Package lists are out of date on this host. Pending updates will be recounted after the next refresh; running Patch refreshes the package lists first."
+)
+
+// pendingKernelNoAutoReboot is the AC-001 host: a kernel update is pending, no
+// reboot is required yet, lists are fresh and nothing will reboot the host by
+// itself (the reboot_class policy is not gated).
+func pendingKernelNoAutoReboot() patchBadgeInput {
+	in := healthyInput()
+	in.OSPatch = windowPolicy("off")
+	in.Updates.PendingUpdates = 7
+	in.Updates.PendingRebootClassCount = 1
+	in.Updates.ListsFreshness = models.ListsFresh
+	return in
+}
+
+// allBadgeText returns every string the badge can show an operator.
+func allBadgeText(b patchBadge) []string {
+	texts := []string{b.Label, b.Explanation.Automatic, b.Explanation.Reboot, b.Explanation.NeedsYouSummary, b.Explanation.AsOf}
+	texts = append(texts, b.Explanation.Notes...)
+	for _, r := range b.Explanation.NeedsYou {
+		texts = append(texts, r.Text, r.Action)
+	}
+	return texts
+}
+
+func TestPatchBadge_PF_AC001_PendingKernelRaisesNoManualReboot(t *testing.T) {
+	b := computePatchBadge(pendingKernelNoAutoReboot(), badgeNow)
+
+	assert.NotContains(t, reasonCodes(b), reasonManualReboot, "[AC-001] a pending kernel is not a reboot required now")
+	assert.Equal(t, badgeAuto, b.Kind)
+}
+
+func TestPatchBadge_PF_AC001_NoBadgeTextTellsToRebootWhenNotRequired(t *testing.T) {
+	cases := map[string]func(*patchBadgeInput){
+		"no automatic path": func(in *patchBadgeInput) {},
+		"allow_reboot off":  func(in *patchBadgeInput) { in.OSPatch = windowPolicy("gated"); in.Updates.AllowReboot = boolPtr(false) },
+		"auto-patch off":    func(in *patchBadgeInput) { in.OSPatch = windowPolicy("gated"); in.AutoPatch = false },
+		"hold_reboot_class off": func(in *patchBadgeInput) {
+			in.OSPatch = windowPolicy("gated")
+			in.Updates.HoldRebootClass = boolPtr(false)
+		},
+	}
+	for name, mutate := range cases {
+		t.Run("[AC-001] "+name, func(t *testing.T) {
+			in := pendingKernelNoAutoReboot()
+			mutate(&in)
+			for _, text := range allBadgeText(computePatchBadge(in, badgeNow)) {
+				assert.NotContains(t, strings.ToLower(text), "reboot this host", "[AC-001] no text may tell the operator to reboot: %q", text)
+			}
+		})
+	}
+}
+
+func TestPatchBadge_PF_AC002_PendingKernelDescribedAsFutureManualReboot(t *testing.T) {
+	b := computePatchBadge(pendingKernelNoAutoReboot(), badgeNow)
+
+	assert.Equal(t, pfKernelLine+" It will not happen automatically.", b.Explanation.Reboot)
+}
+
+func TestPatchBadge_PF_AC003_PendingKernelWithGatedAutoDescribedAsAutomatic(t *testing.T) {
+	t.Run("[AC-003] window mode is dated", func(t *testing.T) {
+		in := healthyInput()
+		in.Updates.PendingRebootClassCount = 1
+		b := computePatchBadge(in, badgeNow)
+		assert.Equal(t, pfKernelLine+" It will happen automatically on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+		assert.Equal(t, badgeAutoRebootDate, b.Kind)
+	})
+	t.Run("[AC-003] anytime mode says the date is unknown", func(t *testing.T) {
+		in := healthyInput()
+		in.OSPatch = anytimePolicy("gated")
+		in.Updates.PendingRebootClassCount = 1
+		b := computePatchBadge(in, badgeNow)
+		assert.Equal(t, pfKernelLine+" It will happen automatically, date Unknown: the reboot happens on the next automatic patch run and the time is not predicted.", b.Explanation.Reboot)
+		assert.Equal(t, badgeAutoRebootUnknown, b.Kind)
+	})
+	t.Run("[AC-003] unresolved needs-you items defer the date", func(t *testing.T) {
+		in := healthyInput()
+		in.Updates.PendingRebootClassCount = 1
+		in.Updates.OtherHolds = &models.OtherHolds{Status: models.FactStatusOK, Packages: []string{"nginx"}, Total: 1}
+		b := computePatchBadge(in, badgeNow)
+		assert.Equal(t, pfKernelLine+" It will happen automatically once the items below are resolved (date not shown).", b.Explanation.Reboot)
+		assert.Equal(t, badgeNeedsYou, b.Kind)
+	})
+}
+
+func TestPatchBadge_PF_AC004_RequiredNowRaisesManualRebootWithRebootNowAction(t *testing.T) {
+	in := healthyInput()
+	in.Updates.RebootRequired = true
+	b := computePatchBadge(in, badgeNow)
+
+	r := findReason(t, b, reasonManualReboot)
+	assert.Equal(t, "Reboot this host now.", r.Action)
+	assert.True(t, strings.HasPrefix(r.Text, "A reboot is required now and nothing will reboot this host automatically: "), r.Text)
+	assert.Equal(t, "Required now: reboot this host now; nothing will reboot it automatically.", b.Explanation.Reboot)
+	assert.Equal(t, badgeNeedsYou, b.Kind)
+}
+
+func TestPatchBadge_PF_AC004_CausesNeverClaimNoKernelPending(t *testing.T) {
+	for _, pending := range []int{0, 1} {
+		in := healthyInput()
+		in.OSPatch = windowPolicy("off")
+		in.Updates.RebootRequired = true
+		in.Updates.PendingRebootClassCount = pending
+		for _, text := range allBadgeText(computePatchBadge(in, badgeNow)) {
+			assert.NotContains(t, text, "no kernel or GPU update is pending", "[AC-004] FR-006: no cause may contradict the telemetry")
+		}
+	}
+}
+
+func TestPatchBadge_PF_AC004_CauseListNeverEmpty(t *testing.T) {
+	enforcements := []string{"", "active", "unsupported", "no_privilege"}
+	flags := []*bool{nil, boolPtr(true), boolPtr(false)}
+	checked := 0
+	for _, pending := range []int{0, 2} {
+		for _, policy := range []models.MaintenanceWindow{windowPolicy("gated"), windowPolicy("off"), anytimePolicy("gated")} {
+			for _, autoPatch := range []bool{true, false} {
+				for _, allow := range flags {
+					for _, hold := range flags {
+						for _, enforcement := range enforcements {
+							in := healthyInput()
+							in.AutoPatch, in.OSPatch = autoPatch, policy
+							in.Updates.RebootRequired = true
+							in.Updates.PendingRebootClassCount = pending
+							in.Updates.AllowReboot, in.Updates.HoldRebootClass, in.Updates.HoldEnforcement = allow, hold, enforcement
+							b := computePatchBadge(in, badgeNow)
+							for _, r := range b.Explanation.NeedsYou {
+								if r.Code != reasonManualReboot {
+									continue
+								}
+								checked++
+								causes := strings.TrimSuffix(strings.TrimPrefix(r.Text, "A reboot is required now and nothing will reboot this host automatically: "), ".")
+								assert.NotEmpty(t, causes, "[AC-004] the cause list must never be empty (%+v)", in.Updates)
+								if pending > 0 {
+									assert.NotContains(t, causes, "rIOt reboots automatically only after", "a pending kernel exists, so a cause from the automatic path must explain the gap")
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	require.NotZero(t, checked, "the table must exercise NY-10")
+}
+
+func TestPatchBadge_PF_AC004_RequiredNowCoveredByAutomaticPath(t *testing.T) {
+	in := healthyInput()
+	in.Updates.RebootRequired = true
+	in.Updates.PendingRebootClassCount = 1
+	b := computePatchBadge(in, badgeNow)
+
+	assert.NotContains(t, reasonCodes(b), reasonManualReboot)
+	assert.Equal(t, "Required now. Automatic on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+}
+
+func TestPatchBadge_PF_AC004_RequiredNowWithoutPatchSupportStillSaysRebootNow(t *testing.T) {
+	in := healthyInput()
+	in.Updates.PackageManager = "pacman"
+	in.Updates.RebootRequired = true
+	b := computePatchBadge(in, badgeNow)
+
+	assert.NotContains(t, reasonCodes(b), reasonManualReboot, "NY-10 needs a patchable host")
+	assert.Equal(t, "Required now: reboot this host now; nothing will reboot it automatically.", b.Explanation.Reboot)
+}
+
+func TestPatchBadge_PF_AC006_PendingOnlyIsNotRebootRequired(t *testing.T) {
+	b := computePatchBadge(pendingKernelNoAutoReboot(), badgeNow)
+
+	assert.NotEqual(t, "Required now", b.Explanation.Reboot)
+	assert.False(t, strings.HasPrefix(b.Explanation.Reboot, "Required now"), "[AC-006] the required-now wording is reserved for reboot_required")
+	assert.NotContains(t, reasonCodes(b), reasonManualReboot)
+}
+
+func TestPatchBadge_PF_AC028_StaleDropsPendingKernelWordingAndAddsNote(t *testing.T) {
+	in := pendingKernelNoAutoReboot()
+	in.OSPatch = windowPolicy("gated")
+	in.Updates.ListsFreshness = models.ListsStale
+	b := computePatchBadge(in, badgeNow)
+
+	for _, text := range allBadgeText(b) {
+		assert.NotContains(t, text, "kernel/GPU update", "[AC-028] the FR-004 wording is absent while stale")
+	}
+	assert.Equal(t, "Not needed.", b.Explanation.Reboot)
+	assert.Contains(t, b.Explanation.Notes, pfStaleNote)
+	assert.Equal(t, badgeAuto, b.Kind, "a stale count raises no auto-reboot date either")
+	assert.Nil(t, b.RebootAt)
+}
+
+func TestPatchBadge_PF_AC028_StaleRaisesNoPendingDerivedReason(t *testing.T) {
+	withPending := healthyInput()
+	withPending.Updates.ListsFreshness = models.ListsStale
+	withPending.Updates.PendingRebootClassCount = 3
+	withPending.OSPatch = windowPolicy("off")
+	without := withPending
+	updates := *withPending.Updates
+	updates.PendingRebootClassCount = 0
+	without.Updates = &updates
+
+	a := computePatchBadge(withPending, badgeNow)
+	c := computePatchBadge(without, badgeNow)
+
+	assert.Equal(t, reasonCodes(c), reasonCodes(a), "[AC-028] the pending list must not change the reasons while stale")
+	assert.Equal(t, c.Explanation.Reboot, a.Explanation.Reboot)
+}
+
+func TestPatchBadge_PF_AC028_StaleStillReportsARebootRequiredNow(t *testing.T) {
+	in := healthyInput()
+	in.Updates.ListsFreshness = models.ListsStale
+	in.Updates.RebootRequired = true
+	b := computePatchBadge(in, badgeNow)
+
+	assert.Contains(t, reasonCodes(b), reasonManualReboot, "reboot_required is not derived from the pending list")
+	assert.Contains(t, b.Explanation.Notes, pfStaleNote)
+}
+
+func TestPatchBadge_PF_AC028_FreshAndUnknownDoNotAddTheStaleNote(t *testing.T) {
+	for _, freshness := range []models.ListsFreshness{"", models.ListsFresh, models.ListsUnknown} {
+		in := healthyInput()
+		in.Updates.ListsFreshness = freshness
+		assert.NotContains(t, computePatchBadge(in, badgeNow).Explanation.Notes, pfStaleNote, "freshness %q", freshness)
+	}
+}
+
+func TestPatchBadge_PF_AC029_UnknownFreshnessKeepsTodaysPendingWording(t *testing.T) {
+	in := pendingKernelNoAutoReboot()
+	in.Updates.ListsFreshness = models.ListsUnknown
+	assert.Equal(t, pfKernelLine+" It will not happen automatically.", computePatchBadge(in, badgeNow).Explanation.Reboot)
+}
+
+func TestPatchBadge_PF_AC038_VermontBeforeRunNeverSaysRebootByHand(t *testing.T) {
+	// vermont before the run: 7 pending, 1 reboot-class pending, reboot_required
+	// false, holds active, allow_reboot true.
+	in := healthyInput()
+	in.OSPatch = windowPolicy("off")
+	in.Updates.PendingUpdates = 7
+	in.Updates.PendingRebootClassCount = 1
+	in.Updates.RebootRequired = false
+	in.Updates.HoldEnforcement = "active"
+	in.Updates.HeldPackages = []string{"linux-image-amd64"}
+	b := computePatchBadge(in, badgeNow)
+
+	assert.NotContains(t, reasonCodes(b), reasonManualReboot)
+	for _, text := range allBadgeText(b) {
+		assert.NotContains(t, strings.ToLower(text), "reboot this host", "[AC-038] %q", text)
+	}
+	assert.Equal(t, pfKernelLine+" It will not happen automatically.", b.Explanation.Reboot)
 }
