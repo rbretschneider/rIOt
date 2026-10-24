@@ -125,3 +125,17 @@ describe('[UIF AC-123] hostname not uppercased', () => {
     expect(link.className).not.toContain('uppercase')
   })
 })
+
+describe('[ALERT-OVERFLOW AC-001] long update failures remain readable', () => {
+  it('keeps the full message and acknowledge control inside a bounded table', async () => {
+    const message = 'Agent update failed: privileged update unavailable; ' + 'long_unbroken_asset_path_'.repeat(30)
+    vi.mocked(api.getEvents).mockResolvedValue([event({ message, container_name: 'container_'.repeat(50) })] as never)
+    renderWithProviders(<Alerts />)
+    const cell = (await screen.findByText(message)).closest('td') as HTMLElement
+    const table = screen.getByRole('table')
+    expect(table).toHaveClass('table-fixed')
+    expect(cell).toHaveClass('[overflow-wrap:anywhere]', 'whitespace-pre-wrap')
+    expect(within(cell.closest('tr') as HTMLElement).getByTitle('Acknowledge')).toBeVisible()
+    expect(cell).toHaveTextContent(message)
+  })
+})

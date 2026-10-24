@@ -859,3 +859,20 @@ func TestSEC004_TriggerUpdate_NonNewerAdvertisedVersionIsRefusedBeforeAnyDownloa
 		})
 	}
 }
+
+func TestUpdateInstallAC001_PreflightRefusalPreservesStagingAndDoesNotDownload(t *testing.T) {
+	fx := newReleaseFixture(t)
+	for _, path := range fx.stagedFiles() {
+		require.NoError(t, os.WriteFile(path, []byte("existing staged material"), 0600))
+	}
+	fx.pipeline.preflight = func(context.Context) error { return errors.New("one-time root installer migration required") }
+	// Even invalid URLs must never be fetched when the installation is unsupported.
+	err := fx.pipeline.run(context.Background(), ":invalid", ":invalid", ":invalid", fx.suffix)
+	require.ErrorContains(t, err, "one-time root installer migration")
+	for _, path := range fx.stagedFiles() {
+		data, e := os.ReadFile(path)
+		require.NoError(t, e)
+		assert.Equal(t, "existing staged material", string(data))
+	}
+	assert.Empty(t, fx.runner.recorded())
+}
