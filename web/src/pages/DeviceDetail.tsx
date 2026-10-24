@@ -18,6 +18,8 @@ import { formatBytes, formatDuration } from '../utils/format'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
 import PatchBadge from '../components/PatchBadge'
+import { PatchConfirmOptions } from '../components/PatchConfirmOptions'
+import { STALE_PATCH_HINT, devicePatchState, rebootOption, staleSecurityNote } from '../utils/patchFlow'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
 import ActivityLog from '../components/ActivityLog'
@@ -68,6 +70,9 @@ export default function DeviceDetail() {
   const toast = useToast()
   const { zoneOpts } = useTimePreference()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
+  // PATCH-FLOW-001: the Patch dialog's reboot opt-in. Reset by the open handler and by
+  // onClose, never persisted, so every opening starts unchecked (FR-009).
+  const [rebootIfRequired, setRebootIfRequired] = useState(false)
   // SEC-002: the delete scope (agent uninstall or record-only) is fixed when the
   // dialog opens, so the message the operator reads is the request that is sent.
   const [deleteScope, setDeleteScope] = useState<{ uninstall: boolean } | null>(null)
@@ -195,6 +200,28 @@ export default function DeviceDetail() {
   // PATCH-GATE: GPU driver update blast radius + hold-enforcement health.
   const gpuContainerCount = tel?.docker?.containers?.filter(c => c.uses_gpu).length ?? 0
   const holdEnforcementBroken = tel?.updates?.hold_enforcement === 'no_privilege' || tel?.updates?.hold_enforcement === 'unsupported'
+  // PATCH-FLOW-001: which of Patch / Reboot is the primary action, from data already loaded.
+  const patchState = devicePatchState(tel?.updates)
+  const staleSecurity = staleSecurityNote(tel?.updates)
+  const openPatchDialog = () => {
+    setRebootIfRequired(false)
+    setConfirmAction('os_update')
+  }
+  const closeConfirmDialog = () => {
+    setRebootIfRequired(false)
+    setConfirmAction(null)
+  }
+
+  // The reboot opt-in is sent only when the box is ticked and the telemetry still allows it.
+  const confirmParams = (action: string): Record<string, unknown> => {
+    if (action !== 'os_update') {
+      return {}
+    }
+    if (rebootIfRequired && rebootOption(tel?.updates).enabled) {
+      return { mode: 'full', reboot_if_required: true }
+    }
+    return { mode: 'full' }
+  }
 
   // Download Summary: fetch Markdown, create a Blob URL, trigger download.
   const handleDownloadSummary = async () => {
@@ -260,15 +287,35 @@ export default function DeviceDetail() {
               >
                 {agentUpdateSent ? 'Update Sent' : 'Update Agent'}
               </button>
-              {tel?.updates && tel.updates.pending_updates > 0 && (
+              {patchState.primary === 'reboot' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setConfirmAction('reboot')}
+                    disabled={commandMutation.isPending || patchState.rebootDisabledReason !== null}
+                    aria-describedby={patchState.rebootDisabledReason ? 'reboot-now-reason' : undefined}
+                  >
+                    Reboot now
+                  </Button>
+                  {patchState.rebootDisabledReason && (
+                    <span id="reboot-now-reason" className="text-xs text-text-muted">
+                      {patchState.rebootDisabledReason}
+                    </span>
+                  )}
+                </div>
+              )}
+              {patchState.showPatch && (
                 <button
-                  onClick={() => setConfirmAction('os_update')}
+                  onClick={openPatchDialog}
                   disabled={commandMutation.isPending}
+                  title={patchState.freshness === 'stale' ? STALE_PATCH_HINT : undefined}
                   className="px-3 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 border border-cyan-800/50 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Patch ({tel.updates.pending_updates})
+                  {patchState.patchLabel}
                 </button>
               )}
+              {staleSecurity && <span className="text-xs text-danger-fg">{staleSecurity}</span>}
               <label className="flex items-center gap-1.5 ml-2 cursor-pointer" title="Automatically apply OS patches when updates are detected">
                 <span className="text-xs text-gray-500">Auto-patch</span>
                 <button
@@ -550,12 +597,16 @@ export default function DeviceDetail() {
         pendingLabel={confirmAction === 'reboot' ? 'Rebooting…' : confirmAction === 'shutdown' ? 'Shutting down…' : confirmAction === 'os_update' ? 'Patching…' : 'Updating…'}
         onConfirm={() => {
           const action = confirmAction!
-          return commandMutation.mutateAsync({ action, params: action === 'os_update' ? { mode: 'full' } : {} })
+          return commandMutation.mutateAsync({ action, params: confirmParams(action) })
         }}
         successToast={cmd => commandSentTitle(confirmAction!, device.hostname, cmd.status)}
         onSuccess={() => { if (confirmAction === 'agent_update') setAgentUpdateSent(true) }}
-        onClose={() => setConfirmAction(null)}
-      />
+        onClose={closeConfirmDialog}
+      >
+        {confirmAction === 'os_update' && (
+          <PatchConfirmOptions updates={tel?.updates} checked={rebootIfRequired} onChange={setRebootIfRequired} />
+        )}
+      </ConfirmDialog>
       <ConfirmDialog
         open={deleteScope !== null}
         variant="danger"
