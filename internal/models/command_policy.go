@@ -93,9 +93,26 @@ func ExpiresAt(action string, now, windowEnd time.Time) time.Time {
 	return exp
 }
 
+// Reboot budget (REBOOT-DPKG-001 AD-004). A reboot waits for the dpkg lock for
+// at most DpkgLockWaitBound before it is skipped, so it needs a larger budget
+// than shutdown, which does not wait. The queued TTL is deliberately unchanged:
+// it bounds undelivered commands only.
+const (
+	// DpkgLockWaitBound is the longest one reboot attempt waits for the dpkg lock
+	// (BR-004). All three reboot paths share it.
+	DpkgLockWaitBound = 10 * time.Minute
+	// RebootAgentHardMax is the agent's time budget for a standalone reboot: the
+	// wait bound plus room for the guards and the final lock check.
+	RebootAgentHardMax = DpkgLockWaitBound + 2*time.Minute
+	// RebootExecDeadline is the server's wait for a reboot result. It exceeds
+	// RebootAgentHardMax + DeadlineSlack.
+	RebootExecDeadline = 20 * time.Minute
+)
+
 // ExecDeadline is how long after dispatch the server waits for a result before
 // declaring timed_out. nTargets matters only for docker_bulk_update
-// (min(35m*N + 5m, 6h), with N < 1 treated as 1).
+// (min(35m*N + 5m, 6h), with N < 1 treated as 1). reboot is 20m because it may
+// wait up to 10m for the dpkg lock; shutdown stays at 10m.
 func ExecDeadline(action string, nTargets int) time.Duration {
 	if action == "docker_remove_items" {
 		return 10 * time.Minute
@@ -105,6 +122,9 @@ func ExecDeadline(action string, nTargets int) time.Duration {
 	}
 	switch ActionClass(action) {
 	case ClassPower:
+		if action == ActionReboot {
+			return RebootExecDeadline
+		}
 		return 10 * time.Minute
 	case ClassOSPatch:
 		return 40 * time.Minute
@@ -182,7 +202,7 @@ func BulkAgentBudget(nTargets int) time.Duration {
 // AgentHardMax is the longest the agent may spend executing action (the value
 // the DeadlineInvariant is checked against).
 //
-//	power 1m, os_update 31m30s, enable_auto_updates 5m,
+//	reboot 12m, shutdown 1m, os_update 31m30s, enable_auto_updates 5m,
 //	docker_update 29m55s, docker_bulk_update deadline-5m30s,
 //	agent_update 9m, other 9m.
 func AgentHardMax(action string, nTargets int) time.Duration {
@@ -194,6 +214,9 @@ func AgentHardMax(action string, nTargets int) time.Duration {
 	}
 	switch ActionClass(action) {
 	case ClassPower:
+		if action == ActionReboot {
+			return RebootAgentHardMax
+		}
 		return time.Minute
 	case ClassOSPatch:
 		if action == ActionEnableAutoUpdates {
