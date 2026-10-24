@@ -25,6 +25,7 @@ func realProbeEnv(lockPath string) dpkgProbeEnv {
 		LockPaths:   []string{lockPath},
 		DpkgMarkers: nil,
 		StatID:      statFileID,
+		Readlink:    os.Readlink,
 		Open:        platformOpen,
 		ProcRoot:    "/proc",
 		Now:         time.Now,
@@ -56,11 +57,27 @@ func lockTempFile(t *testing.T) (string, func()) {
 	return path, unlock
 }
 
+// requireInitPidNamespace skips, with a logged reason, a test that needs the real
+// probe to see the whole host when the test process itself runs in a private pid
+// namespace (a Docker run). There the probe correctly refuses, so the real-/proc
+// tests cannot assert Held.
+func requireInitPidNamespace(t *testing.T) {
+	t.Helper()
+	link, err := os.Readlink("/proc/self/ns/pid")
+	if err != nil {
+		t.Skipf("cannot read /proc/self/ns/pid (%v): the probe would refuse here, as designed", err)
+	}
+	if link != initPidNamespaceLink {
+		t.Skipf("the test process runs in a private pid namespace (%s, not %s): the probe would refuse here, as designed", link, initPidNamespaceLink)
+	}
+}
+
 func requireProcLocks(t *testing.T) {
 	t.Helper()
 	if _, err := os.Stat("/proc/locks"); err != nil {
 		t.Skipf("/proc/locks is not available here: %v", err)
 	}
+	requireInitPidNamespace(t)
 }
 
 func TestDpkgLock_RD_AC002_RealProcLocksSeesFcntlLockOnTempFile(t *testing.T) {
@@ -107,6 +124,7 @@ func TestDpkgLock_RD_AC021_RealProbeWorksUnprivileged(t *testing.T) {
 }
 
 func TestDpkgLock_RD_C1_RealSelfStatusIsInitialNamespace(t *testing.T) {
+	requireInitPidNamespace(t)
 	data, err := os.ReadFile("/proc/self/status")
 	require.NoError(t, err)
 	levels, ok := parseNSpid(string(data))
@@ -136,4 +154,13 @@ func TestStatFileID_RD_AC002_ReportsDeviceAndInode(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, uint64(info.Sys().(*syscall.Stat_t).Ino), id.Ino, "[AC-002] the inode comes from stat")
+}
+
+func TestDpkgLock_RD_C1_RealSelfNsPidIsInit(t *testing.T) {
+	requireInitPidNamespace(t)
+
+	link, err := os.Readlink("/proc/self/ns/pid")
+
+	require.NoError(t, err, "[C-1] a process can always read its own pid namespace link")
+	assert.Equal(t, initPidNamespaceLink, link, "[C-1] the initial pid namespace is the fixed nsfs inode PROC_PID_INIT_INO")
 }

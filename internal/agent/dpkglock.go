@@ -65,14 +65,16 @@ type procLock struct {
 type dpkgLockState int
 
 const (
+	// dpkgLockUnknown: the state cannot be determined; the reboot is skipped. It is
+	// deliberately the zero value, so a zero or hand-built dpkgLockStatus{} fails
+	// closed instead of reading as absent.
+	dpkgLockUnknown dpkgLockState = iota
 	// dpkgLockAbsent: this is not a dpkg host (no lock files and no dpkg).
-	dpkgLockAbsent dpkgLockState = iota
+	dpkgLockAbsent
 	// dpkgLockFree: the lock files exist and nothing holds them.
 	dpkgLockFree
 	// dpkgLockHeld: a process holds a dpkg lock.
 	dpkgLockHeld
-	// dpkgLockUnknown: the state cannot be determined; the reboot is skipped.
-	dpkgLockUnknown
 )
 
 // dpkgLockStatus is the outcome of one lock check.
@@ -120,7 +122,8 @@ type dpkgProbeEnv struct {
 	DpkgMarkers []string                          // /var/lib/dpkg/status, /usr/bin/dpkg
 	StatID      func(path string) (fileID, error) // errors.Is(err, fs.ErrNotExist) = absent
 	Open        func(path string) (io.ReadCloser, error)
-	ProcRoot    string // "/proc": reads <root>/locks, <root>/self/status, <root>/<pid>/{comm,status}
+	Readlink    func(path string) (string, error) // production: os.Readlink
+	ProcRoot    string                            // "/proc": reads <root>/self/ns/pid, <root>/self/status, <root>/locks, <root>/<pid>/{comm,status}
 	Now         func() time.Time
 }
 
@@ -163,6 +166,20 @@ func probeDpkgLock(env dpkgProbeEnv) dpkgLockStatus {
 
 	// The /proc we read must show the whole host's locks (C-1 a): the kernel
 	// omits locks whose holder has no pid in the reader's namespace.
+	// Primary check: the agent is in the initial pid namespace. NSpid alone cannot
+	// say so, because it counts levels from the namespace of the /proc mount: an
+	// agent in a private pid namespace with its own /proc sees one field.
+	link, err := env.Readlink(env.ProcRoot + "/self/ns/pid")
+	if err != nil {
+		return dpkgUnknown("cannot verify the pid namespace: %v", err)
+	}
+	if !isPidNamespaceLink(link) {
+		return dpkgUnknown("cannot verify the pid namespace: unexpected link")
+	}
+	if link != initPidNamespaceLink {
+		return dpkgUnknown("%s", causeNotHostPidNS)
+	}
+	// Secondary check: NSpid still refuses an ancestor's /proc bind-mounted in front of the agent.
 	selfStatus, err := readSmallFile(env, env.ProcRoot+"/self/status")
 	if err != nil {
 		return dpkgUnknown("cannot verify the pid namespace: %v", err)
@@ -249,6 +266,18 @@ func probeDpkgLock(env dpkgProbeEnv) dpkgLockStatus {
 		}
 	}
 	return held
+}
+
+// initPidNamespaceLink is what readlink(/proc/self/ns/pid) returns in the initial
+// pid namespace: PROC_PID_INIT_INO (0xEFFFFFFC), a fixed kernel constant since
+// Linux 3.8. Every other pid namespace gets a dynamically allocated inode.
+const initPidNamespaceLink = "pid:[4026531836]"
+
+// isPidNamespaceLink reports whether link has the form pid:[<decimal>].
+func isPidNamespaceLink(link string) bool {
+	const prefix = "pid:["
+	return strings.HasPrefix(link, prefix) && strings.HasSuffix(link, "]") &&
+		len(link) > len(prefix)+1 && isDecimal(link[len(prefix):len(link)-1])
 }
 
 // readSmallFile reads at most dpkgSmallReadMax bytes of path. When the file is

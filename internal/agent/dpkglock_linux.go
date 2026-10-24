@@ -40,6 +40,7 @@ func platformDpkgProbe(now func() time.Time) dpkgLockStatus {
 			}
 			return f, nil
 		},
+		Readlink: os.Readlink,
 		ProcRoot: "/proc",
 		Now:      now,
 	})

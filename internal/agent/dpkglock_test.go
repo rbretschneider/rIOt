@@ -49,6 +49,11 @@ type fakeDpkgHost struct {
 	opened   []string
 	onOpen   func(path string)
 
+	// links answers Readlink; a path in linkErrs fails, a path in neither is not-exist.
+	links     map[string]string
+	linkErrs  map[string]error
+	readlinks []string
+
 	clock time.Time
 	tick  time.Duration
 }
@@ -68,6 +73,8 @@ func newFakeDpkgHost() *fakeDpkgHost {
 		},
 		openErrs: map[string]error{},
 		readers:  map[string]func() io.Reader{},
+		links:    map[string]string{"/proc/self/ns/pid": initPidNamespaceLink},
+		linkErrs: map[string]error{},
 		clock:    time.Date(2026, 10, 24, 3, 0, 0, 0, time.UTC),
 	}
 	return h
@@ -101,6 +108,16 @@ func (h *fakeDpkgHost) env() dpkgProbeEnv {
 				return io.NopCloser(strings.NewReader(content)), nil
 			}
 			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		},
+		Readlink: func(path string) (string, error) {
+			h.readlinks = append(h.readlinks, path)
+			if err := h.linkErrs[path]; err != nil {
+				return "", err
+			}
+			if target, ok := h.links[path]; ok {
+				return target, nil
+			}
+			return "", &fs.PathError{Op: "readlink", Path: path, Err: fs.ErrNotExist}
 		},
 		ProcRoot: "/proc",
 		Now: func() time.Time {
@@ -734,6 +751,7 @@ func TestDpkgProbe_RD_AC012_NoDpkgNoLockFilesIsAbsentWithoutReadingProc(t *testi
 
 	assert.Equal(t, dpkgLockAbsent, got.State, "[AC-012] a host without dpkg is absent")
 	assert.Empty(t, h.opened, "[AC-012] neither self/status nor /proc/locks is read on a host without dpkg")
+	assert.Empty(t, h.readlinks, "[AC-012] the pid namespace link is not read on a host without dpkg")
 }
 
 // ---------------------------------------------------------------------------
@@ -873,4 +891,106 @@ func TestProbeDpkg_RD_AC021_SeamDefaultsToPlatformProbe(t *testing.T) {
 	a := &Agent{dpkgLockProbe: func() dpkgLockStatus { return scripted }}
 
 	assert.Equal(t, scripted, a.probeDpkg(), "[AC-021] a test probe replaces the platform probe")
+}
+
+// ---------------------------------------------------------------------------
+// C-1 (revision 3): the initial pid namespace is identified by its fixed inode
+// ---------------------------------------------------------------------------
+
+func TestDpkgProbe_RD_C1_InitPidNamespaceLinkPasses(t *testing.T) {
+	h := newFakeDpkgHost()
+	h.setLocks("1: POSIX  ADVISORY  WRITE 5 08:01:99 0 EOF")
+
+	got := h.probe()
+
+	assert.Equal(t, dpkgLockFree, got.State, "[C-1] pid:[4026531836] with one NSpid field proceeds to /proc/locks")
+	assert.Contains(t, h.opened, "/proc/locks", "[C-1] /proc/locks is read once the namespace is verified")
+	assert.Equal(t, []string{"/proc/self/ns/pid"}, h.readlinks, "[C-1] the link is read from the same /proc root")
+}
+
+// This is the case revision 2 missed: a private pid namespace that mounts its own
+// /proc shows a single NSpid field, so only the namespace link can tell.
+func TestDpkgProbe_RD_C1_NonInitPidNamespaceLinkIsUnknown(t *testing.T) {
+	h := newFakeDpkgHost()
+	h.links["/proc/self/ns/pid"] = "pid:[4026532481]"
+	h.files["/proc/self/status"] = "Name:\triot-agent\nNSpid:\t1\n"
+	h.setLocks("1: POSIX  ADVISORY  WRITE 5 08:01:99 0 EOF") // no match: would read as free
+
+	got := h.probe()
+
+	assert.Equal(t, dpkgLockUnknown, got.State, "[C-1] a private pid namespace must be unknown, not free")
+	assert.Equal(t, "agent is not in the host pid namespace", got.Cause, "[C-1] cause")
+	assert.NotContains(t, h.opened, "/proc/locks", "[C-1] a /proc that cannot show the host's locks is never read")
+}
+
+func TestDpkgProbe_RD_C1_PidNamespaceLinkUnreadableIsUnknown(t *testing.T) {
+	cases := map[string]error{
+		"link missing":      &fs.PathError{Op: "readlink", Path: "/proc/self/ns/pid", Err: fs.ErrNotExist},
+		"permission denied": &fs.PathError{Op: "readlink", Path: "/proc/self/ns/pid", Err: fs.ErrPermission},
+	}
+	for name, linkErr := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newFakeDpkgHost()
+			h.linkErrs["/proc/self/ns/pid"] = linkErr
+
+			got := h.probe()
+
+			assert.Equal(t, dpkgLockUnknown, got.State, "[C-1] an unreadable namespace link must be unknown")
+			assert.Contains(t, got.Cause, "cannot verify the pid namespace", "[C-1] cause")
+			assert.NotContains(t, h.opened, "/proc/locks", "[C-1] /proc/locks is not read")
+		})
+	}
+}
+
+func TestDpkgProbe_RD_C1_MalformedPidNamespaceLinkIsUnknown(t *testing.T) {
+	for _, link := range []string{"", "pid:[]", "pid:[abc]", "net:[4026531836]", "pid:[4026531836]x", "pid:4026531836", "pid:[-4026531836]"} {
+		t.Run(link, func(t *testing.T) {
+			h := newFakeDpkgHost()
+			h.links["/proc/self/ns/pid"] = link
+
+			got := h.probe()
+
+			assert.Equal(t, dpkgLockUnknown, got.State, "[C-1] a link that is not pid:[<decimal>] must be unknown")
+			assert.Equal(t, "cannot verify the pid namespace: unexpected link", got.Cause, "[C-1] the value is not echoed in the cause")
+			assert.NotContains(t, h.opened, "/proc/locks", "[C-1] /proc/locks is not read")
+		})
+	}
+}
+
+func TestDpkgProbe_RD_C1_InitLinkButNestedNSpidIsUnknown(t *testing.T) {
+	h := newFakeDpkgHost()
+	h.files["/proc/self/status"] = "Name:\triot-agent\nNSpid:\t4242\t1\n" // an ancestor's /proc bind-mounted in front
+	h.setLocks("1: POSIX  ADVISORY  WRITE 5 08:01:99 0 EOF")
+
+	got := h.probe()
+
+	assert.Equal(t, dpkgLockUnknown, got.State, "[C-1] the secondary NSpid check still applies")
+	assert.Equal(t, "agent is not in the host pid namespace", got.Cause, "[C-1] cause")
+}
+
+func TestReadSmallFile_RD_C1_NoCompleteLineReturnsEmpty(t *testing.T) {
+	h := newFakeDpkgHost()
+	h.files["/proc/self/status"] = strings.Repeat("x", dpkgSmallReadMax+100) // one line, no newline, over the cap
+
+	got, err := readSmallFile(h.env(), "/proc/self/status")
+
+	require.NoError(t, err)
+	assert.Equal(t, "", got, "[C-1] a capped read with no complete line returns nothing, so a cut line is never parsed")
+}
+
+func TestReadSmallFile_RD_C1_WithinCapReturnsEverything(t *testing.T) {
+	h := newFakeDpkgHost()
+	h.files["/proc/self/status"] = "Name:\tx\nNSpid:\t7"
+
+	got, err := readSmallFile(h.env(), "/proc/self/status")
+
+	require.NoError(t, err)
+	assert.Equal(t, "Name:\tx\nNSpid:\t7", got, "[C-1] within the cap the content is returned whole")
+}
+
+func TestDpkgLockState_RD_C1_ZeroValueIsUnknown(t *testing.T) {
+	var zero dpkgLockStatus
+
+	assert.Equal(t, dpkgLockUnknown, zero.State, "[C-1] a zero or hand-built status must fail closed, not read as absent")
+	assert.Equal(t, dpkgLockState(0), dpkgLockUnknown, "[C-1] dpkgLockUnknown is the zero value")
 }

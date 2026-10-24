@@ -38,6 +38,10 @@ const (
 // gate saw them held (C-1 c): the state is no longer trustworthy.
 const causeLockFilesVanished = "dpkg lock files disappeared during the wait"
 
+// causeStateNotRecognized is the cause when a status carries no cause of its own,
+// for example a zero or hand-built dpkgLockStatus.
+const causeStateNotRecognized = "lock state not recognized"
+
 // errRebootNotCleared is returned by execReboot for a permit the gate did not
 // mint for this attempt.
 var errRebootNotCleared = errors.New("reboot refused: no dpkg-lock clearance for this attempt")
@@ -150,8 +154,6 @@ func (a *Agent) awaitRebootClearance(ctx context.Context, path, commandID string
 		}
 		st := a.probeDpkg()
 		switch st.State {
-		case dpkgLockUnknown:
-			return skip(skipLockUnknown, st.Cause)
 		case dpkgLockAbsent, dpkgLockFree:
 			if st.State == dpkgLockAbsent && sawHeld {
 				return skip(skipLockUnknown, causeLockFilesVanished)
@@ -187,8 +189,12 @@ func (a *Agent) awaitRebootClearance(ctx context.Context, path, commandID string
 				}
 				return skip(skipGuard, guardBudgetExpired)
 			}
-		default:
-			return skip(skipLockUnknown, "unexpected lock state")
+		default: // dpkgLockUnknown, the zero value, and any value outside the four states
+			cause := st.Cause
+			if cause == "" {
+				cause = causeStateNotRecognized
+			}
+			return skip(skipLockUnknown, cause)
 		}
 	}
 }
