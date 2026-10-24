@@ -107,7 +107,7 @@ Every reboot the rIOt agent starts runs as root and does not check whether a pac
   - Individual lock checks must not be logged above debug level.
   - Nothing grows with the length of the wait.
 - **NFR-003 [Bounded reads]:** Each lock check must read no more than 1 MiB of lock-holder information and must finish within 1 second. If either bound is exceeded, the lock state is unknown (FR-010).
-- **NFR-004 [Accepted residual]:** A gap of milliseconds between the final lock check and the start of the system shutdown is accepted. A package process that takes the lock in that gap can still be interrupted.
+- **NFR-004 [Accepted residual]:** A gap of sub-second to a few seconds (security review INFO-3) between the final lock check and the start of the system shutdown is accepted. A package process that takes the lock in that gap can still be interrupted.
 - **NFR-005 [Compatibility]:** The post-patch paths must need no server change. Results, events and telemetry must keep their existing shapes. Only additive fields or message text are allowed.
 - **NFR-006 [Testability]:** Every FR must be verifiable by a unit test, without a real dpkg lock, a real reboot or real elapsed time.
 
@@ -260,7 +260,7 @@ Every reboot the rIOt agent starts runs as root and does not check whether a pac
 - dnf, rpm, pacman, apk or other package-manager locks.
 - Any UI change. Outcomes appear in the existing command result, event and log surfaces.
 - Automatic retry of a skipped reboot, by the agent or by a later maintenance window (OQ-005).
-- Closing the millisecond gap between the final check and the start of shutdown (NFR-004).
+- Closing the sub-second-to-seconds gap between the final check and the start of shutdown (NFR-004).
 - Changing the authorized path's phase A result text (OQ-004).
 - Repairing an already-interrupted dpkg (the `updates` collector self-heal is a separate item).
 
