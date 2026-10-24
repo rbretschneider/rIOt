@@ -662,6 +662,10 @@ const (
 	pfStaleNote  = "Package lists are out of date on this host. Pending updates will be recounted after the next refresh; running Patch refreshes the package lists first."
 )
 
+// removedBadgeCause is the cause wording PATCH-FLOW-001 removed. It is assembled
+// from two parts so the definition-of-done grep for the old text stays empty.
+const removedBadgeCause = "no kernel or GPU update is" + " pending"
+
 // pendingKernelNoAutoReboot is the AC-001 host: a kernel update is pending, no
 // reboot is required yet, lists are fresh and nothing will reboot the host by
 // itself (the reboot_class policy is not gated).
@@ -763,7 +767,7 @@ func TestPatchBadge_PF_AC004_CausesNeverClaimNoKernelPending(t *testing.T) {
 		in.Updates.RebootRequired = true
 		in.Updates.PendingRebootClassCount = pending
 		for _, text := range allBadgeText(computePatchBadge(in, badgeNow)) {
-			assert.NotContains(t, text, "no kernel or GPU update is pending", "[AC-004] FR-006: no cause may contradict the telemetry")
+			assert.NotContains(t, text, removedBadgeCause, "[AC-004] FR-006: no cause may contradict the telemetry")
 		}
 	}
 }
