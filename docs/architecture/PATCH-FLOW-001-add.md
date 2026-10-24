@@ -732,8 +732,12 @@ path resolution is unchanged.
 
 **Claim algorithm**, under `rebootIntentMu`, on every call:
 1. Non-canonical `id` → `claimPersistFailed` (unchanged rejection).
-2. Load the file. A missing file means an empty store. A read or parse error → `claimPersistFailed` with no reboot
-   (today's fail-closed behavior; see residual R-6).
+2. Load the file. A missing file means an empty store. A read error, an unparseable file, or a file over 64 KiB (never
+   read whole) is a *corrupt* store. A corrupt store fails closed (`claimPersistFailed`, no reboot) only while it could
+   hold an intent younger than `rebootIntentMinKeep`, judged from the file's own last-write time (a future or
+   unreadable time counts as young). Once older than that, the claim keeps the bad content as one bounded (64 KiB)
+   set-aside copy `patch-reboot-intents.json.corrupt` (overwriting any earlier copy), starts an empty v2 store and
+   proceeds (security review C-1; residual R-6).
 3. **Prune.** Drop entries with claim time earlier than `now - rebootIntentMaxAge`.
    - Clock guard: if any entry's claim time is more than `rebootIntentSkew` after `now`, the clock has moved
      backwards. That call prunes and evicts nothing, and the entries are kept.
@@ -1073,7 +1077,8 @@ shows "Package lists out of date — refresh pending". The next Patch run refres
 | Telemetry read error | 500 `failed to create command` | `slog.Error("os_update authorization: latest telemetry", device_id, error)` |
 | Agent: non-bool param | precheck failure `reboot_if_required must be a boolean` | existing command-failed Warn |
 | Intent store: save failure | no reboot; suffix `suppressed (reboot intent could not be recorded)` | existing Warn |
-| Intent store: parse error | no reboot (fail-closed); suffix `suppressed (reboot intent could not be recorded)` | Warn (one per claim) |
+| Intent store: corrupt or oversized, last written within 72 h | no reboot (fail-closed); suffix `suppressed (reboot intent could not be recorded)`; one agent warning event | Warn (one per claim) |
+| Intent store: corrupt or oversized, last written over 72 h ago | one bounded set-aside copy, new empty store, claim proceeds | Warn (one per heal) |
 | Intent store: full within 72 h | no reboot; suffix `suppressed (reboot intent store full)` | Warn (one per claim) |
 | Intent store: entries pruned or evicted | claim proceeds | one Info |
 | Phase B host busy, shutdown, maintenance busy, `execReboot` error | no reboot; one warning agent event; telemetry trigger | Warn |
@@ -1123,9 +1128,11 @@ shows "Package lists out of date — refresh pending". The next Patch run refres
   - **R-4:** Delivery-wait timeout reboots with the result still queued. It is durable and delivered after boot.
   - **R-5:** An agent downgraded after reporting the capability falls back to PATCH-GATE semantics. It also cannot
     parse the v2 intent file and fails closed: no post-patch reboots.
-  - **R-6:** A corrupt intent file still fails closed, so post-patch reboots are suppressed until the file is fixed. It
-    is never reset automatically, because that would break at-most-once. Each claim attempt logs a Warn. Growth and the
-    256-entry exhaustion are fixed by AD-012.
+  - **R-6 (revised by security review C-1):** A corrupt intent file fails closed only for 72 hours after its last write,
+    the window in which it could still hold an intent whose command can be redelivered. After that the next claim keeps
+    one bounded set-aside copy and starts a fresh store, so post-patch reboots resume with no operator action. Each
+    suppressed claim logs a Warn and raises one agent warning event (C-2). Growth and the 256-entry exhaustion are
+    fixed by AD-012.
 
 ## 11. Performance Considerations
 
@@ -1173,7 +1180,8 @@ shows "Package lists out of date — refresh pending". The next Patch run refres
      the normal agent update (AD-008).
    - The widened `reboot_required` (kernel comparison, and older-kernel-booted hosts).
    - The stale label and its self-healing.
-   - The reboot-intent retention: 30 days, with a 72-hour floor, and the corrupt-file fail-closed behavior (AD-012).
+   - The reboot-intent retention: 30 days, with a 72-hour floor, and the corrupt-file behavior: fail closed for 72 hours
+     after the last write, then self-heal with one set-aside copy `patch-reboot-intents.json.corrupt` (AD-012, C-1).
 10. **Verify on a real Debian 13 host** (vermont is ideal) and record the results in the implementation report:
     1. A no-change `sudo apt-get update` leaves the `/var/lib/apt/lists` mtime unchanged. This confirms why the helper
        stamp exists.
