@@ -239,6 +239,9 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 				a.abortPostPatchReboot(r.RebootCommandID, guardBusyPrefix+blocker)
 				return
 			}
+			// REBOOT-DPKG-001: no operator waits on a result here, so a skip is reported
+			// as a warning event (AD-005). The goroutine holds the host reservation for
+			// the wait, and a skip is never retried.
 			c := a.awaitRebootClearance(a.commandContext(), "post_patch", r.RebootCommandID, a.commonRebootGuards(r.RebootCommandID))
 			if !c.Cleared {
 				a.abortPostPatchReboot(r.RebootCommandID, c.reason())

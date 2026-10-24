@@ -57,6 +57,7 @@
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
 - **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
+- **Reboots wait for the package manager** — every agent-initiated reboot on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot is skipped and reported, never forced. No `install.sh` re-run or sudoers change is needed; upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Dashboard navigation
@@ -2166,7 +2167,8 @@ Once a command is `dispatched`, the execution deadline runs from the dispatch ti
 
 | Command class | Actions | Queued TTL | Execution deadline |
 |---|---|---|---|
-| Power | `reboot`, `shutdown` | 15 minutes | 10 minutes |
+| Power: reboot | `reboot` | 15 minutes | 20 minutes (a reboot can wait up to 10 minutes for the dpkg lock, see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock)) |
+| Power: shutdown | `shutdown` | 15 minutes | 10 minutes |
 | OS patch | `os_update`, `enable_auto_updates` | 30 minutes | 40 minutes |
 | Docker update | `docker_update` | 60 minutes | 35 minutes |
 | Docker bulk update | `docker_bulk_update` | 60 minutes | min(35 minutes × number of targets + 5 minutes, 6 hours) |
@@ -2363,7 +2365,7 @@ When both opt-ins are active and the OS-patch window opens with reboot-class upd
 1. The agent releases **only its own** holds (operator-created `apt-mark hold`s are never touched), recording a crash-recovery marker first.
 2. The package manager applies updates.
 3. Holds are re-applied against the updated package set on **every** exit path — success, upgrade failure, or crash.
-4. If a reboot-class package's version actually changed **and** `allow_reboot` is true, the agent reports the result (stating which reboot-class packages were applied and that a reboot was initiated) and then reboots. If `allow_reboot` is false, it raises `reboot_required` instead. No reboot occurs if only standard packages were applied.
+4. If a reboot-class package's version actually changed **and** `allow_reboot` is true, the agent reports the result (stating which reboot-class packages were applied and that a reboot was initiated) and then reboots once the dpkg lock is free. It waits up to 10 minutes for the lock; if the lock stays held, the reboot is skipped and a warning event says why (see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock)). If `allow_reboot` is false, it raises `reboot_required` instead. No reboot occurs if only standard packages were applied.
 
 Outside the window, holds keep GPU driver and kernel packages pinned, so a casual `apt upgrade` or `unattended-upgrades` skips them.
 
@@ -2527,6 +2529,7 @@ The dialog also says what happens to pending kernel and GPU driver updates. It s
 4. If a reboot is required and `commands.allow_reboot` is still `true`, the agent records its single reboot for this command, then states the decision in the result.
 5. The agent queues the result, then waits at least 2 seconds. It waits up to 30 seconds more for the server to confirm it has the result. Then it reboots. If the server stays unreachable, the reboot proceeds anyway and the queued result is delivered after boot.
 6. The agent checks `commands.allow_reboot`, the host lock and the maintenance state once more immediately before it reboots. A failed check cancels the reboot, raises one warning event on the device and refreshes telemetry.
+7. On a dpkg host, the agent then waits up to 10 minutes for the dpkg lock before it reboots. If the lock stays held, or its state is unknown, the reboot is skipped and a warning event says why. The result from step 4 is already sent and still says `reboot started: yes`. The warning event is the final word. See [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock).
 
 A command causes at most one reboot. It cannot loop: each reboot needs a new, ticked dispatch by an operator.
 
@@ -2636,6 +2639,127 @@ The agent records every reboot it starts or refuses after a patch in `patch-rebo
 | Logging | One Info line per claim that removed entries. One Warn line per refused claim. |
 
 An agent downgraded after it wrote the version 2 file cannot read it, and refuses post-patch reboots until you delete the file. Downgrades are not supported.
+
+---
+
+## Reboots and the dpkg lock
+
+> **Upgrade the server before the agents (REBOOT-DPKG-001).** A new agent can wait up to 10 minutes before it reboots. An old server gives a reboot 10 minutes in total. If the lock frees in the last minute, the old server marks the command `timed_out` and rejects the late result, but the host still reboots. Agents install new releases on their own (every 6 hours by default, see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing)), and an old server that sees the new release can offer it to them. Upgrade the server as soon as the release is published. If a reboot shows `timed_out`, check the host's uptime before you send another one.
+
+Every reboot the agent starts waits until no process holds the dpkg lock, so a reboot never cuts through a running `apt`, `dpkg` or unattended upgrade. The wait applies to hosts that have dpkg (Debian, Ubuntu and derivatives). A host without dpkg, and any Windows or macOS host, reboots as before with no wait.
+
+The change needs no install step. The check runs as the unprivileged `riot` user with no sudo and no new sudoers rule, so no `install.sh` re-run is needed. No configuration key, collector or environment variable changes. It ships with the normal agent update.
+
+### Which reboots wait
+
+| Reboot | Started by | Waits |
+|---|---|---|
+| Standalone reboot | The **Reboot** command in the Power menu, **Reboot now**, or `action: reboot` through the API | Yes |
+| Authorized post-patch reboot | A manual Patch with **Reboot automatically if the patch requires it** ticked | Yes |
+| Automatic post-patch reboot | The OS-patch maintenance window, after reboot-class packages were applied | Yes |
+| Shutdown | The **Shutdown** command | No. Shutdown is not gated. A later story may add it. |
+
+### How the wait works
+
+1. The agent checks the lock. A free lock adds no delay and no log line.
+2. If the lock is held, the agent logs one line and checks again every 2 seconds. The wait ends 10 minutes after the first check that found the lock held. One reboot attempt has one wait.
+3. When the lock looks free, the agent re-checks `commands.allow_reboot`, whether the agent is shutting down, and the host maintenance state. Then it checks the lock once more. The reboot starts only if that last check is also free.
+4. If the lock is taken again, the wait continues under the same 10-minute limit.
+5. At the limit, or when the lock state is unknown, the agent skips the reboot. It never forces the reboot and never retries by itself. Send a new reboot, or patch again, when you want another attempt.
+6. When the agent service stops, a waiting reboot ends within a few seconds and is reported as skipped.
+
+A standalone reboot holds the host's command slot while it waits. Another host-level command on the same device (`os_update`, `shutdown`, `agent_update`) conflicts until the reboot ends. A post-patch reboot keeps the host reservation for up to about 10.5 minutes.
+
+### How the agent detects the lock
+
+The agent never opens or takes the dpkg lock files, which only root can read. Each check does this:
+
+1. It looks up the device and inode of `/var/lib/dpkg/lock-frontend` and `/var/lib/dpkg/lock` with `stat`.
+2. It confirms that it runs in the host (initial) pid namespace.
+3. It reads `/proc/locks` and looks for a lock on either file. A waiting lock request does not count.
+4. If a lock matches, it reads the holder's name from `/proc/<pid>/comm` and its user id from `/proc/<pid>/status`.
+
+A check reads at most 1 MiB of `/proc/locks` and takes at most 1 second. If `stat` reports an anonymous device (btrfs, some overlay or tmpfs roots), the inode alone decides the match and the report says `inode-only match`. That path has not been verified on real hardware.
+
+### When the agent cannot tell, it skips
+
+The agent reboots only when it can show the lock is free. These cases skip the reboot at once, with no wait. On a host without dpkg, none of them applies.
+
+| Case | Cause text in the report |
+|---|---|
+| The agent is not in the initial pid namespace, for example `PrivatePIDs=yes` in its unit, or a container. Its `/proc/locks` would not show every holder. | `agent is not in the host pid namespace` |
+| The agent cannot read its own pid namespace link, or the value is malformed | `cannot verify the pid namespace: <detail>` |
+| dpkg is present (`/var/lib/dpkg/status` or `/usr/bin/dpkg` exists) but both lock files are missing or hidden. This includes a non-Debian host that has the `dpkg` binary installed. | `dpkg is installed but its lock files are missing or hidden` |
+| The lock files disappear while the agent waits | `dpkg lock files disappeared during the wait` |
+| `/proc/locks` cannot be read (`ProcSubset=pid` in the unit hides it), or a line is longer than 4 KiB | `cannot read /proc/locks: <error>` |
+| `/proc/locks` is larger than 1 MiB | `lock information exceeds 1 MiB` |
+| `/proc/locks` has a line the agent does not recognize | `unrecognized /proc/locks line <n>` |
+| A check takes longer than 1 second | `lock check exceeded 1s` |
+| `stat` fails with an error other than "not found" | `cannot stat <path>: <error>` |
+
+The shipped units (`scripts/riot-agent.service` and the unit that `install.sh` writes) set none of `PrivatePIDs=`, `ProtectProc=` or `ProcSubset=`. A test checks both. Do not add `PrivatePIDs=yes` or `ProcSubset=pid` to the agent unit: every reboot on a dpkg host would then skip. Run the agent on the host, not in a container, if reboots must work.
+
+### What you see
+
+**Standalone reboot.** The command result carries one of these messages:
+
+| Outcome | Status | Message |
+|---|---|---|
+| Lock free | `success` | `reboot initiated` |
+| Lock freed after a wait | `success` | `reboot initiated after waiting <duration> for the dpkg lock` |
+| Held for 10 minutes | `failed` | `reboot skipped: dpkg lock held past the timeout (10m), <holder>` |
+| State unknown | `failed` | `reboot skipped: dpkg lock state unknown: <cause>` |
+| Agent stopping | `failed`, reason `shutdown` | `reboot skipped: agent shutting down` |
+| A guard failed | `failed`, reason `conflict` when the host is busy | `reboot skipped: guard failed: <guard>` |
+
+`<guard>` is `commands.allow_reboot is off`, `host busy: <what is running>`, or `agent command time budget exhausted`. A skip is not a timeout: it never shows the "Timed out: outcome unknown" label. When `commands.allow_reboot` is `false`, the reboot fails before the wait with the existing message `reboot not allowed by agent config (set commands.allow_reboot: true)`.
+
+**Post-patch reboots.** A skipped authorized or automatic post-patch reboot raises one warning event on the device and refreshes telemetry, so the host keeps showing that a reboot is required:
+
+```
+authorized reboot for command <command-id> was not started: <reason>
+post-patch reboot for command <command-id> was not started: <reason>
+```
+
+`<reason>` is `dpkg lock held past the timeout (10m), <holder>`, `dpkg lock state unknown: <cause>`, `agent shutting down`, or a guard text. The first line is the manual Patch with the box ticked. The second is the maintenance-window reboot. The event during an agent shutdown is best effort. The skip is also written to the agent log as a `WARN` line (`os_update: authorized reboot not started` or `os_update: post-patch reboot not started`).
+
+**The holder.** Reports name the holder in one of these forms:
+
+```
+held by unattended-upgr (pid 1234, uid 0)
+holder not visible (pid 1234, uid 0)
+holder not visible
+```
+
+An inode-only match adds `, inode-only match` inside the brackets. The name is the first 16 characters of the process name, with every character outside letters, digits and `. _ + : -` replaced by `?`.
+
+**Agent log.** A reboot that waits writes exactly two `INFO` lines and nothing per check: `dpkg lock held, waiting before reboot` and `dpkg lock wait ended`. The second has the fields `path` (`reboot`, `post_patch` or `authorized_post_patch`), `command_id`, `outcome` (`cleared`, `lock_timeout`, `lock_unknown`, `shutdown` or `guard`), `waited` and `holder`.
+
+### Time limits
+
+| Limit | Value |
+|---|---|
+| Wait for the lock, per reboot attempt | 10 minutes |
+| Check interval | 2 seconds |
+| Agent time budget for a standalone reboot | 12 minutes |
+| Server execution deadline for a standalone reboot | 20 minutes |
+| Queued expiry for a reboot | 15 minutes, unchanged |
+| Agent time budget and server deadline for shutdown | 1 minute and 10 minutes, unchanged |
+
+The server stores the 20-minute deadline in `exec_deadline_s` (`1200`) when it creates a reboot. A reboot created before the server upgrade keeps `600`. If an agent dies during a wait, the server marks the command `timed_out` about 20 minutes after dispatch.
+
+### Local users can block reboots
+
+Any local user on a managed host can delay or block rIOt reboots. For example, a user can hold enough byte-range locks to push `/proc/locks` past 1 MiB. On a filesystem that reports an anonymous device, a user can also make a lock on their own file match the inode number of a dpkg lock file. This is the price of failing closed. Each skip is reported with the holder's name, pid and uid.
+
+A process can choose its own name, so do not trust the name alone. A real package manager holds the lock as `uid 0`. When a skip names another uid, or a name that does not match the pid's process, investigate that host.
+
+### Known limits
+
+- A waiting reboot cannot be cancelled from the dashboard. It can start up to 10 minutes after you sent it. Stopping the agent ends the wait.
+- A gap of up to a few seconds remains between the final lock check and the moment systemd begins the shutdown. A package process that takes the lock in that gap can still be interrupted.
+- Shutdown is not gated.
+- The result of a ticked Patch is written before the wait. Its `reboot started: yes` can be followed by a skip. Read the warning event.
 
 ---
 

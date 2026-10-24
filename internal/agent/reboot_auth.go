@@ -232,6 +232,10 @@ func (a *Agent) rebootAfterDelivery(id string) {
 		a.abortAuthorizedReboot(id, "commands.allow_reboot is off")
 		return
 	}
+	// REBOOT-DPKG-001: the checks above fail fast. The gate then waits, bounded, for
+	// the dpkg lock and re-runs the same guards before it clears. The host
+	// reservation stays held for the wait (about 10.5 minutes at most), and a
+	// skip is never retried.
 	c := a.awaitRebootClearance(ctx, "authorized_post_patch", id, a.commonRebootGuards(id))
 	if !c.Cleared {
 		a.abortAuthorizedReboot(id, c.reason())

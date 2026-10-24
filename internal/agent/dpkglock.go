@@ -249,6 +249,9 @@ func probeDpkgLock(env dpkgProbeEnv) dpkgLockStatus {
 		return dpkgLockStatus{State: dpkgLockFree, UID: -1}
 	}
 
+	// Naming the holder is best effort: a holder that cannot be read (another user's
+	// /proc entry, a pid that exited) leaves the name or uid blank but never turns
+	// a proven Held into Unknown (FR-018).
 	held := dpkgLockStatus{State: dpkgLockHeld, PID: match.PID, UID: -1, InodeOnly: matchedOnly}
 	if match.PID > 0 {
 		// The path comes from the parsed integer only, never from the raw token (C-5).

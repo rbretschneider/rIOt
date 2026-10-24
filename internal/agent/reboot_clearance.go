@@ -149,12 +149,17 @@ func (a *Agent) awaitRebootClearance(ctx context.Context, path, commandID string
 	}
 
 	for {
+		// Poll shuttingDown instead of relying on ctx: on SIGTERM the command
+		// context is cancelled only after the 20s grace period, and the post-patch
+		// goroutines are not tracked by the command wait group (FR-013).
 		if a.shuttingDown.Load() {
 			return skip(skipShutdown, guardShuttingDown)
 		}
 		st := a.probeDpkg()
 		switch st.State {
 		case dpkgLockAbsent, dpkgLockFree:
+			// C-1 c: a lock that was held and then vanishes means the lock files were
+			// deleted or hidden, not released. "Absent" never clears after a "held".
 			if st.State == dpkgLockAbsent && sawHeld {
 				return skip(skipLockUnknown, causeLockFilesVanished)
 			}
@@ -172,6 +177,9 @@ func (a *Agent) awaitRebootClearance(ctx context.Context, path, commandID string
 			}
 			return cleared()
 		case dpkgLockHeld:
+			// A lock taken again after the guards passed (FR-012, AC-014) keeps the same
+			// wait deadline and sends the attempt back through the guards, so they
+			// are always evaluated against the state just before the reboot.
 			sawHeld, guardsPassed = true, false
 			holder = st.holderText()
 			now := a.clock().Now()
