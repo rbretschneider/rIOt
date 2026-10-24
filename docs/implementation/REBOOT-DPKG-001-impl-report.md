@@ -3,7 +3,7 @@
 - **Story ID:** REBOOT-DPKG-001
 - **Engineer:** Senior Dev Agent (Opus 5.5)
 - **Date:** 2026-10-24
-- **Branch:** `feat/reboot-dpkg-001` (not pushed, not tagged). Base: `679499e` (ADD revision 2).
+- **Branch:** `feat/reboot-dpkg-001` (not pushed, not tagged). Base: `679499e` (ADD revision 2). Updated for ADD revision 3 (`2e20d21`), see "Revision 3 delta".
 - **Detected stack:**
   - Backend and agent: Go 1.24 (`go.mod`), chi v5, pgx v5, `log/slog`, golang-migrate. No new dependency, `go.mod` and `go.sum` unchanged.
   - Frontend: React 19 + TypeScript, Vite, Tailwind, vitest. Not touched.
@@ -22,7 +22,10 @@ Commits (oldest first, all end with the required `Co-Authored-By` line):
 | `fd74818` | feat: add the dpkg lock probe and the shared reboot gate |
 | `e76ac4b` | feat: gate all three reboot paths on the dpkg lock |
 | `6168c58` | test: check every execReboot reference and the permit minting by AST |
-| (docs) | docs: blockers file and implementation report |
+| `bf4f5ec` | docs: implementation report and blockers note |
+| `a88461f` | fix: identify the initial pid namespace by its link, and fail closed on a zero status (ADD revision 3) |
+| `39e134a` | test: a zero lock status skips every reboot path as unknown |
+| (docs) | docs: implementation report updated for revision 3 |
 
 | File | Action | Notes |
 |---|---|---|
@@ -49,7 +52,7 @@ Explicitly unchanged, confirmed with `git diff --stat 679499e..HEAD`: `go.mod`, 
 
 ## Security conditions
 
-- **C-1** `probeDpkgLock` returns `Unknown` for a nested pid namespace (`NSpid` with more than one field), for an unreadable or `NSpid`-less `self/status`, and for a dpkg host (`/var/lib/dpkg/status` or `/usr/bin/dpkg`) with both lock files missing. `Absent` only means "not a dpkg host" and reads nothing under `/proc`. The gate turns `Held` then `Absent` into `Unknown`. `TestAgentUnit_RD_C1_NoPrivatePIDs` checks both unit files. **See ARCH-QUESTION 1 below: the `NSpid` check does not detect a namespace that mounts its own `/proc`.**
+- **C-1** `probeDpkgLock` returns `Unknown` unless `readlink(<ProcRoot>/self/ns/pid)` equals `pid:[4026531836]` (revision 3; an unreadable link is `cannot verify the pid namespace`, a malformed one `unexpected link`, any other namespace `agent is not in the host pid namespace`), for a nested pid namespace (`NSpid` with more than one field, kept as a second check), for an unreadable or `NSpid`-less `self/status`, and for a dpkg host (`/var/lib/dpkg/status` or `/usr/bin/dpkg`) with both lock files missing. `Absent` only means "not a dpkg host" and reads nothing under `/proc`. The gate turns `Held` then `Absent` into `Unknown`. `TestAgentUnit_RD_C1_NoPrivatePIDs` checks both unit files. A zero or hand-built status is `Unknown` too (`dpkgLockUnknown` is now the zero value).
 - **C-2** Holder text carries the uid and marks inode-only matches; exact strings are tested.
 - **C-3** `execReboot(rebootPermit)` refuses a zero, used or stale permit with `errRebootNotCleared` before anything runs. The AST test checks every reference, including method values and method expressions, and that a permit is built and minted only inside the gate path.
 - **C-4** Documentation item (technical writer): upgrade the server first.
@@ -84,15 +87,15 @@ Go test names carry `RD_ACnnn` or `RD_Cn`; assertion messages start with `[AC-nn
 | AC-019 | `reboot_clearance_test.go` | `RD_AC019_FullWaitBoundedOutput`, `…PostPatchSkipProducesOneEventOneTelemetry` (2), `…WaitLogLinesCarryContext` | PASS |
 | AC-020 | `reboot_callsites_test.go`, `command_policy_test.go`, `reboot_clearance_test.go` | `RebootAuth_PF_C8_ExecRebootHasExactlyThreeGuardedCallSites` (assertions kept, plus a reference count), `RebootCallSites_RD_AC020_GateClearanceFeedsEveryExecReboot`, `…ShutdownHasNoGate`, `CommandPolicy_RD_AC020_ShutdownBudgetUnchanged`, `HandleReboot_RD_AC020_PreGateAllowRebootOffIsUnchanged` | PASS |
 | AC-021 | `dpkglock_test.go`, `reboot_clearance_test.go`, `dpkglock_linux_test.go` | `DpkgProbe_RD_AC021_NoExecNoSudo`, `ProbeDpkg_RD_AC021_SeamDefaultsToPlatformProbe`, `RebootClearance_RD_AC021_GateRunsNoProcessExceptTheReboot`, Linux `DpkgLock_RD_AC021_RealProbeWorksUnprivileged` (skipped as root) | PASS |
-| C-1 | `dpkglock_test.go`, `dpkglock_linux_test.go` | `AgentUnit_RD_C1_NoPrivatePIDs`, `ParseNSpid_RD_C1_CountsNamespaceLevels`, `ReadSmallFile_RD_C1_CutNSpidLineIsNeverTrusted`, Linux `DpkgLock_RD_C1_RealSelfStatusIsInitialNamespace` | PASS |
+| C-1 | `dpkglock_test.go`, `reboot_clearance_test.go`, `dpkglock_linux_test.go` | `DpkgProbe_RD_C1_*` (init link passes, non-init link, unreadable link, malformed link, init link with nested NSpid), `DpkgLockState_RD_C1_ZeroValueIsUnknown`, `RebootClearance_RD_C1_ZeroStatusSkipsAsUnknownOnAllThreePaths`, `ReadSmallFile_RD_C1_NoCompleteLineReturnsEmpty`, Linux `DpkgLock_RD_C1_RealSelfNsPidIsInit`, `AgentUnit_RD_C1_NoPrivatePIDs`, `ParseNSpid_RD_C1_CountsNamespaceLevels`, `ReadSmallFile_RD_C1_CutNSpidLineIsNeverTrusted`, Linux `DpkgLock_RD_C1_RealSelfStatusIsInitialNamespace` | PASS |
 | C-2 | `dpkglock_test.go` | `DpkgProbe_RD_C2_HolderTextCarriesUidAndInodeOnly` (6), `…NonRootHolderUidReported`, `ParseStatusUID_RD_C2_ParsesRealUidOnly` | PASS |
 | C-3 | `reboot_clearance_test.go`, `reboot_callsites_test.go` | `ExecReboot_RD_C3_NonClearedPermitStartsNoReboot` (4 sub), `…ClearedPermitStartsExactlyOnce`, `…RefusalRunsNothing`, `RebootCallSites_RD_C3_MethodValueReferenceIsFlagged` (6 sub), `…PermitMintedOnlyByGate` | PASS |
 | C-5 | `dpkglock_test.go` | `SanitizeHolderName_RD_C5_CharsetAndLength` (8 sub) plus the C-5 rows under AC-002, AC-006 and AC-011 | PASS |
 | C-8 (kept) | `reboot_callsites_test.go` | assertions unchanged (three callers, each `AllowReboot`-guarded) | PASS |
 
 Counts:
-- **New tests:** 101 new top-level Go test functions plus their sub-tests. 95 run on Windows; the 6 in `dpkglock_linux_test.go` compile only on Linux (the 1 in `dpkglock_other_test.go` runs on Windows).
-- **Go (Windows, `go test -count=1 -v ./...`):** 2,098 top-level and 1,992 sub-tests PASS, 0 FAIL, 48 SKIP (all pre-existing, platform- or Postgres-gated; none is an `RD_` test). The 6 Linux-only tests are not in this count.
+- **New tests:** 111 new top-level Go test functions plus their sub-tests (101 in the first pass, 10 for revision 3). 104 run on Windows; the 7 in `dpkglock_linux_test.go` compile only on Linux (the 1 in `dpkglock_other_test.go` runs on Windows).
+- **Go (Windows, `go test -count=1 -v ./...`):** 2,107 top-level and 2,004 sub-tests PASS, 0 FAIL, 48 SKIP (all pre-existing, platform- or Postgres-gated; none is an `RD_` test). The 7 Linux-only tests are not in this count. Before revision 3: 2,098 and 1,992.
 - **Web:** 95 files, 1,707 tests passed (unchanged, no web change).
 - **Mutation spot checks** (changes made to the source and reverted; each was caught by a named test): ignoring `sawHeld` (`HeldThenAbsent`), dropping the `NSpid` check (`NestedPidNamespaceIsUnknown`), not refusing a dpkg host with no lock files (`DpkgStatusPresent…`, `DpkgBinaryPresent…`), skipping the guards (`FreeRunsGuardsThenFinalProbe`, `AC013`), removing the permit check (all `C3` tests), exact match relaxed to inode-only for every major (`BlockDeviceRequiresExactDevice`), and removing the reader cap (`ReaderStopsAtCap`).
 
@@ -107,13 +110,15 @@ Counts:
 `go test -count=1 -v ./internal/agent ./internal/models ./internal/server/commands -run 'RD_|PF_C8|AC029_ExecDeadlineTable|AC029_ExpiresAtPerActionClass|DeadlineInvariant'`:
 
 ```
-102 top-level PASS, 0 FAIL, 153 sub-tests PASS
+111 top-level PASS, 0 FAIL, 165 sub-tests PASS
 ok  	github.com/DesyncTheThird/rIOt/internal/agent
 ok  	github.com/DesyncTheThird/rIOt/internal/models
 ok  	github.com/DesyncTheThird/rIOt/internal/server/commands
 ```
 
-### 2. Full Go suite, Windows (`go test -count=1 -v ./...`, final state)
+### 2. Full Go suite, Windows (`go test -count=1 -v ./...`)
+
+After revision 3 (HEAD): exit 0, 29 packages `ok`, 0 failed; `internal/agent` 17.876s, `internal/models` 0.637s, `internal/server/commands` 1.751s, `internal/server/handlers` 10.499s. The package list below is the first-pass run (same 29 packages, all `ok`).
 
 ```
 ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	0.493s
@@ -151,8 +156,8 @@ ok  	github.com/DesyncTheThird/rIOt/scripts	0.423s
 ### 3. Linters, builds, web
 
 ```
-go vet ./...                                   clean (exit 0)
-GOOS=linux GOARCH=amd64 go vet ./internal/agent/ ./internal/models/    clean (compiles the Linux-only tests)
+go vet ./...                                   clean (exit 0), re-run after revision 3
+GOOS=linux go vet ./...                        clean (exit 0), re-run after revision 3 (compiles the Linux-only tests)
 go build ./cmd/riot-agent for linux/amd64, linux/386, linux/arm64, linux/armv7, linux/armv6,
   darwin/amd64, darwin/arm64, windows/amd64   all 8 targets ok (the make build-agent-all set)
 gofmt (CRLF stripped) on every file changed since 679499e: clean, except internal/agent/commands_test.go,
@@ -176,19 +181,37 @@ $ git diff --stat 679499e..HEAD -- go.mod go.sum scripts web cmd/riot-server/mig
 **Pending.** ADD §12 note 11 needs a real host, and this task did not deploy or touch Hawaii. The orchestrator (Clod) will run a cross-compiled probe check on Hawaii (Debian 13, ext4, as the `riot` user) after this work:
 
 1. at rest the probe returns `Free`;
-2. `/proc/self/status` `NSpid` has one field;
+2. `readlink /proc/self/ns/pid` is `pid:[4026531836]` and `/proc/self/status` `NSpid` has one field;
 3. while `/var/lib/dpkg/lock-frontend` is held for 30 s the probe returns `Held` with comm, pid and `uid 0`;
 4. the `stat` device and inode equal the `/proc/locks` line.
 
 Only Hawaii's ext4 (device 259:2) has been sampled. **The inode-only (major-0) path is unverified on real hardware.** The anonymous-device fixture in `TestProcLocks_RD_AC002_AnonymousDeviceMatchesOnInodeAndMarksInodeOnly` is synthetic; no managed host with btrfs, ZFS or an overlay root is known. A real major-0 sample should be added as a fixture if one is ever taken. The standalone reboot during a held lock (note 11.3) is Ryan's to trigger.
 
+## Revision 3 delta
+
+ADD revision 3 (`2e20d21`) resolved the two architect questions of the first version of this report (`docs/architecture/REBOOT-DPKG-001-blockers.md`). Implemented in commits `a88461f` (fix) and `39e134a` (test).
+
+- **Pid namespace (C-1 a).** `probeDpkgLock` step 4 reads `Readlink(<ProcRoot>/self/ns/pid)` first (`initPidNamespaceLink = "pid:[4026531836]"`, `PROC_PID_INIT_INO`).
+  - An error reads as `cannot verify the pid namespace: <err>`.
+  - A value that is not `pid:[<decimal>]` reads as `cannot verify the pid namespace: unexpected link`; the value is not echoed.
+  - A well-formed other namespace reads as `agent is not in the host pid namespace`, and `/proc/locks` is not opened.
+  - The `NSpid` check follows as a second check. A non-dpkg host (`Absent`) still reads and links nothing.
+  - `dpkgProbeEnv.Readlink` is `os.Readlink` in `dpkglock_linux.go`; every fake env supplies `pid:[4026531836]` by default.
+- **Zero value.** `dpkgLockUnknown` is now `iota` 0. The gate's `default` case covers `Unknown` and any out-of-range value, with the cause `lock state not recognized` when the status carries none.
+- **Tests.**
+  - New: `DpkgProbe_RD_C1_InitPidNamespaceLinkPasses`, `…NonInitPidNamespaceLinkIsUnknown` (single-field `NSpid`, no match, `/proc/locks` not opened: the case revision 2 missed), `…PidNamespaceLinkUnreadableIsUnknown` (ENOENT, EACCES), `…MalformedPidNamespaceLinkIsUnknown` (7 values), `…InitLinkButNestedNSpidIsUnknown`.
+  - New: `ReadSmallFile_RD_C1_NoCompleteLineReturnsEmpty`, `…WithinCapReturnsEverything`, `DpkgLockState_RD_C1_ZeroValueIsUnknown`, `RebootClearance_RD_C1_ZeroStatusSkipsAsUnknownOnAllThreePaths`.
+  - Linux: `DpkgLock_RD_C1_RealSelfNsPidIsInit` and the `requireInitPidNamespace(t)` helper, now called by `requireProcLocks` and the real `NSpid` test, so Docker runs skip with a reason.
+  - A mutation that removed the link comparison made `NonInitPidNamespaceLinkIsUnknown` fail.
+- **Counts.** Go on Windows: 2,098 to 2,107 top-level tests (+9), 1,992 to 2,004 sub-tests; one more Linux-only test (7 in total). Web unchanged at 1,707.
+
 ## Deviations from ADD
 
-None changes the API contract, a security property or a file outside ADD §4 apart from the two docs files. Items 1 and 2 need an architect decision.
+None changes the API contract, a security property or a file outside ADD §4 apart from the two docs files. Nothing is open: revision 3 resolved items 1 and 2 and accepted 3 to 8.
 
-1. **ARCH-QUESTION: the `NSpid` check does not detect a private pid namespace with its own `/proc` (C-1 a).** Written up in `docs/architecture/REBOOT-DPKG-001-blockers.md`. The kernel prints `NSpid` from the namespace of the `/proc` mount being read down to the task's own, so an agent in a private pid namespace (`PrivatePIDs=yes`, a container) reading its own `/proc` sees one field, passes the check, and reads a `/proc/locks` that omits the host's holders (fail open). The check does refuse the reverse case (an ancestor's `/proc`). Implemented as written; latent today because no shipped unit sets `PrivatePIDs=` and `TestAgentUnit_RD_C1_NoPrivatePIDs` guards that. Suggested fix: also require `readlink /proc/self/ns/pid` to equal `pid:[4026531836]` (the kernel constant for the initial namespace), which needs no privilege. It adds one function to `dpkgProbeEnv`.
-2. **ADD internal inconsistency on `_` in holder names.** AD-001, §10 and the security review list `[A-Za-z0-9._+:-]` (underscore kept); the §8 C-5 test row lists `_` among characters mapped to `?`. Implemented the charset (underscore kept) and the test asserts it. A one-line change if `_` should go.
-3. **Commit order.** ADD §12 note 1 lists the probe and the gate as separate commits. They are one commit (`fd74818`) because `TestDpkgLock_RD_AC018_NoLockingCallsInSource` scans `reboot_clearance.go` too, so the probe alone would not have a green suite.
+1. **Resolved (ADD revision 3): the `NSpid` check could not detect a private pid namespace with its own `/proc`.** The kernel prints `NSpid` from the namespace of the `/proc` mount being read, so such an agent saw one field and passed. See "Revision 3 delta" for the fix.
+2. **Resolved: `_` in holder names.** The ADD §8 row was corrected; `_` is kept, as implemented.
+3. **Commit order (accepted in revision 3).** ADD §12 note 1 lists the probe and the gate as separate commits. They are one commit (`fd74818`) because `TestDpkgLock_RD_AC018_NoLockingCallsInSource` scans `reboot_clearance.go` too, so the probe alone would not have a green suite. For the same reason the revision 3 `fix` commit (`a88461f`) also carries the probe test files, whose fixtures must supply the new `Readlink` input; the `test` commit (`39e134a`) holds the remaining gate test.
 4. **`readSmallFile` cuts a capped read back to its last complete line.** The ADD caps the `self/status` read at 8 KiB. Without the cut, a status text cut inside the `NSpid:` line (for example after `NSpid:\t4242\t`) would read as one level. Covered by `ReadSmallFile_RD_C1_CutNSpidLineIsNeverTrusted`.
 5. **Strictness choices the ADD leaves open:** a blank `/proc/locks` line is unrecognized (`Unknown`); the gate's `switch` has a `default` that fails closed (`Unknown`) for a state value outside the four defined.
 6. **Stricter reader-cap assertion.** `ReaderStopsAtCap` asserts at most 1 MiB + 1 byte served (the ADD allows one extra buffer fill), so it detects a missing `io.LimitReader`.
@@ -198,8 +221,8 @@ None changes the API contract, a security property or a file outside ADD §4 apa
 ## Notes for QA
 
 - **Linux-only tests were compiled, not run.** `dpkglock_linux_test.go` (real `/proc/locks`, `FcntlFlock`, `self/status`) cannot run on this Windows box. `GOOS=linux go vet` compiles it. It needs a Linux run (CI, or Docker `golang:1.24`). The race detector was not run either (no CGO toolchain here); the CI `go test -race` run is the check. Shared test state is guarded by a mutex or touched by one goroutine, and post-patch results are read only after the goroutine's last act (the reservation release).
-- **The sandbox's own pid namespace.** `TestDpkgLock_RD_C1_RealSelfStatusIsInitialNamespace` skips with a logged reason when `NSpid` shows more than one level. Per ARCH-QUESTION 1, a Docker run of the real-`/proc` tests reads one level inside its own namespace, so those tests still run there.
-- **A zero-value `dpkgLockStatus{}` is `Absent`** (the ADD fixes the state order `Absent, Free, Held, Unknown`), and `Absent` lets a reboot proceed. Only the probe and the test seam produce statuses today, and every test harness sets a probe. Worth remembering if a new caller ever builds a status by hand.
+- **The sandbox's own pid namespace.** The real-`/proc` Linux tests call `requireInitPidNamespace(t)`, which skips them with a logged reason when `readlink /proc/self/ns/pid` is not `pid:[4026531836]` (a Docker run). There the probe correctly refuses, so Held cannot be asserted. Run them on a VM or on bare metal, as CI does.
+- **A zero-value `dpkgLockStatus{}` is now `Unknown`** (revision 3). A hand-built status skips every reboot path with `dpkg lock state unknown: lock state not recognized`; `RebootClearance_RD_C1_ZeroStatusSkipsAsUnknownOnAllThreePaths` covers it.
 - **Edge cases worth probing on a real host:**
   - an `apt-get install` that holds `lock-frontend` for several minutes (the gate should log one wait-started and one wait-ended Info line and nothing per check);
   - `rm /var/lib/dpkg/lock*` during a wait (immediate skip: `dpkg is installed but its lock files are missing or hidden`);
