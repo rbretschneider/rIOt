@@ -1013,3 +1013,18 @@ func TestHandleReboot_RD_AC020_PreGateAllowRebootOffIsUnchanged(t *testing.T) {
 	assert.Equal(t, "reboot not allowed by agent config (set commands.allow_reboot: true)", res.Message, "[AC-020] the pre-gate text is unchanged")
 	assert.Zero(t, r.calls(), "[AC-020] the fail-fast check runs before any lock check")
 }
+
+func TestRebootClearance_RD_C1_ZeroStatusSkipsAsUnknownOnAllThreePaths(t *testing.T) {
+	for _, path := range allRebootPaths {
+		t.Run(string(path), func(t *testing.T) {
+			r := newGateRig(t)
+			r.script = func(time.Duration, int) dpkgLockStatus { return dpkgLockStatus{} }
+
+			r.drive(path)
+
+			assert.Zero(t, r.reboots.Load(), "[C-1] a zero status must never reboot")
+			assert.Zero(t, r.gatePauses(), "[C-1] a zero status does not wait")
+			assert.Contains(t, r.report(path), "dpkg lock state unknown: lock state not recognized", "[C-1] the skip says the state was not recognized")
+		})
+	}
+}
