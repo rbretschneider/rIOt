@@ -9,9 +9,16 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
 	"github.com/DesyncTheThird/rIOt/internal/maintenance"
+)
+
+const (
+	aptListsDir      = "/var/lib/apt/lists"
+	aptSourcesBudget = 1000
+	rootUID          = 0
 )
 
 func main() {
@@ -43,7 +50,13 @@ func run(args []string) error {
 	if err = maintenance.CheckPrerequisites(ctx); err != nil {
 		return err
 	}
-	worker := maintenance.Worker{Store: store, Runner: maintenance.ExecRunner{}, Holds: collectors.NewDetachedAptHolds()}
+	worker := maintenance.Worker{
+		Store:      store,
+		Runner:     maintenance.ExecRunner{},
+		Holds:      collectors.NewDetachedAptHolds(),
+		Sources:    aptSourcesFingerprint,
+		TouchLists: touchAptLists,
+	}
 	prior, err := store.Current()
 	if err == nil && (!prior.Terminal() || prior.HoldsReleased) {
 		if archived, archiveErr := maintenance.ReadTerminal(prior.CommandID); archiveErr == nil && archived.Terminal() && !archived.HoldsReleased {
@@ -64,4 +77,44 @@ func run(args []string) error {
 	}
 	_, err = worker.Execute(ctx, req)
 	return err
+}
+
+// aptSourcesFingerprint is the production Worker.Sources: a stat-only digest of
+// the apt-effective configuration files.
+func aptSourcesFingerprint() (string, error) {
+	entries, err := maintenance.AptSourceEntries("/", aptSourcesBudget)
+	if err != nil {
+		return "", err
+	}
+	return maintenance.AptSourcesFingerprint(entries), nil
+}
+
+// touchAptLists is the production Worker.TouchLists.
+func touchAptLists() error {
+	return touchDirNoFollow(aptListsDir, time.Now(), rootUID)
+}
+
+// touchDirNoFollow sets path's access and modification times to now. It opens
+// the final component with O_NOFOLLOW, verifies the opened descriptor is a
+// directory owned by ownerUID, and then updates that same descriptor, so a
+// symlink swapped in after the check cannot redirect the write (PATCH-FLOW-001
+// C-5). Any doubt is an error and nothing is touched.
+func touchDirNoFollow(path string, now time.Time, ownerUID uint32) error {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open %s without following symlinks: %w", path, err)
+	}
+	defer syscall.Close(fd)
+	var st syscall.Stat_t
+	if err = syscall.Fstat(fd, &st); err != nil {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR {
+		return fmt.Errorf("%s is not a directory", path)
+	}
+	if st.Uid != ownerUID {
+		return fmt.Errorf("%s is owned by uid %d, want %d", path, st.Uid, ownerUID)
+	}
+	stamp := syscall.NsecToTimeval(now.UnixNano())
+	return syscall.Futimes(fd, []syscall.Timeval{stamp, stamp})
 }
