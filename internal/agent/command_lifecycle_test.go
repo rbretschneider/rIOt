@@ -56,6 +56,9 @@ func newLifecycleHarnessAt(t *testing.T, dir string) *lifecycleHarness {
 	// Tests never talk to a real Docker daemon: Docker is unavailable unless a
 	// test installs a fake.
 	h.a.dockerFactory = func() (dockerAPI, error) { return nil, errors.New("docker is not available in this test") }
+	// REBOOT-DPKG-001: no test reads the real /proc. The dpkg lock reads as free
+	// unless a test installs its own scripted probe.
+	h.a.dpkgLockProbe = freeDpkgLockProbe
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.a.cmdCtx, h.a.cmdCancel = context.WithCancel(context.Background())

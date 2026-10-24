@@ -232,8 +232,13 @@ func (a *Agent) rebootAfterDelivery(id string) {
 		a.abortAuthorizedReboot(id, "commands.allow_reboot is off")
 		return
 	}
-	slog.Info("os_update: authorized reboot after a successful run that requires one", "command_id", id)
-	if err := a.execReboot(); err != nil {
+	c := a.awaitRebootClearance(ctx, "authorized_post_patch", id, a.commonRebootGuards(id))
+	if !c.Cleared {
+		a.abortAuthorizedReboot(id, c.reason())
+		return
+	}
+	slog.Info("os_update: authorized reboot after a successful run that requires one", "command_id", id, "waited", c.Waited.String())
+	if err := a.execReboot(c.Permit); err != nil {
 		slog.Warn("os_update: authorized reboot failed", "command_id", id, "error", err)
 		a.abortAuthorizedReboot(id, "reboot command failed: "+err.Error())
 	}

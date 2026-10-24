@@ -132,6 +132,8 @@ func newOSUpdateTestAgent(t *testing.T, allowReboot bool) (*Agent, *fakeAgentRun
 		rebootIntentPath: filepath.Join(dir,"reboot-intents.json"),
 		locks: newTargetLocks(),
 		telemetryNow: make(chan struct{}, 1),
+		// REBOOT-DPKG-001: the dpkg lock reads as free; no test reads the real /proc.
+		dpkgLockProbe: freeDpkgLockProbe,
 	}
 	return a, fake
 }

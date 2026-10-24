@@ -168,7 +168,7 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 		a.triggerTelemetry()
 		status, message = "success", "image freshness cache cleared, telemetry push triggered"
 	case "reboot":
-		status, message = a.handleReboot(payload)
+		return a.handleReboot(cr)
 	case "shutdown":
 		status, message = a.handleShutdown(payload)
 	case "os_update":
@@ -231,11 +231,20 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 			if !a.sleep(a.commandContext(), delay) {
 				return
 			}
-			if a.shuttingDown.Load() || a.maintenanceBlockerFor(a.commandContext(), r.RebootCommandID) != "" {
-				a.triggerTelemetry()
+			if a.shuttingDown.Load() {
+				a.abortPostPatchReboot(r.RebootCommandID, guardShuttingDown)
 				return
 			}
-			if err := a.execReboot(); err != nil {
+			if blocker := a.maintenanceBlockerFor(a.commandContext(), r.RebootCommandID); blocker != "" {
+				a.abortPostPatchReboot(r.RebootCommandID, guardBusyPrefix+blocker)
+				return
+			}
+			c := a.awaitRebootClearance(a.commandContext(), "post_patch", r.RebootCommandID, a.commonRebootGuards(r.RebootCommandID))
+			if !c.Cleared {
+				a.abortPostPatchReboot(r.RebootCommandID, c.reason())
+				return
+			}
+			if err := a.execReboot(c.Permit); err != nil {
 				slog.Warn("os_update: post-patch reboot failed", "error", err)
 			}
 		}()
@@ -305,23 +314,59 @@ func shortID(id string) string {
 	return id
 }
 
-// handleReboot triggers a system reboot if allowed by config.
-func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
+// handleReboot triggers a system reboot if allowed by config. It first waits,
+// for at most models.DpkgLockWaitBound, for the dpkg lock to be free. A skipped
+// reboot is a failed result that says why; it never starts a reboot later
+// (REBOOT-DPKG-001 AD-003).
+func (a *Agent) handleReboot(cr *cmdRun) commandExecResult {
 	if !a.config.Commands.AllowReboot {
-		return "error", "reboot not allowed by agent config (set commands.allow_reboot: true)"
+		return commandExecResult{Status: models.ResultStatusError, Message: "reboot not allowed by agent config (set commands.allow_reboot: true)"}
 	}
 
-	if err := a.execReboot(); err != nil {
-		return "error", fmt.Sprintf("reboot: %s", err)
+	c := a.awaitRebootClearance(cr.ctx, "reboot", cr.id, a.commonRebootGuards(""))
+	if !c.Cleared {
+		return rebootSkippedResult(c)
 	}
-	return "success", "reboot initiated"
+	if err := a.execReboot(c.Permit); err != nil {
+		return commandExecResult{Status: models.ResultStatusError, Message: fmt.Sprintf("reboot: %s", err)}
+	}
+	if c.Waited > 0 {
+		return commandExecResult{Status: models.ResultStatusSuccess, Message: fmt.Sprintf("reboot initiated after waiting %s for the dpkg lock", models.FormatDurationShort(c.Waited))}
+	}
+	return commandExecResult{Status: models.ResultStatusSuccess, Message: "reboot initiated"}
 }
 
-// execReboot starts the OS reboot command. The three call sites (handleReboot,
+// rebootSkippedResult is the failed result of a standalone reboot the gate did
+// not clear (FR-014 b to e). ReasonTimeout is never used: a dpkg skip is not a
+// budget failure (FR-016).
+func rebootSkippedResult(c rebootClearance) commandExecResult {
+	res := commandExecResult{Status: models.ResultStatusError}
+	switch c.Skip {
+	case skipGuard:
+		res.Message = "reboot skipped: guard failed: " + c.reason()
+		if strings.HasPrefix(c.Detail, guardBusyPrefix) {
+			res.Reason = models.ReasonConflict
+		}
+	case skipShutdown:
+		res.Message = "reboot skipped: " + c.reason()
+		res.Reason = models.ReasonShutdown
+	default:
+		res.Message = "reboot skipped: " + c.reason()
+	}
+	return res
+}
+
+// execReboot starts the OS reboot command. It accepts only the single-use permit
+// that awaitRebootClearance mints when the dpkg lock is clear for this attempt;
+// anything else, including a permit already used, is refused before anything
+// runs (REBOOT-DPKG-001 AD-007). The three call sites (handleReboot,
 // maybeRebootAfterPatch and rebootAfterDelivery) each gate on
 // a.config.Commands.AllowReboot before calling — no other path may reach this
 // (NFR-002, PATCH-FLOW-001 NFR-001).
-func (a *Agent) execReboot() error {
+func (a *Agent) execReboot(p rebootPermit) error {
+	if p.id == 0 || !a.rebootPermitLive.CompareAndSwap(p.id, 0) {
+		return errRebootNotCleared
+	}
 	if a.runner != nil {
 		_, err := a.runner(context.Background(), "sudo", "systemctl", "reboot")
 		return err
