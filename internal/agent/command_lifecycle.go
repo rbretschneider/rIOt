@@ -195,7 +195,7 @@ func (a *Agent) submitCommand(payload models.CommandPayload, via string) {
 	slog.Info("command: received", "id", id, "action", payload.Action, "via", via)
 
 	// FR-019 / C-4: the marker is durable before the command starts.
-	marker := inflightMarker{Action: payload.Action, Target: markerTarget(payload), StartedAt: a.clock().Now()}
+	marker := inflightMarker{Action: payload.Action, Target: markerTarget(payload), StartedAt: a.clock().Now(), RebootIfRequired: payload.Action == models.ActionOSUpdate && rebootAuthorized(payload)}
 	if err := a.inflight.Put(id, marker); err != nil {
 		if isDockerMutation(payload.Action) || payload.Action == models.ActionOSUpdate || payload.Action == models.ActionAgentUpdate {
 			slog.Error("command: in-flight marker unavailable, refusing to run", "id", id, "action", payload.Action, "error", err)

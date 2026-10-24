@@ -56,6 +56,11 @@ type Agent struct {
 	rebootIntentPath string
 	rebootIntentMu   sync.Mutex
 
+	// PATCH-FLOW-001 test seams. rebootRequiredCheck nil = the shared FR-002
+	// evaluator; rebootReportWait zero = defaultRebootReportWait.
+	rebootRequiredCheck func(ctx context.Context, packageManager string) bool
+	rebootReportWait    time.Duration
+
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).
 	telemetryNow chan struct{}

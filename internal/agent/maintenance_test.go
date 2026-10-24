@@ -93,7 +93,16 @@ func TestMaintenance_AC009_RebootReservesDelayRechecksWorkerAndNeverReplaysInten
 	m, rec := maintenanceFixture()
 	rec.Outcome = "success"
 	rec.FinishedAt = &rec.UpdatedAt
-	m.current = func() (maintenance.Record, error) { return rec, nil }
+	var freshWorker atomic.Bool
+	m.current = func() (maintenance.Record, error) {
+		if freshWorker.Load() {
+			// Another command (idB) started a worker: genuinely busy (SEC-002 keeps this abort).
+			other := rec
+			other.CommandID, other.Outcome, other.FinishedAt = idB, "running", nil
+			return other, nil
+		}
+		return rec, nil
+	}
 	var active atomic.Bool
 	m.active = func(context.Context) (bool, error) { return active.Load(), nil }
 	h.a.maintenanceClient = m
@@ -108,10 +117,11 @@ func TestMaintenance_AC009_RebootReservesDelayRechecksWorkerAndNeverReplaysInten
 	_, _, ok := h.a.locks.TryLockAll([]string{models.TargetKeyHost}, idB, models.ActionOSUpdate)
 	assert.False(t, ok, "new package work cannot enter the reboot delay")
 	active.Store(true)
+	freshWorker.Store(true)
 	close(release)
 	require.Eventually(t, func() bool { _, held := h.a.locks.Holder(models.TargetKeyHost); return !held }, time.Second, time.Millisecond)
 	assert.Zero(t, reboot.Load(), "fresh worker state cancels reboot")
-	assert.False(t, h.a.claimPatchReboot(idA), "durable intent is never replayed even when reboot was skipped")
+	assert.Equal(t, claimAlreadyClaimed, h.a.claimPatchReboot(idA), "durable intent is never replayed even when reboot was skipped")
 }
 
 func maintenanceFixture() (*maintenanceClient, maintenance.Record) {
