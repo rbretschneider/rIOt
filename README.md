@@ -56,6 +56,7 @@
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
 - **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
+- **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Dashboard navigation
@@ -597,7 +598,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.terminal_enabled` | `false` | Allow remote `docker exec` from the dashboard |
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `docker.compose_roots` | not enforced | List of absolute directories, for example `[/opt/stacks]`. When set, compose updates run only in a project directory inside one of them. An entry that is empty or relative makes every compose update fail until it is fixed. Required on Windows. Restart the agent after changing it. See [Compose directory trust](#compose-directory-trust) |
-| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard. The agent also reports this value to the server (display-only) so the patch badge can say a reboot is manual — see [Patch badge](#patch-badge) |
+| `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard, and the reboot that **Reboot automatically if the patch requires it** requests after a manual patch (see [Manual patch and reboot](#manual-patch-and-reboot)). Nothing the server sends overrides it. The agent also reports this value to the server (display-only) so the patch badge can say a reboot is manual — see [Patch badge](#patch-badge) |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). The agent applies reboot-class packages only when the run asks for them, this setting is `true` and hold enforcement works; otherwise it never applies them or reboots automatically. Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
@@ -620,7 +621,7 @@ New installs via `install.sh` include all rules automatically.
 | `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth); pool and union filesystems are automatically identified and displayed in a separate "Storage Pools" card section on the device detail page — detected by filesystem type (ZFS, Btrfs, bcachefs, mergerfs, unionfs, Unraid `shfs`/`fuse.shfs`) or by device path (mdraid arrays `/dev/md*`, LVM and device-mapper volumes `/dev/mapper/*` and `/dev/dm-*`; Docker device-mapper and live-boot overlays are excluded) |
 | `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
 | `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
-| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status; classifies each pending update as `gpu_driver` / `kernel` / standard and detects reboot-required state (`/var/run/reboot-required` on apt, `dnf needs-restarting -r` on dnf) — see [Reboot-Class Package Gating](#reboot-class-package-gating) |
+| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status; classifies each pending update as `gpu_driver` / `kernel` / standard and detects reboot-required state (on apt: `/var/run/reboot-required`, or an installed kernel newer than the running one; on dnf: `dnf needs-restarting -r`); on apt it also reports whether the package lists are `fresh`, `stale` or `unknown` (`lists_freshness`) — see [Reboot-Class Package Gating](#reboot-class-package-gating) and [Manual patch and reboot](#manual-patch-and-reboot) |
 | `services` | systemd services — name, state, enabled, PID, memory usage |
 | `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
@@ -1409,7 +1410,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 |---|---|---|
 | `POST` | `/api/v1/devices/register` | Register a new device, or re-register an existing one. Re-registration requires proof of the device's identity (see [Device Registration and Re-registration](#device-registration-and-re-registration)) |
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
-| `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push |
+| `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push. The optional `updates.lists_freshness` and `updates.supports_reboot_if_required` fields are accepted from any agent version. The server reads an unknown `lists_freshness` value as `unknown`, and anything other than JSON `true` in `supports_reboot_if_required` as not supported. Neither can cause a rejection |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
 | `POST` | `/api/v1/devices/:id/commands/:cid/report` | Report command progress or the final result over HTTP when the WebSocket is down. See [Command endpoints](#command-endpoints) |
 | `GET` | `/api/v1/update/check` | Agent update check. Returns the release asset locations, including `checksum_url` and `signature_url` (a locator only; the agent trusts its compiled-in key, not this response) |
@@ -1459,7 +1460,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
-| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. By default lists only devices with at least one pending update or a reboot requirement; add `?all=true` for one row per registered device. Each row also carries the optional fields `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot`, `updates_at` and `patch_badge` — see [Patch badge](#patch-badge) |
+| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. By default lists only devices with at least one pending update or a reboot requirement; add `?all=true` for one row per registered device. Each row also carries the optional fields `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot`, `updates_at` and `patch_badge` — see [Patch badge](#patch-badge). Every row also carries `lists_freshness` (`fresh`, `stale` or `unknown`; always present). `reboot_required` is true only when a reboot is required now, never for a pending kernel update — see [Manual patch and reboot](#manual-patch-and-reboot) |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents. The response adds `conflicts`, the number of devices skipped because a host command was already in flight |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices. The response adds `conflicts`, as for bulk-update |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
@@ -1514,7 +1515,7 @@ Request body: `{"action": "<action>", "params": {...}}`. `action` must be a supp
 | Status | Body |
 |---|---|
 | `201` | The command object. `status` is `queued`, or `dispatched` when the agent was connected and the server sent it immediately |
-| `400` | `{"error":"invalid request body"}` or `{"error":"invalid action"}` |
+| `400` | `{"error":"invalid request body"}` or `{"error":"invalid action"}`. For `os_update`, the three `reboot_if_required` rejections below also use `400` |
 | `409` | The conflict body below |
 | `500` | `{"error":"failed to create command"}` |
 
@@ -1531,6 +1532,46 @@ The `409` conflict body names the command that holds the target:
 ```
 
 The dashboard uses `existing_command_id` to attach to the command that is already running.
+
+**`os_update` parameters**
+
+`POST /api/v1/devices/:id/commands` with `"action": "os_update"` accepts these `params`:
+
+| Param | Type | Rules |
+|---|---|---|
+| `mode` | string, optional | `full` (default), `security` or `repair`. See [OS maintenance](docs/ops/os-maintenance.md) |
+| `reboot_if_required` | boolean, optional | `true` releases rIOt's reboot-class holds for this one run and lets the agent reboot after the run, only if a reboot is required then. Absent means `false`. The server does not store `false`. Any other JSON type is rejected |
+| `include_reboot_class` | — | Never accepted from a client. The server removes the key in any capitalization. It sets `include_reboot_class: true` itself only for a valid `reboot_if_required: true` |
+
+The server checks `reboot_if_required: true` against the device's latest telemetry before it creates the command. A rejected request creates no command and no event.
+
+| Status | Body | When |
+|---|---|---|
+| `201` | The command object. For an authorized request, `params` holds `reboot_if_required: true` and `include_reboot_class: true` | The request is valid |
+| `400` | `{"error":"invalid request","code":"invalid_request"}` | `reboot_if_required` is present and is not a JSON boolean (`"true"`, `1`, `null`, an object or an array). Also: the key is written in another capitalization, or `reboot_if_required: true` comes with `mode: repair` |
+| `400` | `{"error":"reboots are turned off on this agent (commands.allow_reboot: false)","code":"reboot_not_allowed"}` | `reboot_if_required: true`, and the latest telemetry reports `allow_reboot: false` |
+| `400` | `{"error":"the agent must be updated to authorize a reboot with a patch","code":"reboot_authorization_unsupported"}` | `reboot_if_required: true`, and the device has no telemetry, no `updates` section, no `allow_reboot` value, or no `supports_reboot_if_required: true`. The last case is an agent older than this feature, or an agent with the `updates` collector disabled |
+| `500` | `{"error":"failed to create command"}` | The server could not read the device's latest telemetry |
+
+Example request body:
+
+```json
+{"action": "os_update", "params": {"mode": "full", "reboot_if_required": true}}
+```
+
+Example `201` response (abbreviated):
+
+```json
+{
+  "id": "3f2c9a7e-5b1d-4c8e-9a0f-1d2e3f4a5b6c",
+  "device_id": "b7e1c2d4-0a1b-4c3d-8e9f-0a1b2c3d4e5f",
+  "action": "os_update",
+  "params": {"mode": "full", "reboot_if_required": true, "include_reboot_class": true},
+  "status": "dispatched"
+}
+```
+
+The command-sent event for an authorized run ends with ` (reboot authorized if required)`. The final `result_msg` of the run ends with one sentence that states the outcome. See [What the result says](#what-the-result-says).
 
 **`POST /api/v1/devices/:id/docker/bulk-update`**
 
@@ -2198,6 +2239,8 @@ The agent also remembers the IDs of commands it has accepted (up to 1000 IDs for
 | `command-outbox.json` | Final results not yet confirmed by the server | 200 entries, 1 MiB, 24 hours |
 | `seen-commands.json` | IDs of commands the agent already accepted | 1000 entries, 48 hours |
 | `inflight-commands.json` | One marker per running command (action, target, last step, and Docker recovery details) | Running commands, plus records whose recovery is still pending |
+| `patch-reboot-intents.json` | The IDs of patch commands that already claimed their one reboot, each with its claim time | See [Reboot-intent file](#reboot-intent-file): 30-day age limit, 256 entries, 64 KiB read limit |
+| `patch-reboot-intents.json.corrupt` | One copy of an unreadable `patch-reboot-intents.json`, kept for inspection | One file, at most 64 KiB, overwritten by the next copy |
 
 ### Upgrade notes
 
@@ -2311,7 +2354,7 @@ A package matching both (e.g. `nvidia-dkms-550`) is classified `gpu_driver` (GPU
    }
    ```
 
-   Only when the policy is `gated` **and** the dispatch occurs inside the OS-patch window does the orchestrator include reboot-class packages in the run. Manually dispatched `os_update` commands never include them — the server strips the parameter, so the automated in-window run is the only release path.
+   Only when the policy is `gated` **and** the dispatch occurs inside the OS-patch window does the orchestrator include reboot-class packages in the run. A manually dispatched `os_update` includes them only when the operator ticks **Reboot automatically if the patch requires it** and the server accepts the request (see [Manual patch and reboot](#manual-patch-and-reboot)). The server removes any `include_reboot_class` a client sends and sets it itself, so the in-window automated run and a ticked manual run are the only two release paths.
 
 ### What happens during an in-window run
 
@@ -2326,7 +2369,7 @@ Outside the window, holds keep GPU driver and kernel packages pinned, so a casua
 
 ### Reboot-required detection and alert
 
-Independently of holds, the agent reports whether the host needs a reboot to activate installed updates — `/var/run/reboot-required` (+ `/var/run/reboot-required.pkgs`) on apt, `dnf needs-restarting -r` on dnf. A once-per-transition **Reboot Required** event is emitted (warning severity, 24-hour cooldown), and a matching alert rule/template ships enabled so it can fan out to your notification channels. Detection failures degrade quietly to "not required". Populating this state also fixes the security score's kernel-update check, which previously always passed silently because the underlying field was never set.
+Independently of holds, the agent reports whether the host needs a reboot now to activate installed updates. On apt, that is true when `/var/run/reboot-required` (+ `/var/run/reboot-required.pkgs`) exists, or when an installed kernel is newer than the running one. On dnf, it is true when `dnf needs-restarting -r` says so. [Manual patch and reboot](#manual-patch-and-reboot) explains the kernel comparison. A pending update that is not installed yet never counts. A once-per-transition **Reboot Required** event is emitted (warning severity, 24-hour cooldown), and a matching alert rule/template ships enabled so it can fan out to your notification channels. Detection failures degrade quietly to "not required". Populating this state also fixes the security score's kernel-update check, which previously always passed silently because the underlying field was never set.
 
 ### GPU container blast radius
 
@@ -2356,9 +2399,9 @@ No setup is needed beyond the maintenance window you manage in **Settings > Agen
 
 | Badge | Meaning |
 |---|---|
-| **Auto** | Nothing needs you and no reboot is expected. |
-| **Auto (reboot on YYYY-MM-DD)** | A reboot is expected and will happen at the next OS-patch window start (UTC). This is an estimate and can move. |
-| **Auto (reboot date Unknown)** | A reboot is expected and will be automatic, but the time cannot be predicted (for example OS-patch mode is `anytime`, or the agent does not report `allow_reboot`). |
+| **Auto** | Nothing needs you. No reboot is required now. When a pending kernel/GPU update will need a reboot and nothing will do it automatically, the Reboot line says so, and the badge stays **Auto** because no reboot is required yet. |
+| **Auto (reboot on YYYY-MM-DD)** | A reboot is required now or will be needed after a pending kernel/GPU update installs, and it will happen at the next OS-patch window start (UTC). This is an estimate and can move. |
+| **Auto (reboot date Unknown)** | A reboot is required now or will be needed after a pending kernel/GPU update installs. It will be automatic, but the time cannot be predicted (for example OS-patch mode is `anytime`, or the agent does not report `allow_reboot`). |
 | **Needs you** | At least one item needs a person. Hover or focus the badge to read each item and what to do. |
 
 Hover the badge, or move to it with the keyboard, to open the explanation. Press Escape to close it. It has four lines: **Automatic patching**, **Reboot**, **Needs you** and **As of** (when the update data was reported, in UTC). A note about unattended-upgrades or about checks that need a newer agent can follow.
@@ -2378,7 +2421,7 @@ Each reason is listed with an action:
 - Hold enforcement is not working on the host.
 - A new Ubuntu release is available. rIOt never starts a release upgrade.
 - The latest finished patch run failed or timed out. Expired and cancelled commands are ignored.
-- A reboot is needed and no automatic reboot is set up. The explanation lists the causes.
+- A reboot is required now (`reboot_required` is true) and no automatic reboot is set up. The explanation lists the causes, and the action says to reboot the host now. When the agent has `commands.allow_reboot: false`, the action says to reboot it outside rIOt. A pending kernel/GPU update that is not installed yet never raises this item.
 
 A deliberate hold or a host you patch by hand stays **Needs you** until the cause is removed.
 
@@ -2410,9 +2453,189 @@ Agents older than the release that added these facts do not send them. Until suc
 | `os_patch_cooldown_minutes` | number | The cooldown is non-zero | OS-patch window cooldown. |
 | `allow_reboot` | boolean | The device's agent reports it | The device's `commands.allow_reboot`. |
 | `updates_at` | string, RFC 3339 | Update data exists | When the update data was reported. |
+| `lists_freshness` | string: `fresh`, `stale`, `unknown` | Always | Whether the host's apt package lists are older than its apt configuration. Agents that do not report it, dnf hosts and unrecognized values read as `unknown`. Display only: no dispatch decision reads it. See [Stale package lists](#stale-package-lists). |
 | `patch_badge` | object | The device is registered | `kind` (`auto`, `auto_reboot_date`, `auto_reboot_unknown`, `needs_you`), `label`, `explanation` (`automatic`, `reboot`, `needs_you` items with `code`, `text`, `action` and optional `command_id`, `needs_you_summary`, `as_of`, `notes`) and `reboot_at` for `auto_reboot_date` only. |
 
 The error response is unchanged: `500 {"error":"failed to get telemetry"}`.
+
+---
+
+## Manual patch and reboot
+
+The device page **Patch** button patches one device. This section covers what "reboot needed" means, the **Reboot automatically if the patch requires it** option on the Patch confirmation, and the **Package lists out of date** label that replaces a phantom update count.
+
+Before this change, three things misled operators. The badge asked for a reboot while the kernel was still only pending. A patch run that rewrote apt configuration left a count of updates that did not exist. And the operator could not authorize the reboot a patch needed as part of the patch itself.
+
+There is no new environment variable, no database migration, no new collector and no new sudoers rule. One part needs a root re-install per device; see [What ships where](#what-ships-where).
+
+### What "reboot required" means
+
+"Reboot required" means the host needs a reboot now. A kernel or GPU update that is pending, but not installed yet, never counts. The badge describes that case as a future reboot.
+
+The agent reports `reboot_required: true` when at least one of these holds:
+
+| Package manager | Condition |
+|---|---|
+| apt | `/var/run/reboot-required` exists |
+| apt | An installed kernel is newer than the running kernel (rule below) |
+| dnf | `dnf needs-restarting -r` exits with 1 |
+
+When the kernel rule fires, the agent adds one line to `reboot_required_reasons`: `kernel <installed> installed; running <running>`.
+
+**How the apt kernel rule works.** The agent reads the running kernel from `/proc/sys/kernel/osrelease`. It lists the installed kernels from the `/boot/vmlinuz-<release>` file names. It compares releases with dpkg's version ordering.
+
+Only kernels of the running kernel's flavor are compared. The flavor is the run of trailing `-` tokens that contain a letter and no `.` or `+`. Examples: `amd64`, `generic`, `rpi-v8`, `rt-amd64`, `cloud-amd64`. So a `6.12.48+deb13-rt-amd64` kernel is a different flavor from `6.12.48+deb13-amd64`. Installing one never marks the other as needing a reboot.
+
+The rule counts as "not required" when the running kernel cannot be read, `/boot` cannot be listed, or `/boot` holds more than 256 entries. It reads no more than 256 entries and creates no files.
+
+Two effects follow:
+
+- A host that you deliberately booted into an older kernel reports `reboot_required: true` until it boots the newest installed kernel of its flavor.
+- A GPU-driver-only update on a host that writes no `/var/run/reboot-required` file does not count as "reboot required". A ticked manual patch therefore does not reboot for it. The automated in-window run still reboots when it applies reboot-class packages.
+
+### The Patch confirmation
+
+Open the device page and click **Patch**. The confirmation contains one checkbox: **Reboot automatically if the patch requires it**.
+
+- The box is unchecked every time the dialog opens. rIOt never remembers it, per device or per session.
+- Ticking the box does three things for this one run: the run installs pending kernel and GPU driver updates that rIOt otherwise holds, the agent checks after the run whether a reboot is required, and the agent reboots only if one is.
+- Ticking the box does not mean "reboot no matter what". When no reboot is required after the run, the host stays up.
+- Automatic patching and the fleet bulk patch never set this option.
+
+The dialog also says what happens to pending kernel and GPU driver updates. It shows these statements only when such an update is pending:
+
+| Situation | Statement |
+|---|---|
+| Box unticked, rIOt holds are active | Kernel and GPU driver updates are held by rIOt and will not be installed by this run. |
+| Box ticked | Kernel and GPU driver updates will be installed. The host reboots after the run if a reboot is required. |
+| Box unticked, rIOt holds are not active | Kernel and GPU driver updates will be installed. A reboot will be needed afterwards, and rIOt will not reboot the host. |
+| A reboot is already required (any box state) | A reboot is already required on this host. With the box ticked, the host reboots after the run. |
+| Package lists are stale | Package lists are out of date. Running Patch refreshes them first, so the packages installed may differ from the pending list. |
+
+**When the box is disabled.** The dialog shows the reason in text beside the box:
+
+| Reason shown | Cause | Fix |
+|---|---|---|
+| Reboots are turned off on this agent (commands.allow_reboot: false). | The agent's latest telemetry reports `allow_reboot: false`. | Set `commands.allow_reboot: true` in `/etc/riot/agent.yaml` and restart the agent. |
+| The agent must be updated to use this option. | The agent has not reported `allow_reboot` and `supports_reboot_if_required: true`. It is older than this feature, or its `updates` collector is disabled. | Update the agent. If the `updates` collector is off, add `updates` to `collectors.enabled` and restart. |
+
+**What the agent does after a ticked run.**
+
+1. The helper (apt) or the agent (dnf) runs the patch. The server validated the request first; see [`os_update` parameters](#command-endpoints).
+2. If the run did not succeed, the agent does not reboot. Failed, timed out and interrupted runs all count. rIOt restores its holds on every outcome.
+3. The agent checks whether a reboot is required now, with the same function the updates collector uses.
+4. If a reboot is required and `commands.allow_reboot` is still `true`, the agent records its single reboot for this command, then states the decision in the result.
+5. The agent queues the result, then waits at least 2 seconds. It waits up to 30 seconds more for the server to confirm it has the result. Then it reboots. If the server stays unreachable, the reboot proceeds anyway and the queued result is delivered after boot.
+6. The agent checks `commands.allow_reboot`, the host lock and the maintenance state once more immediately before it reboots. A failed check cancels the reboot, raises one warning event on the device and refreshes telemetry.
+
+A command causes at most one reboot. It cannot loop: each reboot needs a new, ticked dispatch by an operator.
+
+`mode: repair` never upgrades or reboots. The server rejects a ticked `repair` request.
+
+**Fresh state afterwards.** After any `os_update` ends without a reboot, the agent sends new update telemetry right away. After the agent starts, including after the reboot, its first telemetry push goes out as soon as startup recovery finishes. Recovery is bounded at 2 minutes. It takes long only when an interrupted Docker update must be reconciled. The device page therefore does not wait for the next poll to drop its pre-patch counts.
+
+### When only a reboot is needed
+
+When a device has zero pending updates, `reboot_required` is true and the package lists are not stale, the device page header shows **Reboot now** as the primary action instead of **Patch**. It opens the same confirmation as the Power menu reboot.
+
+If the agent has `commands.allow_reboot: false`, **Reboot now** is disabled. Visible text says to reboot the host outside rIOt.
+
+When updates are pending and a reboot is also required, **Patch** stays the primary action. The dialog says a reboot is already required. **Reboot** stays in the Power menu.
+
+### What the result says
+
+A ticked run adds one sentence to the end of the command's `result_msg`, after ` | `:
+
+```
+Reboot authorized; reboot required after run: yes; reboot started: yes
+Reboot authorized; reboot required after run: no; reboot not started: not required
+```
+
+When no reboot started, the sentence ends with one of these reasons:
+
+| Reason | Meaning |
+|---|---|
+| `not required` | The run succeeded and no reboot was required. |
+| `allow_reboot off` | A reboot was required, but `commands.allow_reboot` is `false` on the agent. The usual `reboot_required` event fires. |
+| `run not successful` | The run failed, timed out or was interrupted. |
+| `suppressed (reboot already claimed for this command)` | The command already used its one reboot, for example after a redelivery. |
+| `suppressed (reboot intent could not be recorded)` | The agent could not save its reboot record, or the record file is unreadable. No reboot happens. |
+| `suppressed (reboot intent store full)` | 256 patch reboots happened within 72 hours on this host. |
+| `suppressed (result recovered after agent restart)` | The agent restarted during the run. A recovered result never reboots. |
+
+The result keeps the sentence when the text is truncated, because the sentence is last. A request that the agent refuses before the run starts (a host lock conflict, or other maintenance running) carries no sentence, because no run happened.
+
+### Stale package lists
+
+An apt host reports its package lists as `fresh`, `stale` or `unknown` in `lists_freshness`.
+
+**Stale** means the lists cannot match the current apt configuration. The agent judges the lists stale when either of these holds:
+
+- No package lists exist under `/var/lib/apt/lists`.
+- A file that apt reads was modified after the lists were last refreshed.
+
+The files checked are `/etc/apt/sources.list`, the `*.list` and `*.sources` files in `/etc/apt/sources.list.d/`, and the files in `/etc/apt/preferences.d/` that have no dot in the name or end in `.pref`. Backup files such as `.dpkg-old`, `.dpkg-dist`, `.save` and `~` are ignored. The single file `/etc/apt/preferences`, `/etc/apt/apt.conf.d/` and keyrings are not checked. The agent takes the refresh time from the modification time of `/var/lib/apt/lists`, or of `/var/lib/apt/periodic/update-success-stamp` on Ubuntu when that is later.
+
+**Unknown** means the check could not finish: an error, more than 1,000 entries, more than 2 seconds, or a configuration file dated more than 5 minutes in the future. An unknown host shows today's `Patch (N)` count. dnf hosts never report `stale`, and older agents report nothing, which reads as `unknown`.
+
+When a host is stale:
+
+- The device page **Patch** button reads "Package lists out of date — refresh pending" and shows no count. The button still works, because a patch run refreshes the lists first. Its tooltip says so.
+- The Pending OS Patches panel shows the same label in place of the count. The Devices table shows "Lists out of date". The panel's package total leaves stale hosts out and says how many it left out. Security counts stay visible, on the device page too, and are marked "(lists out of date)".
+- The patch badge drops the pending kernel/GPU wording and every reason that comes only from the pending list. It adds the note "Package lists are out of date on this host. Pending updates will be recounted after the next refresh; running Patch refreshes the package lists first."
+- The raw count and package list are still reported (`pending_updates`) for diagnostics.
+
+Nothing refreshes the lists by itself. The next manual or automatic patch run does. Freshness is display only: no automatic patching decision reads it.
+
+### Post-run package list refresh
+
+The `riot-maintenance` helper runs `apt-get update` before each `full` or `security` upgrade. A package can rewrite apt configuration during the upgrade, after that refresh. The result is a stale list and a count of packages that do not exist.
+
+The new helper compares a fingerprint of the apt configuration files taken just before its refresh with one taken after the upgrade and final verification. If the fingerprint changed, or either one could not be read, the helper runs one more refresh.
+
+- It runs at most one extra refresh per run, and only for `full` and `security` modes.
+- The extra refresh has a 5-minute limit. The helper skips it when less than 7 minutes remain in its 30-minute budget.
+- Its output is appended to the run output under the `[post_refresh]` marker, inside the existing 256 KiB bound.
+- A failed or skipped extra refresh does not change the run outcome. The run summary gets a note: `post-run package list refresh failed: ...` or `post-run package list refresh skipped: ...`.
+- After every successful refresh the helper sets the modification time of `/var/lib/apt/lists` to now. A refresh that downloads nothing otherwise leaves that time unchanged, and the agent would keep reporting `stale`. If the helper cannot do this, it adds a `[lists_stamp]` line to the run output and carries on. It refuses a symlink or a directory not owned by root.
+
+The helper protocol did not change, so old and new agents and helpers work together.
+
+### What ships where
+
+| Change | Reaches a device by |
+|---|---|
+| Server: request validation, the badge text, `lists_freshness` in the fleet patch status, the dashboard | The normal server update |
+| Agent: the kernel rule, list freshness, the `supports_reboot_if_required` fact, the authorized reboot, the reboot-intent file, fresh telemetry after a run | The normal agent update |
+| Helper: the post-run refresh and the lists stamp | **Re-run the root `install.sh` on each device**, using the matching release |
+
+Deploy the server first, then update the agents.
+
+Agent-only updates do not refresh the privileged helper. See [Upgrading existing agents](#upgrading-existing-agents) and [OS maintenance and recovery](docs/ops/os-maintenance.md).
+
+Until `install.sh` is re-run on a device, that device keeps the old helper. Everything else in this section works. The difference: when a package rewrites apt configuration during a run, the host reports `stale`. It stays `stale` until a refresh changes a package list file. Debian archives publish several times a day. Running Patch refreshes the lists too, but with the old helper a refresh that downloads nothing does not move the modification time the agent reads. Re-running `install.sh` removes this limit.
+
+| Server | Agent | Result |
+|---|---|---|
+| New | Old | The checkbox is disabled with "The agent must be updated". A ticked request sent through the API gets `400 reboot_authorization_unsupported`. The agent reports no list freshness, so the host shows `Patch (N)` as before. |
+| Old | New | The old server ignores the new telemetry fields. |
+
+### Reboot-intent file
+
+The agent records every reboot it starts or refuses after a patch in `patch-reboot-intents.json` in its data directory (`/var/lib/riot/` on Linux). The record is what limits a command to one reboot, including after a redelivery or an agent restart. The automated in-window run uses the same file. The file needs no operator action.
+
+| Rule | Value |
+|---|---|
+| Format | `{"version":2,"intents":{"<command-id>":"<claim time, RFC 3339>"}}` |
+| Age limit | The agent removes entries older than 30 days at every claim. |
+| Capacity | At most 256 entries. When full, the agent evicts the oldest entries, but never one younger than 72 hours. If it cannot make room, the claim fails and no reboot happens. |
+| 72-hour floor | A command can be redelivered or replayed for up to 48 hours. An entry younger than 72 hours therefore always stays. |
+| Old format | A file in the earlier `{"<id>":true}` format is read once, and every entry gets today as its claim time. The agent rewrites it as version 2 at the next claim. |
+| Unreadable file | If the file is corrupt or over 64 KiB, no reboot happens while the file was last written less than 72 hours ago. After that, the agent copies the bad content once to `patch-reboot-intents.json.corrupt` (at most 64 KiB, overwritten by the next copy), starts a new file and carries on. |
+| Clock moved backwards | If an entry is dated more than 5 minutes in the future, that claim prunes and evicts nothing. |
+| Logging | One Info line per claim that removed entries. One Warn line per refused claim. |
+
+An agent downgraded after it wrote the version 2 file cannot read it, and refuses post-patch reboots until you delete the file. Downgrades are not supported.
 
 ---
 

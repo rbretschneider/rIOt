@@ -35,7 +35,30 @@ type Worker struct {
 	Runner Runner
 	Holds  Holds
 	Now    func() time.Time
+	// Sources returns a fingerprint of the apt-effective configuration files
+	// (PATCH-FLOW-001 AD-007). An error is treated as "changed". Nil disables the
+	// post-run package list refresh.
+	Sources func() (string, error)
+	// TouchLists stamps /var/lib/apt/lists after a successful refresh so the
+	// agent's freshness rule sees no-change refreshes. Nil disables the stamp.
+	TouchLists func() error
 }
+
+// PostRefreshBudget bounds the single extra package list refresh a run may
+// perform after apt configuration changed during the upgrade (FR-042).
+const PostRefreshBudget = 5 * time.Minute
+
+// postRefreshMinRemaining is the worker budget that must remain before the
+// extra refresh may start: its own budget, the SIGTERM->SIGKILL grace and a
+// margin. It guarantees the parent context cannot expire during the refresh, so
+// a successful run can never turn into "interrupted" because of it.
+const postRefreshMinRemaining = PostRefreshBudget + TerminationGrace + 30*time.Second
+
+// successSummary is the terminal summary of a verified run.
+const successSummary = "Package state verified; maintenance completed"
+
+// maxSummaryBytes mirrors the limit enforced by Record.Validate.
+const maxSummaryBytes = 4096
 
 func (w *Worker) now() time.Time {
 	if w.Now != nil {
@@ -64,6 +87,7 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 	ctx, cancel := context.WithTimeout(ctx, WorkerBudget)
 	defer cancel()
 	releaseAttempted := false
+	var postRefreshNote string
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.Background(), CleanupBudget)
 		defer stop()
@@ -100,7 +124,10 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 		if retErr == nil {
 			rec.Outcome = "success"
 			rec.ExitCode = 0
-			rec.Summary = "Package state verified; maintenance completed"
+			rec.Summary = successSummary
+			if postRefreshNote != "" {
+				rec.Summary = boundedText(successSummary+"; "+postRefreshNote, maxSummaryBytes)
+			}
 		} else {
 			rec.Outcome = "error"
 			if rec.ExitCode == 0 {
@@ -205,9 +232,11 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 		return rec, nil
 	}
 
-	if _, err := step("refresh", "/usr/bin/apt-get", "-o", "Acquire::Retries=0", "update"); err != nil {
+	sourcesBefore, sourcesBeforeErr := w.fingerprintSources()
+	if _, err := step("refresh", "/usr/bin/apt-get", aptRefreshArgs()...); err != nil {
 		return rec, err
 	}
+	w.stampLists(&rec)
 	action := "dist-upgrade"
 	if req.Mode == "security" {
 		action = "upgrade"
@@ -218,7 +247,67 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 	if err := verify(); err != nil {
 		return rec, err
 	}
+	postRefreshNote = w.postRunRefresh(ctx, &rec, sourcesBefore, sourcesBeforeErr)
 	return rec, nil
+}
+
+func aptRefreshArgs() []string {
+	return []string{"-o", "Acquire::Retries=0", "update"}
+}
+
+// fingerprintSources reports the apt configuration fingerprint, or ("", nil)
+// when the feature is not wired.
+func (w *Worker) fingerprintSources() (string, error) {
+	if w.Sources == nil {
+		return "", nil
+	}
+	return w.Sources()
+}
+
+// stampLists records a successful refresh in the lists directory mtime. A
+// failure is an output line, never a run failure.
+func (w *Worker) stampLists(rec *Record) {
+	if w.TouchLists == nil {
+		return
+	}
+	if err := w.TouchLists(); err != nil {
+		note := "\n[lists_stamp]\ncould not update /var/lib/apt/lists timestamp: " + boundedText(err.Error(), 200) + "\n"
+		rec.Output, rec.OutputTruncated = appendBounded(rec.Output, note, rec.OutputTruncated)
+	}
+}
+
+// postRunRefresh runs at most one extra package list refresh when the apt
+// configuration changed between the run's refresh and the end of its upgrade
+// (PATCH-FLOW-001 FR-040..FR-045). It never changes the run outcome: it goes
+// through Runner.Run, not step(), so runner interruption flags and exit codes
+// stay off the record. It returns a summary note, or "" when nothing needs
+// saying.
+func (w *Worker) postRunRefresh(ctx context.Context, rec *Record, before string, beforeErr error) string {
+	if w.Sources == nil {
+		return ""
+	}
+	after, afterErr := w.Sources()
+	if beforeErr == nil && afterErr == nil && before == after {
+		return ""
+	}
+	// time.Until, not w.now(): context deadlines run on the real clock.
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < postRefreshMinRemaining {
+		return "post-run package list refresh skipped: worker time budget nearly exhausted"
+	}
+	rec.Phase = "post_refresh"
+	rec.UpdatedAt = w.now()
+	if err := w.Store.Save(*rec); err != nil {
+		return "post-run package list refresh skipped: state not persisted"
+	}
+	sub, cancel := context.WithTimeout(ctx, PostRefreshBudget)
+	defer cancel()
+	out, err := w.Runner.Run(sub, "/usr/bin/apt-get", aptRefreshArgs()...)
+	rec.Output, rec.OutputTruncated = appendBounded(rec.Output, "\n[post_refresh]\n"+out.Output, rec.OutputTruncated || out.Truncated)
+	if err != nil {
+		return "post-run package list refresh failed: " + boundedText(err.Error(), 200)
+	}
+	w.stampLists(rec)
+	return ""
 }
 
 // RecoverInterrupted restores only the recorded managed holds. It never

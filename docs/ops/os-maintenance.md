@@ -16,8 +16,8 @@ The existing `os_update` command accepts these apt modes:
 
 | Mode | Behavior after clean recovery checks |
 |---|---|
-| `full` (default) | Refresh indexes, then guarded `dist-upgrade` |
-| `security` | Refresh indexes, then guarded `upgrade`; this retains conservative upgrade behavior and **does not select security origins only** |
+| `full` (default) | Refresh indexes, then guarded `dist-upgrade`, then one more refresh if apt configuration changed during the upgrade (see [Post-run refresh](#post-run-package-list-refresh)) |
+| `security` | Refresh indexes, then guarded `upgrade`, then the same conditional refresh; this retains conservative upgrade behavior and **does not select security origins only** |
 | `repair` | Finish after configuration/dependency verification; no refresh, general upgrade, managed-hold release or automatic reboot |
 
 Each run first configures interrupted packages using fixed noninteractive conffile options, then checks `dpkg --audit` and `apt-get check`. A nonempty audit is failure even when dpkg exits zero. Unresolved configuration/dependencies permit **one** `--fix-broken install` with no package operands and `--no-remove`, followed by one configure/audit/check verification. Failure stops the run. A dependency missing from the existing indexes/cache may need administrator review; the worker does not loop through refresh and repair.
@@ -27,6 +27,28 @@ Only clean full/security runs proceed to refresh and upgrade, followed by final 
 Package tools run with null input, working directory `/` and a replaced environment: fixed system PATH, root HOME, C locale, noninteractive debconf and `NEEDRESTART_MODE=l`. Caller environment and apt options are not forwarded. Root-managed apt configuration, repositories and package scripts remain trusted local policy.
 
 The worker has a 30-minute transaction budget, SIGTERM with 90-second process-tree grace, and a separate two-minute hold-cleanup budget. The service has a 35-minute runtime backstop and 90-second stop timeout. Forced interruption reports uncertain package state rather than success. These bounds are not an atomic rollback promise.
+
+## Post-run package list refresh
+
+PATCH-FLOW-001 adds one conditional step to `full` and `security` runs. A package postinst can rewrite apt configuration after the run's refresh step. The lists then no longer match the configuration, and `apt list --upgradable` reports packages that do not exist.
+
+The worker takes a fingerprint (path, modification time, size) of the files apt reads, immediately before its refresh. These are `/etc/apt/sources.list`, `*.list` and `*.sources` in `sources.list.d`, and the apt-readable files in `preferences.d`. It takes a second fingerprint after the upgrade and final verification. At most 1,000 directory entries are examined per fingerprint, and only metadata is read.
+
+| Condition | Behavior |
+|---|---|
+| Fingerprints equal | No extra refresh. |
+| Fingerprints differ, or either could not be read | One extra `/usr/bin/apt-get -o Acquire::Retries=0 update`, with a 5-minute limit. Its output is appended to the run output after a `[post_refresh]` line, within the 256 KiB bound. The record phase is `post_refresh`. |
+| Fewer than 7 minutes left of the 30-minute worker budget | The extra refresh is skipped. The summary ends with `post-run package list refresh skipped: worker time budget nearly exhausted`. |
+| The record cannot be saved before the extra refresh | Skipped, with `post-run package list refresh skipped: state not persisted`. |
+| The extra refresh fails | The outcome stays `success`. The summary ends with `post-run package list refresh failed: <error>`. |
+| Upgrade or verification failed | No extra refresh. The failure outcome stands. |
+| `repair` mode | No fingerprint and no refresh. |
+
+The extra refresh never changes the exit code or marks the record interrupted. The 7-minute threshold keeps the worker budget from expiring during it. The argv is the one already allowed to the worker, so `install.sh` and sudoers are unchanged. The request and record formats are unchanged: a new agent works with an old helper, and an old agent works with a new helper.
+
+After every successful refresh, the worker also sets the modification time of `/var/lib/apt/lists` to the current time. A refresh that downloads nothing leaves that time unchanged, and the agent compares apt configuration times with it. The worker opens the path with `O_NOFOLLOW|O_DIRECTORY`, requires a directory owned by root, and changes the time on that open descriptor. It changes nothing else. On failure, the run output gets a `[lists_stamp]` line and the run carries on.
+
+This behavior reaches a device only when a matching release's `install.sh` is re-run as root. Agent-only updates do not refresh the worker. See [Manual patch and reboot](../../README.md#manual-patch-and-reboot) for how the agent reads the result.
 
 ## Repair through the existing API
 
@@ -38,7 +60,7 @@ Send this JSON through your existing authenticated administrator API client to `
 
 This adds no endpoint or Repair UI button. Cookie-authenticated API writes still need the normal same-origin/Origin and JSON content-type requirements. The agent's `commands.allow_patching` must be enabled. Do not write the worker inbox or start the service manually as a substitute for authenticated dispatch.
 
-Wrong mode types and unknown mode values are refused. The server removes manual `include_reboot_class` requests; only the existing authorized scheduled patch policy can release reboot-class holds. Repair always preserves those holds and never requests reboot.
+Wrong mode types and unknown mode values are refused. The server removes every client-supplied `include_reboot_class`. Two paths can release reboot-class holds: the scheduled patch policy, and a manual `full` or `security` run whose request carries `reboot_if_required: true` (PATCH-FLOW-001). The server validates that parameter against the device's latest telemetry and then sets `include_reboot_class` itself. The server rejects `reboot_if_required: true` together with `mode: repair`. Repair always preserves those holds and never requests reboot.
 
 ## Installed privilege boundary
 
@@ -72,7 +94,7 @@ The root worker, normal/boot signed apply and installer share the protected lock
 
 Agent restart reattaches the same UUID, reserves the host and delivers the matching final result through the durable command outbox. Observer cancellation does not signal or relaunch the worker. A vanished worker is interrupted/unknown, never automatically replayed. A subsequent **explicit** request may first restore the prior durable terminal result or attempt bounded prior hold cleanup, then refuse fresh work and require operator review and another request. Do not interpret that recovery refusal as a completed repair/upgrade. Missing, unreadable or mismatched state is not permission to start over.
 
-Only proven authorized reboot-class changes on a successful update can use existing reboot policy, after result queuing. Repair, failed/uncertain outcomes and recovered results do not replay a reboot. Durable intent prevents a duplicate after restart. Existing reboot privilege remains separate; host administrators and already privileged accounts can still interrupt the host.
+Two things can lead to a reboot after a successful update, both after result queuing. The scheduled patch policy reboots after proven reboot-class changes. A manual run with `reboot_if_required: true` reboots when a reboot is required after the run, whatever packages changed. Both need `commands.allow_reboot: true` on the agent. Repair, failed/uncertain outcomes and recovered results do not replay a reboot. See [Manual patch and reboot](../../README.md#manual-patch-and-reboot). Durable intent prevents a duplicate after restart. Existing reboot privilege remains separate; host administrators and already privileged accounts can still interrupt the host.
 
 ## Root migration
 

@@ -624,4 +624,15 @@ const (
 	CodeInvalidFilter     = "invalid_filter"
 	CodeRateLimited       = "rate_limited"
 	CodeNotCancellable    = "not_cancellable"
+
+	// PATCH-FLOW-001 AD-004: manual os_update reboot authorization rejections.
+	CodeRebootNotAllowed      = "reboot_not_allowed"
+	CodeRebootAuthUnsupported = "reboot_authorization_unsupported"
+)
+
+// os_update parameter names (PATCH-FLOW-001). include_reboot_class is derived
+// by the server only; reboot_if_required is the operator's per-command opt-in.
+const (
+	ParamRebootIfRequired   = "reboot_if_required"
+	ParamIncludeRebootClass = "include_reboot_class"
 )

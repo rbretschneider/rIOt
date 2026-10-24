@@ -185,6 +185,8 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 				v.AllowPatching = &allowPatching
 				holdRebootClass := a.config.Commands.HoldRebootClass
 				v.HoldRebootClass = &holdRebootClass
+				// This agent understands os_update's reboot_if_required (PATCH-FLOW-001 AD-004).
+				v.SupportsRebootIfRequired = true
 			}
 		case []models.ServiceInfo:
 			data.Services = v

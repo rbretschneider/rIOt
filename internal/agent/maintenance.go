@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -113,6 +112,15 @@ func (a *Agent) maintenanceBusy(ctx context.Context) bool {
 // are not. The reason reaches command results and logs so a blocked device can
 // be diagnosed from the dashboard.
 func (a *Agent) maintenanceBlocker(ctx context.Context) string {
+	return a.maintenanceBlockerFor(ctx, "")
+}
+
+// maintenanceBlockerFor is maintenanceBlocker for a reboot that follows command
+// ownID. The helper unit of that same command can still be active or
+// deactivating just after it wrote its terminal record; that is the command
+// winding down, not other maintenance work, so it does not block (PATCH-FLOW-001
+// C-3). An empty ownID keeps the strict behavior.
+func (a *Agent) maintenanceBlockerFor(ctx context.Context, ownID string) string {
 	m := a.maintenance()
 	if !m.present() {
 		return ""
@@ -121,10 +129,13 @@ func (a *Agent) maintenanceBlocker(ctx context.Context) string {
 	if err != nil {
 		return "cannot inspect " + maintenance.UnitName + ": " + err.Error()
 	}
-	if active {
+	if active && ownID == "" {
 		return maintenanceRunning
 	}
 	record, err := m.current()
+	if active && !finishedRunOf(ownID, record, err) {
+		return maintenanceRunning
+	}
 	switch {
 	case os.IsNotExist(err):
 		return ""
@@ -136,6 +147,11 @@ func (a *Agent) maintenanceBlocker(ctx context.Context) string {
 		return "package holds were not restored after OS maintenance; run os_update to recover"
 	}
 	return ""
+}
+
+// finishedRunOf reports whether record is the terminal record of command id.
+func finishedRunOf(id string, record maintenance.Record, err error) bool {
+	return id != "" && err == nil && record.CommandID == id && record.Terminal()
 }
 
 func (a *Agent) runDetachedMaintenance(ctx context.Context, payload models.CommandPayload, mode string, include bool) commandExecResult {
@@ -263,9 +279,13 @@ func (a *Agent) recoverMaintenanceCommand(id string, marker inflightMarker) bool
 		defer cr.cancel()
 		cr.start = marker.StartedAt
 		res := a.observeMaintenance(a.commandContext(), id, true)
+		if marker.RebootIfRequired && !res.Detached {
+			a.noteRecoveredAuthorization(a.commandContext(), &res)
+		}
 		a.completeCommand(cr, res)
 		if !res.Detached {
 			a.locks.Unlock([]string{models.TargetKeyHost}, id)
+			a.triggerTelemetry()
 		}
 	}()
 	return true
@@ -393,37 +413,4 @@ func (a *Agent) canRequestMaintenanceRecovery(ctx context.Context, action string
 	// The root worker performs only its fixed prior-hold cleanup before
 	// refusing this new request. A live or uninspectable worker is never raced.
 	return err == nil && !active
-}
-
-func (a *Agent) claimPatchReboot(id string) bool {
-	if !models.IsCanonicalUUID(id) {
-		return false
-	}
-	a.rebootIntentMu.Lock()
-	defer a.rebootIntentMu.Unlock()
-	path := a.rebootIntentPath
-	var fs stateFS = osStateFS{}
-	if a.inflight != nil {
-		fs = a.inflight.file.fs
-		if path == "" {
-			path = filepath.Join(filepath.Dir(a.inflight.file.path), "patch-reboot-intents.json")
-		}
-	}
-	if path == "" {
-		path = filepath.Join(filepath.Dir(OutboxPath()), "patch-reboot-intents.json")
-	}
-	store := newAtomicJSONFile(path, fs)
-	claims := map[string]bool{}
-	if _, err := store.Load(&claims); err != nil {
-		return false
-	}
-	if claims[id] || len(claims) >= 256 {
-		return false
-	}
-	claims[id] = true
-	if err := store.Save(claims); err != nil {
-		slog.Warn("cannot persist reboot intent; reboot suppressed", "error", err)
-		return false
-	}
-	return true
 }

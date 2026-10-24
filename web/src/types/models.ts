@@ -221,6 +221,13 @@ export interface UpdateInfo {
   last_check_time?: string
   unattended_upgrades: boolean
   allow_reboot?: boolean
+  // Self-reported agent settings (absent = the agent does not report them).
+  allow_patching?: boolean
+  hold_reboot_class?: boolean
+  // PATCH-FLOW-001: apt package-list freshness. Absent reads as unknown.
+  lists_freshness?: 'fresh' | 'stale' | 'unknown'
+  // The agent understands os_update reboot_if_required (only true counts).
+  supports_reboot_if_required?: boolean
 }
 
 export interface PendingUpdate {

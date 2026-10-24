@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -27,6 +28,11 @@ type UpdatesCollector struct {
 	exitRun                exitRunner // dnf needs-restarting exit-code runner; nil = real exec
 	rebootRequiredPath     string     // apt marker file override
 	rebootRequiredPkgsPath string     // apt package-list file override
+
+	// PATCH-FLOW-001 seams; the zero values mean production ("/" roots, wall clock).
+	kernelRoot string           // root for /boot and /proc kernel comparison
+	aptRoot    string           // root for /etc/apt and /var/lib/apt freshness
+	listsNow   func() time.Time // clock for the freshness clock-skew guard
 }
 
 // exitRunner runs a command and reports its exit code. err is non-nil only
@@ -96,30 +102,38 @@ func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateIn
 	// Check for updates (requires apt update to have been run)
 	out, err = exec.CommandContext(ctx, "apt", "list", "--upgradable").Output()
 	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "upgradable") || strings.Contains(line, "/") {
-				if strings.Contains(line, "Listing") {
-					continue
-				}
-				info.PendingUpdates++
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					name := strings.Split(parts[0], "/")[0]
-					info.Updates = append(info.Updates, models.PendingUpdate{
-						Name:   name,
-						NewVer: parts[1],
-					})
-				}
-				if strings.Contains(line, "-security") {
-					info.PendingSecurityCount++
-				}
-			}
-		}
+		parseAptUpgradable(string(out), info)
 	}
 
 	classifyUpdates(info)
+	c.applyListsFreshness(info)
 	c.detectRebootRequiredAPT(info)
+}
+
+// parseAptUpgradable counts and lists the entries of `apt list --upgradable`
+// output into info. The raw list is reported even when the package lists are
+// stale (PATCH-FLOW-001 FR-032).
+func parseAptUpgradable(output string, info *models.UpdateInfo) {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if !strings.Contains(line, "upgradable") && !strings.Contains(line, "/") {
+			continue
+		}
+		if strings.Contains(line, "Listing") {
+			continue
+		}
+		info.PendingUpdates++
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			name := strings.Split(parts[0], "/")[0]
+			info.Updates = append(info.Updates, models.PendingUpdate{
+				Name:   name,
+				NewVer: parts[1],
+			})
+		}
+		if strings.Contains(line, "-security") {
+			info.PendingSecurityCount++
+		}
+	}
 }
 
 func (c *UpdatesCollector) collectDNF(ctx context.Context, info *models.UpdateInfo) {
@@ -223,9 +237,33 @@ func classifyUpdates(info *models.UpdateInfo) {
 	info.PendingKernelVersion = version
 }
 
-// detectRebootRequiredAPT checks the apt reboot-required marker file
-// (FR-017). Stat/read errors degrade to false with debug-only logging.
+// detectRebootRequiredAPT reports whether a reboot is required now: the apt
+// reboot-required marker exists (PATCH-GATE FR-017) or the newest installed
+// kernel is newer than the running one (PATCH-FLOW-001 FR-002). Stat/read
+// errors degrade to false with debug-only logging.
 func (c *UpdatesCollector) detectRebootRequiredAPT(info *models.UpdateInfo) {
+	if c.detectRebootMarker(info) {
+		info.RebootRequired = true
+	}
+	if newer, installed, running, ok := kernelNewerThanRunning(c.kernelRoot); ok && newer {
+		info.RebootRequired = true
+		info.RebootRequiredReasons = append(info.RebootRequiredReasons, kernelReason(installed, running))
+	}
+}
+
+// kernelReason is the single reason line added when the kernel source fires.
+// Both inputs already passed the release charset filter.
+func kernelReason(installed, running string) string {
+	reason := "kernel " + installed + " installed; running " + running
+	if len(reason) > maxKernelReasonLen {
+		reason = reason[:maxKernelReasonLen]
+	}
+	return reason
+}
+
+// detectRebootMarker reports whether the apt marker file exists and, when it
+// does, appends the deduplicated package reasons from the .pkgs file.
+func (c *UpdatesCollector) detectRebootMarker(info *models.UpdateInfo) bool {
 	markerPath := c.rebootRequiredPath
 	if markerPath == "" {
 		markerPath = defaultRebootRequiredPath
@@ -239,13 +277,12 @@ func (c *UpdatesCollector) detectRebootRequiredAPT(info *models.UpdateInfo) {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Debug("updates: reboot-required stat failed", "path", markerPath, "error", err)
 		}
-		return
+		return false
 	}
-	info.RebootRequired = true
 
 	data, err := os.ReadFile(pkgsPath)
 	if err != nil {
-		return // marker alone is enough; reasons are optional
+		return true // marker alone is enough; reasons are optional
 	}
 	seen := make(map[string]bool)
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
@@ -254,6 +291,7 @@ func (c *UpdatesCollector) detectRebootRequiredAPT(info *models.UpdateInfo) {
 			info.RebootRequiredReasons = append(info.RebootRequiredReasons, line)
 		}
 	}
+	return true
 }
 
 // detectRebootRequiredDNF maps `dnf needs-restarting -r` exit codes

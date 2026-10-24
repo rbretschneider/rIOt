@@ -107,3 +107,23 @@ func TestUpdateInfo_NewPayloadDecodesIntoOldShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(raw), &old), "unknown keys must be ignored by an older decoder")
 	assert.Equal(t, 2, old.PendingUpdates)
 }
+
+// PATCH-FLOW-001 AC-016 (agent half): every agent of this release reports that
+// it understands reboot_if_required, so the server can accept a ticked dispatch.
+func TestTelemetry_PF_AC016_AgentReportsCapability(t *testing.T) {
+	data := collectWithAllowReboot(t, true, &models.UpdateInfo{PendingUpdates: 1})
+
+	require.NotNil(t, data.Updates)
+	assert.True(t, bool(data.Updates.SupportsRebootIfRequired), "[AC-016] the capability must be stamped on update telemetry")
+	raw, err := json.Marshal(data.Updates)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"supports_reboot_if_required":true`)
+}
+
+func TestTelemetry_PF_AC016_CapabilityReportedEvenWhenRebootsAreOff(t *testing.T) {
+	data := collectWithAllowReboot(t, false, &models.UpdateInfo{PendingUpdates: 1})
+
+	require.NotNil(t, data.Updates)
+	assert.True(t, bool(data.Updates.SupportsRebootIfRequired),
+		"[AC-016] allow_reboot=false is reported separately; the capability fact is about understanding the parameter")
+}

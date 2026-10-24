@@ -226,6 +226,10 @@ func (g *Generator) recentDisruptiveCommand(ctx context.Context, deviceID string
 	return nil
 }
 
+// rebootAuthorizedEventSuffix is appended to the command-sent message of an os_update
+// the operator authorized to reboot if required.
+const rebootAuthorizedEventSuffix = " (reboot authorized if required)"
+
 // CommandSent creates an informational event when any command is dispatched.
 func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action string, params map[string]interface{}) {
 	label, ok := commandLabels[action]
@@ -236,6 +240,11 @@ func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action 
 	// Add container context for Docker commands
 	if cname, _ := params["container_id"].(string); cname != "" {
 		msg = fmt.Sprintf("%s initiated for %s on %s", label, cname, hostname)
+	}
+	// The audit trail shows when the operator authorized a reboot with the patch
+	// (PATCH-FLOW-001 NFR-010).
+	if authorized, _ := params[models.ParamRebootIfRequired].(bool); authorized && action == "os_update" {
+		msg += rebootAuthorizedEventSuffix
 	}
 	g.createEvent(ctx, &models.Event{
 		DeviceID:  deviceID,

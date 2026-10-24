@@ -45,6 +45,12 @@ type commandExecResult struct {
 	RebootPending      bool
 	RebootCommandID    string
 
+	// PATCH-FLOW-001: PackageManager ("apt" or "dnf") names the manager an
+	// os_update used, and RebootAuth is the decision of an authorized run. Both
+	// are internal; the FR-023 facts reach the server in Message.
+	PackageManager string
+	RebootAuth     *rebootAuthOutcome
+
 	// CMD-LIFECYCLE-001: the failing (or last) step, the closed-enum reason and
 	// the error text a failed result carries. Status stays success/error on the
 	// wire (FR-081).
@@ -166,10 +172,7 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	case "shutdown":
 		status, message = a.handleShutdown(payload)
 	case "os_update":
-		r := a.handleOSUpdateWithOutput(ctx, payload)
-		r.RebootCommandID = payload.CommandID
-		r.postResult = func() { a.maybeRebootAfterPatch(r) }
-		return r
+		return a.executeOSUpdate(cr)
 	case "agent_update":
 		status, message = a.handleTriggerUpdate(context.WithValue(ctx, updateCommandIDKey{}, payload.CommandID))
 		if status == "pending" {
@@ -198,10 +201,11 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 // and fires the FR-019 event.
 func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 	if len(r.RebootClassApplied) == 0 {
+		a.triggerTelemetry()
 		return
 	}
 	if a.config.Commands.AllowReboot {
-		if a.locks == nil || a.maintenanceBusy(a.commandContext()) {
+		if a.locks == nil || a.maintenanceBlockerFor(a.commandContext(), r.RebootCommandID) != "" {
 			a.triggerTelemetry()
 			return
 		}
@@ -210,8 +214,9 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 			a.triggerTelemetry()
 			return
 		}
-		if !a.claimPatchReboot(r.RebootCommandID) {
+		if claim := a.claimPatchReboot(r.RebootCommandID); claim != claimOK {
 			a.locks.Unlock([]string{models.TargetKeyHost}, reservation)
+			a.reportSuppressedReboot(r.RebootCommandID, claim)
 			a.triggerTelemetry()
 			return
 		}
@@ -219,24 +224,14 @@ func (a *Agent) maybeRebootAfterPatch(r commandExecResult) {
 			"packages", r.RebootClassApplied)
 		delay := a.rebootDelay
 		if delay == 0 {
-			delay = 2 * time.Second
+			delay = defaultRebootDelay
 		}
 		go func() {
 			defer a.locks.Unlock([]string{models.TargetKeyHost}, reservation)
-			if a.pause != nil {
-				if !a.pause(a.commandContext(), delay) {
-					return
-				}
-			} else {
-				timer := time.NewTimer(delay)
-				defer timer.Stop()
-				select {
-				case <-timer.C:
-				case <-a.commandContext().Done():
-					return
-				}
+			if !a.sleep(a.commandContext(), delay) {
+				return
 			}
-			if a.shuttingDown.Load() || a.maintenanceBusy(a.commandContext()) {
+			if a.shuttingDown.Load() || a.maintenanceBlockerFor(a.commandContext(), r.RebootCommandID) != "" {
 				a.triggerTelemetry()
 				return
 			}
@@ -322,9 +317,10 @@ func (a *Agent) handleReboot(payload models.CommandPayload) (string, string) {
 	return "success", "reboot initiated"
 }
 
-// execReboot starts the OS reboot command. Both call sites (handleReboot
-// and maybeRebootAfterPatch) gate on a.config.Commands.AllowReboot before
-// calling — no other path may reach this (NFR-002, ADD Note #6).
+// execReboot starts the OS reboot command. The three call sites (handleReboot,
+// maybeRebootAfterPatch and rebootAfterDelivery) each gate on
+// a.config.Commands.AllowReboot before calling — no other path may reach this
+// (NFR-002, PATCH-FLOW-001 NFR-001).
 func (a *Agent) execReboot() error {
 	if a.runner != nil {
 		_, err := a.runner(context.Background(), "sudo", "systemctl", "reboot")
@@ -396,12 +392,15 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	switch {
 	case aptErr == nil:
 		_ = aptPath
-		return a.runDetachedMaintenance(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled)
+		result := a.runDetachedMaintenance(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled)
+		result.PackageManager = pmAPT
+		return result
 	case dnfErr == nil:
 		if mode == "repair" {
 			return precheckFailure("bounded repair is supported only on apt/systemd hosts")
 		}
-		plan.PM = "dnf"
+		plan.PM = pmDNF
+		plan.RebootAuthorized = rebootAuthorized(payload)
 		plan.RefreshArgs = []string{"sudo", dnfPath, "makecache"}
 		if mode == "security" {
 			plan.UpgradeArgs = []string{"sudo", dnfPath, "-y", "--security", "update"}
@@ -412,7 +411,9 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 		return commandExecResult{Status: "error", Message: "no supported package manager found (apt-get or dnf)"}
 	}
 
-	return a.runOSUpdate(updateCtx, payload.CommandID, plan)
+	result := a.runOSUpdate(updateCtx, payload.CommandID, plan)
+	result.PackageManager = plan.PM
+	return result
 }
 
 // osUpdatePlan describes one os_update run: the resolved package-manager
@@ -421,8 +422,12 @@ type osUpdatePlan struct {
 	Mode               string
 	IncludeRebootClass bool
 	PM                 string // "apt" | "dnf"
-	RefreshArgs        []string
-	UpgradeArgs        []string
+	// RebootAuthorized is the operator's reboot_if_required for this run. When
+	// set, the result text states the authorized decision (AD-006) instead of
+	// the PATCH-GATE reboot phrases.
+	RebootAuthorized bool
+	RefreshArgs      []string
+	UpgradeArgs      []string
 	// RepairArgs, when non-empty, is run between refresh and upgrade to
 	// clear a dpkg transaction left half-finished by an earlier interruption
 	// (`dpkg --configure -a`). Empty for package managers that have no such
@@ -506,6 +511,8 @@ func (a *Agent) runOSUpdate(updateCtx context.Context, commandID string, plan os
 	ec := 0
 	summary := parseOSUpdateSummary(string(upgradeOut), plan.PM == "apt")
 	switch {
+	case len(applied) > 0 && plan.RebootAuthorized:
+		summary += fmt.Sprintf(" (reboot-class applied: %s)", strings.Join(applied, ", "))
 	case len(applied) > 0 && a.config.Commands.AllowReboot:
 		summary += fmt.Sprintf(" (reboot-class applied: %s; reboot initiated)", strings.Join(applied, ", "))
 	case len(applied) > 0:

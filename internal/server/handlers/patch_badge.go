@@ -117,6 +117,13 @@ type patchBadge struct {
 // computePatchBadge decides the badge for one host. See the decision table:
 // any needs-you reason wins; otherwise a reboot is either dated (window mode,
 // allow_reboot true), unknown, or not needed.
+//
+// PATCH-FLOW-001 amends PATCH-BADGE-001 rule NY-10 and the Reboot line (no
+// PATCH-BADGE-001 FRD/ADD exists in the repository, so the amendment is recorded
+// here): "reboot needed" means a reboot is required now, which is only
+// u.RebootRequired. A pending, not yet installed kernel/GPU update is a future
+// reboot and never raises manual_reboot_needed. While the package lists are
+// stale, nothing is derived from the pending list.
 func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	now = now.UTC()
 	u := in.Updates
@@ -124,10 +131,9 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	nextStart, haveStart := nextMaintenanceWindowStart(in.OSPatch, now)
 
 	allowReboot := (*bool)(nil)
-	holdRebootClass := (*bool)(nil)
 	allowPatching := (*bool)(nil)
 	if u != nil {
-		allowReboot, holdRebootClass, allowPatching = u.AllowReboot, u.HoldRebootClass, u.AllowPatching
+		allowReboot, allowPatching = u.AllowReboot, u.AllowPatching
 	}
 	gated := in.OSPatch.RebootClass == "gated"
 
@@ -136,11 +142,14 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	canPatch := u != nil && (u.PackageManager == "apt" || u.PackageManager == "dnf")
 	autoPatchSetUp := in.AutoPatch && modeUsable && !agentRefuses && canPatch
 
-	rebootExpected := u != nil && (u.RebootRequired || u.PendingRebootClassCount > 0)
+	requiredNow := u != nil && u.RebootRequired
+	stale := u != nil && u.Freshness() == string(models.ListsStale)
+	pendingRC := u != nil && !stale && u.PendingRebootClassCount > 0
 	enforcementBroken := u != nil && (u.HoldEnforcement == "no_privilege")
 	agentCanRelease := agentCanReleaseRebootClass(u)
-	autoRebootSetUp := autoPatchSetUp && gated && u != nil && u.PendingRebootClassCount > 0 &&
+	autoRebootSetUp := autoPatchSetUp && gated && pendingRC &&
 		(allowReboot == nil || *allowReboot) && agentCanRelease
+	autoCovers := (requiredNow || pendingRC) && autoRebootSetUp
 
 	var reasons []patchBadgeReason
 	add := func(code, text, action string) {
@@ -212,30 +221,12 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 		}
 		reasons = append(reasons, reason)
 	}
-	// NY-10: a reboot is expected and nothing will do it.
-	var rebootCauses []string
-	if canPatch && rebootExpected && !autoRebootSetUp {
-		if u.PendingRebootClassCount == 0 {
-			rebootCauses = append(rebootCauses, "no kernel or GPU update is pending")
-		}
-		if !gated {
-			rebootCauses = append(rebootCauses, "the reboot_class policy is not gated")
-		}
-		if allowReboot != nil && !*allowReboot {
-			rebootCauses = append(rebootCauses, "allow_reboot is off on the agent")
-		}
-		if holdRebootClass != nil && !*holdRebootClass {
-			rebootCauses = append(rebootCauses, "hold_reboot_class is off on the agent")
-		}
-		if u.HoldEnforcement == "unsupported" || enforcementBroken {
-			rebootCauses = append(rebootCauses, "hold enforcement is not working on the agent")
-		}
-		if !autoPatchSetUp {
-			rebootCauses = append(rebootCauses, "automatic patching is not set up")
-		}
+	// NY-10: a reboot is required now and nothing will do it.
+	if canPatch && requiredNow && !autoCovers {
+		causes := manualRebootCauses(u, pendingRC, gated, autoPatchSetUp)
 		add(reasonManualReboot,
-			"A reboot is needed and no automatic reboot is set up: "+strings.Join(rebootCauses, "; ")+".",
-			"Reboot this host by hand.")
+			"A reboot is required now and nothing will reboot this host automatically: "+strings.Join(causes, "; ")+".",
+			manualRebootAction(allowReboot))
 	}
 
 	b := patchBadge{Explanation: patchBadgeExplanation{NeedsYou: reasons, Notes: []string{}}}
@@ -244,34 +235,21 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	}
 
 	// Badge kind, reboot line and reboot time.
+	dated := mode == "window" && allowReboot != nil && *allowReboot
+	b.Explanation.Reboot = rebootLine(rebootFacts{
+		requiredNow: requiredNow, pendingRC: pendingRC, autoCovers: autoCovers,
+		reasons: len(reasons), dated: dated, at: nextStart, why: unknownDateReasons(mode, allowReboot),
+	})
 	switch {
 	case len(reasons) > 0:
 		b.Kind, b.Label = badgeNeedsYou, "Needs you"
-		switch {
-		case !rebootExpected:
-			b.Explanation.Reboot = "Not needed."
-		case autoRebootSetUp:
-			b.Explanation.Reboot = "Automatic once the items below are resolved (date not shown)."
-		default:
-			b.Explanation.Reboot = "Manual: you must reboot this host."
-		}
-	case !rebootExpected:
+	case !autoCovers:
 		b.Kind, b.Label = badgeAuto, "Auto"
-		b.Explanation.Reboot = "Not needed."
-	case mode == "window" && allowReboot != nil && *allowReboot:
+	case dated:
 		at := nextStart
 		b.Kind, b.Label, b.RebootAt = badgeAutoRebootDate, "Auto (reboot on "+at.Format("2006-01-02")+")", &at
-		b.Explanation.Reboot = "Automatic on " + at.Format("2006-01-02 15:04") + " UTC (estimate)."
 	default:
 		b.Kind, b.Label = badgeAutoRebootUnknown, "Auto (reboot date Unknown)"
-		var why []string
-		if mode == "anytime" {
-			why = append(why, "the reboot happens on the next automatic patch run and the time is not predicted")
-		}
-		if allowReboot == nil {
-			why = append(why, "this agent is too old to report allow_reboot; update the agent")
-		}
-		b.Explanation.Reboot = "Automatic, date Unknown: " + strings.Join(why, "; ") + "."
 	}
 
 	// Line 1: automatic patching.
@@ -301,6 +279,96 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	return b
 }
 
+// pendingKernelLine opens every Reboot line that describes a future reboot.
+const pendingKernelLine = "The pending patch includes a kernel/GPU update; a reboot will be needed after it installs."
+
+// staleListsNote explains a badge that ignores the pending-update list (FR-036).
+const staleListsNote = "Package lists are out of date on this host. Pending updates will be recounted after the next refresh; running Patch refreshes the package lists first."
+
+// rebootFacts is what the Reboot line depends on.
+type rebootFacts struct {
+	requiredNow bool
+	pendingRC   bool
+	autoCovers  bool
+	reasons     int
+	dated       bool
+	at          time.Time
+	why         string
+}
+
+// rebootLine renders the Reboot line (PATCH-FLOW-001 AD-001). "Required now" and
+// "will be needed" are different facts and never share wording.
+func rebootLine(f rebootFacts) string {
+	switch {
+	case !f.requiredNow && !f.pendingRC:
+		return "Not needed."
+	case f.requiredNow && !f.autoCovers:
+		return "Required now: reboot this host now; nothing will reboot it automatically."
+	case !f.autoCovers:
+		return pendingKernelLine + " It will not happen automatically."
+	}
+	head := pendingKernelLine + " It will happen automatically"
+	if f.requiredNow {
+		head = "Required now. Automatic"
+	}
+	switch {
+	case f.reasons > 0:
+		return head + " once the items below are resolved (date not shown)."
+	case f.dated:
+		return head + " on " + f.at.Format("2006-01-02 15:04") + " UTC (estimate)."
+	default:
+		return head + ", date Unknown: " + f.why + "."
+	}
+}
+
+// unknownDateReasons explains why an automatic reboot has no predicted date.
+func unknownDateReasons(mode string, allowReboot *bool) string {
+	var why []string
+	if mode == "anytime" {
+		why = append(why, "the reboot happens on the next automatic patch run and the time is not predicted")
+	}
+	if allowReboot == nil {
+		why = append(why, "this agent is too old to report allow_reboot; update the agent")
+	}
+	return strings.Join(why, "; ")
+}
+
+// manualRebootCauses lists, in order, why no automatic reboot will follow. It is
+// never empty when a reboot is required now and not covered: either no pending
+// kernel/GPU update exists to trigger one, or the automatic path is missing a
+// condition listed here.
+func manualRebootCauses(u *models.UpdateInfo, pendingRC, gated, autoPatchSetUp bool) []string {
+	var causes []string
+	if !pendingRC {
+		causes = append(causes, "rIOt reboots automatically only after an automatic patch run installs a kernel or GPU update")
+	}
+	if !gated {
+		causes = append(causes, "the reboot_class policy is not gated")
+	}
+	if u.AllowReboot != nil && !*u.AllowReboot {
+		causes = append(causes, "allow_reboot is off on the agent")
+	}
+	if u.HoldRebootClass != nil && !*u.HoldRebootClass {
+		causes = append(causes, "hold_reboot_class is off on the agent")
+	}
+	if u.HoldEnforcement == "unsupported" || u.HoldEnforcement == "no_privilege" {
+		causes = append(causes, "hold enforcement is not working on the agent")
+	}
+	if !autoPatchSetUp {
+		causes = append(causes, "automatic patching is not set up")
+	}
+	return causes
+}
+
+// manualRebootAction tells the operator to reboot now; when the agent forbids
+// reboots it says the reboot must happen outside rIOt.
+func manualRebootAction(allowReboot *bool) string {
+	if allowReboot != nil && !*allowReboot {
+		return "Reboot this host now, outside rIOt (commands.allow_reboot is off on the agent)."
+	}
+	return "Reboot this host now."
+}
+
 // agentCanReleaseRebootClass reports whether the agent can apply reboot-class
 // packages during an automatic run. Unknown counts as yes.
 func agentCanReleaseRebootClass(u *models.UpdateInfo) bool {
@@ -319,6 +387,9 @@ func patchBadgeNotes(in patchBadgeInput, u *models.UpdateInfo) []string {
 	notes := []string{}
 	if u == nil {
 		return notes
+	}
+	if u.Freshness() == string(models.ListsStale) {
+		notes = append(notes, staleListsNote)
 	}
 	if u.UnattendedUpgrades {
 		notes = append(notes, "unattended-upgrades is installed on this host. rIOt cannot see what it applies or whether it reboots, and it does not count as automatic patching by rIOt.")

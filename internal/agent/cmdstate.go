@@ -312,6 +312,10 @@ type inflightMarker struct {
 	UpdateSHA256      string         `json:"update_sha256,omitempty"`
 	UpdateRequestedAt time.Time      `json:"update_requested_at,omitempty"`
 	Docker            []dockerRecord `json:"docker,omitempty"`
+	// RebootIfRequired marks an os_update the operator authorized to reboot
+	// after the run, so a result recovered after an agent restart still states
+	// the authorization (PATCH-FLOW-001 AD-005).
+	RebootIfRequired bool `json:"reboot_if_required,omitempty"`
 }
 
 func (m inflightMarker) clone() inflightMarker {

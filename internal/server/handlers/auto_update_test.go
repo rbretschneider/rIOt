@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/testutil"
@@ -900,3 +901,57 @@ func TestCheckAutoUpdates_StaggerOnlyConsumedByRealDispatch(t *testing.T) {
 	assert.Len(t, e.dockerUpdates(), 2, "alpha's conflict is skipped and must not use up the stagger slot, so bravo dispatches")
 }
 
+
+// [PATCH-FLOW-001 AC-022] The automated orchestration is unchanged: whatever the
+// policy, its dispatch params are exactly the PATCH-GATE ones and never carry
+// the manual reboot_if_required authorization.
+func TestAutoPatch_PF_AC022_DispatchParamsUnchanged(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy models.MaintenanceWindow
+		want   map[string]interface{}
+	}{
+		{"gated", models.MaintenanceWindow{Mode: "anytime", StartTime: "00:00", EndTime: "23:59", CooldownMinutes: 60, RebootClass: "gated"},
+			map[string]interface{}{"mode": "full", "include_reboot_class": true}},
+		{"off", models.MaintenanceWindow{Mode: "anytime", StartTime: "00:00", EndTime: "23:59", CooldownMinutes: 60, RebootClass: "off"},
+			map[string]interface{}{"mode": "full"}},
+	}
+	for _, tc := range cases {
+		t.Run("[AC-022] "+tc.name, func(t *testing.T) {
+			h, cmdRepo := autoPatchTestHandler(t, tc.policy)
+			h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+			cmds := osUpdateCommands(cmdRepo)
+			if assert.Len(t, cmds, 1) {
+				assert.Equal(t, tc.want, cmds[0].Params)
+			}
+		})
+	}
+	t.Run("[AC-022] out of window dispatches nothing", func(t *testing.T) {
+		h, cmdRepo := autoPatchTestHandler(t, models.MaintenanceWindow{
+			Mode: "window", StartTime: "00:00", EndTime: "00:00", CooldownMinutes: 60, RebootClass: "gated",
+		})
+		h.checkAutoPatch(context.Background(), "dev-1", pendingUpdatesTelemetry())
+		assert.Empty(t, osUpdateCommands(cmdRepo))
+	})
+}
+
+// [PATCH-FLOW-001 AC-031] Freshness is display-only: a stale host and a fresh
+// host get the identical automated dispatch decision.
+func TestAutoPatch_PF_AC031_FreshnessDoesNotChangeDispatch(t *testing.T) {
+	policy := models.MaintenanceWindow{Mode: "anytime", StartTime: "00:00", EndTime: "23:59", CooldownMinutes: 60, RebootClass: "gated"}
+	dispatched := func(freshness models.ListsFreshness) []*models.Command {
+		h, cmdRepo := autoPatchTestHandler(t, policy)
+		data := pendingUpdatesTelemetry()
+		data.Updates.ListsFreshness = freshness
+		h.checkAutoPatch(context.Background(), "dev-1", data)
+		return osUpdateCommands(cmdRepo)
+	}
+
+	stale, fresh := dispatched(models.ListsStale), dispatched(models.ListsFresh)
+
+	require.Len(t, stale, 1, "[AC-031] a stale host is still patched on schedule")
+	require.Len(t, fresh, 1)
+	assert.Equal(t, fresh[0].Params, stale[0].Params, "[AC-031] identical parameters")
+	assert.Equal(t, fresh[0].Action, stale[0].Action)
+	assert.Equal(t, 1, len(dispatched(models.ListsUnknown)), "unknown freshness dispatches too")
+}

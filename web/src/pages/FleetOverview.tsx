@@ -6,6 +6,7 @@ import { errorMessage } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { isVersionOlder } from '../utils/version'
+import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, normalizeFreshness } from '../utils/patchFlow'
 
 import PatchBadge from '../components/PatchBadge'
 import RebootClassBadge from '../components/RebootClassBadge'
@@ -319,7 +320,12 @@ export default function FleetOverview() {
                   <td className="px-4 py-3 text-sm">
                     <div className="flex items-center gap-2">
                       {(() => {
-                        const count = patchMap.get(d.id)?.pending_updates
+                        const row = patchMap.get(d.id)
+                        // A count read from stale package lists is not actionable (BR-005).
+                        if (normalizeFreshness(row?.lists_freshness) === 'stale') {
+                          return <span className="text-amber-400 text-xs" title={STALE_PATCH_LABEL}>Lists out of date</span>
+                        }
+                        const count = row?.pending_updates
                         if (!count) return <span className="text-gray-600">-</span>
                         return <span className="text-cyan-400">{count}</span>
                       })()}
@@ -432,8 +438,14 @@ function PatchReviewModal({ loading, patches, pending, onConfirm, onClose }: {
     })
   }
 
-  const totalPkgs = patches?.reduce((n, d) => n + d.pending_updates, 0) ?? 0
+  // Package totals leave out hosts whose lists are stale (OQ-008, BR-005). Security
+  // counts never disappear (SEC-007): stale hosts stay in the security total, and the
+  // part that comes from out-of-date lists is called out.
+  const isStale = (d: DevicePatchInfo) => normalizeFreshness(d.lists_freshness) === 'stale'
+  const staleCount = patches?.filter(isStale).length ?? 0
+  const totalPkgs = patches?.reduce((n, d) => n + (isStale(d) ? 0 : d.pending_updates), 0) ?? 0
   const totalSecurity = patches?.reduce((n, d) => n + d.security_count, 0) ?? 0
+  const staleSecurity = patches?.reduce((n, d) => n + (isStale(d) ? d.security_count : 0), 0) ?? 0
 
   return (
     <Modal
@@ -444,7 +456,16 @@ function PatchReviewModal({ loading, patches, pending, onConfirm, onClose }: {
         !loading && patches ? (
           <>
             {totalPkgs} package{totalPkgs !== 1 ? 's' : ''} across {patches.length} device{patches.length !== 1 ? 's' : ''}
-            {totalSecurity > 0 && <span className="text-danger-fg ml-2">({totalSecurity} security)</span>}
+            {totalSecurity > 0 && (
+              <span className="text-danger-fg ml-2">
+                ({totalSecurity} security{staleSecurity > 0 ? `, ${staleSecurity} of them from out-of-date lists` : ''})
+              </span>
+            )}
+            {staleCount > 0 && (
+              <span className="text-text-muted">
+                {' · '}{staleCount} device{staleCount !== 1 ? 's' : ''} with out-of-date package lists not counted
+              </span>
+            )}
           </>
         ) : undefined
       }
@@ -489,14 +510,20 @@ function PatchReviewModal({ loading, patches, pending, onConfirm, onClose }: {
                     <div className="flex items-center gap-3 text-sm">
                       {d.patch_badge && <PatchBadge badge={d.patch_badge} />}
                       {d.security_count > 0 && (
-                        <span className="text-red-400">{d.security_count} security</span>
+                        <span className="text-red-400">
+                          {d.security_count} security{isStale(d) ? ` ${STALE_SECURITY_QUALIFIER}` : ''}
+                        </span>
                       )}
-                      {d.reboot_class_count > 0 && (
+                      {d.reboot_class_count > 0 && !isStale(d) && (
                         <span className="text-violet-300" title="GPU driver / kernel packages — applied only during the maintenance window when reboot-class gating is on">
                           {d.reboot_class_count} reboot-class
                         </span>
                       )}
-                      <span className="text-cyan-400">{d.pending_updates} pkg{d.pending_updates !== 1 ? 's' : ''}</span>
+                      {isStale(d) ? (
+                        <span className="text-amber-400">{STALE_PATCH_LABEL}</span>
+                      ) : (
+                        <span className="text-cyan-400">{d.pending_updates} pkg{d.pending_updates !== 1 ? 's' : ''}</span>
+                      )}
                       <span className="text-gray-500">{expanded.has(d.device_id) ? '▲' : '▼'}</span>
                     </div>
                   </button>

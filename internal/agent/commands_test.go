@@ -404,3 +404,28 @@ func TestLastMeaningfulLines_LessLines(t *testing.T) {
 	result := lastMeaningfulLines(output, 5)
 	assert.Equal(t, "only one", result)
 }
+
+// PATCH-FLOW-001 AD-005: an authorized dnf run states its decision through the
+// AD-006 suffix alone, so the PATCH-GATE reboot phrases are not appended.
+func TestRunOSUpdate_PF_AC017_AuthorizedPlanOmitsPatchGateRebootPhrases(t *testing.T) {
+	for _, allowReboot := range []bool{true, false} {
+		a, _ := newOSUpdateTestAgent(t, allowReboot)
+		plan := aptTestPlan(true)
+		plan.RebootAuthorized = true
+
+		r := a.runOSUpdate(context.Background(), "cmd-pf", plan)
+
+		require.Equal(t, "success", r.Status)
+		assert.Contains(t, r.Message, "reboot-class applied: nvidia-driver-550", "the applied packages are still auditable")
+		assert.NotContains(t, r.Message, "reboot initiated", "[AC-017] the decision text comes from the authorized suffix only")
+		assert.NotContains(t, r.Message, "reboot required but not permitted")
+	}
+}
+
+func TestRunOSUpdate_PF_AC013_UnauthorizedPlanKeepsPatchGatePhrases(t *testing.T) {
+	a, _ := newOSUpdateTestAgent(t, true)
+
+	r := a.runOSUpdate(context.Background(), "cmd-pf2", aptTestPlan(true))
+
+	assert.Contains(t, r.Message, "reboot initiated", "[AC-013] an unauthorized run behaves as before")
+}
