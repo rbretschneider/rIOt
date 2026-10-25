@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
@@ -103,17 +102,13 @@ func TestRebootClearance_QA_AC015_RealTimerShutdownEndsWaitWithin5s(t *testing.T
 	assert.Equal(t, 2, linesWith(logs.String(), `msg="dpkg lock `), "[AC-015] exactly the wait-started and wait-ended lines")
 }
 
-// Covers AC-020 / FR-021 (the budget split). reboot gets the long budget through the
-// real command policy, and shutdown is unchanged. A server that read the agent's
-// 12m maximum for shutdown too would make a one-minute poweroff wait 12 minutes.
+// Covers AC-017 / FR-021: the reboot budgets through the real command policy.
+// (SHUTDOWN-DPKG-001 AD-005 gave shutdown its own budgets, pinned by
+// TestCommandPolicy_SD_AC017_ShutdownBudgetCoversWait.)
 func TestCommandPolicy_QA_AC020_RebootAndShutdownBudgetsAreIndependent(t *testing.T) {
-	require.NotEqual(t, models.AgentHardMax(models.ActionReboot, 1), models.AgentHardMax(models.ActionShutdown, 1), "precondition: the budgets were split")
-	assert.Equal(t, time.Minute, models.AgentHardMax(models.ActionShutdown, 1), "[AC-020] shutdown agent budget unchanged")
-	assert.Equal(t, 10*time.Minute, models.ExecDeadline(models.ActionShutdown, 1), "[AC-020] shutdown server deadline unchanged")
 	assert.Equal(t, 12*time.Minute, models.AgentHardMax(models.ActionReboot, 1), "[AC-017] reboot agent budget covers the 10m wait")
 	assert.Equal(t, 20*time.Minute, models.ExecDeadline(models.ActionReboot, 1), "[AC-017] reboot server deadline")
 	assert.EqualValues(t, 1200, models.ExecDeadlineSeconds(models.ActionReboot, 1), "[AC-017] reboot exec_deadline_s")
-	assert.EqualValues(t, 600, models.ExecDeadlineSeconds(models.ActionShutdown, 1), "[AC-020] shutdown exec_deadline_s")
 }
 
 // Covers AC-010 (ADD section 8 lists this test, the implementation lacks it). A

@@ -245,17 +245,46 @@ func TestSweep_RD_AC017_RebootNotTimedOutBefore20m(t *testing.T) {
 		assert.Equal(t, "no result from agent within 20m", got.ResultMsg)
 		assert.Equal(t, 1, res.TimedOut)
 	})
-	t.Run("shutdown keeps the 10m deadline", func(t *testing.T) {
+}
+
+// seedShutdownDispatchedAgo stores a running shutdown dispatched `ago` ago, with
+// the execution deadline the server computes for new shutdown rows.
+func seedShutdownDispatchedAgo(h *harness, id string, ago time.Duration) {
+	h.t.Helper()
+	h.seed(id, "shutdown", "running", func(c *models.Command) {
+		at := h.clock.Now().Add(-ago)
+		dl := at.Add(time.Duration(c.ExecDeadlineS) * time.Second)
+		c.DispatchedAt, c.DeadlineAt = &at, &dl
+	})
+}
+
+func TestSweep_SD_AC016_ShutdownNotTimedOutBefore20m(t *testing.T) {
+	t.Run("a shutdown waiting 19m50s for the dpkg lock is still running", func(t *testing.T) {
 		h := newHarness(t)
-		h.seed(uid(1), "shutdown", "running", func(c *models.Command) {
-			at := h.clock.Now().Add(-10 * time.Minute)
-			dl := at.Add(time.Duration(c.ExecDeadlineS) * time.Second)
-			c.DispatchedAt, c.DeadlineAt = &at, &dl
-		})
+		seedShutdownDispatchedAgo(h, uid(1), 19*time.Minute+50*time.Second)
+
+		res := h.svc.Sweep(context.Background())
+
+		assert.Equal(t, "running", h.get(uid(1)).Status, "[AC-016] a shutdown inside its 20m deadline must not be timed out")
+		assert.Zero(t, res.TimedOut, "[AC-016] nothing may be swept before the 20m deadline")
+	})
+	t.Run("the old 10m deadline no longer times a shutdown out", func(t *testing.T) {
+		h := newHarness(t)
+		seedShutdownDispatchedAgo(h, uid(1), 11*time.Minute)
 
 		h.svc.Sweep(context.Background())
 
-		assert.Equal(t, "timed_out", h.get(uid(1)).Status, "[AC-020] shutdown must still time out at 10m")
-		assert.Equal(t, "no result from agent within 10m", h.get(uid(1)).ResultMsg)
+		assert.Equal(t, "running", h.get(uid(1)).Status, "[AC-016] 11m is past the old 600s deadline but inside the new 1200s one")
+	})
+	t.Run("a shutdown with no result after 20m times out with the 20m text", func(t *testing.T) {
+		h := newHarness(t)
+		seedShutdownDispatchedAgo(h, uid(1), 20*time.Minute)
+
+		res := h.svc.Sweep(context.Background())
+
+		got := h.get(uid(1))
+		assert.Equal(t, "timed_out", got.Status, "[AC-016] a lost shutdown result must still be swept at the new deadline")
+		assert.Equal(t, "no result from agent within 20m", got.ResultMsg)
+		assert.Equal(t, 1, res.TimedOut)
 	})
 }
