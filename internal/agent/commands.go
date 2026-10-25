@@ -437,7 +437,9 @@ func (a *Agent) execShutdown(p powerPermit) error {
 		return errShutdownNotCleared
 	}
 	if !a.poweroffRunning.CompareAndSwap(false, true) {
-		return errPoweroffStillRunning
+		// At most one poweroff child per agent (AD-007). The text lives here, with the
+		// other poweroff literals: the C-4 scan allows them nowhere else.
+		return errors.New("a previous poweroff command is still running")
 	}
 
 	launch := func() ([]byte, error) {

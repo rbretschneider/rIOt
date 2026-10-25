@@ -21,10 +21,6 @@ const (
 	poweroffErrMax = 200
 )
 
-// errPoweroffStillRunning is returned when an earlier poweroff child is still
-// alive: at most one runs per agent (AD-007).
-var errPoweroffStillRunning = errors.New("a previous poweroff command is still running")
-
 type poweroffExitKind uint8
 
 const (
@@ -98,7 +94,7 @@ func classifyPoweroff(x poweroffExit) error {
 		return errors.New(msg)
 	default:
 		if x.Err == nil {
-			return errors.New("poweroff command did not start")
+			return errors.New("shutdown command did not start")
 		}
 		return x.Err
 	}
