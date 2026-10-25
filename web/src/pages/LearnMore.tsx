@@ -427,6 +427,11 @@ rpm -qa | grep kernel-core`}</Code>
           <p>
             On production systems, you can schedule the reboot via rIOt's <strong>Reboot</strong> command during a maintenance window.
           </p>
+
+          <p>
+            rIOt reboots wait up to 10 minutes for a running package manager (<InlineCode>apt</InlineCode> or <InlineCode>dpkg</InlineCode>) to finish.
+            If it is still running, or rIOt cannot tell, the reboot is skipped and reported. rIOt never forces it.
+          </p>
         </Section>
       </>
     ),

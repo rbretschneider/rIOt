@@ -207,7 +207,7 @@ func TestCL_AC029_ExpiresAtPerActionClass(t *testing.T) {
 		ttl    time.Duration
 		dl     int
 	}{
-		{"reboot", nil, 15 * time.Minute, 600},
+		{"reboot", nil, 15 * time.Minute, 1200}, // REBOOT-DPKG-001 AD-004: reboot alone gets 20m
 		{"shutdown", nil, 15 * time.Minute, 600},
 		{"os_update", nil, 30 * time.Minute, 2400},
 		{"enable_auto_updates", nil, 30 * time.Minute, 2400},

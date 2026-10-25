@@ -232,8 +232,17 @@ func (a *Agent) rebootAfterDelivery(id string) {
 		a.abortAuthorizedReboot(id, "commands.allow_reboot is off")
 		return
 	}
-	slog.Info("os_update: authorized reboot after a successful run that requires one", "command_id", id)
-	if err := a.execReboot(); err != nil {
+	// REBOOT-DPKG-001: the checks above fail fast. The gate then waits, bounded, for
+	// the dpkg lock and re-runs the same guards before it clears. The host
+	// reservation stays held for the wait (about 10.5 minutes at most), and a
+	// skip is never retried.
+	c := a.awaitRebootClearance(ctx, "authorized_post_patch", id, a.commonRebootGuards(id))
+	if !c.Cleared {
+		a.abortAuthorizedReboot(id, c.reason())
+		return
+	}
+	slog.Info("os_update: authorized reboot after a successful run that requires one", "command_id", id, "waited", c.Waited.String())
+	if err := a.execReboot(c.Permit); err != nil {
 		slog.Warn("os_update: authorized reboot failed", "command_id", id, "error", err)
 		a.abortAuthorizedReboot(id, "reboot command failed: "+err.Error())
 	}

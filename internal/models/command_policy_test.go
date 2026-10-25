@@ -153,7 +153,7 @@ func TestCL_AC029_ExecDeadlineTable(t *testing.T) {
 		n      int
 		want   time.Duration
 	}{
-		{"reboot", 0, 10 * time.Minute},
+		{"reboot", 0, 20 * time.Minute}, // REBOOT-DPKG-001 AD-004: covers the 10m dpkg wait
 		{"shutdown", 0, 10 * time.Minute},
 		{"os_update", 0, 40 * time.Minute},
 		{"enable_auto_updates", 0, 40 * time.Minute},
@@ -734,5 +734,43 @@ func TestCL_AD005_OriginsAndOutboxBounds(t *testing.T) {
 		OutboxMaxAge != 24*time.Hour || SeenMaxEntries != 1000 || SeenMaxAge != 48*time.Hour ||
 		LegacyServerModeDuration != time.Hour || NotifierQueueBound != 64 {
 		t.Error("agent persistence bounds drifted from ADD 5.4 / AD-010 / AD-011")
+	}
+}
+
+func TestCommandPolicy_RD_AC017_RebootBudgetCoversWait(t *testing.T) {
+	if DpkgLockWaitBound != 10*time.Minute {
+		t.Errorf("[AC-017] DpkgLockWaitBound = %v, want 10m (BR-004)", DpkgLockWaitBound)
+	}
+	if got := AgentHardMax("reboot", 1); got != 12*time.Minute {
+		t.Errorf("[AC-017] AgentHardMax(reboot) = %v, want 12m", got)
+	}
+	if AgentHardMax("reboot", 1) <= DpkgLockWaitBound {
+		t.Errorf("[AC-017] the agent budget %v must exceed the wait bound %v so a full wait is never cut by cr.ctx", AgentHardMax("reboot", 1), DpkgLockWaitBound)
+	}
+	if got := ExecDeadline("reboot", 1); got != 20*time.Minute {
+		t.Errorf("[AC-017] ExecDeadline(reboot) = %v, want 20m", got)
+	}
+	if got := ExecDeadlineSeconds("reboot", 1); got != 1200 {
+		t.Errorf("[AC-017] ExecDeadlineSeconds(reboot) = %d, want 1200", got)
+	}
+	if ExecDeadline("reboot", 1) <= AgentHardMax("reboot", 1)+DeadlineSlack {
+		t.Errorf("[AC-017] the server deadline %v must exceed the agent max %v + %v", ExecDeadline("reboot", 1), AgentHardMax("reboot", 1), DeadlineSlack)
+	}
+}
+
+func TestCommandPolicy_RD_AC020_ShutdownBudgetUnchanged(t *testing.T) {
+	if got := AgentHardMax("shutdown", 1); got != time.Minute {
+		t.Errorf("[AC-020] AgentHardMax(shutdown) = %v, want 1m", got)
+	}
+	if got := ExecDeadline("shutdown", 1); got != 10*time.Minute {
+		t.Errorf("[AC-020] ExecDeadline(shutdown) = %v, want 10m", got)
+	}
+	for _, action := range []string{"reboot", "shutdown"} {
+		if got := QueuedTTL(action); got != 15*time.Minute {
+			t.Errorf("[AC-020] QueuedTTL(%s) = %v, want 15m (unchanged)", action, got)
+		}
+		if got := ActionClass(action); got != ClassPower {
+			t.Errorf("[AC-020] ActionClass(%s) = %v, want power (unchanged)", action, got)
+		}
 	}
 }
