@@ -64,7 +64,7 @@ func TestRebootClearance_QA_C1_HeldThenFreeThenAbsentNeverClears(t *testing.T) {
 	assert.Equal(t, skipLockUnknown, c.Skip, "[C-1] skip kind")
 	assert.Equal(t, causeLockFilesVanished, c.Detail, "[C-1] the skip says the lock files disappeared")
 	assert.Equal(t, 1, guardRuns, "[C-1] the guards ran once")
-	assert.EqualValues(t, 0, r.a.rebootPermitSeq.Load(), "[C-1] no permit was minted")
+	assert.EqualValues(t, 0, r.a.powerPermitSeq.Load(), "[C-1] no permit was minted")
 }
 
 // Covers AC-015 / FR-013 with the REAL timer. All other AC-015 tests use the fake

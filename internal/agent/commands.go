@@ -342,19 +342,25 @@ func (a *Agent) handleReboot(cr *cmdRun) commandExecResult {
 // rebootSkippedResult is the failed result of a standalone reboot the gate did
 // not clear (FR-014 b to e). ReasonTimeout is never used: a dpkg skip is not a
 // budget failure (FR-016).
-func rebootSkippedResult(c rebootClearance) commandExecResult {
+func rebootSkippedResult(c powerClearance) commandExecResult {
+	return powerSkippedResult("reboot", c)
+}
+
+// powerSkippedResult maps a gate skip to the failed result of verb ("reboot" or
+// "shutdown"); both commands report skips in the same shape.
+func powerSkippedResult(verb string, c powerClearance) commandExecResult {
 	res := commandExecResult{Status: models.ResultStatusError}
 	switch c.Skip {
 	case skipGuard:
-		res.Message = "reboot skipped: guard failed: " + c.reason()
+		res.Message = verb + " skipped: guard failed: " + c.reason()
 		if strings.HasPrefix(c.Detail, guardBusyPrefix) {
 			res.Reason = models.ReasonConflict
 		}
 	case skipShutdown:
-		res.Message = "reboot skipped: " + c.reason()
+		res.Message = verb + " skipped: " + c.reason()
 		res.Reason = models.ReasonShutdown
 	default:
-		res.Message = "reboot skipped: " + c.reason()
+		res.Message = verb + " skipped: " + c.reason()
 	}
 	return res
 }
@@ -366,8 +372,8 @@ func rebootSkippedResult(c rebootClearance) commandExecResult {
 // maybeRebootAfterPatch and rebootAfterDelivery) each gate on
 // a.config.Commands.AllowReboot before calling — no other path may reach this
 // (NFR-002, PATCH-FLOW-001 NFR-001).
-func (a *Agent) execReboot(p rebootPermit) error {
-	if p.id == 0 || !a.rebootPermitLive.CompareAndSwap(p.id, 0) {
+func (a *Agent) execReboot(p powerPermit) error {
+	if !a.consumePowerPermit(p, powerActionReboot) {
 		return errRebootNotCleared
 	}
 	if a.runner != nil {

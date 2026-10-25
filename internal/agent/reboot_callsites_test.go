@@ -236,7 +236,7 @@ func (a *Agent) handleReboot() {
 func (a *Agent) handleReboot() {
 	if !a.config.Commands.AllowReboot { return }
 	_ = a.awaitRebootClearance()
-	_ = a.execReboot(rebootPermit{})
+	_ = a.execReboot(powerPermit{})
 }`
 	const clearedNeverChecked = `package agent
 func (a *Agent) handleReboot() {
@@ -246,7 +246,7 @@ func (a *Agent) handleReboot() {
 }`
 	const secondCallHidden = `package agent
 func (a *Agent) handleReboot() {
-	_ = a.execReboot(rebootPermit{})
+	_ = a.execReboot(powerPermit{})
 	if !a.config.Commands.AllowReboot { return }
 	c := a.awaitRebootClearance()
 	if !c.Cleared { return }
@@ -305,9 +305,9 @@ func TestRebootCallSites_RD_C3_PermitMintedOnlyByGate(t *testing.T) {
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.CompositeLit:
-					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "rebootPermit" {
+					if id, ok := x.Type.(*ast.Ident); ok && id.Name == "powerPermit" {
 						literals++
-						assert.Equal(t, "mintRebootPermit", owner, "[C-3] %s builds a rebootPermit outside mintRebootPermit", fset.Position(x.Pos()))
+						assert.Equal(t, "mintPowerPermit", owner, "[C-3] %s builds a powerPermit outside mintPowerPermit", fset.Position(x.Pos()))
 					}
 				case *ast.CallExpr:
 					called := ""
@@ -317,17 +317,17 @@ func TestRebootCallSites_RD_C3_PermitMintedOnlyByGate(t *testing.T) {
 					case *ast.Ident:
 						called = f.Name
 					}
-					if called == "mintRebootPermit" {
+					if called == "mintPowerPermit" {
 						mints++
-						assert.Equal(t, "awaitRebootClearance", owner, "[C-3] %s mints a permit outside the gate", fset.Position(x.Pos()))
+						assert.Equal(t, "awaitPowerClearance", owner, "[C-3] %s mints a permit outside the gate", fset.Position(x.Pos()))
 					}
 				}
 				return true
 			})
 		}
 	}
-	assert.Equal(t, 1, literals, "[C-3] exactly one rebootPermit literal, inside mintRebootPermit")
-	assert.Equal(t, 1, mints, "[C-3] exactly one mintRebootPermit call, inside awaitRebootClearance")
+	assert.Equal(t, 1, literals, "[C-3] exactly one powerPermit literal, inside mintPowerPermit")
+	assert.Equal(t, 1, mints, "[C-3] exactly one mintPowerPermit call, inside awaitPowerClearance")
 }
 
 func TestRebootCallSites_RD_AC020_ShutdownHasNoGate(t *testing.T) {

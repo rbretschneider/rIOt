@@ -61,13 +61,13 @@ type Agent struct {
 	rebootRequiredCheck func(ctx context.Context, packageManager string) bool
 	rebootReportWait    time.Duration
 
-	// REBOOT-DPKG-001: dpkgLockProbe is the test seam for the dpkg lock check
-	// (nil = the real /proc based probe). rebootPermitSeq mints the single-use
-	// permits awaitRebootClearance hands to execReboot; rebootPermitLive holds the
-	// one permit that has not been used yet (0 = none).
-	dpkgLockProbe    func() dpkgLockStatus
-	rebootPermitSeq  atomic.Uint64
-	rebootPermitLive atomic.Uint64
+	// REBOOT-DPKG-001 / SHUTDOWN-DPKG-001: dpkgLockProbe is the test seam for the
+	// dpkg lock check (nil = the real /proc based probe). powerPermitSeq mints the
+	// single-use permits awaitPowerClearance hands to execReboot and execShutdown;
+	// powerPermitLive holds the one permit that has not been used yet (0 = none).
+	dpkgLockProbe   func() dpkgLockStatus
+	powerPermitSeq  atomic.Uint64
+	powerPermitLive atomic.Uint64
 
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).
