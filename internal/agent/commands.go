@@ -170,7 +170,7 @@ func (a *Agent) executeAction(cr *cmdRun) commandExecResult {
 	case "reboot":
 		return a.handleReboot(cr)
 	case "shutdown":
-		status, message = a.handleShutdown(payload)
+		return a.handleShutdown(cr)
 	case "os_update":
 		return a.executeOSUpdate(cr)
 	case "agent_update":
@@ -392,23 +392,100 @@ func (a *Agent) execReboot(p powerPermit) error {
 	return cmd.Start()
 }
 
-// handleShutdown triggers a system shutdown if allowed by config.
-func (a *Agent) handleShutdown(payload models.CommandPayload) (string, string) {
+// handleShutdown powers the host off if allowed by config. Like handleReboot it
+// first waits, for at most models.ShutdownDpkgLockWaitBound, for the dpkg lock to
+// be free. A skipped shutdown is a failed result that says why; it never powers
+// off later (SHUTDOWN-DPKG-001 AD-003). The result is truthful: a poweroff command
+// the OS refused is reported as failed (AD-009).
+func (a *Agent) handleShutdown(cr *cmdRun) commandExecResult {
 	if !a.config.Commands.AllowShutdown {
-		return "error", "shutdown not allowed by agent config (set commands.allow_shutdown: true)"
+		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown not allowed by agent config (set commands.allow_shutdown: true)"}
 	}
 
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("shutdown", "/s", "/t", "5")
-	} else {
-		cmd = exec.Command("sudo", "systemctl", "poweroff")
+	c := a.awaitShutdownClearance(cr.ctx, cr.id)
+	if !c.Cleared {
+		return shutdownSkippedResult(c)
+	}
+	if err := a.execShutdown(c.Permit); err != nil {
+		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown: " + sanitizePowerErr(err.Error())}
+	}
+	if c.Waited > 0 {
+		return commandExecResult{Status: models.ResultStatusSuccess, Message: fmt.Sprintf("shutdown initiated after waiting %s for the dpkg lock", models.FormatDurationShort(c.Waited))}
+	}
+	return commandExecResult{Status: models.ResultStatusSuccess, Message: "shutdown initiated"}
+}
+
+// shutdownSkippedResult is the failed result of a shutdown the gate did not clear
+// (FR-013 c to f). ReasonTimeout is never used: a dpkg skip is not a budget failure.
+func shutdownSkippedResult(c powerClearance) commandExecResult {
+	return powerSkippedResult("shutdown", c)
+}
+
+// execShutdown starts the OS poweroff command and watches its exit for
+// models.ShutdownStartCheckBound. It accepts only the single-use shutdown permit
+// that awaitShutdownClearance mints; anything else is refused before anything runs
+// (AD-002). The one call site is handleShutdown, after its allow_shutdown check.
+//
+// The result is truthful (AD-009): exit 0 and a still-running or signal-killed
+// child count as initiated; a launch error or a normal non-zero exit, such as
+// sudo's refusal, is an error. One goroutine always waits for the child, so it is
+// reaped even after the start check gave up on it, and at most one runs per agent.
+// The command is not bound to any context: a cancelled command must never kill a
+// poweroff.
+func (a *Agent) execShutdown(p powerPermit) error {
+	if !a.consumePowerPermit(p, powerActionShutdown) {
+		return errShutdownNotCleared
+	}
+	if !a.poweroffRunning.CompareAndSwap(false, true) {
+		return errPoweroffStillRunning
 	}
 
-	if err := cmd.Start(); err != nil {
-		return "error", fmt.Sprintf("shutdown: %s", err)
+	launch := func() ([]byte, error) {
+		if a.runner != nil {
+			return a.runner(context.Background(), "sudo", "systemctl", "poweroff")
+		}
+		if inTestBinary() {
+			return nil, errPowerProcessInTest
+		}
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("shutdown", "/s", "/t", "5")
+		} else {
+			cmd = exec.Command("sudo", "systemctl", "poweroff")
+		}
+		buf := &cappedWriter{max: poweroffOutputCap}
+		cmd.Stdout, cmd.Stderr = buf, buf
+		cmd.WaitDelay = time.Second // a grandchild holding the pipe cannot hold up Wait
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		err := cmd.Wait()
+		return buf.Bytes(), err
 	}
-	return "success", "shutdown initiated"
+
+	done := make(chan poweroffExit)
+	abandoned := make(chan struct{})
+	go func() {
+		defer a.poweroffRunning.Store(false)
+		x := poweroffExitFrom(launch())
+		select {
+		case done <- x:
+		case <-abandoned:
+			if !x.initiated() {
+				slog.Warn("shutdown: poweroff command failed after the start check", "error", sanitizePowerErr(classifyPoweroff(x).Error()))
+			}
+		}
+	}()
+
+	timer := a.clock().NewTimer(models.ShutdownStartCheckBound)
+	defer timer.Stop()
+	select {
+	case x := <-done:
+		return classifyPoweroff(x)
+	case <-timer.C():
+		close(abandoned)
+		return nil // still running at the bound: initiated (FR-030)
+	}
 }
 
 // handleOSUpdateWithOutput runs package manager updates and captures full output.

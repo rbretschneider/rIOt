@@ -68,6 +68,10 @@ type Agent struct {
 	dpkgLockProbe   func() dpkgLockStatus
 	powerPermitSeq  atomic.Uint64
 	powerPermitLive atomic.Uint64
+	// poweroffRunning is true while a poweroff child is alive: at most one per
+	// agent, so a hung poweroff command cannot pile up children (SHUTDOWN-DPKG-001
+	// AD-009).
+	poweroffRunning atomic.Bool
 
 	// telemetryNow signals the telemetry loop to send immediately
 	// (e.g. after a docker update so the dashboard reflects new state).

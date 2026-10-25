@@ -18,7 +18,7 @@ import (
 // branch consults it first.
 
 // powerExecFuncs are the functions whose real-process branch must be guarded.
-var powerExecFuncs = []string{"execReboot"}
+var powerExecFuncs = []string{"execReboot", "execShutdown"}
 
 func TestPowerGuard_SD_C1_TestBinaryIsDetected(t *testing.T) {
 	assert.True(t, inTestBinary(), "[C-1] a go test binary must be detected, or the power guard is dead code")
