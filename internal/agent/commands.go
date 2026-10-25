@@ -374,6 +374,9 @@ func (a *Agent) execReboot(p rebootPermit) error {
 		_, err := a.runner(context.Background(), "sudo", "systemctl", "reboot")
 		return err
 	}
+	if inTestBinary() {
+		return errPowerProcessInTest
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.Command("shutdown", "/r", "/t", "5")
