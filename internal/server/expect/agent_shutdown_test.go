@@ -137,7 +137,7 @@ func TestEX_AC029_PoweredOffEndsOnOnline(t *testing.T) {
 func TestEX_AC030_FailedShutdownNoPoweredOff(t *testing.T) {
 	h := newHarness(t)
 	c := h.dispatch("picups", models.ActionShutdown)
-	h.fail(c) // poweroff refused, the device stays online
+	h.fail(c) // the power-off was refused: the device stays online
 
 	h.at("10:03:00")
 	off := h.deviceOffline("picups")
