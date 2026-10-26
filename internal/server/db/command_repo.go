@@ -42,7 +42,7 @@ var (
 
 const commandColumns = `id, device_id, action, params, status, result_msg, duration_ms, exit_code, created_at, updated_at,
 	expires_at, exec_deadline_s, deadline_at, dispatched_at, acknowledged_at, started_at, verifying_at, finished_at,
-	step, progress, failure_step, stderr_tail, origin, policy_id, target_keys, pre_lifecycle, send_ambiguous, actor_kind, actor_auth, actor_name, actor_sub, steps, target_results`
+	step, progress, failure_step, stderr_tail, origin, policy_id, target_keys, pre_lifecycle, send_ambiguous, actor_kind, actor_auth, actor_name, actor_sub, steps, target_results, window_closed_at`
 
 // scanCommand scans a single command row selected with commandColumns. The
 // result is normalized, so legacy status values read as canonical ones
@@ -55,7 +55,7 @@ func scanCommand(scan func(dest ...interface{}) error) (models.Command, error) {
 		&cmd.ExpiresAt, &cmd.ExecDeadlineS, &cmd.DeadlineAt, &cmd.DispatchedAt, &cmd.AcknowledgedAt,
 		&cmd.StartedAt, &cmd.VerifyingAt, &cmd.FinishedAt,
 		&cmd.Step, &cmd.Progress, &cmd.FailureStep, &cmd.StderrTail, &cmd.Origin, &cmd.PolicyID,
-		&cmd.TargetKeys, &cmd.PreLifecycle, &cmd.SendAmbiguous, &cmd.ActorKind, &cmd.ActorAuth, &cmd.ActorName, &cmd.ActorSub, &cmd.Steps, &cmd.TargetResults); err != nil {
+		&cmd.TargetKeys, &cmd.PreLifecycle, &cmd.SendAmbiguous, &cmd.ActorKind, &cmd.ActorAuth, &cmd.ActorName, &cmd.ActorSub, &cmd.Steps, &cmd.TargetResults, &cmd.WindowClosedAt); err != nil {
 		return cmd, err
 	}
 	cmd.Params = make(map[string]interface{})

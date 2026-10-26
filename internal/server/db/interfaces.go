@@ -302,6 +302,39 @@ type ExternalIdentityRepository interface {
 	RecordLogin(ctx context.Context, ident models.ExternalIdentity) (firstSeen bool, err error)
 }
 
+// ExpectedActivityRepository is the persistence of expected-activity windows
+// (EXPECT-001): the processed marker, exactly-once escalation markers and the
+// powered-off state. See ExpectRepo for the bounds of every table.
+type ExpectedActivityRepository interface {
+	// ListOpenWindows returns unprocessed in-scope commands that are active or
+	// finished within 24 h, newest first.
+	ListOpenWindows(ctx context.Context, now time.Time, limit int) ([]models.Command, error)
+	// ListDueBacklog returns unprocessed terminal in-scope commands, oldest finish first.
+	ListDueBacklog(ctx context.Context, now time.Time, limit int) ([]models.Command, error)
+	// ListLapseCandidates returns unprocessed terminal commands older than cutoff,
+	// or terminal without a dispatch time.
+	ListLapseCandidates(ctx context.Context, cutoff time.Time, limit int) ([]models.Command, error)
+	// CloseWindow marks a window processed; applied is false when it already was.
+	CloseWindow(ctx context.Context, commandID string, at time.Time, outcome models.WindowOutcome) (applied bool, err error)
+	// RecordEscalation inserts the marker and the event in one transaction;
+	// inserted is false when the marker already exists.
+	RecordEscalation(ctx context.Context, esc *models.Escalation, evt *models.Event) (inserted bool, err error)
+	ListEscalationTargets(ctx context.Context, commandID string) ([]string, error)
+	ListOpenDeviceEscalations(ctx context.Context, since time.Time) ([]models.Escalation, error)
+	ClearDeviceEscalations(ctx context.Context, deviceID string, at time.Time) (int64, error)
+	SuppressedDeaths(ctx context.Context, deviceID, commandID string, limit int) ([]models.ContainerDeath, error)
+	ContainerStartsSince(ctx context.Context, deviceID string, since time.Time, limit int) (map[string]time.Time, error)
+	// UpsertPoweredOff never re-stamps a row of the same command (AD-007).
+	UpsertPoweredOff(ctx context.Context, p *models.PoweredOffState) (stored bool, err error)
+	DeletePoweredOff(ctx context.Context, deviceID string) (*models.PoweredOffState, error)
+	// PurgeInvalidPoweredOff deletes rows whose device is live or heartbeated after offline_at.
+	PurgeInvalidPoweredOff(ctx context.Context) (int64, error)
+	// ListPoweredOff returns valid rows only.
+	ListPoweredOff(ctx context.Context) ([]models.PoweredOffState, error)
+	// CreateWarningEvent is a plain event insert (expect_backstop_skipped, held summary).
+	CreateWarningEvent(ctx context.Context, e *models.Event) error
+}
+
 // Compile-time interface conformance checks.
 var (
 	_ DeviceRepository           = (*DeviceRepo)(nil)
@@ -321,4 +354,5 @@ var (
 	_ ContainerMetricRepository  = (*ContainerMetricRepo)(nil)
 	_ DeviceProbeRepository      = (*DeviceProbeRepo)(nil)
 	_ ExternalIdentityRepository = (*ExternalIdentityRepo)(nil)
+	_ ExpectedActivityRepository = (*ExpectRepo)(nil)
 )

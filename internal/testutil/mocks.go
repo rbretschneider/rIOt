@@ -960,6 +960,7 @@ func copyCommand(c *models.Command) models.Command {
 	cp.StartedAt = copyTime(c.StartedAt)
 	cp.VerifyingAt = copyTime(c.VerifyingAt)
 	cp.FinishedAt = copyTime(c.FinishedAt)
+	cp.WindowClosedAt = copyTime(c.WindowClosedAt)
 	if c.TargetKeys != nil {
 		cp.TargetKeys = append([]string(nil), c.TargetKeys...)
 	}

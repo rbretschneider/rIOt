@@ -41,7 +41,7 @@ func commandBudgetPG(t *testing.T) *Guard {
 		admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
 		admin.Close()
 	})
-	_, e = pool.Exec(ctx, `CREATE TABLE commands(id text PRIMARY KEY,status text,created_at timestamptz,updated_at timestamptz,finished_at timestamptz,result_bytes bigint);CREATE TABLE command_output(id bigserial PRIMARY KEY,command_id text REFERENCES commands(id) ON DELETE CASCADE,created_at timestamptz,bytes bigint);CREATE TABLE docker_audit(id int);INSERT INTO docker_audit VALUES(1)`)
+	_, e = pool.Exec(ctx, `CREATE TABLE commands(id text PRIMARY KEY,status text,created_at timestamptz,updated_at timestamptz,finished_at timestamptz,result_bytes bigint,action text NOT NULL DEFAULT '',window_closed_at timestamptz);CREATE TABLE command_output(id bigserial PRIMARY KEY,command_id text REFERENCES commands(id) ON DELETE CASCADE,created_at timestamptz,bytes bigint);CREATE TABLE docker_audit(id int);INSERT INTO docker_audit VALUES(1)`)
 	if e != nil {
 		t.Fatal(e)
 	}
