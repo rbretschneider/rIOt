@@ -101,6 +101,8 @@ export const EVENT_TYPES = [
   'probe_down',
   'probe_recovered',
   'tls_expiring',
+  'expect_backstop_skipped',
+  'expect_notifications_held',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -200,6 +202,8 @@ export const LABELS: {
     probe_down: 'Probe down',
     probe_recovered: 'Probe recovered',
     tls_expiring: 'TLS certificate expiring',
+    expect_backstop_skipped: 'Expected-activity check skipped',
+    expect_notifications_held: 'Escalation notifications held',
   },
 }
 

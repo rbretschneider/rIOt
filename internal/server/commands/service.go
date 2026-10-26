@@ -50,6 +50,15 @@ type Broadcaster interface {
 	BroadcastCommandUpdate(u models.CommandUpdate)
 }
 
+// CommandObserver is told about every accepted command transition (EXPECT-001
+// AD-004): creation, delivery claim, revert, agent report, cancel and sweep. It
+// is called synchronously before the dashboard broadcast, with a copy of the
+// row, and must not block or do I/O: the expected-activity tracker copies the
+// row under its lock and wakes its own goroutine.
+type CommandObserver interface {
+	CommandChanged(c models.Command)
+}
+
 // CompletionEvents raises the "command completed" event. status is the legacy
 // vocabulary the event generator expects ("success" or "error").
 type CompletionEvents interface {
@@ -66,7 +75,10 @@ type Options struct {
 	Telemetry   TelemetryReader
 	Agents      AgentSender
 	Broadcaster Broadcaster
-	Events      CompletionEvents
+	// Observer is notified of every accepted transition (optional; never assign
+	// a nil *expect.Tracker to it).
+	Observer CommandObserver
+	Events   CompletionEvents
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// Logger receives the service's records; nil means slog.Default().
@@ -82,6 +94,7 @@ type Service struct {
 	telemetry   TelemetryReader
 	agents      AgentSender
 	broadcaster Broadcaster
+	observer    CommandObserver
 	events      CompletionEvents
 	now         func() time.Time
 	log         *slog.Logger
@@ -107,7 +120,7 @@ func New(o Options) *Service {
 	return &Service{
 		quota: o.Quota,
 		repo:  o.Commands, policies: o.Policies, telemetry: o.Telemetry, agents: o.Agents,
-		broadcaster: o.Broadcaster, events: o.Events, now: now, log: logger,
+		broadcaster: o.Broadcaster, observer: o.Observer, events: o.Events, now: now, log: logger,
 		limiter:         NewDeviceLimiter(now),
 		logThrottle:     NewLogThrottle(now, logger),
 		gate:            newProgressGate(),
@@ -753,10 +766,17 @@ func (s *Service) completed(ctx context.Context, cmd *models.Command, state mode
 	s.events.CommandCompleted(ctx, cmd.DeviceID, cmd.Action, models.LegacyStatus(state), cmd.ResultMsg)
 }
 
-// broadcast pushes one accepted transition to the dashboards (FR-079). Rejected
-// transitions never reach it.
+// broadcast pushes one accepted transition to the observer (EXPECT-001 AD-004,
+// called first and also when no broadcaster is wired) and to the dashboards
+// (FR-079). Rejected transitions never reach it.
 func (s *Service) broadcast(cmd *models.Command) {
-	if s.broadcaster == nil || cmd == nil {
+	if cmd == nil {
+		return
+	}
+	if s.observer != nil {
+		s.observer.CommandChanged(*cmd)
+	}
+	if s.broadcaster == nil {
 		return
 	}
 	s.broadcaster.BroadcastCommandUpdate(models.NewCommandUpdate(*cmd))

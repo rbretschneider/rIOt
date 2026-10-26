@@ -4,7 +4,8 @@ import { api } from '../api/client'
 import { useWebSocket } from './useWebSocket'
 import { mergeTelemetry } from './telemetryMerge'
 import { applyActiveUpdate, isTerminal, shouldSuppressExited } from '../utils/commandLifecycle'
-import type { Command, CommandUpdate, Device, DeviceDetailResponse, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
+import { applyActivityUpdate } from '../utils/activity'
+import type { ActivityResponse, Command, CommandUpdate, Device, DeviceActivity, DeviceDetailResponse, HeartbeatData, FullTelemetryData, WSMessage, DockerEvent, ContainerInfo } from '../types/models'
 
 export function useDevices() {
   const queryClient = useQueryClient()
@@ -104,6 +105,18 @@ export function useDevices() {
           if (old === undefined && isTerminal(update.status)) return undefined
           return applyActiveUpdate(old, update)
         })
+      }
+    } else if (msg.type === 'activity_update') {
+      // EXPECT-001 (ADD 6.4): data is the device's new DeviceActivity, or null
+      // when its activity ended. Applied to the cache seeded by useActivity.
+      if (queryClient.getQueryData<ActivityResponse>(['activity'])) {
+        queryClient.setQueryData<ActivityResponse>(['activity'], (old) =>
+          applyActivityUpdate(old, msg.device_id, msg.data as DeviceActivity | null | undefined),
+        )
+      } else {
+        // The first fetch has not landed, so there is nothing to patch and that fetch
+        // may predate this message: refetch (a no-op when no page observes the query).
+        void queryClient.invalidateQueries({ queryKey: ['activity'] })
       }
     } else if (msg.type === 'docker_update' && msg.device_id) {
       const evt = msg.data as DockerEvent

@@ -1,4 +1,4 @@
-import type { AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { ActivityResponse, AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 import { ApiError } from './errors'
 
 export { ApiError }
@@ -278,6 +278,9 @@ export const api = {
 
   getProbeResults: (id: number, limit = 100) =>
     fetchJSON<ProbeResult[]>(`${BASE}/probes/${id}/results?limit=${limit}`),
+
+  // EXPECT-001: server-computed expected-activity per device (admin session).
+  getActivity: () => fetchJSON<ActivityResponse>(`${BASE}/activity`),
 
   // Fleet
   getAgentVersions: () =>

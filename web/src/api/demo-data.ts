@@ -9,7 +9,7 @@ import type {
   Command, UPSInfo, WebServerInfo, USBInfo, SecurityScoreResult,
   AutomationConfig, ContainerLogEntry, DeviceProbeResult, DeviceProbeWithResultEnriched,
   FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
-  AutoUpdatePolicy,
+  AutoUpdatePolicy, ActivityResponse,
 } from '../types/models'
 import type { DevicePatchInfo, PatchBadge } from './client'
 import { ApiError } from './errors'
@@ -753,6 +753,36 @@ export function getPatchStatus(): DevicePatchInfo[] {
 }
 
 // ── Misc ─────────────────────────────────────────────────────────────────────
+
+// EXPECT-001: one in-flight container update so the demo shows an activity label.
+export function getActivity(): ActivityResponse {
+  const device = getDevices()[0]
+  return {
+    generated_at: new Date().toISOString(),
+    newest_agent_version: '0.9.2',
+    activities: [
+      {
+        device_id: device.id,
+        kind: 'docker',
+        phase: 'in_progress',
+        action: 'docker_update',
+        command_id: uuid('cmd-activity-1'),
+        actor_phrase: 'by auto-update policy for nginx',
+        started_at: ago(4 * MIN),
+        back_by: null,
+        waiting_dpkg_lock: false,
+        progress: null,
+        agent_from_version: '',
+        target: 'nginx',
+        docker_actions: 1,
+        covers_offline: false,
+        device_online: true,
+        escalation: null,
+        powered_off_at: null,
+      },
+    ],
+  }
+}
 
 export function getAgentVersions() {
   return [

@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5/pgconn"
 	"time"
+
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (g *Guard) commandBytes(ctx context.Context) (int64, error) {
@@ -23,7 +25,7 @@ func (g *Guard) purgeCommandResults(ctx context.Context, target int64, before *t
 	terminal := `('succeeded','failed','timed_out','cancelled','expired','success','error')`
 	queries := []string{
 		`WITH selected AS(SELECT o.id FROM command_output o JOIN commands c ON c.id=o.command_id WHERE c.status IN ` + terminal + ` AND ($1::timestamptz IS NULL OR o.created_at<$1) AND (o.bytes>0 OR $1::timestamptz IS NOT NULL) ORDER BY o.created_at,o.id LIMIT $2),deleted AS(DELETE FROM command_output WHERE id IN(SELECT id FROM selected) RETURNING bytes) SELECT COALESCE(sum(bytes),0)::bigint,count(*)::bigint FROM deleted`,
-		`WITH selected AS(SELECT c.id FROM commands c WHERE c.status IN ` + terminal + ` AND ($1::timestamptz IS NULL OR COALESCE(c.finished_at,c.updated_at)<$1) AND (c.result_bytes>0 OR $1::timestamptz IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM command_output o WHERE o.command_id=c.id) ORDER BY c.created_at,c.id LIMIT $2),deleted AS(DELETE FROM commands WHERE id IN(SELECT id FROM selected) RETURNING result_bytes) SELECT COALESCE(sum(result_bytes),0)::bigint,count(*)::bigint FROM deleted`,
+		`WITH selected AS(SELECT c.id FROM commands c WHERE c.status IN ` + terminal + ` AND ($1::timestamptz IS NULL OR COALESCE(c.finished_at,c.updated_at)<$1) AND (c.result_bytes>0 OR $1::timestamptz IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM command_output o WHERE o.command_id=c.id) AND ` + db.PendingWindowExemptionSQL() + ` ORDER BY c.created_at,c.id LIMIT $2),deleted AS(DELETE FROM commands WHERE id IN(SELECT id FROM selected) RETURNING result_bytes) SELECT COALESCE(sum(result_bytes),0)::bigint,count(*)::bigint FROM deleted`,
 	}
 	batch := 5000
 	for _, query := range queries {

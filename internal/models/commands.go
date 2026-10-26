@@ -54,6 +54,11 @@ type Command struct {
 	// revert (SEC-016). Neither is exposed through the API.
 	PreLifecycle  bool `json:"-"`
 	SendAmbiguous bool `json:"-"`
+
+	// WindowClosedAt is set once the expected-activity window of this command has
+	// been fully processed, backstop included (EXPECT-001 AD-001). It is not
+	// exposed through the API.
+	WindowClosedAt *time.Time `json:"-"`
 }
 
 // State returns Status as a canonical CommandState (legacy values mapped, an

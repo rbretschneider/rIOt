@@ -134,3 +134,26 @@ func (h *Hub) BroadcastCommandUpdate(u models.CommandUpdate) {
 func (h *Hub) BroadcastProbeResult(probeID int64, data interface{}) {
 	h.broadcastMsg(WSMessage{Type: "probe_result", Data: data})
 }
+
+// activityMessage is the activity_update envelope. Data is always present: null
+// tells the dashboard that the device has no activity any more, which WSMessage
+// (omitempty) could not express.
+type activityMessage struct {
+	Type     string                 `json:"type"`
+	DeviceID string                 `json:"device_id"`
+	Data     *models.DeviceActivity `json:"data"`
+}
+
+// BroadcastActivity pushes one device's expected activity to the dashboards
+// (EXPECT-001 AD-014); a nil activity clears it. The envelope's device_id is the
+// device the activity belongs to. Like every broadcast it can block on the hub's
+// channel, so the activity publisher, not a request or the evaluation loop,
+// calls it.
+func (h *Hub) BroadcastActivity(deviceID string, a *models.DeviceActivity) {
+	data, err := json.Marshal(activityMessage{Type: "activity_update", DeviceID: deviceID, Data: a})
+	if err != nil {
+		slog.Error("ws marshal", "error", err.Error())
+		return
+	}
+	h.broadcast <- data
+}

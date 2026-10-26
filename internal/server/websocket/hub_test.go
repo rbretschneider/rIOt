@@ -187,3 +187,39 @@ func TestHub_OtherEnvelopesCarryNoTimestamps(t *testing.T) {
 	assert.NotContains(t, top, "collected_at")
 	assert.NotContains(t, top, "received_at")
 }
+
+func TestEX_Hub_BroadcastActivityEnvelope(t *testing.T) {
+	hub, client := setupHub(t)
+	started := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	act := models.DeviceActivity{
+		DeviceID: "dev-1", Kind: models.ActivityHost, Phase: models.PhaseInProgress, Action: "reboot",
+		CommandID: "c-1", ActorPhrase: "by ryan", StartedAt: started, CoversOffline: true,
+	}
+
+	hub.BroadcastActivity("dev-1", &act)
+
+	top := rawEnvelope(t, receive(t, client))
+	assert.JSONEq(t, `"activity_update"`, string(top["type"]))
+	assert.JSONEq(t, `"dev-1"`, string(top["device_id"]), "the envelope names the device")
+	var data models.DeviceActivity
+	require.NoError(t, json.Unmarshal(top["data"], &data))
+	assert.Equal(t, act, data, "the payload round-trips")
+	assert.Equal(t, "dev-1", data.DeviceID, "the payload's device_id equals the envelope's")
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(top["data"], &raw))
+	for _, field := range []string{"back_by", "progress", "escalation", "powered_off_at"} {
+		assert.JSONEq(t, `null`, string(raw[field]), "%s is sent as null, not omitted", field)
+	}
+}
+
+func TestEX_Hub_BroadcastActivityNilClearsTheDevice(t *testing.T) {
+	hub, client := setupHub(t)
+
+	hub.BroadcastActivity("dev-1", nil)
+
+	top := rawEnvelope(t, receive(t, client))
+	assert.JSONEq(t, `"activity_update"`, string(top["type"]))
+	assert.JSONEq(t, `"dev-1"`, string(top["device_id"]))
+	require.Contains(t, top, "data", "data is present")
+	assert.JSONEq(t, `null`, string(top["data"]), "data is null so the dashboard drops the entry")
+}

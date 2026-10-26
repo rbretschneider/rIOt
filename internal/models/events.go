@@ -52,6 +52,22 @@ const (
 	EventAuthFailure            EventType = "auth_failure"
 	EventDetectorInitialized    EventType = "detector_initialized"
 	EventRebootRequired         EventType = "reboot_required"
+
+	// EXPECT-001: a window whose end-of-life checks were skipped or delayed, and
+	// the summary of escalation pushes held by the per-device ceiling.
+	EventExpectBackstopSkipped   EventType = "expect_backstop_skipped"
+	EventExpectNotificationsHeld EventType = "expect_notifications_held"
+)
+
+// Event.CommandAttr values written by EXPECT-001 (the agent and the server's
+// attribution rule already use "agent" and "inferred").
+const (
+	// CommandAttrExpected marks an info event that records a suppressed
+	// occurrence inside an expected-activity window.
+	CommandAttrExpected = "expected"
+	// CommandAttrEscalation marks the single alert raised when a window ends and
+	// its target is still down.
+	CommandAttrEscalation = "escalation"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
@@ -69,6 +85,9 @@ type DockerEvent struct {
 	ContainerName string `json:"container_name"`
 	Action        string `json:"action"` // start, stop, die, create, destroy, oom
 	Image         string `json:"image,omitempty"`
+	// TargetKeys are the command target keys of this container (its name key and
+	// its compose key), computed by the server and never read from the agent.
+	TargetKeys []string `json:"-"`
 }
 
 const (

@@ -21,7 +21,7 @@ var pgNow = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 
 func (e *pgEnv) repo() *CommandRepo {
 	e.T.Helper()
-	err := e.Mig.Migrate(32)
+	err := e.Mig.Up()
 	if err != nil && err.Error() != "no change" {
 		e.T.Fatal(err)
 	}

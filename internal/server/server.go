@@ -23,6 +23,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
 	"github.com/DesyncTheThird/rIOt/internal/server/events"
+	"github.com/DesyncTheThird/rIOt/internal/server/expect"
 	"github.com/DesyncTheThird/rIOt/internal/server/handlers"
 	"github.com/DesyncTheThird/rIOt/internal/server/logstore"
 	"github.com/DesyncTheThird/rIOt/internal/server/notify"
@@ -64,7 +65,11 @@ type Server struct {
 	ProbeRunner          *probes.Runner
 	Hub                  *websocket.Hub
 	EventGen             *events.Generator
-	Dispatcher           *notify.Dispatcher
+	// Expect derives the expected-activity windows from the commands and tells
+	// the event generator what is expected (EXPECT-001). It is built once in
+	// Start so it survives a router rebuild.
+	Expect     *expect.Tracker
+	Dispatcher *notify.Dispatcher
 	UpdateChecker        *updates.Checker
 	// PartitionManager pre-creates upcoming daily partitions and drops
 	// aged-out ones (including the legacy partition) for the six high-churn
@@ -208,6 +213,33 @@ func (s *Server) Start() error {
 	s.EventGen = events.NewGenerator(s.EventRepo, s.Hub, s.AlertRuleRepo, s.Dispatcher, s.CommandRepo)
 	s.EventGen.StartCleanup(ctx)
 
+	// Offline detection pauses after a start (EXPECT-001 AD-008, C-7). The end of
+	// the pause is computed before any worker runs, from the durable restart
+	// series, and bounds a restart loop to 4 minutes without detection.
+	graceEnd := restartSeriesGrace(ctx, s.AdminRepo, time.Now().UTC(), slog.Default())
+
+	// The expected-activity tracker (EXPECT-001, AD-002). Its readiness is the
+	// fail-open guard: until Load succeeds every lookup says "undecidable" and the
+	// generator alerts as it did before the feature.
+	s.Expect = expect.New(expect.Options{
+		Repo:        db.NewExpectRepo(s.DB),
+		Devices:     s.DeviceRepo,
+		Policies:    s.AutoUpdateRepo,
+		Telemetry:   s.TelemetryRepo,
+		Commands:    s.CommandRepo,
+		Escalator:   s.EventGen,
+		Broadcaster: s.Hub,
+		NewestAgentVersion: func() string {
+			if s.UpdateChecker == nil {
+				return ""
+			}
+			return s.UpdateChecker.ServerUpdateInfo().LatestVersion
+		},
+		GraceEnd: graceEnd,
+		Logger:   slog.Default(),
+	})
+	s.EventGen.SetExpectedActivity(s.Expect)
+
 	// The command service is built once here (not in setupRouter, which
 	// applyTLSAndRestart calls again) so its limiter, progress gate and log
 	// throttle survive a router rebuild. The sweeper resolves stale commands at
@@ -220,7 +252,11 @@ func (s *Server) Start() error {
 		Agents:      handlers.Agents(),
 		Broadcaster: s.Hub,
 		Events:      handlers.NewCompletionEvents(s.EventGen, s.DeviceRepo),
+		Observer:    s.Expect,
 	})
+	if err := s.Expect.Load(ctx); err != nil {
+		slog.Warn("expected-activity load failed; alerting as usual until it succeeds", "error", err.Error())
+	}
 	go s.runCommandSweeper(ctx)
 
 	// Initialize probe runner
@@ -240,6 +276,11 @@ func (s *Server) Start() error {
 	s.UpdateChecker = updates.NewChecker(s.Config.GitHubRepo, s.Version)
 	go s.UpdateChecker.Start(ctx)
 
+	// Start the expected-activity loop (1 s evaluation, 30 s reconcile on its own
+	// goroutine, bounded publisher). After the update checker, whose latest
+	// version the activity reports.
+	go s.Expect.Run(ctx)
+
 	// Start retention worker
 	go s.retentionWorker(ctx)
 
@@ -249,8 +290,13 @@ func (s *Server) Start() error {
 	go s.PartitionManager.Run(ctx)
 	go s.storageQuotaWorker(ctx)
 
-	// Start offline detection worker
-	go s.offlineDetectionWorker(ctx)
+	// Start offline detection worker: paused until graceEnd, then every 30 s, with
+	// a one-shot check at graceEnd itself.
+	detector := &offlineDetector{
+		devices: s.DeviceRepo, events: s.EventGen, observer: s.Expect, graceEnd: graceEnd,
+		now: func() time.Time { return time.Now().UTC() },
+	}
+	go detector.run(ctx)
 
 	// Start server-error-rate alert worker — notifies the user when the server
 	// itself starts logging too many errors in a short window.
@@ -584,34 +630,6 @@ func runRetention(
 		slog.Error("purge stale bootstrap keys failed", "error", err.Error())
 	} else if bkDeleted > 0 {
 		slog.Info("purged stale bootstrap keys", "count", bkDeleted)
-	}
-}
-
-func (s *Server) offlineDetectionWorker(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkOfflineDevices(ctx)
-		}
-	}
-}
-
-func (s *Server) checkOfflineDevices(ctx context.Context) {
-	devices, err := s.DeviceRepo.List(ctx)
-	if err != nil {
-		return
-	}
-	threshold := time.Now().UTC().Add(-45 * time.Second) // 3x 15s heartbeat interval
-	for _, d := range devices {
-		if d.Status == "online" && d.LastHeartbeat != nil && d.LastHeartbeat.Before(threshold) {
-			s.DeviceRepo.SetStatus(ctx, d.ID, "offline")
-			s.EventGen.DeviceOffline(ctx, d.ID, d.Hostname)
-		}
 	}
 }
 

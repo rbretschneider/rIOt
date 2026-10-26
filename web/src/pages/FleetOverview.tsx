@@ -5,9 +5,12 @@ import { api, type DevicePatchInfo } from '../api/client'
 import { errorMessage } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
+import { useActivity } from '../hooks/useActivity'
+import { isExpectedOffline } from '../utils/activity'
 import { isVersionOlder } from '../utils/version'
 import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, normalizeFreshness } from '../utils/patchFlow'
 
+import ActivityLabel from '../components/ActivityLabel'
 import PatchBadge from '../components/PatchBadge'
 import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
@@ -21,6 +24,8 @@ export default function FleetOverview() {
   const { data: devices, wsConnected } = devicesQuery
   const toast = useToast()
   const { isEnabled } = useFeatures()
+  // EXPECT-001: server-computed activity per device; empty until it loads or when it is unavailable.
+  const { byDevice: activityByDevice, newestAgentVersion } = useActivity()
   const { data: serverUpdate } = useQuery({
     queryKey: ['server-update'],
     queryFn: api.getServerUpdate,
@@ -119,13 +124,17 @@ export default function FleetOverview() {
   // Derive summary from live device data â€” no separate polling needed
   const summary = useMemo(() => {
     if (!devices) return null
+    // FR-038: offline inside a window, or powered off, is counted apart from real
+    // outages. An escalated device is not expected and stays in the offline count.
+    const expectedOffline = devices.filter(d => isExpectedOffline(activityByDevice.get(d.id), d.status)).length
     return {
       total_devices: devices.length,
       online_count: devices.filter(d => d.status === 'online').length,
-      offline_count: devices.filter(d => d.status === 'offline').length,
+      offline_count: devices.filter(d => d.status === 'offline').length - expectedOffline,
+      expected_offline_count: expectedOffline,
       warning_count: devices.filter(d => d.status === 'warning').length,
     }
-  }, [devices])
+  }, [devices, activityByDevice])
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('hostname')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
@@ -179,10 +188,13 @@ export default function FleetOverview() {
         actions={<Button variant="primary" onClick={() => setShowGuide(true)}>+ Add Device</Button>}
       />
       {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+        <div className={`grid grid-cols-2 gap-4 ${summary.expected_offline_count > 0 ? 'sm:grid-cols-6' : 'sm:grid-cols-5'}`}>
           <StatCard label="Total Devices" value={summary.total_devices} />
           <StatCard label="Online" value={summary.online_count} color="text-emerald-400" />
           <StatCard label="Offline" value={summary.offline_count} color="text-red-400" />
+          {summary.expected_offline_count > 0 && (
+            <StatCard label="Expected offline" value={summary.expected_offline_count} color="text-sky-400" />
+          )}
           <StatCard label="Warnings" value={summary.warning_count} color="text-amber-400" />
           <StatCard label="OS Updates" value={pendingPatchCount} color={pendingPatchCount > 0 ? 'text-cyan-400' : 'text-white'} />
         </div>
@@ -266,10 +278,19 @@ export default function FleetOverview() {
               {filtered.map((d) => (
                 <tr key={d.id} className="hover:bg-gray-800/30 transition-colors">
                   <td className="pl-4 pr-0 py-3 w-4">
-                    <span
-                      className={`block w-2.5 h-2.5 rounded-full ${d.status === 'online' ? 'bg-emerald-400' : d.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'}`}
-                      title={d.status.charAt(0).toUpperCase() + d.status.slice(1)}
-                    />
+                    {isExpectedOffline(activityByDevice.get(d.id), d.status) ? (
+                      // FR-043: offline stays visible as a hollow dot, distinct from both online and a real outage.
+                      <span
+                        className="block w-2.5 h-2.5 rounded-full border-2 border-sky-400 bg-transparent"
+                        title="Offline (expected)"
+                        data-testid="status-dot-expected-offline"
+                      />
+                    ) : (
+                      <span
+                        className={`block w-2.5 h-2.5 rounded-full ${d.status === 'online' ? 'bg-emerald-400' : d.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'}`}
+                        title={d.status.charAt(0).toUpperCase() + d.status.slice(1)}
+                      />
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Link to={`/devices/${d.id}`} className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5">
@@ -282,6 +303,11 @@ export default function FleetOverview() {
                         </span>
                       )}
                     </Link>
+                    {activityByDevice.get(d.id) && (
+                      <div className="mt-1">
+                        <ActivityLabel activity={activityByDevice.get(d.id)!} newestAgentVersion={newestAgentVersion} />
+                      </div>
+                    )}
                   </td>
                   {isEnabled('docker') && (
                   <td className="px-2 py-3 pr-4 text-center">

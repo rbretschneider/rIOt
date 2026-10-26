@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+// pendingWindowExemption keeps commands whose expected-activity window is not
+// processed out of every commands DELETE (EXPECT-001 C-2 b): deleting such a
+// row would cascade its escalation markers and silently drop the backstop. The
+// exempt set is the pending set, bounded by AD-012 (open windows, queued
+// in-scope commands, at most 24 h of backlog before the lapse closes them).
+var pendingWindowExemption = PendingWindowExemptionSQL()
+
 // Purge bounds each independent purge and retries timeouts with a smaller batch.
 // Outputs precede commands, so the parent deletion never cascades large results.
 func (r *DockerRepo) Purge(ctx context.Context, now time.Time) error {
@@ -19,7 +26,7 @@ func (r *DockerRepo) Purge(ctx context.Context, now time.Time) error {
 		days      int
 	}{
 		{`DELETE FROM command_output WHERE id IN(SELECT id FROM command_output WHERE created_at<$1 ORDER BY created_at LIMIT $2)`, "command_output", 30},
-		{`DELETE FROM commands WHERE id IN(SELECT id FROM commands WHERE COALESCE(finished_at,updated_at)<$1 AND status IN('succeeded','failed','timed_out','cancelled','expired','success','error') AND NOT EXISTS(SELECT 1 FROM command_output WHERE command_id=commands.id) ORDER BY created_at LIMIT $2)`, "commands", 90},
+		{`DELETE FROM commands WHERE id IN(SELECT id FROM commands WHERE COALESCE(finished_at,updated_at)<$1 AND status IN('succeeded','failed','timed_out','cancelled','expired','success','error') AND NOT EXISTS(SELECT 1 FROM command_output WHERE command_id=commands.id) AND ` + pendingWindowExemption + ` ORDER BY created_at LIMIT $2)`, "commands", 90},
 		{`DELETE FROM docker_audit WHERE id IN(SELECT id FROM docker_audit WHERE created_at<$1 AND kind IN('terminal','command','device_delete','stack_paths','policy') AND (kind<>'terminal' OR data->>'ended_at' IS NOT NULL) ORDER BY created_at LIMIT $2)`, "long_audit", 180},
 		{`DELETE FROM docker_audit WHERE id IN(SELECT id FROM docker_audit WHERE created_at<$1 AND kind NOT IN('terminal','command','device_delete','stack_paths','policy') AND data->>'ended_at' IS NOT NULL ORDER BY created_at LIMIT $2)`, "short_audit", 90},
 		{`DELETE FROM terminal_sessions WHERE id IN(SELECT id FROM terminal_sessions WHERE started_at<$1 AND ended_at IS NOT NULL ORDER BY started_at LIMIT $2)`, "legacy_terminal", 180},
