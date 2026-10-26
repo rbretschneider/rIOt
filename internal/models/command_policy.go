@@ -317,7 +317,14 @@ const (
 	OriginAutoPatch  = "auto_patch"
 )
 
-// IsValidOrigin reports whether o is one of the three allowed origins.
+// OriginAgentSelfUpdate marks a record of an agent's own scheduled self-update
+// (EXPECT-002). Only the server's self-update path creates one, directly in
+// running; no API, fleet, auto-update or auto-patch path can (IsValidOrigin
+// excludes it on purpose), and nothing is ever sent to an agent for it.
+const OriginAgentSelfUpdate = "agent_self_update"
+
+// IsValidOrigin reports whether o is one of the three origins Service.Dispatch
+// accepts. It deliberately excludes OriginAgentSelfUpdate (EXPECT-002 AD-001).
 func IsValidOrigin(o string) bool {
 	return o == OriginUser || o == OriginAutoUpdate || o == OriginAutoPatch
 }

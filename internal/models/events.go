@@ -62,6 +62,13 @@ const (
 	// command (EXTRA-UPD-001 FR-045).
 	EventExtraUpdaterStarted  EventType = "extra_updater_started"
 	EventExtraUpdaterFinished EventType = "extra_updater_finished"
+
+	// EXPECT-002: server-written outcome events of an agent self-update record.
+	// None is routed through alert rules, none is ever dispatched to a channel
+	// and none consumes the per-device push ceiling.
+	EventAgentSelfUpdateFailed      EventType = "agent_self_update_failed"
+	EventAgentSelfUpdateUnconfirmed EventType = "agent_self_update_unconfirmed"
+	EventAgentSelfUpdatePaused      EventType = "agent_self_update_paused"
 )
 
 // Event.CommandAttr values written by EXPECT-001 (the agent and the server's
@@ -73,6 +80,13 @@ const (
 	// CommandAttrEscalation marks the single alert raised when a window ends and
 	// its target is still down.
 	CommandAttrEscalation = "escalation"
+	// CommandAttrInferred marks an event the server linked to a command or record
+	// by its own rule (the Docker attribution and, since EXPECT-002, the
+	// agent_update_* events).
+	CommandAttrInferred = "inferred"
+	// CommandAttrOutcome marks the single outcome event of an agent self-update
+	// record (EXPECT-002 AD-012).
+	CommandAttrOutcome = "outcome"
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
