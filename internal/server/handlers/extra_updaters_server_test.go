@@ -263,8 +263,7 @@ func TestReceiveAgentEvent_EU_SEC005_UnknownUpdaterRejected(t *testing.T) {
 		"unknown command":     eventBody("extra_updater_started", "1c8b64b7-2a3f-4c7b-8e2e-3e4a6d7b8c9d", "dietpi", "", ""),
 		"bad outcome":         eventBody("extra_updater_finished", euCmdID, "dietpi", "exploded", ""),
 		"missing outcome":     eventBody("extra_updater_finished", euCmdID, "dietpi", "", ""),
-		"skipped without a known reason is never an end": eventBody("extra_updater_finished", euCmdID, "dietpi", "skipped", ""),
-		"outcome on a start":                             eventBody("extra_updater_started", euCmdID, "dietpi", "success", ""),
+		"outcome on a start":  eventBody("extra_updater_started", euCmdID, "dietpi", "success", ""),
 	}
 	for name, body := range bad {
 		body := body

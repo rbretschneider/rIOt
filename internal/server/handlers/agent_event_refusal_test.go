@@ -72,11 +72,16 @@ func TestAgentEventExtra_DP_AC011_UnknownReasonDropped(t *testing.T) {
 	}
 	for name, reason := range bad {
 		reason := reason
-		t.Run("[AC-011] "+name+" stores nothing", func(t *testing.T) {
+		t.Run("[AC-011] "+name+" is dropped and the event kept", func(t *testing.T) {
 			f := newEventFixture(t)
 			rec := f.post(t, "dev-1", refusalEventBody("extra_updater_finished", "skipped", reason, "x"))
-			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
-			assert.Empty(t, f.events.Events)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.Len(t, f.events.Events, 1)
+			msg := f.events.Events[0].Message
+			assert.Contains(t, msg, "DietPi update skipped on pivpn (command ")
+			if reason != "" {
+				assert.NotContains(t, msg, reason, "agent text never reaches the stored message")
+			}
 		})
 	}
 	t.Run("[AC-011] a reason on a start event is rejected", func(t *testing.T) {

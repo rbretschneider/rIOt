@@ -52,11 +52,11 @@ func (h *Handlers) receiveExtraUpdaterEvent(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		// The reason is accepted only from the closed skip-reason set, and only
-		// on a skipped event. An unknown reason drops the event; the stored
-		// message is composed here and never contains agent text.
-		if evt.Outcome == "skipped" && !knownSkipReasons[evt.Reason] {
-			reject()
-			return
+		// on a skipped event. An unknown reason is dropped and the event kept
+		// (ADD AD-5), so a newer agent's reason never costs Ryan the event; the
+		// stored message is composed here and never contains agent text.
+		if evt.Outcome != "skipped" || !knownSkipReasons[evt.Reason] {
+			evt.Reason = ""
 		}
 	} else if evt.Outcome != "" || evt.Reason != "" {
 		reject()
@@ -100,7 +100,7 @@ func (h *Handlers) receiveExtraUpdaterEvent(w http.ResponseWriter, r *http.Reque
 	msg := label + " update started on " + hostname + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
 	if finished {
 		msg = label + " update " + outcomeWords + " on " + hostname + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
-		if evt.Outcome == "skipped" {
+		if evt.Outcome == "skipped" && evt.Reason != "" {
 			msg = label + " update skipped on " + hostname + ": " + refusalWords(evt.Reason, "") + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
 		}
 		if evt.Outcome != "success" {
