@@ -833,3 +833,123 @@ describe('[AC-113] with no tracked command a stop event still shows exited', () 
     expect(updated.latest_telemetry.data.docker.containers[0].state).toBe('exited')
   })
 })
+
+// ---------------------------------------------------------------------------
+// EXPECT-001 AC-040: activity_update WebSocket messages keep the ['activity']
+// cache current without a reload.
+// ---------------------------------------------------------------------------
+
+const hostActivity = (over: Record<string, unknown> = {}) => ({
+  device_id: 'dev-1',
+  kind: 'docker',
+  phase: 'in_progress',
+  action: 'docker_update',
+  command_id: 'cmd-1',
+  actor_phrase: 'by auto-update policy for plex',
+  started_at: '2026-10-26T14:00:00Z',
+  back_by: null,
+  waiting_dpkg_lock: false,
+  progress: null,
+  agent_from_version: '',
+  target: 'plex',
+  docker_actions: 1,
+  covers_offline: false,
+  device_online: true,
+  escalation: null,
+  powered_off_at: null,
+  ...over,
+})
+
+const seededActivity = {
+  generated_at: '2026-10-26T14:00:00Z',
+  newest_agent_version: '2.78.0',
+  activities: [] as ReturnType<typeof hostActivity>[],
+}
+
+describe('[AC-040] activity_update keeps the activity cache live', () => {
+  it('adds the activity a schedule just dispatched to the cache', () => {
+    const qc = makeQC()
+    qc.setQueryData(['activity'], seededActivity)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: hostActivity() })
+    })
+
+    const cached = qc.getQueryData<typeof seededActivity>(['activity'])!
+    expect(cached.activities, 'the dispatched activity must be in the cache').toHaveLength(1)
+    expect(cached.activities[0].target).toBe('plex')
+  })
+
+  it('replaces the activity of a device whose activity changed', () => {
+    const qc = makeQC()
+    qc.setQueryData(['activity'], { ...seededActivity, activities: [hostActivity()] })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({
+        type: 'activity_update',
+        device_id: 'dev-1',
+        data: hostActivity({ kind: 'host', action: 'reboot', phase: 'return', target: '' }),
+      })
+    })
+
+    const cached = qc.getQueryData<typeof seededActivity>(['activity'])!
+    expect(cached.activities).toHaveLength(1)
+    expect(cached.activities[0].action).toBe('reboot')
+  })
+
+  it('removes the activity when the window closes (data is null)', () => {
+    const qc = makeQC()
+    qc.setQueryData(['activity'], { ...seededActivity, activities: [hostActivity()] })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: null })
+    })
+
+    const cached = qc.getQueryData<typeof seededActivity>(['activity'])!
+    expect(cached.activities, 'a cleared activity must leave the cache').toEqual([])
+  })
+
+  it('leaves other devices untouched', () => {
+    const qc = makeQC()
+    qc.setQueryData(['activity'], {
+      ...seededActivity,
+      activities: [hostActivity({ device_id: 'dev-2', target: 'sonarr' })],
+    })
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: null })
+    })
+
+    const cached = qc.getQueryData<typeof seededActivity>(['activity'])!
+    expect(cached.activities.map(a => a.device_id)).toEqual(['dev-2'])
+  })
+
+  it('does not create the cache before the first fetch has landed', () => {
+    const qc = makeQC()
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: hostActivity() })
+    })
+
+    expect(qc.getQueryData(['activity'])).toBeUndefined()
+  })
+
+  it('does not touch the device list or the device detail caches', () => {
+    const qc = makeQC()
+    qc.setQueryData(['activity'], seededActivity)
+    qc.setQueryData(['device', 'dev-1'], baseDeviceDetail)
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+    const before = qc.getQueryData(['device', 'dev-1'])
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: hostActivity() })
+    })
+
+    expect(qc.getQueryData(['device', 'dev-1'])).toBe(before)
+  })
+})

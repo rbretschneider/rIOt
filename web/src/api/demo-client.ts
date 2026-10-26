@@ -69,6 +69,7 @@ export const api: ApiClient = {
   deleteProbe: async () => { await delay(); },
   runProbe: async (id: number) => { await delay(); const p = demo.getProbes().find(p => p.id === id); return p?.latest_result ?? { id: 0, probe_id: id, success: true, latency_ms: 10, error_msg: '', metadata: {}, created_at: new Date().toISOString() } },
   getProbeResults: (id: number) => Promise.resolve(demo.getProbeResults(id)),
+  getActivity: () => Promise.resolve(demo.getActivity()),
   getAgentVersions: () => Promise.resolve(demo.getAgentVersions()),
   getPatchStatus: () => Promise.resolve(demo.getPatchStatus()),
   getPatchStatusDetail: () => Promise.resolve(demo.getPatchStatus()),

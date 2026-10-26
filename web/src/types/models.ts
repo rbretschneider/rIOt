@@ -697,6 +697,45 @@ export interface UpdateInfo {
   server_host_device_id?: string
 }
 
+// EXPECT-001 (ADD 6.1): server-computed activity per device. At most one entry
+// per device; the server owns selection (host or agent over docker), the web
+// only renders. Times are RFC 3339 strings.
+export type ActivityKind = 'host' | 'agent' | 'docker' | 'powered_off' | 'escalated'
+export type ActivityPhase = 'queued' | 'in_progress' | 'return' | 'settling' | 'powered_off' | 'escalated'
+export type ActivityEscalationReason = 'failed' | 'timed_out' | 'no_result' | 'not_back'
+
+export interface ActivityEscalation {
+  reason: ActivityEscalationReason
+  bound: string
+  at: string
+}
+
+export interface DeviceActivity {
+  device_id: string
+  kind: ActivityKind
+  phase: ActivityPhase
+  action: string
+  command_id: string
+  actor_phrase: string
+  started_at: string
+  back_by: string | null
+  waiting_dpkg_lock: boolean
+  progress: number | null
+  agent_from_version: string
+  target: string
+  docker_actions: number
+  covers_offline: boolean
+  device_online: boolean
+  escalation: ActivityEscalation | null
+  powered_off_at: string | null
+}
+
+export interface ActivityResponse {
+  generated_at: string
+  newest_agent_version: string
+  activities: DeviceActivity[]
+}
+
 export interface WSMessage {
   type: string
   device_id?: string
