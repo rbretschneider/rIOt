@@ -658,3 +658,27 @@ func TestEffectiveUnit_EU_SEC002_RunnerErrorsFailClosed(t *testing.T) {
 		}
 	})
 }
+
+func TestGateOutcome_DP_AC005_LauncherReasonsMapToSkips(t *testing.T) {
+	for _, reason := range []string{ReasonTmpNotPrivate, ReasonMountPropagation, ReasonRunDirNotPrivate} {
+		t.Run("[AC-005] "+reason+" is a skip with its detail and nothing ran", func(t *testing.T) {
+			out := gateOutcome(&LauncherError{Reason: reason, Detail: "d"}, 125)
+			if out.Skip != reason || out.SkipDetail != "d" || out.SetupErr != "" || out.Output != "" {
+				t.Errorf("outcome = %+v, want a skip for %s", out, reason)
+			}
+		})
+	}
+	for _, reason := range []string{ReasonLauncherRefused, ReasonLauncherSetupError, "something_else"} {
+		t.Run("[DP-SEC-004] "+reason+" stays a setup failure and is never a skip", func(t *testing.T) {
+			out := gateOutcome(&LauncherError{Reason: reason, Detail: "d"}, 125)
+			if out.Skip != "" || out.SetupErr == "" {
+				t.Errorf("outcome = %+v, want a setup error", out)
+			}
+		})
+	}
+	t.Run("[DP-SEC-004] a plain error is a setup failure", func(t *testing.T) {
+		if out := gateOutcome(errors.New("pipe closed"), 1); out.Skip != "" || out.SetupErr != "pipe closed" {
+			t.Errorf("outcome = %+v", out)
+		}
+	})
+}
