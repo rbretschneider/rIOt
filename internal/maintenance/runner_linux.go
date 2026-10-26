@@ -73,18 +73,70 @@ func runProcess(ctx context.Context, path string, args []string, grace time.Dura
 	return runProcessBounded(ctx, path, args, grace, stdout, stderr, MaxOutputBytes)
 }
 func runProcessBounded(ctx context.Context, path string, args []string, grace time.Duration, stdout, stderr io.Writer, limit int) (CommandResult, error) {
-	var result CommandResult
+	res, err := runProcessSpec(ctx, processSpec{path: path, args: args, grace: grace, stdout: stdout, stderr: stderr, limit: limit})
+	return res.CommandResult, err
+}
+
+// processSpec describes one supervised process. Its zero values give the apt
+// behaviour exactly: FixedEnvironment, Dir /, no settle time, no gate and no
+// extra descriptors.
+type processSpec struct {
+	path string
+	args []string
+	// env and dir default to FixedEnvironment() and "/".
+	env []string
+	dir string
+
+	grace          time.Duration
+	limit          int
+	stdout, stderr io.Writer
+
+	// settle is how long members of the process group may outlive the leader
+	// before they count as stray (EXTRA-UPD-001: DietPi's tee). Zero keeps the
+	// apt rule: any live member is stray at once.
+	settle time.Duration
+	// extraFiles become the child's descriptors 3 and up. runProcessSpec closes
+	// the parent's copies once the child has started.
+	extraFiles []*os.File
+	// gate runs in its own goroutine after the process started. A non-nil error
+	// kills the whole group at once; it is returned in processResult.GateErr.
+	gate func(ctx context.Context) error
+}
+
+type processResult struct {
+	CommandResult
+	GateErr error
+}
+
+func runProcessSpec(ctx context.Context, ps processSpec) (processResult, error) {
+	var result processResult
 	if err := ctx.Err(); err != nil {
-		return CommandResult{ExitCode: 1, Interrupted: true}, err
+		result.ExitCode, result.Interrupted = 1, true
+		return result, err
 	}
-	capture := &outputCapture{limit: limit}
-	cmd := exec.Command(path, args...)
+	capture := &outputCapture{limit: ps.limit}
+	cmd := exec.Command(ps.path, ps.args...)
 	cmd.Dir = "/"
+	if ps.dir != "" {
+		cmd.Dir = ps.dir
+	}
 	cmd.Env = FixedEnvironment()
+	if ps.env != nil {
+		cmd.Env = ps.env
+	}
 	cmd.Stdin = nil
+	cmd.ExtraFiles = ps.extraFiles
+	stdout, stderr := ps.stdout, ps.stderr
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	cmd.Stdout = io.MultiWriter(capture, stdout)
 	cmd.Stderr = io.MultiWriter(capture, stderr)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	grace := ps.grace
 	drainGrace := 5 * time.Second
 	if grace < drainGrace {
 		drainGrace = grace / 2
@@ -93,14 +145,32 @@ func runProcessBounded(ctx context.Context, path string, args []string, grace ti
 		drainGrace = time.Millisecond
 	}
 	cmd.WaitDelay = drainGrace
-	if err := cmd.Start(); err != nil {
-		return CommandResult{ExitCode: 1}, err
+	if ps.settle > 0 {
+		// Members that may legitimately outlive the leader for the settle time
+		// still hold the output pipe; do not cut the pipe before they may end.
+		cmd.WaitDelay = ps.settle + drainGrace
+	}
+	err := cmd.Start()
+	// The child owns its copy of every extra descriptor now; the parent's copies
+	// must go so a reader sees end-of-file when the child closes its own.
+	for _, f := range ps.extraFiles {
+		_ = f.Close()
+	}
+	if err != nil {
+		result.ExitCode = 1
+		return result, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	var gateDone chan error
+	if ps.gate != nil {
+		gateCtx, stopGate := context.WithCancel(ctx)
+		defer stopGate()
+		gateDone = make(chan error, 1)
+		go func() { gateDone <- ps.gate(gateCtx) }()
+	}
 
-	var err error
-	var stopAt, killAt time.Time
+	var stopAt, killAt, leaderExit time.Time
 	leaderDone, terminating, killed := false, false, false
 	ctxDone := ctx.Done()
 	tick := time.NewTicker(20 * time.Millisecond)
@@ -111,12 +181,21 @@ func runProcessBounded(ctx context.Context, path string, args []string, grace ti
 			if leaderDone && !alive {
 				break
 			}
+			settling := false
 			if leaderDone && alive && !terminating {
-				result.Interrupted = true
-				terminating = true
-				stopAt = time.Now().Add(grace)
-				_ = unix.Kill(-cmd.Process.Pid, unix.SIGTERM)
-				err = errors.Join(err, errors.New("package descendants outlived parent; state requires manual review"))
+				if ps.settle > 0 {
+					if leaderExit.IsZero() {
+						leaderExit = time.Now()
+					}
+					settling = time.Since(leaderExit) < ps.settle
+				}
+				if !settling {
+					result.Interrupted = true
+					terminating = true
+					stopAt = time.Now().Add(grace)
+					_ = unix.Kill(-cmd.Process.Pid, unix.SIGTERM)
+					err = errors.Join(err, errors.New("package descendants outlived parent; state requires manual review"))
+				}
 			}
 			if terminating && !killed && !time.Now().Before(stopAt) {
 				_ = unix.Kill(-cmd.Process.Pid, unix.SIGKILL)
@@ -134,6 +213,16 @@ func runProcessBounded(ctx context.Context, path string, args []string, grace ti
 			leaderDone = true
 			done = nil
 			err = errors.Join(err, waitErr)
+		case gateErr := <-gateDone:
+			gateDone = nil
+			if gateErr != nil && result.GateErr == nil {
+				result.GateErr = gateErr
+				if !killed {
+					terminating, killed = true, true
+					_ = unix.Kill(-cmd.Process.Pid, unix.SIGKILL)
+					killAt = time.Now().Add(drainGrace)
+				}
+			}
 		case <-ctxDone:
 			ctxDone = nil
 			result.Interrupted = true
