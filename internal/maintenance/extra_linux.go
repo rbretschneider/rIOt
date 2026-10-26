@@ -177,7 +177,7 @@ func (osTrustFS) Lstat(name string) (trustStat, error) {
 	if !ok {
 		return trustStat{}, errors.New("no ownership information")
 	}
-	return trustStat{Mode: info.Mode(), UID: sys.Uid}, nil
+	return trustStat{Mode: info.Mode(), UID: sys.Uid, Nlink: uint64(sys.Nlink)}, nil
 }
 
 func (osTrustFS) ReadDir(name string) ([]string, error) {
@@ -244,13 +244,20 @@ func (ExtraLaunchRunner) RunStep(ctx context.Context, id string, spec extraupd.A
 	})
 	_ = pr.Close()
 	if res.GateErr != nil {
-		var le *LauncherError
-		if errors.As(res.GateErr, &le) && (le.Reason == ReasonTmpNotPrivate || le.Reason == ReasonMountPropagation) {
-			return StepOutcome{Skip: le.Reason, SkipDetail: le.Detail, ExitCode: res.ExitCode}
-		}
-		return StepOutcome{SetupErr: boundedText(res.GateErr.Error(), 200), ExitCode: res.ExitCode}
+		return gateOutcome(res.GateErr, res.ExitCode)
 	}
 	return StepOutcome{Output: res.Output, Truncated: res.Truncated, ExitCode: res.ExitCode, Err: runErr}
+}
+
+// gateOutcome maps a launcher failure to the step outcome. The three isolation
+// refusals mean nothing ran and are recorded as skips; any other failure is a
+// setup error and stays a failed step (DP-SEC-004).
+func gateOutcome(gateErr error, exitCode int) StepOutcome {
+	var le *LauncherError
+	if errors.As(gateErr, &le) && (le.Reason == ReasonTmpNotPrivate || le.Reason == ReasonMountPropagation || le.Reason == ReasonRunDirNotPrivate) {
+		return StepOutcome{Skip: le.Reason, SkipDetail: le.Detail, ExitCode: exitCode}
+	}
+	return StepOutcome{SetupErr: boundedText(gateErr.Error(), 200), ExitCode: exitCode}
 }
 
 // readLauncherStatus reads the launcher's status pipe until end-of-file, within

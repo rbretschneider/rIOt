@@ -82,7 +82,7 @@ func newExtraRig(t *testing.T, root string, cmds CommandsConfig) *extraRig {
 			return nil, nil
 		},
 	}
-	g.a.extra.fs = extraupd.DirFS(root)
+	g.a.extra.fs = extraupd.DirFSOwnedByCaller(root)
 	return g
 }
 
@@ -172,15 +172,15 @@ func TestReadiness_EU_AC013_FiveReasons(t *testing.T) {
 		g.client.rootPolicy = func() ([]byte, error) { return nil, os.ErrNotExist }
 		assert.Equal(t, models.ExtraReadinessNotOptedIn, g.readiness(t))
 		g.a.config.Commands = CommandsConfig{AllowExtraUpdaters: ExtraUpdaterIDs{"dietpi"}}
-		g.a.extra = extraState{fs: extraupd.DirFS(root)}
+		g.a.extra = extraState{fs: extraupd.DirFSOwnedByCaller(root)}
 		assert.Equal(t, models.ExtraReadinessPatchingDisabled, g.readiness(t))
 		g.a.config.Commands.AllowPatching = true
-		g.a.extra = extraState{fs: extraupd.DirFS(root)}
+		g.a.extra = extraState{fs: extraupd.DirFSOwnedByCaller(root)}
 		assert.Equal(t, models.ExtraReadinessUnsupportedHelper, g.readiness(t))
 		g.client.capabilities = func(context.Context) ([]byte, error) {
 			return []byte("request-versions=1,2\nextra-updaters=dietpi\n"), nil
 		}
-		g.a.extra = extraState{fs: extraupd.DirFS(root)}
+		g.a.extra = extraState{fs: extraupd.DirFSOwnedByCaller(root)}
 		assert.Equal(t, models.ExtraReadinessRootSideMissing, g.readiness(t))
 	})
 }
@@ -304,7 +304,7 @@ func runPlanned(t *testing.T, g *extraRig, mode string, params map[string]interf
 	}
 	plan := g.a.planExtras(context.Background(), mode, params)
 	res := g.a.runDetachedMaintenanceWith(context.Background(), payloadFor(params), mode, false, plan, cr)
-	res = g.a.applyExtraV1Lines(context.Background(), plan, res)
+	res = g.a.applyExtraV1Lines(context.Background(), idA, plan, res)
 	return plan, res
 }
 
@@ -369,14 +369,14 @@ func TestPlanExtras_EU_AC037_V2OnlyWhenEnabledStampedAndNotExcluded(t *testing.T
 		assert.Contains(t, res.Message, "dietpi: skipped (excluded_by_operator)")
 		assert.Equal(t, models.ResultStatusSuccess, res.Status, "[AC-039] an excluded updater never changes the outcome")
 	})
-	t.Run("[AC-037] without the server's budget stamp the request stays version 1 and a pending update fails the run", func(t *testing.T) {
+	t.Run("[AC-037] without the server's budget stamp the request stays version 1 and a pending update is skipped without failing the run", func(t *testing.T) {
 		g := newExtraRig(t, dietpiRoot(t), enabledCommands())
 		_, res := runPlanned(t, g, "full", map[string]interface{}{}, nil)
 		assert.Equal(t, 1, g.request.Version)
 		assert.Contains(t, res.Message, "dietpi: skipped (insufficient_time)")
-		assert.Equal(t, models.ResultStatusError, res.Status, "[AF-7] an enabled, pending updater that could not be run fails the command")
+		assert.Equal(t, models.ResultStatusSuccess, res.Status, "[AF-7, DP-AC010] an enabled, pending updater that could not be started is a refusal, not a failure")
 		require.NotNil(t, res.ExitCode)
-		assert.Equal(t, 1, *res.ExitCode)
+		assert.Equal(t, 0, *res.ExitCode)
 	})
 	t.Run("[AC-037] a non-boolean exclusion value is not an exclusion", func(t *testing.T) {
 		g := newExtraRig(t, dietpiRoot(t), enabledCommands())
@@ -412,8 +412,7 @@ func TestOSUpdate_EU_AC022_ExcludedAndNotEnabledLines(t *testing.T) {
 			g := newExtraRig(t, root, tc.cmds)
 			_, res := runPlanned(t, g, "full", tc.params, nil)
 			assert.Contains(t, res.Message, tc.want)
-			wantFail := name == "enabled, no stamp"
-			assert.Equal(t, !wantFail, res.Status == models.ResultStatusSuccess, "only the missing budget fails the run: %s", res.Message)
+			assert.Equal(t, models.ResultStatusSuccess, res.Status, "a skip before the updater started never fails the run (DIETPI-PATH-001 FR-012): %s", res.Message)
 		})
 	}
 	t.Run("[AC-022] after an apt failure the line is apt_not_successful and the apt result is kept", func(t *testing.T) {
@@ -422,7 +421,7 @@ func TestOSUpdate_EU_AC022_ExcludedAndNotEnabledLines(t *testing.T) {
 		// agent states why it was not applied.
 		plan := g.a.planExtras(context.Background(), "full", map[string]interface{}{})
 		failed := commandExecResult{Status: models.ResultStatusError, Message: "upgrade failed (exit 100): E: boom"}
-		out := g.a.applyExtraV1Lines(context.Background(), plan, failed)
+		out := g.a.applyExtraV1Lines(context.Background(), idA, plan, failed)
 		assert.True(t, strings.HasPrefix(out.Message, "apt: failed; dietpi: skipped (apt_not_successful)"), out.Message)
 		assert.Contains(t, out.Message, "upgrade failed (exit 100): E: boom")
 		assert.Equal(t, models.ResultStatusError, out.Status)
@@ -431,7 +430,7 @@ func TestOSUpdate_EU_AC022_ExcludedAndNotEnabledLines(t *testing.T) {
 		g := newExtraRig(t, dietpiRoot(t), enabledCommands())
 		plan := g.a.planExtras(context.Background(), "full", budget)
 		for _, r := range []commandExecResult{precheckFailure("busy"), {Detached: true, Message: "observer detached"}} {
-			assert.Equal(t, r.Message, g.a.applyExtraV1Lines(context.Background(), plan, r).Message)
+			assert.Equal(t, r.Message, g.a.applyExtraV1Lines(context.Background(), idA, plan, r).Message)
 		}
 	})
 }
@@ -674,7 +673,7 @@ func TestTelemetry_EU_AC011_DietPiEntryWithTodaysCollectorList(t *testing.T) {
 	root := dietpiRoot(t)
 	g := newExtraRig(t, root, enabledCommands())
 	reg := collectors.NewRegistry()
-	reg.Register(&fakeUpdatesCollector{result: &models.UpdateInfo{ExtraUpdaters: extraupd.DetectAll(context.Background(), extraupd.DirFS(root))}})
+	reg.Register(&fakeUpdatesCollector{result: &models.UpdateInfo{ExtraUpdaters: extraupd.DetectAll(context.Background(), extraupd.DirFSOwnedByCaller(root))}})
 	g.a.registry = reg
 	data := g.a.collectAll(context.Background())
 	require.NotNil(t, data.Updates)

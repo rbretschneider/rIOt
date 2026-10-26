@@ -24,7 +24,13 @@ func (m *memTrustFS) dir(path string, mode fs.FileMode, uid uint32) *memTrustFS 
 	return m
 }
 func (m *memTrustFS) file(path string, mode fs.FileMode, uid uint32) *memTrustFS {
-	m.nodes[path] = trustStat{Mode: mode, UID: uid}
+	m.nodes[path] = trustStat{Mode: mode, UID: uid, Nlink: 1}
+	return m
+}
+func (m *memTrustFS) links(path string, n uint64) *memTrustFS {
+	st := m.nodes[path]
+	st.Nlink = n
+	m.nodes[path] = st
 	return m
 }
 func (m *memTrustFS) symlink(path string, uid uint32) *memTrustFS {
@@ -65,6 +71,21 @@ func ext4Host() *memTrustFS {
 	return m
 }
 
+// stockDietPi9 is the layout of a stock DietPi 9.20.1 host with DietPi-RAMlog
+// (the PiCUPS layout, DIETPI-PATH-001 F-1 and F-6): /run/dietpi is 0777 and not
+// sticky, and /var/tmp/dietpi/logs holds a mirror of /var/log with its original
+// owners and modes.
+func stockDietPi9() *memTrustFS {
+	m := ext4Host()
+	m.dir("/run/dietpi", 0o777, 0).file("/run/dietpi/.update_available", 0o666, 1000)
+	m.dir("/var/tmp/dietpi/logs/dietpi-ramlog_store", 0o755, 0)
+	m.file("/var/tmp/dietpi/logs/dietpi-ramlog_store/wtmp", 0o664, 0)
+	m.dir("/var/tmp/dietpi/logs/dietpi-ramlog_store/cups", 0o755, 1000)
+	m.file("/var/tmp/dietpi/logs/dietpi-ramlog_store/cups/error_log", 0o640, 1000)
+	m.file("/var/tmp/dietpi/dietpi-update_reinstalls", 0o644, 0)
+	return m
+}
+
 func dietpiSpec() extraupd.ApplySpec { return extraupd.NewDietPi().Apply() }
 
 func installedDietPi(version string) models.ExtraUpdater {
@@ -97,22 +118,16 @@ func TestTrustWalk_EU_SEC004_Layouts(t *testing.T) {
 			t.Fatal("a group-writable dietpi-globals must fail")
 		}
 	})
-	t.Run("[SEC-004] a non-root /run/dietpi fails", func(t *testing.T) {
-		m := ext4Host().dir("/run/dietpi", 0o755, 1000)
-		if err := trustWalk(m, dietpiSpec(), installedDietPi("10.8.2")); err == nil || !strings.Contains(err.Error(), "uid 1000") {
+	t.Run("[DP-AC001] /run/dietpi is no longer walked: a non-root or world-writable one passes (flags are checked on their own descriptors)", func(t *testing.T) {
+		m := ext4Host().dir("/run/dietpi", 0o777, 1000)
+		if err := trustWalk(m, dietpiSpec(), installedDietPi("10.8.2")); err != nil {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	t.Run("[SEC-004] a non-root flag file under a root-owned /run/dietpi fails", func(t *testing.T) {
-		m := ext4Host().file("/run/dietpi/.update_available", 0o644, 1000)
-		if err := trustWalk(m, dietpiSpec(), installedDietPi("10.8.2")); err == nil {
-			t.Fatal("a forged flag file must fail")
-		}
-	})
-	t.Run("[SEC-004] a non-root entry in /var/tmp/dietpi fails", func(t *testing.T) {
-		m := ext4Host().file("/var/tmp/dietpi/logs/dietpi-update.log", 0o644, 1000)
-		if err := trustWalk(m, dietpiSpec(), installedDietPi("10.8.2")); err == nil {
-			t.Fatal("riot-planted content under /var/tmp/dietpi must fail")
+	t.Run("[DP-AC001] entries below /var/tmp/dietpi/logs are data and are not walked", func(t *testing.T) {
+		m := ext4Host().file("/var/tmp/dietpi/logs/dietpi-update.log", 0o666, 1000)
+		if err := trustWalk(m, dietpiSpec(), installedDietPi("10.8.2")); err != nil {
+			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("[SEC-004] /var/tmp/dietpi absent with installed 9.20.1 fails because Patch_10_4 is pending", func(t *testing.T) {
@@ -145,7 +160,7 @@ func TestTrustWalk_EU_SEC004_Layouts(t *testing.T) {
 		m := ext4Host()
 		base := 0
 		for p := range m.nodes {
-			if strings.HasPrefix(p, "/boot/dietpi") || strings.HasPrefix(p, "/run/dietpi") || strings.HasPrefix(p, "/var/tmp/dietpi") {
+			if strings.HasPrefix(p, "/boot/dietpi") {
 				base++
 			}
 		}

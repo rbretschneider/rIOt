@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"reflect"
 	"strconv"
 	"strings"
@@ -38,9 +39,19 @@ type fakeNS struct {
 	// afterTmpMount is the self mountinfo once the tmpfs is stacked.
 	afterTmpMount string
 	tmpMounted    bool
-	execPath      string
-	execArgv      []string
-	execEnv       []string
+
+	// The /run/dietpi scenario (DIETPI-PATH-001). With runDirHost unset the
+	// host has no /run/dietpi and the launcher must not touch /run at all.
+	runDirHost      *FileID
+	runDirStatErr   error
+	runDirAfter     FileID
+	afterRunMount   string
+	runDirMounted   bool
+	runDirTmpfsType int64
+	runDirEntries   int
+	execPath        string
+	execArgv        []string
+	execEnv         []string
 }
 
 const hostInit = `22 1 179:2 / / rw,noatime shared:1 - ext4 /dev/mmcblk0p2 rw
@@ -63,7 +74,34 @@ func newFakeNS() *fakeNS {
 		statfs:        tmpfsMagic,
 		statID:        map[string]FileID{"/tmp": {Dev: 50, Ino: 2, UID: 0}, initTmpPath: {Dev: 21, Ino: 2, UID: 0}},
 		afterTmpMount: selfAfter,
+
+		runDirTmpfsType: tmpfsMagic,
 	}
+}
+
+// Host layouts with a separate /run mount, as on every systemd host.
+const hostInitRun = hostInit + "25 22 0:22 / /run rw,nosuid,nodev,noexec,relatime shared:4 - tmpfs tmpfs rw,size=400000k,mode=755\n"
+
+// selfAfterRunTmp is the table once /tmp is stacked, with /run still shared.
+const selfAfterRunTmp = hostInitRun + "60 24 0:50 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=1000k,mode=1777\n"
+
+// selfAfterRunDir is the table once /run is private and /run/dietpi is stacked.
+const selfAfterRunDir = "22 1 179:2 / / rw,noatime shared:1 - ext4 /dev/mmcblk0p2 rw\n" +
+	"24 22 0:21 / /tmp rw,nosuid,nodev,noatime shared:3 - tmpfs tmpfs rw\n" +
+	"23 22 179:1 / /boot rw,noatime shared:7 - vfat /dev/mmcblk0p1 rw\n" +
+	"25 22 0:22 / /run rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=400000k,mode=755\n" +
+	"60 24 0:50 / /tmp rw,nosuid,nodev,relatime - tmpfs tmpfs rw,size=1000k,mode=1777\n" +
+	"61 25 0:51 / /run/dietpi rw,nosuid,nodev,noexec,relatime - tmpfs tmpfs rw,size=1024k,nr_inodes=64,mode=755\n"
+
+// withRunDir makes the host have a stock 0777 root-owned /run/dietpi on its own
+// /run mount, and scripts the namespace the launcher ends up with.
+func (f *fakeNS) withRunDir() *fakeNS {
+	f.runDirHost = &FileID{Dev: 22, Ino: 40, UID: 0, Mode: 0o040777}
+	f.files[selfMountinfo] = []byte(hostInitRun)
+	f.afterTmpMount = selfAfterRunTmp
+	f.afterRunMount = selfAfterRunDir
+	f.runDirAfter = FileID{Dev: 51, Ino: 1, UID: 0, Mode: 0o040755}
+	return f
 }
 
 func (f *fakeNS) rec(format string, a ...any) { f.calls = append(f.calls, fmt.Sprintf(format, a...)) }
@@ -85,10 +123,15 @@ func (f *fakeNS) Unshare(flags int) error {
 }
 func (f *fakeNS) Mount(source, target, fstype string, flags uintptr, data string) error {
 	f.rec("mount %q %q %q %#x %q", source, target, fstype, flags, data)
-	if fstype == "tmpfs" {
+	if err := f.mountErr[target+"|"+fstype]; err != nil {
+		return err
+	}
+	if fstype == "tmpfs" && target == "/run/dietpi" {
+		f.runDirMounted = true
+	} else if fstype == "tmpfs" {
 		f.tmpMounted = true
 	}
-	return f.mountErr[target+"|"+fstype]
+	return nil
 }
 func (f *fakeNS) ReadFile(path string, max int) ([]byte, error) {
 	f.rec("read %s", path)
@@ -96,6 +139,9 @@ func (f *fakeNS) ReadFile(path string, max int) ([]byte, error) {
 		return nil, err
 	}
 	if path == selfMountinfo {
+		if f.runDirMounted && f.afterRunMount != "" {
+			return []byte(f.afterRunMount), nil
+		}
 		if f.tmpMounted {
 			return []byte(f.afterTmpMount), nil
 		}
@@ -108,14 +154,42 @@ func (f *fakeNS) ReadFile(path string, max int) ([]byte, error) {
 }
 func (f *fakeNS) StatfsType(path string) (int64, error) {
 	f.rec("statfs %s", path)
+	if path == "/run/dietpi" {
+		return f.runDirTmpfsType, f.statErr["statfs-run"]
+	}
 	return f.statfs, f.statErr["statfs"]
 }
 func (f *fakeNS) StatID(path string) (FileID, error) {
 	f.rec("stat %s", path)
+	switch path {
+	case "/run/dietpi":
+		return f.runDirAfter, f.statErr[path]
+	case "/proc/1/root/run/dietpi":
+		if f.runDirHost == nil {
+			return FileID{}, f.statErr[path]
+		}
+		return *f.runDirHost, f.statErr[path]
+	}
 	return f.statID[path], f.statErr[path]
+}
+func (f *fakeNS) StatNoFollow(path string) (FileID, error) {
+	f.rec("lstat %s", path)
+	if path != "/run/dietpi" {
+		return f.statID[path], f.statErr[path]
+	}
+	if f.runDirStatErr != nil {
+		return FileID{}, f.runDirStatErr
+	}
+	if f.runDirHost == nil {
+		return FileID{}, &fs.PathError{Op: "lstat", Path: path, Err: fs.ErrNotExist}
+	}
+	return *f.runDirHost, nil
 }
 func (f *fakeNS) EntryCount(path string) (int, error) {
 	f.rec("count %s", path)
+	if path == "/run/dietpi" {
+		return f.runDirEntries, nil
+	}
 	return f.entries, nil
 }
 func (f *fakeNS) Chdir(path string) error { f.rec("chdir %s", path); return nil }

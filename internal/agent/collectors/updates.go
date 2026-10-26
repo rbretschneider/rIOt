@@ -34,6 +34,11 @@ type UpdatesCollector struct {
 	kernelRoot string           // root for /boot and /proc kernel comparison
 	aptRoot    string           // root for /etc/apt and /var/lib/apt freshness
 	listsNow   func() time.Time // clock for the freshness clock-skew guard
+
+	// extraFS overrides the extra-updater detection view. Tests set it to a
+	// fixture view that trusts the test user's flags; nil is the real root, or a
+	// root-trusting view of kernelRoot (DIETPI-PATH-001 FR-011).
+	extraFS extraupd.FS
 }
 
 // exitRunner runs a command and reports its exit code. err is non-nil only
@@ -96,6 +101,9 @@ func extraRootFS(root string) extraupd.FS {
 // reads files only and never starts a process (FR-003). The kernel root seam
 // doubles as its root, so one fixture tree serves both.
 func (c *UpdatesCollector) detectExtraUpdaters(ctx context.Context) []models.ExtraUpdater {
+	if c.extraFS != nil {
+		return extraupd.DetectAll(ctx, c.extraFS)
+	}
 	return extraupd.DetectAll(ctx, extraRootFS(c.kernelRoot))
 }
 

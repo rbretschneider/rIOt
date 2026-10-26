@@ -55,7 +55,7 @@
 - **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
-- **Patch badge** — each device shows one badge, **Auto**, **Manual** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). **Needs you** appears only when updates are pending or a reboot is required and nothing will apply them. A setting alone, such as "auto-patch off" on a host with nothing pending, is shown as neutral information under **Manual**. A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
+- **Patch badge** — each device shows one badge, **Auto**, **Manual**, **Blocked** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). **Needs you** appears only when updates are pending or a reboot is required and nothing will apply them, or when rIOt refused an update for a reason only you can fix. **Blocked** (amber) means rIOt refused an update for a reason you cannot act on. A setting alone, such as "auto-patch off" on a host with nothing pending, is shown as neutral information under **Manual**. A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
 - **DietPi updates in the patch flow** — opt in per device with `commands.allow_extra_updaters: [dietpi]` and a root re-run of `install.sh`. The maintenance worker then runs DietPi's own `dietpi-update` after apt during a patch, and the dashboard shows DietPi updates next to apt updates. No sudoers line is added ([details](#dietpi-updates))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
 - **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is truthful: a shutdown that sudo refuses reports `failed`. On a Linux host set up by the installer, remote shutdown is opt-in (SHUTDOWN-SUDO-001). The installer adds the one `systemctl poweroff` sudo rule only when you answer yes to "Allow remote shutdown from dashboard?" or when `commands.allow_shutdown` is `true` and you re-run `install.sh` as root ([how to enable it](#shutdown-on-linux-and-the-sudo-rule)). Upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
@@ -2720,11 +2720,12 @@ No setup is needed beyond the maintenance window you manage in **Settings > Agen
 | **Auto (reboot on YYYY-MM-DD)** | A reboot is required now or will be needed after a pending kernel/GPU update installs, and it will happen at the next OS-patch window start (UTC). This is an estimate and can move. |
 | **Auto (reboot date Unknown)** | A reboot is required now or will be needed after a pending kernel/GPU update installs. It will be automatic, but the time cannot be predicted (for example OS-patch mode is `anytime`, or the agent does not report `allow_reboot`). |
 | **Manual** | Nothing needs you, and nothing patches this host automatically. For example: auto-patch is off, automatic patching is disabled server-wide, or the agent does not allow patching, and no update is waiting. The badge is grey, not red. It does not count toward "N hosts need you". |
+| **Blocked** | rIOt did not start an update that is waiting, and the reason is not something you can fix by an action in rIOt. Amber, not red. It is not a failure of the patch run, and it does not count toward "N hosts need you". Hover the badge to read the reason ([details](#refused-updates-blocked-and-needs-you)). |
 | **Needs you** | At least one item needs a person. Hover or focus the badge to read each item and what to do. |
 
 Hover the badge, or move to it with the keyboard, to open the explanation. Press Escape to close it. It has four lines: **Automatic patching**, **Reboot**, **Needs you** and **As of** (when the update data was reported, in UTC). A note about unattended-upgrades or about checks that need a newer agent can follow. When the badge has information items, an **Information** block lists them below the four lines, with the text "Nothing here needs you."
 
-The **N hosts need you** button above the device table shows only the devices whose badge is **Needs you**. It is a toggle. **Manual** and **Auto** hosts are never counted.
+The **N hosts need you** button above the device table shows only the devices whose badge is **Needs you**. It is a toggle. **Manual**, **Auto** and **Blocked** hosts are never counted. When at least one host is **Blocked**, an **N blocked** button beside it filters to those hosts. The two filters exclude each other.
 
 ### What makes a device "Needs you"
 
@@ -2751,8 +2752,25 @@ The badge says **Needs you** if, and only if, at least one action item exists. E
 | A DietPi update is pending and DietPi is not enabled (`extra_update_not_applied`). The text names the update and why it is not applied, and the action says what to do | Always, when it applies | Not applicable |
 | A DietPi update is pending and will be applied (`extra_update_pending`) | Never | Always information. The text says when it will be applied |
 | DietPi's update state is unknown (`extra_update_unknown`) | Never | Always information. The text names the reason. rIOt never says "up to date" for an unknown state |
+| The latest patch run refused a pending DietPi update for a reason you can fix (`extra_refused`): the path check found something not root-only, the update source is not the default, or the patch window is too short | Always, when the update is still pending and enabled | Information, once the update is no longer pending: "The last patch run skipped DietPi: ..." |
+| The latest patch run refused a pending DietPi update for a reason you cannot act on (`extra_blocked`): rIOt could not isolate the step, or a temporary condition | Never. It makes the badge **Blocked** and is listed under **Blocked** | Information, once the update is no longer pending |
 
 Each extra-updater code appears once per updater. The Automatic patching, Reboot and As of lines are unchanged.
+
+### Refused updates: Blocked and Needs you
+
+A patch run can refuse to start a DietPi update and still succeed. The apt part ran, DietPi did not start, and nothing on the host changed. The command stays `success`, and the first line of its result names the refusal, for example `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`. The agent also sends one warning event for the refusal. The badge then tells you whether you can do something about it.
+
+| Class | Reasons | Badge |
+|---|---|---|
+| Blocked: rIOt's own isolation check, or a temporary condition | `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked` | **Blocked** |
+| Blocked: a stock-host false positive from a worker older than the fix | `unsafe_dietpi_path` whose note starts with `/run/dietpi ` | **Blocked**. The text says to re-run `install.sh` as root on the host |
+| Needs you: a path under `/boot/dietpi` or `/var/tmp/dietpi` is not root-only | `unsafe_dietpi_path` with any other path | **Needs you**, with the action "Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only." This is a possible tampering signal |
+| Needs you: only you can change it | `non_default_update_source`, `insufficient_time` | **Needs you**, with the action for that reason |
+
+A **Blocked** text for an isolation reason says that the host's mount layout prevented rIOt from isolating the step. It never promises that the next run fixes it. The temporary reasons say that rIOt retries on the next patch run. The reasons and their fixes are in the [refusal table](docs/ops/os-maintenance.md#refusal-reasons).
+
+If a host has both a **Needs you** item and a Blocked item, the badge is **Needs you** and the Blocked reason is still listed. A **Blocked** badge stays until the next OS patch run finishes. Re-running `install.sh` does not clear it by itself.
 
 A host with nothing pending, no reboot required and auto-patch off therefore reads **Manual**. For example, vermont used to read **Needs you** for "auto-patch off". It now reads **Manual**, with `auto_patch_off` under **Information**, and it is not counted in "N hosts need you". A host with updates pending and auto-patch off still reads **Needs you**. A deliberate hold on a package that has an update stays **Needs you** until the cause is removed.
 
@@ -2785,7 +2803,7 @@ Agents older than the release that added these facts do not send them. Until suc
 | `allow_reboot` | boolean | The device's agent reports it | The device's `commands.allow_reboot`. |
 | `updates_at` | string, RFC 3339 | Update data exists | When the update data was reported. |
 | `lists_freshness` | string: `fresh`, `stale`, `unknown` | Always | Whether the host's apt package lists are older than its apt configuration. Agents that do not report it, dnf hosts and unrecognized values read as `unknown`. Display only: no dispatch decision reads it. See [Stale package lists](#stale-package-lists). |
-| `patch_badge` | object | The device is registered | `kind` (`auto`, `auto_reboot_date`, `auto_reboot_unknown`, `manual`, `needs_you`), `label`, `explanation` (`automatic`, `reboot`, `needs_you` action items with `code`, `text`, `action` and optional `command_id` and `updater`, `needs_you_summary` (counts action items only), `info` (information items in the same shape), `as_of`, `notes`) and `reboot_at` for `auto_reboot_date` only. `manual` and `info` are new; a client that does not know `manual` should treat it as a neutral badge. |
+| `patch_badge` | object | The device is registered | `kind` (`auto`, `auto_reboot_date`, `auto_reboot_unknown`, `manual`, `blocked`, `needs_you`), `label`, `explanation` (`automatic`, `reboot`, `needs_you` action items with `code`, `text`, `action` and optional `command_id` and `updater`, `needs_you_summary` (counts action items only), `blocked` (refusals you cannot act on, in the same shape as `needs_you`; always present, possibly empty), `info` (information items in the same shape), `as_of`, `notes`) and `reboot_at` for `auto_reboot_date` only. `manual` and `info` are new; a client that does not know `manual` should treat it as a neutral badge. `blocked` is new (DIETPI-PATH-001): a client that matches `kind` exactly must accept it, and should treat it as an amber warning that is not "needs you". |
 | `extra_updaters` | array | A DietPi update is pending | The extra-updater entries that have an update waiting, at most 8: `id`, `status`, `installed_version`, `available_version`, `pending_count`, `readiness`, `notices`. Display only: no dispatch decision reads it. See [DietPi updates](#dietpi-updates). |
 
 The error response is unchanged: `500 {"error":"failed to get telemetry"}`.
@@ -2983,7 +3001,7 @@ The feature is opt-in per device and is not part of any release until the releas
 - **Device page.** An **Other updaters** list shows DietPi next to the apt updates: installed version, available version, status, the reason in words when the state is unknown, and each notice. The **Patch** button names a pending, enabled DietPi update, for example `Patch (3 + DietPi)` or `Patch (DietPi)`.
 - **Patch dialog.** When a DietPi update is pending and enabled, the dialog shows **Apply DietPi update in this run**. The box is ticked every time the dialog opens. Unticking it sends `exclude_extra_updaters: true` for that run. The dialog states the version change, that DietPi runs after apt and may take up to 40 minutes. It also says DietPi stops and restarts the services it manages (for example CUPS or VPN software) and runs `apt-get autopurge`, which removes packages apt considers no longer needed. A major upgrade adds a note that the kernel or firmware may change and a reboot is likely.
 - **Fleet.** A host whose only waiting update is a DietPi update appears in the Pending OS Patches panel, with a row such as "DietPi 10.8.2". Bulk patch includes it. Automatic patching fires for it when DietPi is enabled and pending, even with no apt updates.
-- **Result.** The command result starts with both parts, for example `apt: succeeded; dietpi: succeeded`. A DietPi failure makes the whole command `failed`.
+- **Result.** The command result starts with both parts, for example `apt: succeeded; dietpi: succeeded`. A DietPi step that started and did not succeed (`failed`, `timed_out` or `interrupted`) makes the whole command `failed`. A step that rIOt refused before it started does not: the command stays `success`, the first line names the skip, for example `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, and the badge reports the refusal ([details](#refused-updates-blocked-and-needs-you)).
 - **Badge.** DietPi items follow the [patch badge](#patch-badge) rules.
 
 rIOt reports **unknown**, never "up to date", when DietPi has nothing pending. DietPi leaves no proof that its own check ran and found nothing.
@@ -2995,6 +3013,8 @@ rIOt reports **unknown**, never "up to date", when DietPi has nothing pending. D
 3. The step has a 40-minute limit. Its output is kept in its own section of at most 128 KiB. It runs at most once per command and at most once per 60 minutes per host.
 4. The step never reboots the host. A reboot goes only through the existing [reboot gate](#manual-patch-and-reboot).
 5. DietPi is run only when its update source owner is `MichaIng`. A `DEV_GITOWNER` in `/boot/dietpi.txt` with any other value is refused.
+6. Before the step starts, the worker checks that root alone controls what root runs: `/boot/dietpi`, `/boot/dietpi.txt`, and three entries under `/var/tmp/dietpi` (the directory, `logs` and `dietpi-update_reinstalls`). A stock DietPi host passes. `/run/dietpi` is not checked, because DietPi makes it world-writable; the step gets a private, empty one instead.
+7. After a successful step, the worker removes the host's `/run/dietpi/.update_available` and `/run/dietpi/.live_patches`, as DietPi would have. rIOt believes those two flags only when root owns them, nobody else can write them and they have one link.
 
 No sudoers line is added. The privilege is the root worker, a root-owned policy file `/etc/riot-maintenance/extra-updaters.json` and a unit drop-in `/etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf`. Only `install.sh`, run as root, writes them.
 
@@ -3137,6 +3157,94 @@ PiCUPS runs DietPi. DietPi stops and restarts its CUPS print service while the D
 
 9. On PiCUPS, plan for a reboot. The first DietPi 9 to 10 update on a Raspberry Pi moves the boot partition from `/boot` to `/boot/firmware` and needs a reboot afterwards. The DietPi step never reboots. The reboot goes through rIOt's reboot gate, as described for PiVPN.
 
+### Fix for stock DietPi hosts (DIETPI-PATH-001)
+
+On PiCUPS, the first DietPi run was refused and the whole patch showed red, although apt had succeeded. The refusal was `unsafe_dietpi_path`: the path check treated `/run/dietpi` as unsafe because stock DietPi makes it world-writable (mode 0777). The check failed on every stock DietPi host, and doctor was green beforehand. DIETPI-PATH-001 fixes this.
+
+What changed:
+
+- **Stock DietPi passes the path check.** `/run/dietpi` is no longer checked. `/var/tmp/dietpi` is checked exactly: the directory, `logs` and `dietpi-update_reinstalls`. The RAMlog store below `logs` is not walked. `/boot/dietpi` and `/boot/dietpi.txt` are still fully walked.
+- **The step gets a private `/run/dietpi`.** During the DietPi step, `/run/dietpi` is an empty tmpfs that only that step sees, so a local user cannot use a planted symlink to make root overwrite a file. If rIOt cannot set it up, DietPi is not started and the result says `skipped (rundir_not_private)`.
+- **Flags are cleaned up and trusted only from root.** After a successful step, rIOt removes the host's `.update_available` and `.live_patches`. rIOt believes those flags only when root owns them, nobody else can write them and they have one link.
+- **A refusal no longer fails a good apt run.** The command is `success`, the summary still names the skip, and rIOt stores one warning event.
+- **New Blocked badge.** Refusals you cannot act on show **Blocked** (amber) and are not counted in "N hosts need you". A path refusal under `/boot/dietpi` or `/var/tmp/dietpi` shows **Needs you** with an action to investigate, because it can be a sign of tampering. See [Refused updates: Blocked and Needs you](#refused-updates-blocked-and-needs-you).
+- **No sudoers, config or database change.**
+
+The server update fixes the badge. The DietPi run itself is fixed only by a root `install.sh` re-run on each DietPi host, which installs the new worker and agent together. Never copy the worker binary alone. Replace `X.Y.Z` in the steps below with the release that contains DIETPI-PATH-001 (see the [CHANGELOG](CHANGELOG.md)).
+
+#### hawaii
+
+hawaii runs the rIOt server.
+
+1. On hawaii, do the normal server update to the release that contains DIETPI-PATH-001. Do this first, before any Pi. Nothing else changes on hawaii.
+2. In the dashboard, open the Devices page. PiCUPS's red badge turns into an amber **Blocked** badge with the text "DietPi update blocked: /run/dietpi permissions (fixed by this rIOt release; re-run install.sh as root on this host to apply the fix)". The server update alone does this. It runs no patch and changes nothing on PiCUPS.
+
+#### vermont
+
+vermont is Debian and has no DietPi. Nothing to do.
+
+#### PiCUPS
+
+Printing is unavailable while the DietPi step runs, for up to 40 minutes.
+
+1. On PiCUPS, re-run the installer once, as root, with your existing server URL. Do not pass `--bootstrap-key`: it resets the config and every remote feature in it.
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331 --version X.Y.Z
+   ```
+
+   It must print `==> DietPi updates: root-side opt-in recorded (/etc/riot-maintenance/extra-updaters.json); maintenance backstop 85min`.
+
+2. On PiCUPS, run doctor as the service account:
+
+   ```bash
+   sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
+   ```
+
+   The **Extra Updaters** section must show `✓` on every line. Doctor does not check the `/run/dietpi` isolation (see [Known limits](docs/ops/os-maintenance.md#known-limits)), so a green doctor does not prove the step will start.
+
+3. In the dashboard, open PiCUPS's device page and run one manual Patch. Check **Apply DietPi update in this run** is ticked. When the run ends, read the first line of the command result: `apt: succeeded; dietpi: succeeded` is the goal. The **Blocked** badge clears when this run finishes, not when the installer finishes.
+
+4. If the result says `dietpi: skipped (<reason>)`, look the reason up in the [refusal table](docs/ops/os-maintenance.md#refusal-reasons). A `skipped (unsafe_dietpi_path)` that names a path under `/boot/dietpi` or `/var/tmp/dietpi` means that path is not root-only. Check who changed it before you run Patch again.
+
+5. On PiCUPS, plan for a reboot after the first DietPi 9 to 10 update, as described in step 9 of the PiCUPS steps above.
+
+6. Optional: apply the [host hardening for DietPi hosts](docs/ops/os-maintenance.md#host-hardening-for-dietpi-hosts-recommended) on PiCUPS.
+
+#### PiVPN
+
+DietPi stops and restarts the VPN software while the DietPi step runs, for up to 40 minutes. Do not run the Patch in step 4 over the VPN that you use to reach this host. PiVPN's patch was held until this fix.
+
+1. On PiVPN, check that the agent config has both opt-in lines:
+
+   ```bash
+   grep -n 'allow_patching\|allow_extra_updaters' /etc/riot/agent.yaml
+   ```
+
+   The output must show `allow_patching: true` and `allow_extra_updaters: [dietpi]`. If PiVPN never had the EXTRA-UPD-001 re-run, set both lines first, as in steps 1 to 3 of the PiVPN steps above. The one re-run below then covers both EXTRA-UPD-001 and DIETPI-PATH-001.
+
+2. On PiVPN, re-run the installer once, as root, with your existing server URL and without `--bootstrap-key`:
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331 --version X.Y.Z
+   ```
+
+   It must print `==> DietPi updates: root-side opt-in recorded (/etc/riot-maintenance/extra-updaters.json); maintenance backstop 85min`. If it prints `no root-side opt-in`, the installer did not read your list. Fix the line from step 1 and re-run.
+
+3. On PiVPN, run doctor as the service account:
+
+   ```bash
+   sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
+   ```
+
+   The **Extra Updaters** section must show `✓` on every line.
+
+4. In the dashboard, open PiVPN's device page and run one manual Patch. Check **Apply DietPi update in this run** is ticked. Read the first line of the command result: `apt: succeeded; dietpi: succeeded` is the goal. If DietPi shows `skipped`, use the [refusal table](docs/ops/os-maintenance.md#refusal-reasons).
+
+5. On PiVPN, plan for a reboot after the first DietPi 9 to 10 update, as described in step 9 of the PiVPN steps above.
+
+6. Optional: apply the [host hardening for DietPi hosts](docs/ops/os-maintenance.md#host-hardening-for-dietpi-hosts-recommended) on PiVPN.
+
 ### Turn it off
 
 1. On the server, remove `dietpi` from `commands.allow_extra_updaters` in `/etc/riot/agent.yaml`, or set the list to `[]`.
@@ -3149,6 +3257,8 @@ PiCUPS runs DietPi. DietPi stops and restarts its CUPS print service while the D
 | Server: the badge rules (**Manual**, **Needs you** only when work is waiting), the DietPi budget stamp and events, the dashboard | The normal server update |
 | Agent: DietPi detection, readiness, the request, the result lines, doctor | The normal agent update |
 | Root: the maintenance worker, the launcher, the policy file and the unit drop-in | **Re-run `install.sh` as root on each DietPi host**, using the matching release |
+| Server: the **Blocked** badge and the reclassified refusals (DIETPI-PATH-001) | The normal server update. It also turns a stored old-worker refusal, such as PiCUPS's red badge, into **Blocked** |
+| Root, DIETPI-PATH-001: the new path check, the private `/run/dietpi`, the flag cleanup and the truthful outcome | **Re-run `install.sh` as root on each DietPi host.** The new worker and the new agent must arrive together |
 
 Deploy the server first, then update the agents. The badge change needs only the server and the dashboard. An agent that is updated and configured before the root re-run reports DietPi with readiness `unsupported_helper` (old helper) or `root_side_missing`. The badge then shows an action item that says to re-run `install.sh` as root.
 

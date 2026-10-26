@@ -9,6 +9,8 @@ const TONE: Record<PatchBadgeData['kind'], string> = {
   auto_reboot_date: 'bg-emerald-900/40 text-emerald-400 border-emerald-800/50',
   auto_reboot_unknown: 'bg-amber-900/30 text-amber-300 border-amber-800/50',
   needs_you: 'bg-red-900/30 text-red-300 border-red-800/50',
+  // DIETPI-PATH-001 FR-017: an update was refused for a reason Ryan cannot act on. A warning, never red.
+  blocked: 'bg-amber-900/30 text-amber-300 border-amber-800/50',
   // EXTRA-UPD-001 FR-081: nothing needs Ryan and nothing patches the host by itself. Neutral, never red.
   manual: 'bg-gray-800/60 text-gray-300 border-gray-700/60',
 }
@@ -30,6 +32,7 @@ export default function PatchBadge({ badge }: { badge: PatchBadgeData }) {
   const open = (hover || focus) && !dismissed
   const ex = badge.explanation
   const info = ex.info ?? []
+  const blocked = ex.blocked ?? []
 
   function show() {
     const r = ref.current?.getBoundingClientRect()
@@ -76,6 +79,18 @@ export default function PatchBadge({ badge }: { badge: PatchBadgeData }) {
               </ul>
             )}
           </div>
+          {blocked.length > 0 && (
+            <div data-testid="patch-badge-blocked">
+              <p><span className="font-semibold text-amber-300">Blocked: </span>rIOt did not start these updates. This is not a failure of the patch run.</p>
+              <ul className="mt-1 ml-4 list-disc space-y-1 text-gray-200">
+                {blocked.map(r => (
+                  <li key={itemKey(r)}>
+                    {r.text} <span className="text-gray-400">{r.action}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {info.length > 0 && (
             <div data-testid="patch-badge-info">
               <p><span className="font-semibold text-gray-400">Information: </span>Nothing here needs you.</p>

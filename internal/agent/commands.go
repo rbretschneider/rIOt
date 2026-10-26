@@ -542,7 +542,7 @@ func (a *Agent) handleOSUpdateWithRun(ctx context.Context, payload models.Comman
 		// exact pre-story request and message.
 		extras := a.planExtras(a.commandContext(), mode, payload.Params)
 		result := a.runDetachedMaintenanceWith(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled, extras, cr)
-		result = a.applyExtraV1Lines(a.commandContext(), extras, result)
+		result = a.applyExtraV1Lines(a.commandContext(), payload.CommandID, extras, result)
 		result.PackageManager = pmAPT
 		return result
 	case dnfErr == nil:

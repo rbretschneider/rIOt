@@ -1628,6 +1628,8 @@ exec /usr/sbin/visudo.fixture-real "$@"
         import json
         good = {'valid failed run': record(),
                 'valid skipped run': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'skipped', 'reason': 'not_enabled'}]),
+                'a success record with a refusal (DIETPI-PATH-001 FR-012)': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'skipped', 'reason': 'unsafe_dietpi_path', 'note': '/run/dietpi is writable by group or others (mode 0777)'}]),
+                'a success record with rundir_not_private': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'skipped', 'reason': 'rundir_not_private'}]),
                 'a version 1 record still passes': {k: v for k, v in record(version=1).items() if k not in ('requested_extra_updaters', 'apt_outcome', 'extra_updaters')}}
         for name, body in good.items():
             with self.subTest(valid=name):
@@ -1645,6 +1647,8 @@ exec /usr/sbin/visudo.fixture-real "$@"
             'an unknown apt outcome': record(apt_outcome='partial'),
             'a missing apt outcome': {k: v for k, v in record().items() if k != 'apt_outcome'},
             'success after a failed updater': record(outcome='success', exit_code=0),
+            'success after a timed out updater': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'timed_out'}]),
+            'success after an interrupted updater': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'interrupted'}]),
             'success after a failed apt part': record(outcome='success', exit_code=0, apt_outcome='error', extra_updaters=[]),
             'nine results': record(extra_updaters=[{'id': 'u%d' % i, 'outcome': 'failed'} for i in range(9)]),
             'a bad identifier': record(extra_updaters=[{'id': 'Bad Id', 'outcome': 'failed'}]),

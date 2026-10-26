@@ -32,14 +32,15 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json()
 }
 
-export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you' | 'manual'
+// 'blocked' (DIETPI-PATH-001): an update was refused for a reason the operator cannot act on.
+export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you' | 'manual' | 'blocked'
 
 export interface PatchBadgeReason {
   code: string
   text: string
   action: string
   command_id?: string
-  // The extra updater an extra_update_* item is about (EXTRA-UPD-001).
+  // The extra updater an extra_update_*, extra_refused or extra_blocked item is about.
   updater?: string
 }
 
@@ -48,6 +49,8 @@ export interface PatchBadgeExplanation {
   reboot: string
   needs_you: PatchBadgeReason[]
   needs_you_summary: string
+  // Refused updates the operator cannot act on (DIETPI-PATH-001). Absent from older servers.
+  blocked?: PatchBadgeReason[]
   // Neutral items that do not need action (EXTRA-UPD-001 group K). Absent from older servers.
   info?: PatchBadgeReason[]
   as_of: string

@@ -29,6 +29,9 @@ const (
 	nsFixtureRole = "RIOT_NS_FIXTURE_ROLE"
 	nsFixtureHelp = "RIOT_NS_FIXTURE_HELPER"
 	nsFixtureDir  = "/mnt/riot-ns-fixture"
+	// nsFixtureBoot is a mount point under /boot, which the fixture mounts on
+	// from inside the namespace: it must reach the parent (DIETPI-PATH-001).
+	nsFixtureBoot = "/boot/riot-ns-fixture"
 )
 
 // fixtureScript runs inside the launcher's namespace as the "updater". It makes
@@ -40,6 +43,11 @@ mount -t tmpfs tmpfs ` + nsFixtureDir + `
 echo proof > ` + nsFixtureDir + `/proof
 echo child > /tmp/child-only
 ls -A /tmp > ` + nsFixtureDir + `/tmp-listing
+echo child > /run/dietpi/child-only
+ls -A /run/dietpi > ` + nsFixtureDir + `/rundir-listing
+mkdir -p ` + nsFixtureBoot + `
+mount -t tmpfs tmpfs ` + nsFixtureBoot + `
+echo bootproof > ` + nsFixtureBoot + `/proof
 `
 
 // TestLauncherFixtureProcess is the re-executed child of the real-namespace
@@ -102,6 +110,30 @@ func TestRunExtra_EU_OPS001_RealNamespace(t *testing.T) {
 	}
 	defer func() { _ = unix.Unmount(nsFixtureDir, unix.MNT_DETACH) }()
 
+	// A host /boot and /run as separate shared mounts, and the stock DietPi
+	// /run/dietpi: root-owned 0777, not sticky (F-1).
+	if err = os.MkdirAll("/boot", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = unix.Mount("tmpfs", "/boot", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=755"); err != nil {
+		t.Skipf("cannot mount a tmpfs on /boot: %v", err)
+	}
+	defer unix.Unmount("/boot", unix.MNT_DETACH)
+	defer func() { _ = unix.Unmount(nsFixtureBoot, unix.MNT_DETACH) }()
+	if err = unix.Mount("tmpfs", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "mode=755"); err != nil {
+		t.Skipf("cannot mount a tmpfs on /run: %v", err)
+	}
+	defer unix.Unmount("/run", unix.MNT_DETACH)
+	if err = os.Mkdir("/run/dietpi", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chmod("/run/dietpi", 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile("/run/dietpi/host-marker", []byte("host"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +179,33 @@ func TestRunExtra_EU_OPS001_RealNamespace(t *testing.T) {
 		}
 		if got := strings.TrimSpace(string(listing)); got != "child-only" {
 			t.Errorf("the fixture saw /tmp = %q, want only its own file (an empty private tmpfs)", got)
+		}
+	})
+	t.Run("[DP-AC004] a file the fixture wrote to /run/dietpi is not visible in the parent /run/dietpi", func(t *testing.T) {
+		if _, err := os.Stat("/run/dietpi/child-only"); err == nil {
+			t.Error("the fixture's /run/dietpi is the host's /run/dietpi")
+		}
+		listing, err := os.ReadFile(nsFixtureDir + "/rundir-listing")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(listing)); got != "child-only" {
+			t.Errorf("the fixture saw /run/dietpi = %q, want only its own file (an empty private tmpfs)", got)
+		}
+	})
+	t.Run("[DP-AC004] the parent /run/dietpi is untouched and still 0777", func(t *testing.T) {
+		data, err := os.ReadFile("/run/dietpi/host-marker")
+		if err != nil || string(data) != "host" {
+			t.Errorf("host marker = %q %v", data, err)
+		}
+		if info, err := os.Stat("/run/dietpi"); err != nil || info.Mode().Perm() != 0o777 {
+			t.Errorf("host /run/dietpi = %v %v, want mode 0777", info, err)
+		}
+	})
+	t.Run("[DP-AC004] a mount the fixture made under /boot still reaches the parent namespace", func(t *testing.T) {
+		data, err := os.ReadFile(nsFixtureBoot + "/proof")
+		if err != nil || strings.TrimSpace(string(data)) != "bootproof" {
+			t.Errorf("the fixture's /boot mount did not propagate to the host namespace: %q %v", data, err)
 		}
 	})
 	t.Run("[SEC-001] the parent /tmp is untouched", func(t *testing.T) {
