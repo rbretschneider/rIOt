@@ -429,8 +429,8 @@ rpm -qa | grep kernel-core`}</Code>
           </p>
 
           <p>
-            rIOt reboots wait up to 10 minutes for a running package manager (<InlineCode>apt</InlineCode> or <InlineCode>dpkg</InlineCode>) to finish.
-            If it is still running, or rIOt cannot tell, the reboot is skipped and reported. rIOt never forces it.
+            rIOt reboots and shutdowns wait up to 10 minutes for a running package manager (<InlineCode>apt</InlineCode> or <InlineCode>dpkg</InlineCode>) to finish.
+            If it is still running, or rIOt cannot tell, the reboot or shutdown is skipped and reported. rIOt never forces it.
           </p>
         </Section>
       </>

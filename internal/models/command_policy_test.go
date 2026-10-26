@@ -2,6 +2,9 @@ package models
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 	"time"
@@ -153,8 +156,8 @@ func TestCL_AC029_ExecDeadlineTable(t *testing.T) {
 		n      int
 		want   time.Duration
 	}{
-		{"reboot", 0, 20 * time.Minute}, // REBOOT-DPKG-001 AD-004: covers the 10m dpkg wait
-		{"shutdown", 0, 10 * time.Minute},
+		{"reboot", 0, 20 * time.Minute},   // REBOOT-DPKG-001 AD-004: covers the 10m dpkg wait
+		{"shutdown", 0, 20 * time.Minute}, // SHUTDOWN-DPKG-001 AD-005: covers the 10m dpkg wait
 		{"os_update", 0, 40 * time.Minute},
 		{"enable_auto_updates", 0, 40 * time.Minute},
 		{"docker_update", 0, 35 * time.Minute},
@@ -758,19 +761,100 @@ func TestCommandPolicy_RD_AC017_RebootBudgetCoversWait(t *testing.T) {
 	}
 }
 
-func TestCommandPolicy_RD_AC020_ShutdownBudgetUnchanged(t *testing.T) {
-	if got := AgentHardMax("shutdown", 1); got != time.Minute {
-		t.Errorf("[AC-020] AgentHardMax(shutdown) = %v, want 1m", got)
+func TestCommandPolicy_SD_AC017_ShutdownBudgetCoversWait(t *testing.T) {
+	if ShutdownDpkgLockWaitBound != 10*time.Minute {
+		t.Errorf("[AC-017] ShutdownDpkgLockWaitBound = %v, want 10m", ShutdownDpkgLockWaitBound)
 	}
-	if got := ExecDeadline("shutdown", 1); got != 10*time.Minute {
-		t.Errorf("[AC-020] ExecDeadline(shutdown) = %v, want 10m", got)
+	if got := AgentHardMax("shutdown", 1); got != 12*time.Minute {
+		t.Errorf("[AC-017] AgentHardMax(shutdown) = %v, want 12m", got)
+	}
+	if got := ExecDeadline("shutdown", 1); got != 20*time.Minute {
+		t.Errorf("[AC-017] ExecDeadline(shutdown) = %v, want 20m", got)
+	}
+	if got := ExecDeadlineSeconds("shutdown", 1); got != 1200 {
+		t.Errorf("[AC-017] ExecDeadlineSeconds(shutdown) = %d, want 1200", got)
+	}
+	if ExecDeadline("shutdown", 1) <= AgentHardMax("shutdown", 1)+DeadlineSlack {
+		t.Errorf("[AC-017] the server deadline %v must exceed the agent max %v + %v", ExecDeadline("shutdown", 1), AgentHardMax("shutdown", 1), DeadlineSlack)
 	}
 	for _, action := range []string{"reboot", "shutdown"} {
 		if got := QueuedTTL(action); got != 15*time.Minute {
-			t.Errorf("[AC-020] QueuedTTL(%s) = %v, want 15m (unchanged)", action, got)
+			t.Errorf("[AC-017] QueuedTTL(%s) = %v, want 15m (unchanged)", action, got)
 		}
 		if got := ActionClass(action); got != ClassPower {
-			t.Errorf("[AC-020] ActionClass(%s) = %v, want power (unchanged)", action, got)
+			t.Errorf("[AC-017] ActionClass(%s) = %v, want power (unchanged)", action, got)
+		}
+	}
+}
+
+func TestCommandPolicy_SD_AC031_StartCheckBoundFitsBudget(t *testing.T) {
+	if ShutdownStartCheckBound != 3*time.Second {
+		t.Errorf("[AC-031] ShutdownStartCheckBound = %v, want 3s", ShutdownStartCheckBound)
+	}
+	// 7s is the gate tail after the wait bound (a poll, the guards and the final probe).
+	if total := ShutdownDpkgLockWaitBound + 7*time.Second + ShutdownStartCheckBound; total >= ShutdownAgentHardMax {
+		t.Errorf("[AC-031] wait + gate tail + start check = %v must stay below the agent hard maximum %v", total, ShutdownAgentHardMax)
+	}
+	// The result must be ready well inside the agent's SIGTERM grace.
+	if ShutdownStartCheckBound >= AgentShutdownGrace {
+		t.Errorf("[AC-031] the start-check bound %v must be below AgentShutdownGrace %v", ShutdownStartCheckBound, AgentShutdownGrace)
+	}
+}
+
+// AC-018: the reboot and shutdown budget constants derive from nothing in each
+// other. The values are equal at launch, so the test reads the declarations.
+func TestCommandPolicy_SD_AC018_BudgetConstantsDoNotReferenceEachOther(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "command_policy.go", nil, 0)
+	if err != nil {
+		t.Fatalf("[AC-018] parse command_policy.go: %v", err)
+	}
+	refs := map[string][]string{} // constant name -> identifiers its value mentions
+	for _, d := range f.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, sp := range gd.Specs {
+			vs := sp.(*ast.ValueSpec)
+			for i, n := range vs.Names {
+				if i >= len(vs.Values) {
+					continue
+				}
+				refs[n.Name] = append(refs[n.Name], "") // marks the constant as found
+				ast.Inspect(vs.Values[i], func(x ast.Node) bool {
+					if id, ok := x.(*ast.Ident); ok {
+						refs[n.Name] = append(refs[n.Name], id.Name)
+					}
+					return true
+				})
+			}
+		}
+	}
+	reboot := []string{"DpkgLockWaitBound", "RebootAgentHardMax", "RebootExecDeadline"}
+	shutdown := []string{"ShutdownDpkgLockWaitBound", "ShutdownAgentHardMax", "ShutdownExecDeadline", "ShutdownStartCheckBound"}
+	mentions := func(name string, group []string) string {
+		for _, id := range refs[name] {
+			for _, g := range group {
+				if id == g {
+					return id
+				}
+			}
+		}
+		return ""
+	}
+	for _, n := range append(append([]string{}, reboot...), shutdown...) {
+		if _, ok := refs[n]; !ok {
+			t.Fatalf("[AC-018] constant %s not found in command_policy.go", n)
+		}
+	}
+	for _, n := range reboot {
+		if id := mentions(n, shutdown); id != "" {
+			t.Errorf("[AC-018] reboot budget %s references the shutdown budget %s", n, id)
+		}
+	}
+	for _, n := range shutdown {
+		if id := mentions(n, reboot); id != "" {
+			t.Errorf("[AC-018] shutdown budget %s references the reboot budget %s", n, id)
 		}
 	}
 }

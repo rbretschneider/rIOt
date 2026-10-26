@@ -95,7 +95,7 @@ func ExpiresAt(action string, now, windowEnd time.Time) time.Time {
 
 // Reboot budget (REBOOT-DPKG-001 AD-004). A reboot waits for the dpkg lock for
 // at most DpkgLockWaitBound before it is skipped, so it needs a larger budget
-// than shutdown, which does not wait. The queued TTL is deliberately unchanged:
+// than an action that does not wait. The queued TTL is deliberately unchanged:
 // it bounds undelivered commands only.
 const (
 	// DpkgLockWaitBound is the longest one reboot attempt waits for the dpkg lock
@@ -109,10 +109,32 @@ const (
 	RebootExecDeadline = 20 * time.Minute
 )
 
+// Shutdown budget (SHUTDOWN-DPKG-001 AD-005). Shutdown waits for the dpkg lock
+// like reboot but has its own constants, so either can change without the other
+// (BR-004). None of these reference a Reboot* constant or DpkgLockWaitBound; an
+// AST test enforces it.
+const (
+	// ShutdownDpkgLockWaitBound is the longest one shutdown command waits for the
+	// dpkg lock (FR-017).
+	ShutdownDpkgLockWaitBound = 10 * time.Minute
+	// ShutdownAgentHardMax is the agent's time budget for a shutdown: the wait
+	// bound plus room for the guards, the final lock check and the start check.
+	ShutdownAgentHardMax = ShutdownDpkgLockWaitBound + 2*time.Minute
+	// ShutdownExecDeadline is the server's wait for a shutdown result. It exceeds
+	// ShutdownAgentHardMax + DeadlineSlack.
+	ShutdownExecDeadline = 20 * time.Minute
+	// ShutdownStartCheckBound is how long the agent watches the poweroff command's
+	// exit status (FR-027). A sudo refusal returns within milliseconds and
+	// `systemctl poweroff` enqueues and returns well under a second, so 3s separates
+	// refusal from acceptance; a command still running at the bound counts as
+	// initiated. It is far below the 20s SIGTERM grace the result is written in.
+	ShutdownStartCheckBound = 3 * time.Second
+)
+
 // ExecDeadline is how long after dispatch the server waits for a result before
 // declaring timed_out. nTargets matters only for docker_bulk_update
-// (min(35m*N + 5m, 6h), with N < 1 treated as 1). reboot is 20m because it may
-// wait up to 10m for the dpkg lock; shutdown stays at 10m.
+// (min(35m*N + 5m, 6h), with N < 1 treated as 1). reboot and shutdown are 20m
+// because each may wait up to 10m for the dpkg lock; their constants are separate.
 func ExecDeadline(action string, nTargets int) time.Duration {
 	if action == "docker_remove_items" {
 		return 10 * time.Minute
@@ -122,8 +144,11 @@ func ExecDeadline(action string, nTargets int) time.Duration {
 	}
 	switch ActionClass(action) {
 	case ClassPower:
-		if action == ActionReboot {
+		switch action {
+		case ActionReboot:
 			return RebootExecDeadline
+		case ActionShutdown:
+			return ShutdownExecDeadline
 		}
 		return 10 * time.Minute
 	case ClassOSPatch:
@@ -202,7 +227,7 @@ func BulkAgentBudget(nTargets int) time.Duration {
 // AgentHardMax is the longest the agent may spend executing action (the value
 // the DeadlineInvariant is checked against).
 //
-//	reboot 12m, shutdown 1m, os_update 31m30s, enable_auto_updates 5m,
+//	reboot 12m, shutdown 12m, os_update 31m30s, enable_auto_updates 5m,
 //	docker_update 29m55s, docker_bulk_update deadline-5m30s,
 //	agent_update 9m, other 9m.
 func AgentHardMax(action string, nTargets int) time.Duration {
@@ -214,8 +239,11 @@ func AgentHardMax(action string, nTargets int) time.Duration {
 	}
 	switch ActionClass(action) {
 	case ClassPower:
-		if action == ActionReboot {
+		switch action {
+		case ActionReboot:
 			return RebootAgentHardMax
+		case ActionShutdown:
+			return ShutdownAgentHardMax
 		}
 		return time.Minute
 	case ClassOSPatch:

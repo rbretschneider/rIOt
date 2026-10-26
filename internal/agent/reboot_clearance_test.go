@@ -179,7 +179,7 @@ func (r *gateRig) report(path rebootPath) string {
 	return events[0]
 }
 
-func (r *gateRig) clearanceFor(guards rebootGuards) rebootClearance {
+func (r *gateRig) clearanceFor(guards powerGuards) powerClearance {
 	return r.a.awaitRebootClearance(context.Background(), "test", idA, guards)
 }
 
@@ -854,7 +854,7 @@ func TestRebootClearance_RD_AC019_FullWaitBoundedOutput(t *testing.T) {
 
 	require.False(t, c.Cleared, "[AC-019] precondition: the full wait ended in a skip")
 	assert.LessOrEqual(t, r.calls(), 303, "[AC-019] at most 10m/2s + 3 lock checks per attempt")
-	assert.EqualValues(t, 0, r.a.rebootPermitSeq.Load(), "[AC-019] a skipped attempt mints no permit")
+	assert.EqualValues(t, 0, r.a.powerPermitSeq.Load(), "[AC-019] a skipped attempt mints no permit")
 	assert.Equal(t, before, listStateDir(t, dir), "[AC-019] the gate must not create any file")
 	out := logs.String()
 	assert.Equal(t, 2, linesWith(out, `msg="dpkg lock `), "[AC-019] exactly the wait-started and wait-ended lines, none per check")
@@ -920,14 +920,14 @@ func TestExecReboot_RD_C3_NonClearedPermitStartsNoReboot(t *testing.T) {
 	t.Run("zero permit", func(t *testing.T) {
 		r := newGateRig(t)
 
-		err := r.a.execReboot(rebootPermit{})
+		err := r.a.execReboot(powerPermit{})
 
 		assert.ErrorIs(t, err, errRebootNotCleared, "[C-3] a zero permit must be refused")
 		assert.Zero(t, r.reboots.Load(), "[C-3] a refused permit starts no reboot")
 	})
 	t.Run("the permit of a skipped clearance", func(t *testing.T) {
 		r := newGateRig(t)
-		skipped := rebootClearance{Skip: skipLockTimeout}
+		skipped := powerClearance{Skip: skipLockTimeout}
 
 		err := r.a.execReboot(skipped.Permit)
 
@@ -936,7 +936,7 @@ func TestExecReboot_RD_C3_NonClearedPermitStartsNoReboot(t *testing.T) {
 	})
 	t.Run("a permit used twice", func(t *testing.T) {
 		r := newGateRig(t)
-		p := r.a.mintRebootPermit()
+		p := r.a.mintPowerPermit(powerActionReboot)
 		require.NoError(t, r.a.execReboot(p), "[C-3] first use")
 
 		err := r.a.execReboot(p)
@@ -946,8 +946,8 @@ func TestExecReboot_RD_C3_NonClearedPermitStartsNoReboot(t *testing.T) {
 	})
 	t.Run("an older permit after a newer one was minted", func(t *testing.T) {
 		r := newGateRig(t)
-		older := r.a.mintRebootPermit()
-		newer := r.a.mintRebootPermit()
+		older := r.a.mintPowerPermit(powerActionReboot)
+		newer := r.a.mintPowerPermit(powerActionReboot)
 
 		assert.ErrorIs(t, r.a.execReboot(older), errRebootNotCleared, "[C-3] a stale permit must be refused")
 		assert.Zero(t, r.reboots.Load(), "[C-3] a stale permit starts no reboot")
@@ -966,7 +966,7 @@ func TestExecReboot_RD_C3_ClearedPermitStartsExactlyOnce(t *testing.T) {
 	assert.EqualValues(t, 1, r.reboots.Load(), "[C-3] exactly one reboot")
 	assert.ErrorIs(t, r.a.execReboot(c.Permit), errRebootNotCleared, "[C-3] the same permit cannot start a second reboot")
 	assert.EqualValues(t, 1, r.reboots.Load(), "[C-3] still exactly one reboot")
-	assert.EqualValues(t, 1, r.a.rebootPermitSeq.Load(), "[C-3] one permit minted for one attempt")
+	assert.EqualValues(t, 1, r.a.powerPermitSeq.Load(), "[C-3] one permit minted for one attempt")
 }
 
 func TestExecReboot_RD_C3_RefusalRunsNothing(t *testing.T) {
@@ -974,7 +974,7 @@ func TestExecReboot_RD_C3_RefusalRunsNothing(t *testing.T) {
 	called := false
 	a.runner = func(context.Context, string, ...string) ([]byte, error) { called = true; return nil, nil }
 
-	err := a.execReboot(rebootPermit{})
+	err := a.execReboot(powerPermit{})
 
 	assert.ErrorIs(t, err, errRebootNotCleared, "[C-3] refused")
 	assert.False(t, called, "[C-3] a refused permit must not reach the runner or exec")
@@ -987,13 +987,13 @@ func TestExecReboot_RD_C3_RefusalRunsNothing(t *testing.T) {
 func TestRebootClearance_RD_AC006_ReasonTexts(t *testing.T) {
 	cases := []struct {
 		name string
-		c    rebootClearance
+		c    powerClearance
 		want string
 	}{
-		{"timeout", rebootClearance{Skip: skipLockTimeout, Detail: unattendedUpgrText}, "dpkg lock held past the timeout (10m), " + unattendedUpgrText},
-		{"unknown", rebootClearance{Skip: skipLockUnknown, Detail: "cannot stat /x: boom"}, "dpkg lock state unknown: cannot stat /x: boom"},
-		{"shutdown", rebootClearance{Skip: skipShutdown, Detail: "ignored"}, "agent shutting down"},
-		{"guard", rebootClearance{Skip: skipGuard, Detail: "commands.allow_reboot is off"}, "commands.allow_reboot is off"},
+		{"timeout", powerClearance{Skip: skipLockTimeout, Detail: unattendedUpgrText, Bound: models.DpkgLockWaitBound}, "dpkg lock held past the timeout (10m), " + unattendedUpgrText},
+		{"unknown", powerClearance{Skip: skipLockUnknown, Detail: "cannot stat /x: boom"}, "dpkg lock state unknown: cannot stat /x: boom"},
+		{"shutdown", powerClearance{Skip: skipShutdown, Detail: "ignored"}, "agent shutting down"},
+		{"guard", powerClearance{Skip: skipGuard, Detail: "commands.allow_reboot is off"}, "commands.allow_reboot is off"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
