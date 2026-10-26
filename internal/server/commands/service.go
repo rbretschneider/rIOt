@@ -79,6 +79,10 @@ type Options struct {
 	// a nil *expect.Tracker to it).
 	Observer CommandObserver
 	Events   CompletionEvents
+	// SelfUpdates is the persistence of agent self-update records (EXPECT-002).
+	// Optional: nil keeps today's behaviour (no record is ever created). Never
+	// assign a nil *db.CommandRepo to it.
+	SelfUpdates db.SelfUpdateRepository
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// Logger receives the service's records; nil means slog.Default().
@@ -96,6 +100,7 @@ type Service struct {
 	broadcaster Broadcaster
 	observer    CommandObserver
 	events      CompletionEvents
+	selfUpdates db.SelfUpdateRepository
 	now         func() time.Time
 	log         *slog.Logger
 
@@ -120,7 +125,7 @@ func New(o Options) *Service {
 	return &Service{
 		quota: o.Quota,
 		repo:  o.Commands, policies: o.Policies, telemetry: o.Telemetry, agents: o.Agents,
-		broadcaster: o.Broadcaster, observer: o.Observer, events: o.Events, now: now, log: logger,
+		broadcaster: o.Broadcaster, observer: o.Observer, events: o.Events, selfUpdates: o.SelfUpdates, now: now, log: logger,
 		limiter:         NewDeviceLimiter(now),
 		logThrottle:     NewLogThrottle(now, logger),
 		gate:            newProgressGate(),
@@ -747,6 +752,14 @@ func (s *Service) classifyRejected(ctx context.Context, deviceID, id string, tar
 	}
 	if err != nil {
 		return ReportOutcome{}, fmt.Errorf("classify rejected report: %w", err)
+	}
+	if row.Origin == models.OriginAgentSelfUpdate {
+		// EXPECT-002 AD-007 row 8: an agent never reports on a self-update record
+		// (it is not a command it was sent), so it reads as an unknown command:
+		// HTTP 404 command_not_found, WebSocket receipt not_found, for ack,
+		// progress and result alike.
+		s.warnThrottled(deviceID, "command report for unknown or foreign command", "command_id", id)
+		return ReportOutcome{Disposition: models.ReportNotFound}, nil
 	}
 
 	from := row.State()
