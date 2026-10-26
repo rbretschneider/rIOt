@@ -568,3 +568,21 @@ func TestDietPiBusy_EU_SEC001_MatchRule(t *testing.T) {
 		}
 	}
 }
+
+// A finished detection must free the detector before its result is delivered:
+// a call made right after the previous one returned is not "in flight". CI's
+// runner hit the old ordering, where the flag cleared after the send, as
+// detection_failed on back-to-back detections.
+func TestDetect_EU_AC009_BackToBackCallsNeverSeeInFlight(t *testing.T) {
+	h := dietpiHost(t, "10", "8", "2")
+	d := NewDietPi()
+	for i := 0; i < 2000; i++ {
+		e, present := d.Detect(context.Background(), h.fs())
+		if !present || e.UnknownReason == "detection_failed" {
+			t.Fatalf("call %d: got %+v (present %v), want a real detection", i, e, present)
+		}
+		if d.inflight.Load() {
+			t.Fatalf("call %d: the detector is still marked in flight after Detect returned", i)
+		}
+	}
+}

@@ -269,7 +269,10 @@ func TestDietPiBusy_EU_SEC001_ScanMatchesAndBounds(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if busy, detail := scanBusy(root, match, now); !busy || !strings.Contains(detail, "32768") {
+		// A frozen clock isolates the PID bound: on a slow disk the real-time
+		// 2-second bound would otherwise fire first (busy too, other detail).
+		frozen := time.Now()
+		if busy, detail := scanBusy(root, match, func() time.Time { return frozen }); !busy || !strings.Contains(detail, "32768") {
 			t.Errorf("busy=%v detail=%q", busy, detail)
 		}
 	})

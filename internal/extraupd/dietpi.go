@@ -199,9 +199,14 @@ func (d *DietPi) Detect(ctx context.Context, fsys FS) (models.ExtraUpdater, bool
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		defer d.inflight.Store(false)
-		entry, present := d.detect(fsys)
-		done <- outcome{entry, present}
+		var r outcome
+		func() {
+			// Free the detector before delivering the result, so a call made
+			// right after this one returns is never refused as in flight.
+			defer d.inflight.Store(false)
+			r.entry, r.present = d.detect(fsys)
+		}()
+		done <- r
 	}()
 	timer := time.NewTimer(d.timeout())
 	defer timer.Stop()

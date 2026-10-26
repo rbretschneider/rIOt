@@ -1697,6 +1697,38 @@ exec /usr/sbin/visudo.fixture-real "$@"
                 self.assertEqual(self.opted_in(), name in ('flow list', 'block list'))
                 self.assert_transparency(result.stdout, 'granting')
 
+    def test_EU_AC016_classifier_agrees_on_every_awk(self):
+        """mawk 1.3.4-20200120 (Debian 12, DietPi on bookworm) once dropped every flow list while gawk read it."""
+        text = SOURCE.read_text().replace('\r', '')
+        start = text.index('# BEGIN shutdown-config-classifier')
+        end = text.index('# END shutdown-config-classifier')
+        lib = Path('/tmp/riot-classifier.sh')
+        lib.write_text(text[start:end])
+        expected = {
+            '[dietpi]': ['extra dietpi'], '[ dietpi ]': ['extra dietpi'],
+            '[dietpi, snap]': ['extra dietpi', 'extra snap'], '[dietpi ,snap ]': ['extra dietpi', 'extra snap'],
+            '[dietpi] # note': ['extra dietpi'], '[a-b_c9]': ['extra a-b_c9'],
+            '[]': [], '[ ]': [], '[dietpi,]': [], '[,dietpi]': [], '[Dietpi]': [], '[die tpi]': [],
+            '["dietpi"]': [], 'dietpi': [], '[[dietpi]]': [],
+        }
+        awks = {name: cmd for name, cmd in (('mawk', 'mawk'), ('gawk', 'gawk'), ('busybox', 'busybox awk'))
+                if shutil.which(cmd.split()[0])}
+        self.assertIn('mawk', awks, 'Debian ships mawk as its default awk; the fixture image must have it')
+        for name, cmd in awks.items():
+            bindir = Path(f'/tmp/riot-awk-{name}')
+            bindir.mkdir(exist_ok=True)
+            write(bindir / 'awk', f'#!/bin/sh\nexec {cmd} "$@"\n')
+            for value, facts in expected.items():
+                with self.subTest(awk=name, value=value):
+                    cfg = Path('/tmp/riot-classifier.yaml')
+                    cfg.write_text(f'commands:\n  allow_extra_updaters: {value}\n')
+                    out = subprocess.run(
+                        ['bash', '-c', 'STAGE=$(mktemp -d); . /tmp/riot-classifier.sh; config_facts /tmp/riot-classifier.yaml'],
+                        env={**os.environ, 'PATH': f'{bindir}:{os.environ["PATH"]}'},
+                        capture_output=True, text=True)
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                    self.assertEqual([l for l in out.stdout.splitlines() if l], facts)
+
     def test_EU_AC016_extra_decision_does_not_change_shutdown_for_non_list_files(self):
         self.set_config('commands:\n  allow_shutdown: false\n  allow_extra_updaters: [dietpi]\n')
         result = self.run_installer('--non-interactive')

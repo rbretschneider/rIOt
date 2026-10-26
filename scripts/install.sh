@@ -249,20 +249,25 @@ function chk(t,    c, u, q) {
 function addid(id) {
     if (length(id) <= 32 && !(id in idseen)) { idseen[id] = 1; nids++; ids[nids] = id }
 }
+# Each name is checked on its own: mawk 1.3.4-20200120 (Debian 12, DietPi on
+# bookworm) fails to match a repeated group such as "( *, *name)*", which
+# silently dropped every flow list.
 function listshape(val,    t, inner, n, parts, i, id) {
     t = val
     sub(/ +#.*$/, "", t)
     sub(/ +$/, "", t)
-    if (t ~ /^\[ *\]$/) return
-    if (t ~ /^\[ *[a-z][a-z0-9_-]*( *, *[a-z][a-z0-9_-]*)* *\]$/) {
-        inner = substr(t, 2, length(t) - 2)
-        n = split(inner, parts, ",")
-        for (i = 1; i <= n; i++) {
-            id = parts[i]
-            gsub(/ /, "", id)
-            addid(id)
-        }
+    if (substr(t, 1, 1) != "[" || substr(t, length(t)) != "]") return
+    inner = substr(t, 2, length(t) - 2)
+    if (inner ~ /^ *$/) return
+    n = split(inner, parts, ",")
+    for (i = 1; i <= n; i++) {
+        id = parts[i]
+        sub(/^ +/, "", id)
+        sub(/ +$/, "", id)
+        if (id !~ /^[a-z][a-z0-9_-]*$/) return
+        parts[i] = id
     }
+    for (i = 1; i <= n; i++) addid(parts[i])
 }
 BEGIN {
     sq = sprintf("%c", 39); dq = sprintf("%c", 34); bt = sprintf("%c", 96)
