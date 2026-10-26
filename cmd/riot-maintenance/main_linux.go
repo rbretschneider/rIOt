@@ -115,6 +115,8 @@ func runWith(args []string, stdout io.Writer) error {
 			Trust:     maintenance.TrustWalk,
 			LastStart: store.LatestExtraStart,
 			Step:      maintenance.ExtraLaunchRunner{},
+
+			ReconcileFlags: maintenance.ReconcileDietPiFlags,
 		},
 	}
 	prior, err := store.Current()

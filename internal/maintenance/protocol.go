@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -82,8 +83,10 @@ const (
 	UpdaterSkipped     = "skipped"
 )
 
-// Skip reasons. The first three are neutral: they never change a successful
-// run. Every other reason fails the command (FR-038, FR-039).
+// Skip reasons. A skip never changes the outcome of a successful apt run: the
+// updater did not start, so nothing on the host changed (DIETPI-PATH-001 FR-012,
+// amending EXTRA-UPD-001 FR-038). The first group is neutral and quiet; every
+// other reason is a refusal, which raises a warning event and a badge item.
 const (
 	SkipAptNotSuccessful      = "apt_not_successful"
 	SkipNotEnabled            = "not_enabled"
@@ -97,6 +100,7 @@ const (
 	SkipMountPropagationUnver = "mount_propagation_unverified"
 	SkipBusy                  = "dietpi_busy"
 	SkipDpkgLocked            = "dpkg_locked"
+	SkipRunDirNotPrivate      = "rundir_not_private"
 )
 
 // Phases and apt outcomes of a v2 record.
@@ -112,6 +116,19 @@ var skipReasons = map[string]bool{
 	SkipAptNotSuccessful: true, SkipNotEnabled: true, SkipStatusUnknown: true, SkipNothingPending: true,
 	SkipInsufficientTime: true, SkipNonDefaultSource: true, SkipUnsafePath: true, SkipMinInterval: true,
 	SkipTmpNotPrivate: true, SkipMountPropagationUnver: true, SkipBusy: true, SkipDpkgLocked: true,
+	SkipRunDirNotPrivate: true,
+}
+
+// SkipReasons returns every known skip reason in sorted order. The server uses
+// it as the closed set an agent event's reason must belong to (DIETPI-PATH-001
+// FR-014).
+func SkipReasons() []string {
+	out := make([]string, 0, len(skipReasons))
+	for r := range skipReasons {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NeutralSkip reports whether a skip reason leaves a successful run successful.
@@ -306,16 +323,24 @@ type UpdaterResult struct {
 }
 
 // Failing reports whether this result makes the command fail even when apt
-// succeeded (FR-038, FR-039).
+// succeeded: the updater started and did not succeed (FR-012). Any skip is
+// before the start, so it never fails a run; a launcher setup_failed or
+// launcher_refused is recorded as failed, not skipped, and still fails it
+// (DP-SEC-004).
 func (u UpdaterResult) Failing() bool {
 	switch u.Outcome {
-	case UpdaterSuccess:
+	case UpdaterSuccess, UpdaterSkipped:
 		return false
-	case UpdaterSkipped:
-		return !NeutralSkip(u.Reason) && u.Reason != SkipAptNotSuccessful
 	default:
 		return true
 	}
+}
+
+// Refused reports a skip that is not neutral: the updater was pending and
+// wanted, and rIOt refused to start it. It raises a warning event and a badge
+// item without changing the outcome (FR-014).
+func (u UpdaterResult) Refused() bool {
+	return u.Outcome == UpdaterSkipped && !NeutralSkip(u.Reason) && u.Reason != SkipAptNotSuccessful
 }
 
 func (r Record) Terminal() bool { return r.Outcome != "running" && r.FinishedAt != nil }

@@ -47,7 +47,8 @@ type StepOutcome struct {
 	Truncated bool
 	ExitCode  int
 	// Skip is set when the launcher refused to start the step, so nothing
-	// ran: tmp_not_private or mount_propagation_unverified.
+	// ran: tmp_not_private, rundir_not_private or
+	// mount_propagation_unverified.
 	Skip       string
 	SkipDetail string
 	// SetupErr is set for any other launcher failure before the step started.
@@ -82,6 +83,9 @@ type ExtraEnv struct {
 	LastStart func(id string) (time.Time, bool, error)
 	// Step starts the step.
 	Step StepRunner
+	// ReconcileFlags removes the host's update flags after a successful step
+	// and returns a note for a problem, or "" (AD-3). Nil does nothing.
+	ReconcileFlags func(dir string) string
 	// Sleep waits for d or until ctx ends. Nil means a real timer.
 	Sleep func(ctx context.Context, d time.Duration)
 	// StepLimit overrides the spec's step limit. Tests only; zero keeps it.
@@ -335,6 +339,13 @@ func (w *Worker) runExtra(runCtx context.Context, deadline time.Time, req Reques
 	run.res.ExitCode = &exit
 	section := extraSection(id, out, spec)
 	rec.Output, rec.OutputTruncated = appendBounded(rec.Output, section, rec.OutputTruncated || out.Truncated)
+	stepOK := runCtx.Err() == nil && stepErr == nil && out.Err == nil && out.ExitCode == 0
+	// The step's own flag removals died with its private /run/dietpi. After a
+	// success the worker does what DietPi would have done, before the post-run
+	// detection reads the flags (FR-008, FR-009). A problem is a note only.
+	if stepOK && spec.ReconcileFlags && env.ReconcileFlags != nil {
+		run.res.Note = boundedText(env.ReconcileFlags(DietPiRunDir), maxUpdaterNote)
+	}
 	if after, present := u.Detect(context.Background(), env.FS); present {
 		run.res.VersionAfter = boundedText(after.InstalledVersion, maxUpdaterVersion)
 	}
@@ -346,7 +357,7 @@ func (w *Worker) runExtra(runCtx context.Context, deadline time.Time, req Reques
 	case stepErr != nil:
 		run.res.Outcome = UpdaterTimedOut
 		run.res.Note = fmt.Sprintf("timed out after %s; %s state uncertain: services may be stopped; see %s", models.FormatDurationShort(limit), spec.Label, spec.LogPath)
-	case out.Err == nil && out.ExitCode == 0:
+	case stepOK:
 		run.res.Outcome = UpdaterSuccess
 	default:
 		run.res.Outcome = UpdaterFailed
@@ -481,8 +492,8 @@ func (r extraRun) versionChange() string {
 }
 
 // finalizeV2 finishes a version 2 record: the overall outcome is success only
-// when the apt part succeeded and every updater either succeeded or was skipped
-// for a neutral reason (FR-038, FR-039).
+// when the apt part succeeded and no updater started and failed. An updater
+// skipped before it started, for any reason, leaves it success (FR-012).
 func (w *Worker) finalizeV2(svc, runCtx context.Context, rec *Record, st *aptState, aptErr error, runs extraRuns) error {
 	rec.UpdatedAt = w.now()
 	finished := rec.UpdatedAt

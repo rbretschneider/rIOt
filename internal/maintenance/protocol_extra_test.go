@@ -161,30 +161,25 @@ func TestRecord_EU_AC028_V2Validation(t *testing.T) {
 		}
 	})
 	mutate := map[string]func(*Record){
-		"success with a failed updater":    func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterFailed },
-		"success with a timed out updater": func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterTimedOut },
-		"success with dpkg_locked": func(r *Record) {
-			r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipDpkgLocked
-		},
-		"success with insufficient_time": func(r *Record) {
-			r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipInsufficientTime
-		},
-		"success after a failed apt part":    func(r *Record) { r.AptOutcome = "error" },
-		"terminal without an apt outcome":    func(r *Record) { r.AptOutcome = "" },
-		"unknown apt outcome":                func(r *Record) { r.AptOutcome = "partial" },
-		"unknown updater outcome":            func(r *Record) { r.ExtraUpdaters[0].Outcome = "partial" },
-		"skip without a reason":              func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterSkipped },
-		"skip with an unknown reason":        func(r *Record) { r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, "because" },
-		"reason on a non-skip":               func(r *Record) { r.ExtraUpdaters[0].Reason = SkipNotEnabled },
-		"running entry in a terminal record": func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterRunning },
-		"duplicate updater id":               func(r *Record) { r.ExtraUpdaters = append(r.ExtraUpdaters, r.ExtraUpdaters[0]) },
-		"bad updater id":                     func(r *Record) { r.ExtraUpdaters[0].ID = "Bad Id" },
-		"note over 256 bytes":                func(r *Record) { r.ExtraUpdaters[0].Note = strings.Repeat("n", 257) },
-		"version over 32 bytes":              func(r *Record) { r.ExtraUpdaters[0].VersionAfter = strings.Repeat("9", 33) },
-		"nine results":                       func(r *Record) { r.ExtraUpdaters = make([]UpdaterResult, 9) },
-		"v1 record carrying results":         func(r *Record) { r.Version, r.RequestedExtraUpdaters = 1, nil },
-		"requested list unknown":             func(r *Record) { r.RequestedExtraUpdaters = []string{"snap"} },
-		"repair with requested updaters":     func(r *Record) { r.Mode = "repair" },
+		"success with a failed updater":       func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterFailed },
+		"success with a timed out updater":    func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterTimedOut },
+		"success with an interrupted updater": func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterInterrupted },
+		"success after a failed apt part":     func(r *Record) { r.AptOutcome = "error" },
+		"terminal without an apt outcome":     func(r *Record) { r.AptOutcome = "" },
+		"unknown apt outcome":                 func(r *Record) { r.AptOutcome = "partial" },
+		"unknown updater outcome":             func(r *Record) { r.ExtraUpdaters[0].Outcome = "partial" },
+		"skip without a reason":               func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterSkipped },
+		"skip with an unknown reason":         func(r *Record) { r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, "because" },
+		"reason on a non-skip":                func(r *Record) { r.ExtraUpdaters[0].Reason = SkipNotEnabled },
+		"running entry in a terminal record":  func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterRunning },
+		"duplicate updater id":                func(r *Record) { r.ExtraUpdaters = append(r.ExtraUpdaters, r.ExtraUpdaters[0]) },
+		"bad updater id":                      func(r *Record) { r.ExtraUpdaters[0].ID = "Bad Id" },
+		"note over 256 bytes":                 func(r *Record) { r.ExtraUpdaters[0].Note = strings.Repeat("n", 257) },
+		"version over 32 bytes":               func(r *Record) { r.ExtraUpdaters[0].VersionAfter = strings.Repeat("9", 33) },
+		"nine results":                        func(r *Record) { r.ExtraUpdaters = make([]UpdaterResult, 9) },
+		"v1 record carrying results":          func(r *Record) { r.Version, r.RequestedExtraUpdaters = 1, nil },
+		"requested list unknown":              func(r *Record) { r.RequestedExtraUpdaters = []string{"snap"} },
+		"repair with requested updaters":      func(r *Record) { r.Mode = "repair" },
 	}
 	for name, fn := range mutate {
 		t.Run("[AC-028] rejects "+name, func(t *testing.T) {
@@ -202,6 +197,22 @@ func TestRecord_EU_AC028_V2Validation(t *testing.T) {
 			if err := rec.Validate(); err != nil {
 				t.Errorf("%s: %v", reason, err)
 			}
+		}
+	})
+	t.Run("[DP-AC010] every refusal keeps a success record valid (FR-012, amending EXTRA-UPD-001 FR-038)", func(t *testing.T) {
+		for _, reason := range []string{SkipUnsafePath, SkipDpkgLocked, SkipInsufficientTime, SkipMinInterval, SkipBusy, SkipTmpNotPrivate, SkipMountPropagationUnver, SkipRunDirNotPrivate, SkipNonDefaultSource} {
+			rec := sampleV2Record()
+			rec.ExtraUpdaters = []UpdaterResult{{ID: "dietpi", Outcome: UpdaterSkipped, Reason: reason}}
+			if err := rec.Validate(); err != nil {
+				t.Errorf("%s: a success record with a refusal must validate: %v", reason, err)
+			}
+		}
+	})
+	t.Run("[DP-SEC-004] a launcher setup failure is recorded as failed and still rejects a success record", func(t *testing.T) {
+		rec := sampleV2Record()
+		rec.ExtraUpdaters = []UpdaterResult{{ID: "dietpi", Outcome: UpdaterFailed, Note: "launcher setup failed: no ok line"}}
+		if err := rec.Validate(); err == nil {
+			t.Fatal("a never-started failed step must keep the command failed")
 		}
 	})
 	t.Run("[AC-028] an apt failure with the updater skipped for it is a valid error record", func(t *testing.T) {

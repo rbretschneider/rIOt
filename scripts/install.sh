@@ -819,7 +819,7 @@ try:
         assert d['apt_outcome'] in ('success','error','interrupted')
         results = d.get('extra_updaters', [])
         assert type(results) is list and len(results) <= 8
-        reasons = ('apt_not_successful','not_enabled','status_unknown','nothing_pending','insufficient_time','non_default_update_source','unsafe_dietpi_path','min_interval','tmp_not_private','mount_propagation_unverified','dietpi_busy','dpkg_locked')
+        reasons = ('apt_not_successful','not_enabled','status_unknown','nothing_pending','insufficient_time','non_default_update_source','unsafe_dietpi_path','min_interval','tmp_not_private','mount_propagation_unverified','dietpi_busy','dpkg_locked','rundir_not_private')
         result_keys = {'id','outcome','reason','exit_code','started_at','finished_at','version_before','version_after','source_owner','source_branch','reboot_required_after','note'}
         seen_ids = set()
         for r in results:
@@ -832,7 +832,8 @@ try:
             assert len(r.get('source_owner', '').encode()) <= 64 and len(r.get('source_branch', '').encode()) <= 64
         if d['outcome'] == 'success':
             assert d['apt_outcome'] == 'success'
-            assert all(r['outcome'] == 'success' or (r['outcome'] == 'skipped' and r['reason'] in ('not_enabled','status_unknown','nothing_pending')) for r in results)
+            # DIETPI-PATH-001: a skip before the updater started leaves a run successful, whatever the reason.
+            assert all(r['outcome'] in ('success','skipped') for r in results)
 except Exception:
     sys.exit('ERROR: unfinished or invalid maintenance state; recover it before installing')
 PY
