@@ -24,8 +24,9 @@ var trustParents = []string{"/", "/boot", "/run", "/var", "/var/tmp"}
 
 // trustStat is what the walk needs to know about one path.
 type trustStat struct {
-	Mode fs.FileMode
-	UID  uint32
+	Mode  fs.FileMode
+	UID   uint32
+	Nlink uint64
 }
 
 // trustFS is the filesystem view of the trust walk. The production
@@ -49,7 +50,11 @@ func (s trustStat) groupOrWorldWritable() bool { return s.Mode.Perm()&0o022 != 0
 //     world writable (a root-owned sticky directory is allowed as an ancestor);
 //   - every trust root that exists, and every entry below it to depth 4 and
 //     4096 entries, is root-owned and not group or world writable, with only
-//     root-owned symlinks allowed;
+//     root-owned symlinks allowed. These are the code the updater executes and
+//     the settings it reads;
+//   - every exact root that exists is lstat()ed and nothing below it is walked:
+//     root-owned, not a symlink, of its kind, not group or world writable even
+//     when sticky, and for a file exactly one link (DIETPI-PATH-001 AD-1);
 //   - every required root exists;
 //   - reaching a bound is a failure.
 //
@@ -74,7 +79,7 @@ func trustWalk(fsys trustFS, spec extraupd.ApplySpec, installed models.ExtraUpda
 		}
 	}
 	entries := 0
-	for _, root := range append(append([]string(nil), spec.TrustRoots...), required...) {
+	for _, root := range append(append([]string(nil), spec.TrustRoots...), unlisted(required, spec)...) {
 		if err := checkAncestors(fsys, root); err != nil {
 			return err
 		}
@@ -88,6 +93,72 @@ func trustWalk(fsys trustFS, spec extraupd.ApplySpec, installed models.ExtraUpda
 		if err = walkEntry(fsys, root, st, 0, &entries); err != nil {
 			return err
 		}
+	}
+	for _, root := range spec.ExactRoots {
+		if err := checkAncestors(fsys, root.Path); err != nil {
+			return err
+		}
+		st, err := fsys.Lstat(root.Path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && !isRequired(root.Path) {
+				continue
+			}
+			return fmt.Errorf("%s: %w", root.Path, err)
+		}
+		if err = checkExact(root, st); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// unlisted returns the required roots that are neither a trust root nor an exact
+// root. A required root named by neither is still proved, as a tree.
+func unlisted(required []string, spec extraupd.ApplySpec) []string {
+	var out []string
+next:
+	for _, r := range required {
+		for _, t := range spec.TrustRoots {
+			if t == r {
+				continue next
+			}
+		}
+		for _, e := range spec.ExactRoots {
+			if e.Path == r {
+				continue next
+			}
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// checkExact is the lstat-only proof of one exact root. Mode 0777 and 1777 both
+// fail: a sticky bit does not make a directory root interprets safe
+// (DP-SEC-005).
+func checkExact(root extraupd.ExactRoot, st trustStat) error {
+	p := root.Path
+	if st.UID != 0 {
+		return fmt.Errorf("%s is owned by uid %d, not root", p, st.UID)
+	}
+	if st.isSymlink() {
+		return fmt.Errorf("%s is a symbolic link", p)
+	}
+	switch root.Kind {
+	case extraupd.ExactDir:
+		if !st.isDir() {
+			return fmt.Errorf("%s is not a directory", p)
+		}
+	case extraupd.ExactFile:
+		if !st.Mode.IsRegular() {
+			return fmt.Errorf("%s is not a regular file", p)
+		}
+		if st.Nlink != 1 {
+			return fmt.Errorf("%s has %d links, want exactly 1", p, st.Nlink)
+		}
+	}
+	if st.groupOrWorldWritable() {
+		return fmt.Errorf("%s is writable by group or others (mode %04o)", p, st.Mode.Perm())
 	}
 	return nil
 }
