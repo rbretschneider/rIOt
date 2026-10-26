@@ -223,4 +223,11 @@ These trigger architect review.
 
 ## Web
 
-_To be filled in by the web engineer. The web report is `docs/implementation/EXPECT-002-impl-report-web.md` (commits `8ffdfb8`, `a9bdfae`, `4b4dba4`, `d1ee067`, `a4b8fa4`). Items for that section: the web rows of ADD section 4, the web AC-to-test table, `tsc` and `npm run test:run` output, and the AC-029 web scan list (it must include `SelfUpdateDetails.test.tsx`, `FleetOverview.selfupdate.test.tsx`, `DeviceDetail.selfupdate.test.tsx`, `selfUpdate.ts` and `SelfUpdateDetails.tsx`)._
+The web rows are reported in full in `docs/implementation/EXPECT-002-impl-report-web.md`: the commits (`8ffdfb8`, `a9bdfae`, `4b4dba4`, `d1ee067`), the web AC-to-test table, the deviations and the AC-029 web scan scope.
+
+- **Results:** `npx tsc --noEmit -p .` is clean, and `npm run test:run` passes 114 files and 2015 tests (the baseline was 109 files and 1873 tests).
+- **AC-029 web scan:** `web/src/utils/selfUpdate.safety.test.ts` prints its file list. That list includes `SelfUpdateDetails.test.tsx`, `FleetOverview.selfupdate.test.tsx`, `DeviceDetail.selfupdate.test.tsx`, `selfUpdate.ts` and `SelfUpdateDetails.tsx`.
+- **Deviations:**
+  - `DeviceActivity.agent_to_version` is optional in TypeScript.
+  - `labels.test.ts` now counts 54 event types.
+  - The web scan does not ban the Go-side literals `dpkg`, `apt` and `systemd-run`, because `activity.ts` contains "waiting for dpkg lock".
