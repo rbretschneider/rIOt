@@ -8,10 +8,14 @@ export default function CommandProgress({
   deviceId,
   commandId,
   onTerminal,
+  showActivityLink = true,
 }: {
   deviceId: string
   commandId: string
   onTerminal?: () => void
+  // EXPECT-001 (X-3): host and agent commands have no Docker activity entry, so the
+  // activity modal hides the "View steps and output" link.
+  showActivityLink?: boolean
 }) {
   const query = useQuery({
     queryKey: ['docker-command', deviceId, commandId],
@@ -67,12 +71,14 @@ export default function CommandProgress({
               {target.step ? ` (${target.step})` : ''}
             </p>
           ))}
-          <Link
-            className="text-link text-xs"
-            to={`/docker/activity?host=${encodeURIComponent(deviceId)}&command=${encodeURIComponent(commandId)}`}
-          >
-            View steps and output
-          </Link>
+          {showActivityLink && (
+            <Link
+              className="text-link text-xs"
+              to={`/docker/activity?host=${encodeURIComponent(deviceId)}&command=${encodeURIComponent(commandId)}`}
+            >
+              View steps and output
+            </Link>
+          )}
         </div>
       )}
     </QueryState>

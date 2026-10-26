@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { errorMessage, retryUnlessNotFound } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
+import { useActivity } from '../hooks/useActivity'
+import ActivityLabel from '../components/ActivityLabel'
 import { isVersionOlder } from '../utils/version'
 import { isPoolFilesystem, formatCapacity } from '../utils/filesystem'
 import StatusBadge from '../components/StatusBadge'
@@ -34,6 +36,9 @@ export default function DeviceDetail() {
   // useDevices sets up the WS listener that pushes heartbeat/telemetry/events
   // directly into the ['device', id] and ['events'] query caches
   const { wsConnected } = useDevices()
+  // EXPECT-001: the server's activity for this device (FR-039); undefined when it has none.
+  const { byDevice: activityByDevice, newestAgentVersion } = useActivity()
+  const activity = id ? activityByDevice.get(id) : undefined
   const { isEnabled } = useFeatures()
   const { data, isPending, error: deviceError, refetch: refetchDevice } = useQuery({
     queryKey: ['device', id],
@@ -428,6 +433,11 @@ export default function DeviceDetail() {
             )}
           </div>
           <StatusBadge status={device.status} />
+          {activity && (
+            <div className="mt-2">
+              <ActivityLabel activity={activity} newestAgentVersion={newestAgentVersion} showLink />
+            </div>
+          )}
           <p className="text-sm text-gray-500 font-mono mt-0.5">
             {device.short_id} &middot; {device.arch}
             {device.agent_version && (
