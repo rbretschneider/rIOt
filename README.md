@@ -57,7 +57,7 @@
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
 - **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
-- **Reboots wait for the package manager** — every agent-initiated reboot on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot is skipped and reported, never forced. No `install.sh` re-run or sudoers change is needed; upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
+- **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is now truthful: on Linux hosts set up by the installer, which grants no poweroff sudo rule, a shutdown reports `failed` until SHUTDOWN-SUDO-001 ships. No `install.sh` re-run or sudoers change is needed; upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Dashboard navigation
@@ -600,7 +600,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `docker.compose_roots` | not enforced | List of absolute directories, for example `[/opt/stacks]`. When set, compose updates run only in a project directory inside one of them. An entry that is empty or relative makes every compose update fail until it is fixed. Required on Windows. Restart the agent after changing it. See [Compose directory trust](#compose-directory-trust) |
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard, and the reboot that **Reboot automatically if the patch requires it** requests after a manual patch (see [Manual patch and reboot](#manual-patch-and-reboot)). Nothing the server sends overrides it. The agent also reports this value to the server (display-only) so the patch badge can say a reboot is manual — see [Patch badge](#patch-badge) |
-| `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on) |
+| `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on). The shutdown waits for the dpkg lock, and on installer-managed Linux hosts it reports `failed` until SHUTDOWN-SUDO-001 adds a poweroff privilege; see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). The agent applies reboot-class packages only when the run asks for them, this setting is `true` and hold enforcement works; otherwise it never applies them or reboots automatically. Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
@@ -2168,7 +2168,7 @@ Once a command is `dispatched`, the execution deadline runs from the dispatch ti
 | Command class | Actions | Queued TTL | Execution deadline |
 |---|---|---|---|
 | Power: reboot | `reboot` | 15 minutes | 20 minutes (a reboot can wait up to 10 minutes for the dpkg lock, see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock)) |
-| Power: shutdown | `shutdown` | 15 minutes | 10 minutes |
+| Power: shutdown | `shutdown` | 15 minutes | 20 minutes (a shutdown can wait up to 10 minutes for the dpkg lock, see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock)) |
 | OS patch | `os_update`, `enable_auto_updates` | 30 minutes | 40 minutes |
 | Docker update | `docker_update` | 60 minutes | 35 minutes |
 | Docker bulk update | `docker_bulk_update` | 60 minutes | min(35 minutes × number of targets + 5 minutes, 6 hours) |
@@ -2646,29 +2646,33 @@ An agent downgraded after it wrote the version 2 file cannot read it, and refuse
 
 > **Upgrade the server before the agents (REBOOT-DPKG-001).** A new agent can wait up to 10 minutes before it reboots. An old server gives a reboot 10 minutes in total. If the lock frees in the last minute, the old server marks the command `timed_out` and rejects the late result, but the host still reboots. Agents install new releases on their own (every 6 hours by default, see [Agent Auto-Update and Release Signing](#agent-auto-update-and-release-signing)), and an old server that sees the new release can offer it to them. Upgrade the server as soon as the release is published. If a reboot shows `timed_out`, check the host's uptime before you send another one.
 
-Every reboot the agent starts waits until no process holds the dpkg lock, so a reboot never cuts through a running `apt`, `dpkg` or unattended upgrade. The wait applies to hosts that have dpkg (Debian, Ubuntu and derivatives). A host without dpkg, and any Windows or macOS host, reboots as before with no wait.
+> **The same rule applies to shutdown (SHUTDOWN-DPKG-001).** A new agent can wait up to 10 minutes before it powers a host off. An old server gives a shutdown 10 minutes in total (`exec_deadline_s` `600`). A new server gives it 20 minutes (`1200`). If the lock frees in the last minute, the old server marks the command `timed_out` and rejects the late result, but the host still powers off. If a shutdown shows `timed_out`, check whether the host is off before you send another one. A second shutdown can power the host off again after someone switches it back on, while the 15-minute queued expiry has not run out.
 
-The change needs no install step. The check runs as the unprivileged `riot` user with no sudo and no new sudoers rule, so no `install.sh` re-run is needed. No configuration key, collector or environment variable changes. It ships with the normal agent update.
+Every reboot and every shutdown the agent starts waits until no process holds the dpkg lock, so neither cuts through a running `apt`, `dpkg` or unattended upgrade. The wait applies to hosts that have dpkg (Debian, Ubuntu and derivatives). A host without dpkg, and any Windows or macOS host, reboots and shuts down as before with no wait.
 
-### Which reboots wait
+The change needs no install step. The check runs as the unprivileged `riot` user with no sudo and no new sudoers rule, so no `install.sh` re-run is needed. No configuration key, collector or environment variable changes. It ships with the normal agent update. One thing changes for shutdown: its result is now truthful, so a Linux host that has no poweroff sudo rule reports `failed`. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
 
-| Reboot | Started by | Waits |
+### Which power actions wait
+
+| Power action | Started by | Waits |
 |---|---|---|
 | Standalone reboot | The **Reboot** command in the Power menu, **Reboot now**, or `action: reboot` through the API | Yes |
 | Authorized post-patch reboot | A manual Patch with **Reboot automatically if the patch requires it** ticked | Yes |
 | Automatic post-patch reboot | The OS-patch maintenance window, after reboot-class packages were applied | Yes |
-| Shutdown | The **Shutdown** command | No. Shutdown is not gated. A later story may add it. |
+| Shutdown | The **Shutdown** command in the Power menu, or `action: shutdown` through the API | Yes |
 
 ### How the wait works
 
 1. The agent checks the lock. A free lock adds no delay and no log line.
-2. If the lock is held, the agent logs one line and checks again every 2 seconds. The wait ends 10 minutes after the first check that found the lock held. One reboot attempt has one wait.
-3. When the lock looks free, the agent re-checks `commands.allow_reboot`, whether the agent is shutting down, and the host maintenance state. Then it checks the lock once more. The reboot starts only if that last check is also free.
+2. If the lock is held, the agent logs one line and checks again every 2 seconds. The wait ends 10 minutes after the first check that found the lock held. One attempt has one wait.
+3. When the lock looks free, the agent re-checks the action's config flag (`commands.allow_reboot` for a reboot, `commands.allow_shutdown` for a shutdown), whether the agent is shutting down, and the host maintenance state. Then it checks the lock once more. The reboot or shutdown starts only if that last check is also free.
 4. If the lock is taken again, the wait continues under the same 10-minute limit.
-5. At the limit, or when the lock state is unknown, the agent skips the reboot. It never forces the reboot and never retries by itself. Send a new reboot, or patch again, when you want another attempt.
-6. When the agent service stops, a waiting reboot ends within a few seconds and is reported as skipped.
+5. At the limit, or when the lock state is unknown, the agent skips the reboot or shutdown. It never forces it and never retries by itself. Send a new command, or patch again, when you want another attempt.
+6. When the agent service stops, a waiting reboot or shutdown ends within a few seconds and is reported as skipped. A shutdown skipped this way is never run again after the agent starts.
 
-A standalone reboot holds the host's command slot while it waits. Another host-level command on the same device (`os_update`, `shutdown`, `agent_update`) conflicts until the reboot ends. A post-patch reboot keeps the host reservation for up to about 10.5 minutes.
+A reboot or shutdown holds the host's command slot while it waits. Another host-level command on the same device (`os_update`, `reboot`, `shutdown`, `agent_update`) conflicts until it ends. A post-patch reboot keeps the host reservation for up to about 10.5 minutes.
+
+The reboot and shutdown limits are separate settings that happen to have the same values today. The two actions read their own constants, so changing one does not change the other.
 
 ### How the agent detects the lock
 
@@ -2683,7 +2687,7 @@ A check reads at most 1 MiB of `/proc/locks` and takes at most 1 second. If `sta
 
 ### When the agent cannot tell, it skips
 
-The agent reboots only when it can show the lock is free. These cases skip the reboot at once, with no wait. On a host without dpkg, none of them applies.
+The agent reboots or shuts down only when it can show the lock is free. These cases skip the reboot or shutdown at once, with no wait. On a host without dpkg, none of them applies.
 
 | Case | Cause text in the report |
 |---|---|
@@ -2697,7 +2701,7 @@ The agent reboots only when it can show the lock is free. These cases skip the r
 | A check takes longer than 1 second | `lock check exceeded 1s` |
 | `stat` fails with an error other than "not found" | `cannot stat <path>: <error>` |
 
-The shipped units (`scripts/riot-agent.service` and the unit that `install.sh` writes) set none of `PrivatePIDs=`, `ProtectProc=` or `ProcSubset=`. A test checks both. Do not add `PrivatePIDs=yes` or `ProcSubset=pid` to the agent unit: every reboot on a dpkg host would then skip. Run the agent on the host, not in a container, if reboots must work.
+The shipped units (`scripts/riot-agent.service` and the unit that `install.sh` writes) set none of `PrivatePIDs=`, `ProtectProc=` or `ProcSubset=`. A test checks both. Do not add `PrivatePIDs=yes` or `ProcSubset=pid` to the agent unit: every reboot and shutdown on a dpkg host would then skip. Run the agent on the host, not in a container, if reboots and shutdowns must work.
 
 ### What you see
 
@@ -2713,6 +2717,27 @@ The shipped units (`scripts/riot-agent.service` and the unit that `install.sh` w
 | A guard failed | `failed`, reason `conflict` when the host is busy | `reboot skipped: guard failed: <guard>` |
 
 `<guard>` is `commands.allow_reboot is off`, `host busy: <what is running>`, or `agent command time budget exhausted`. A skip is not a timeout: it never shows the "Timed out: outcome unknown" label. When `commands.allow_reboot` is `false`, the reboot fails before the wait with the existing message `reboot not allowed by agent config (set commands.allow_reboot: true)`.
+
+**Shutdown.** The command result carries one of these messages:
+
+| Outcome | Status | Message |
+|---|---|---|
+| Lock free, poweroff accepted | `success` | `shutdown initiated` |
+| Lock freed after a wait | `success` | `shutdown initiated after waiting <duration> for the dpkg lock` |
+| Held for 10 minutes | `failed` | `shutdown skipped: dpkg lock held past the timeout (10m), <holder>` |
+| State unknown | `failed` | `shutdown skipped: dpkg lock state unknown: <cause>` |
+| Agent stopping | `failed`, reason `shutdown` | `shutdown skipped: agent shutting down` |
+| A guard failed | `failed`, reason `conflict` when the host is busy | `shutdown skipped: guard failed: <guard>` |
+| The poweroff command did not start, or the system refused it | `failed` | `shutdown: <error>` |
+| An earlier poweroff command is still running | `failed` | `shutdown: a previous poweroff command is still running` |
+
+`<guard>` is `host busy: <what is running>` or `agent command time budget exhausted`. A skip is not a timeout: it never shows the "Timed out: outcome unknown" label. When `commands.allow_shutdown` is `false`, the shutdown fails before the wait with the existing message `shutdown not allowed by agent config (set commands.allow_shutdown: true)`.
+
+`<error>` is the text the system returned. It holds printable characters only and is at most 200 bytes. For example: `shutdown: exit status 1: sudo: a terminal is required to read the password; either use the -S option ...`.
+
+Every failed shutdown, including a skip, also raises the existing warning event `Command shutdown failed: <message>` on the device. Notification channels forward that text, so the holder's name, pid and uid reach them.
+
+**What "shutdown initiated" means.** The agent starts the poweroff command and watches its exit status for 3 seconds. It reports `shutdown initiated` when the command exits with status 0, when it is still running after 3 seconds, or when a signal ends it. The last case is what happens when the system starts powering off and stops the agent's child processes. It reports `shutdown: <error>` when the command cannot start or exits with a non-zero status. `shutdown initiated` means the operating system accepted the poweroff command. It does not mean the host has finished powering off. If the poweroff command fails after the 3 seconds, the result stays `shutdown initiated` and the agent writes one `WARN` line to its log.
 
 **Post-patch reboots.** A skipped authorized or automatic post-patch reboot raises one warning event on the device and refreshes telemetry, so the host keeps showing that a reboot is required:
 
@@ -2733,32 +2758,73 @@ holder not visible
 
 An inode-only match adds `, inode-only match` inside the brackets. The name is the first 16 characters of the process name, with every character outside letters, digits and `. _ + : -` replaced by `?`.
 
-**Agent log.** A reboot that waits writes exactly two `INFO` lines and nothing per check: `dpkg lock held, waiting before reboot` and `dpkg lock wait ended`. The second has the fields `path` (`reboot`, `post_patch` or `authorized_post_patch`), `command_id`, `outcome` (`cleared`, `lock_timeout`, `lock_unknown`, `shutdown` or `guard`), `waited` and `holder`.
+**Agent log.** A reboot or shutdown that waits writes exactly two `INFO` lines and nothing per check: `dpkg lock held, waiting before reboot` (or `... before shutdown`) and `dpkg lock wait ended`. The second has the fields `path` (`reboot`, `shutdown`, `post_patch` or `authorized_post_patch`), `command_id`, `outcome` (`cleared`, `lock_timeout`, `lock_unknown`, `shutdown` or `guard`), `waited` and `holder`.
+
+A shutdown whose poweroff command fails after the 3-second check writes one more line, at most once per command: `WARN shutdown: poweroff command failed after the start check`, with an `error` field and no `command_id`. A command that fails inside the 3 seconds writes no such line. Its result carries the error.
+
+### Shutdown on Linux and the sudo rule
+
+The installer grants the `riot` user no sudo rule for `systemctl poweroff`. No installer version has ever granted one. Its only power rule is `systemctl reboot` (see [Sudoers Rules](#sudoers-rules)).
+
+The agent still runs `sudo systemctl poweroff`, as before. On a Linux host set up by the installer, sudo refuses the command because it has no terminal to ask for a password. Earlier releases did not check the result. They reported `shutdown initiated` and the host stayed on.
+
+This release reports the refusal. On those hosts a shutdown now ends `failed`, for example:
+
+```
+shutdown: exit status 1: sudo: a terminal is required to read the password; either use the -S option ...
+```
+
+This is the true result: a remote shutdown has never worked on a host like this. It stays failed until the follow-up story SHUTDOWN-SUDO-001 ships. That story adds a poweroff privilege through the agent capability path. This release adds no sudo rule, changes no installer file and does not change the poweroff command.
+
+On Windows, `shutdown /s /t 5` returns at once with status 0, so a working Windows host still reports `shutdown initiated`. A refusal now shows as `failed` there too.
+
+### How long a shutdown can take, and how to cancel it
+
+A shutdown can power the host off well after you click **Shut Down**:
+
+- If the device is connected and the dpkg lock is held, the host powers off up to about 10 minutes after the click.
+- If the device was not connected when you sent the command, the command first waits in the queue for up to 15 minutes. Then it waits up to 10 more minutes for the lock. The worst case is about 25 minutes from click to poweroff.
+- The host stays off until someone powers it on. Make sure you have physical or out-of-band access before you send the command.
+
+The dashboard cannot cancel a waiting shutdown, and it shows no progress for the wait. To cancel one, restart the agent on the host:
+
+```
+sudo systemctl restart riot-agent
+```
+
+Within a few seconds the waiting command ends with `shutdown skipped: agent shutting down`. The agent never runs it again after it starts. This works only while the agent is waiting for the lock. Once the poweroff command has started, nothing cancels it. A shutdown still queued for an offline device is delivered when the device reconnects, unless its 15-minute expiry passes first.
+
+Editing `commands.allow_shutdown` does not cancel a waiting shutdown. The agent reads its configuration only at start-up, so a running agent never sees the change.
 
 ### Time limits
 
 | Limit | Value |
 |---|---|
 | Wait for the lock, per reboot attempt | 10 minutes |
+| Wait for the lock, per shutdown attempt | 10 minutes |
 | Check interval | 2 seconds |
+| Start check of the poweroff command (shutdown only) | 3 seconds |
 | Agent time budget for a standalone reboot | 12 minutes |
+| Agent time budget for a shutdown | 12 minutes (was 1 minute) |
 | Server execution deadline for a standalone reboot | 20 minutes |
-| Queued expiry for a reboot | 15 minutes, unchanged |
-| Agent time budget and server deadline for shutdown | 1 minute and 10 minutes, unchanged |
+| Server execution deadline for a shutdown | 20 minutes (was 10 minutes) |
+| Queued expiry for a reboot or shutdown | 15 minutes, unchanged |
 
-The server stores the 20-minute deadline in `exec_deadline_s` (`1200`) when it creates a reboot. A reboot created before the server upgrade keeps `600`. If an agent dies during a wait, the server marks the command `timed_out` about 20 minutes after dispatch.
+The server stores the 20-minute deadline in `exec_deadline_s` (`1200`) when it creates a reboot or a shutdown. A command created before the server upgrade keeps `600`. If an agent dies during a wait, the server marks the command `timed_out` about 20 minutes after dispatch.
 
-### Local users can block reboots
+### Local users can block reboots and shutdowns
 
-Any local user on a managed host can delay or block rIOt reboots. For example, a user can hold enough byte-range locks to push `/proc/locks` past 1 MiB. On a filesystem that reports an anonymous device, a user can also make a lock on their own file match the inode number of a dpkg lock file. This is the price of failing closed. Each skip is reported with the holder's name, pid and uid.
+Any local user on a managed host can delay or block rIOt reboots and shutdowns. For example, a user can hold enough byte-range locks to push `/proc/locks` past 1 MiB. On a filesystem that reports an anonymous device, a user can also make a lock on their own file match the inode number of a dpkg lock file. This is the price of failing closed. Each skip is reported with the holder's name, pid and uid.
 
 A process can choose its own name, so do not trust the name alone. A real package manager holds the lock as `uid 0`. When a skip names another uid, or a name that does not match the pid's process, investigate that host.
 
 ### Known limits
 
-- A waiting reboot cannot be cancelled from the dashboard. It can start up to 10 minutes after you sent it. Stopping the agent ends the wait.
-- A gap of up to a few seconds remains between the final lock check and the moment systemd begins the shutdown. A package process that takes the lock in that gap can still be interrupted.
-- Shutdown is not gated.
+- A waiting reboot or shutdown cannot be cancelled from the dashboard. It can start up to 10 minutes after the command reaches the agent. Stopping the agent ends the wait.
+- A shutdown for a device that was offline can power the host off about 25 minutes after you sent it (15 minutes queued, plus the wait). The host then stays off. See [How long a shutdown can take, and how to cancel it](#how-long-a-shutdown-can-take-and-how-to-cancel-it).
+- On Linux hosts set up by the installer, shutdown reports `failed` until SHUTDOWN-SUDO-001 adds a poweroff privilege. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
+- A shutdown reported as `initiated` may still not power the host off. A signal that ends the poweroff command within the first 3 seconds counts as accepted. An unrelated signal in that window, such as an agent restart or the out-of-memory killer, can make the result wrong.
+- A gap of up to a few seconds remains between the final lock check and the moment systemd begins the reboot or shutdown. A package process that takes the lock in that gap can still be interrupted.
 - The result of a ticked Patch is written before the wait. Its `reboot started: yes` can be followed by a skip. Read the warning event.
 
 ---
