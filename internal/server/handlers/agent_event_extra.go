@@ -49,6 +49,11 @@ func (h *Handlers) receiveExtraUpdaterEvent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// SEC-005: the lock makes "check, then insert" atomic inside this process
+	// only. There is no database uniqueness constraint, so two server replicas
+	// could both store the event. That is accepted for today's single-process
+	// deployment (QA N-2). The key is (device, command, type), not the updater:
+	// add the updater to the key when a second updater is built.
 	h.extraEventMu.Lock()
 	defer h.extraEventMu.Unlock()
 	exists, err := h.events.HasCommandEvent(r.Context(), deviceID, evt.CommandID, evt.Type)

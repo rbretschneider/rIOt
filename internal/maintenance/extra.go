@@ -261,6 +261,12 @@ func (w *Worker) runExtra(runCtx context.Context, deadline time.Time, req Reques
 		switch {
 		case last.After(now):
 			// A record dated in the future cannot prove an interval; ignore it.
+			// KNOWN LIMIT (QA N-1): LatestExtraStart returns the maximum
+			// recorded start, so after a backward clock jump this one future
+			// record hides every later, older-dated start. The 60-minute
+			// minimum is then off until the clock passes that record, not just
+			// once. The other gates in this function still apply. Documented
+			// in docs/ops/os-maintenance.md ("Known limits").
 		case now.Sub(last) < ExtraMinInterval:
 			return skip(SkipMinInterval, fmt.Sprintf("last started %s ago, minimum is %s", now.Sub(last).Round(time.Second), ExtraMinInterval))
 		}
