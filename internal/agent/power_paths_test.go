@@ -258,6 +258,15 @@ func (s *powerScanner) problems() []string {
 			if fn, ok := decl.(*ast.FuncDecl); ok && powerExemptFuncs[fn.Name.Name] && info.dir == "." && info.file.Name.Name == "agent" {
 				continue
 			}
+			// SHUTDOWN-SUDO-001 AD-011: one data-only listing function may name the
+			// power verb, and only in this exact shape. It contains no call, so
+			// there is nothing for checkCall to see.
+			if fn, ok := decl.(*ast.FuncDecl); ok && powerListingFuncs[fn.Name.Name] && info.dir == "." && info.file.Name.Name == "agent" {
+				if why := listingFuncShapeProblem(fn); why != "" {
+					flag(fn.Pos(), "listing function %s must only return a two-element systemctl literal: %s", fn.Name.Name, why)
+				}
+				continue
+			}
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.CallExpr:
@@ -487,4 +496,151 @@ func list() ([]byte, error) { return exec.Command("sudo", "apt-get", "update").O
 			assert.Empty(t, problems, "[C-4] %s must not be flagged", tc.name)
 		})
 	}
+}
+
+// SHUTDOWN-SUDO-001 AD-011 (security condition SEC-002). The amendment is
+// additive: the two tests above and their cases are unchanged. One data-only
+// function may name the power verb so doctor can ask sudo about the shutdown
+// command. The allowance is only safe because shutdown_doctor_test.go limits
+// where the function may be referenced (TestShutdownDoctor_SS_C4_*).
+
+// powerListingFuncs are the functions the string rule skips, but only in package
+// agent, directory ".", and only in the shape listingFuncShapeProblem accepts.
+var powerListingFuncs = map[string]bool{"shutdownSudoCommand": true}
+
+// listingFuncShapeProblem returns "" only for `func name() []string { return
+// []string{"systemctl", "<verb>"} }`: no receiver, no parameters, one []string
+// result, and a body that is a single return of a two-element string literal
+// whose first element is "systemctl".
+func listingFuncShapeProblem(fn *ast.FuncDecl) string {
+	if fn.Recv != nil {
+		return "it has a receiver"
+	}
+	if fn.Type.TypeParams != nil {
+		return "it has type parameters"
+	}
+	if fn.Type.Params != nil && len(fn.Type.Params.List) > 0 {
+		return "it has parameters"
+	}
+	if fn.Type.Results == nil || len(fn.Type.Results.List) != 1 || len(fn.Type.Results.List[0].Names) > 0 {
+		return "it must have exactly one unnamed result"
+	}
+	if !isStringSliceType(fn.Type.Results.List[0].Type) {
+		return "its result is not []string"
+	}
+	if fn.Body == nil || len(fn.Body.List) != 1 {
+		return "its body is not a single statement"
+	}
+	ret, ok := fn.Body.List[0].(*ast.ReturnStmt)
+	if !ok || len(ret.Results) != 1 {
+		return "its body is not a single return of one value"
+	}
+	lit, ok := ret.Results[0].(*ast.CompositeLit)
+	if !ok || !isStringSliceType(lit.Type) {
+		return "it does not return a []string literal"
+	}
+	if len(lit.Elts) != 2 {
+		return "the literal does not have exactly two elements"
+	}
+	var values []string
+	for _, e := range lit.Elts {
+		bl, ok := e.(*ast.BasicLit)
+		if !ok || bl.Kind != token.STRING {
+			return "an element is not a string literal"
+		}
+		v, err := strconv.Unquote(bl.Value)
+		if err != nil {
+			return "an element is not a valid string literal"
+		}
+		values = append(values, v)
+	}
+	if values[0] != "systemctl" {
+		return "the first element is not systemctl"
+	}
+	return ""
+}
+
+func isStringSliceType(e ast.Expr) bool {
+	at, ok := e.(*ast.ArrayType)
+	if !ok || at.Len != nil {
+		return false
+	}
+	id, ok := at.Elt.(*ast.Ident)
+	return ok && id.Name == "string"
+}
+
+func TestPowerPaths_SS_C4_ListingAllowanceSelfTest(t *testing.T) {
+	flagged := []struct {
+		name string
+		path string
+		src  string
+		want string // a fragment of the problem, "" for any
+	}{
+		{"the function with an exec.Command inside", "shutdown_doctor.go", `package agent
+import "os/exec"
+func shutdownSudoCommand() []string {
+	_ = exec.Command("sudo", "systemctl", "poweroff")
+	return []string{"systemctl", "poweroff"}
+}`, "listing function"},
+		{"the function with an extra statement", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string {
+	n := 1
+	_ = n
+	return []string{"systemctl", "poweroff"}
+}`, "listing function"},
+		{"the function returning a variable", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string { return verbs }`, "listing function"},
+		{"the function returning a call", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string { return append([]string{"systemctl"}, "poweroff") }`, "listing function"},
+		{"the function with a parameter", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand(x string) []string { return []string{"systemctl", "poweroff"} }`, "listing function"},
+		{"a method with the same name", "shutdown_doctor.go", `package agent
+func (a *Agent) shutdownSudoCommand() []string { return []string{"systemctl", "poweroff"} }`, "listing function"},
+		{"a first element other than systemctl", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string { return []string{"sh", "poweroff"} }`, "listing function"},
+		{"a third element", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string { return []string{"systemctl", "poweroff", "--force"} }`, "listing function"},
+		{"a non-literal element", "shutdown_doctor.go", `package agent
+func shutdownSudoCommand() []string { return []string{"systemctl", verb} }`, "listing function"},
+		{"the exact shape in a subpackage, where the string rule applies", "collectors/x.go", `package collectors
+func shutdownSudoCommand() []string { return []string{"systemctl", "poweroff"} }`, "names a power action"},
+		{"the exact shape in another package of directory .", "other.go", `package collectors
+func shutdownSudoCommand() []string { return []string{"systemctl", "poweroff"} }`, "names a power action"},
+		{"a differently named function returning the same literal", "shutdown_doctor.go", `package agent
+func otherCommand() []string { return []string{"systemctl", "poweroff"} }`, "names a power action"},
+	}
+	for _, tc := range flagged {
+		t.Run("flags "+tc.name, func(t *testing.T) {
+			problems := newPowerScanner(t, []powerPathFile{{Path: tc.path, Src: []byte(tc.src)}}).problems()
+			require.NotEmpty(t, problems, "[C-4/SEC-002] %s must be flagged", tc.name)
+			assert.Contains(t, strings.Join(problems, "\n"), tc.want, "[C-4/SEC-002] %s is flagged for the right reason", tc.name)
+		})
+	}
+
+	t.Run("allows the exact shape", func(t *testing.T) {
+		src := `package agent
+func shutdownSudoCommand() []string {
+	return []string{"systemctl", "poweroff"}
+}`
+		problems := newPowerScanner(t, []powerPathFile{{Path: "shutdown_doctor.go", Src: []byte(src)}}).problems()
+		assert.Empty(t, problems, "[C-4/SEC-002] the exact data-only shape is the one allowance")
+	})
+
+	t.Run("allows the real shutdown_doctor.go", func(t *testing.T) {
+		src, err := os.ReadFile("shutdown_doctor.go")
+		require.NoError(t, err)
+		problems := newPowerScanner(t, []powerPathFile{{Path: "shutdown_doctor.go", Src: src}}).problems()
+		assert.Empty(t, problems, "[C-4/SEC-002] the real file passes the scan on its own")
+	})
+
+	t.Run("the allowance does not reach a power launch next to the listing function", func(t *testing.T) {
+		src := `package agent
+import "os/exec"
+func shutdownSudoCommand() []string {
+	return []string{"systemctl", "poweroff"}
+}
+func launch() error { return exec.Command("sudo", "systemctl", "poweroff").Start() }`
+		problems := newPowerScanner(t, []powerPathFile{{Path: "shutdown_doctor.go", Src: []byte(src)}}).problems()
+		assert.NotEmpty(t, problems, "[C-4/SEC-002] only the listing function is skipped, not its neighbours")
+	})
 }
