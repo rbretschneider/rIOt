@@ -66,6 +66,14 @@ const OUTCOME_LABELS: Record<string, string> = {
   timed_out: 'Not confirmed',
 }
 
+/** Badge tone for an outcome: a failure is a failure, an unconfirmed update is a warning, not an error. */
+export function selfUpdateOutcomeTone(status: string | null | undefined): 'success' | 'danger' | 'warn' | 'info' {
+  if (status === 'succeeded') return 'success'
+  if (status === 'failed') return 'danger'
+  if (status === 'timed_out') return 'warn'
+  return 'info'
+}
+
 /** The outcome wording of FR-015 for a self-update row's status. Unknown values fall back to the status label. */
 export function selfUpdateOutcomeLabel(status: string | null | undefined): string {
   if (status && Object.prototype.hasOwnProperty.call(OUTCOME_LABELS, status)) return OUTCOME_LABELS[status]
