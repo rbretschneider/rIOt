@@ -75,7 +75,10 @@ export function noticeWords(n: { code: string; branch?: string; owner?: string }
     case 'dietpi_auto_apt_upgrade':
       return 'DietPi upgrades apt packages by itself (CONFIG_CHECK_APT_UPDATES=2); rIOt only reports this.'
     case 'non_default_update_source':
-      return `Its update source is ${n.owner ?? 'unreadable'}/${n.branch ?? 'unreadable'}, not MichaIng/master; rIOt will not apply it.`
+      // Only the owner gates apply (SEC-003): a MichaIng branch other than master is still applied.
+      return n.owner === 'MichaIng'
+        ? `Its update source is MichaIng/${n.branch ?? 'unreadable'}, not MichaIng/master; rIOt still applies it because the owner is MichaIng.`
+        : `Its update source is ${n.owner ?? 'unreadable'}/${n.branch ?? 'unreadable'}, not MichaIng/master; rIOt will not apply it.`
     case 'major_upgrade':
       return 'This is a major upgrade: the kernel or firmware may change and a reboot is likely to be needed.'
     default:
