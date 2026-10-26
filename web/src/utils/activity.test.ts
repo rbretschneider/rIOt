@@ -289,6 +289,12 @@ describe('[AC-040] applying an activity_update to the cache', () => {
     expect(next).toBe(base)
   })
 
+  it('accepts a cached response whose activities arrived as null (a Go nil slice)', () => {
+    const emptyAsNull = { ...base, activities: null } as unknown as ActivityResponse
+    const next = applyActivityUpdate(emptyAsNull, 'a', activity({ device_id: 'a' }))
+    expect(next?.activities.map(a => a.device_id)).toEqual(['a'])
+  })
+
   it('ignores a message before the first fetch has landed', () => {
     expect(applyActivityUpdate(undefined, 'a', activity({ device_id: 'a' }))).toBeUndefined()
   })

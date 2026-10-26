@@ -148,6 +148,7 @@ export function applyActivityUpdate(
 ): ActivityResponse | undefined {
   if (!old || !deviceId) return old
   if (data != null && data.device_id !== deviceId) return old
-  const rest = old.activities.filter(a => a.device_id !== deviceId)
+  // A Go nil slice marshals as null, so an empty list may arrive as null.
+  const rest = (old.activities ?? []).filter(a => a.device_id !== deviceId)
   return { ...old, activities: data ? [...rest, data] : rest }
 }
