@@ -99,6 +99,10 @@ type AgentEvent struct {
 	CommandID string        `json:"command_id,omitempty"`
 	Updater   string        `json:"updater,omitempty"`
 	Outcome   string        `json:"outcome,omitempty"`
+	// Reason is the skip reason of an extra_updater_finished event whose outcome
+	// is "skipped". The server accepts it only from the closed skip-reason set
+	// and composes the stored message itself (DIETPI-PATH-001 FR-014).
+	Reason string `json:"reason,omitempty"`
 }
 
 // DockerEvent is the payload agents push for Docker container state changes.

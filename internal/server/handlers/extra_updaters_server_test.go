@@ -255,16 +255,15 @@ func TestReceiveAgentEvent_EU_SEC005_DuplicateIsNoop(t *testing.T) {
 
 func TestReceiveAgentEvent_EU_SEC005_UnknownUpdaterRejected(t *testing.T) {
 	bad := map[string]string{
-		"unknown updater":         eventBody("extra_updater_started", euCmdID, "snap", "", ""),
-		"empty updater":           eventBody("extra_updater_started", euCmdID, "", "", ""),
-		"updater with markup":     eventBody("extra_updater_started", euCmdID, "<script>", "", ""),
-		"non-canonical uuid":      eventBody("extra_updater_started", strings.ToUpper(euCmdID), "dietpi", "", ""),
-		"not a uuid":              eventBody("extra_updater_started", "../../x", "dietpi", "", ""),
-		"unknown command":         eventBody("extra_updater_started", "1c8b64b7-2a3f-4c7b-8e2e-3e4a6d7b8c9d", "dietpi", "", ""),
-		"bad outcome":             eventBody("extra_updater_finished", euCmdID, "dietpi", "exploded", ""),
-		"missing outcome":         eventBody("extra_updater_finished", euCmdID, "dietpi", "", ""),
-		"skipped is never an end": eventBody("extra_updater_finished", euCmdID, "dietpi", "skipped", ""),
-		"outcome on a start":      eventBody("extra_updater_started", euCmdID, "dietpi", "success", ""),
+		"unknown updater":     eventBody("extra_updater_started", euCmdID, "snap", "", ""),
+		"empty updater":       eventBody("extra_updater_started", euCmdID, "", "", ""),
+		"updater with markup": eventBody("extra_updater_started", euCmdID, "<script>", "", ""),
+		"non-canonical uuid":  eventBody("extra_updater_started", strings.ToUpper(euCmdID), "dietpi", "", ""),
+		"not a uuid":          eventBody("extra_updater_started", "../../x", "dietpi", "", ""),
+		"unknown command":     eventBody("extra_updater_started", "1c8b64b7-2a3f-4c7b-8e2e-3e4a6d7b8c9d", "dietpi", "", ""),
+		"bad outcome":         eventBody("extra_updater_finished", euCmdID, "dietpi", "exploded", ""),
+		"missing outcome":     eventBody("extra_updater_finished", euCmdID, "dietpi", "", ""),
+		"outcome on a start":  eventBody("extra_updater_started", euCmdID, "dietpi", "success", ""),
 	}
 	for name, body := range bad {
 		body := body

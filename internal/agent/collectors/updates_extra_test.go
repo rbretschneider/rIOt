@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DesyncTheThird/rIOt/internal/extraupd"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
@@ -48,7 +49,8 @@ func TestUpdatesCollector_EU_AC001_EmptyListWithoutDietPi(t *testing.T) {
 	onlyOne := t.TempDir()
 	put(t, onlyOne, "boot/dietpi/.version", versionFile)
 	assert.Empty(t, (&UpdatesCollector{kernelRoot: onlyOne}).detectExtraUpdaters(context.Background()), "[AC-001] one of the two files is not DietPi")
-	got := (&UpdatesCollector{kernelRoot: dietpiTree(t)}).detectExtraUpdaters(context.Background())
+	tree := dietpiTree(t)
+	got := (&UpdatesCollector{kernelRoot: tree, extraFS: extraupd.DirFSOwnedByCaller(tree)}).detectExtraUpdaters(context.Background())
 	require.Len(t, got, 1, "[AC-001] both files report one dietpi entry")
 	assert.Equal(t, "dietpi", got[0].ID)
 	assert.Equal(t, models.ExtraStatusUpdateAvailable, got[0].Status)
@@ -101,7 +103,8 @@ func TestRebootRequiredNow_EU_AC010_SameRule(t *testing.T) {
 func TestTelemetry_EU_AC011_DietPiEntryWithTodaysCollectorList(t *testing.T) {
 	// The updates collector's name is already in every agent's collector.enabled
 	// list, and detection rides on it: the entry appears without a config change.
-	c := &UpdatesCollector{kernelRoot: dietpiTree(t)}
+	tree := dietpiTree(t)
+	c := &UpdatesCollector{kernelRoot: tree, extraFS: extraupd.DirFSOwnedByCaller(tree)}
 	assert.Equal(t, "updates", c.Name())
 	got := c.detectExtraUpdaters(context.Background())
 	require.Len(t, got, 1)

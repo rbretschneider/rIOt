@@ -696,6 +696,19 @@ func TestPatchBadge_EveryReasonCodeHasATest(t *testing.T) {
 		reasonExtraNotApplied: func(in *patchBadgeInput) {
 			in.Updates.ExtraUpdaters = models.ExtraUpdaterList{{ID: "dietpi", Status: models.ExtraStatusUpdateAvailable, Readiness: models.ExtraReadinessNotOptedIn}}
 		},
+		// DIETPI-PATH-001: a refusal only the operator can act on.
+		reasonExtraRefused: func(in *patchBadgeInput) {
+			in.Updates.ExtraUpdaters = models.ExtraUpdaterList{{ID: "dietpi", Status: models.ExtraStatusUpdateAvailable, Readiness: models.ExtraReadinessEnabled}}
+			in.LastRun = refusedRun("succeeded", "non_default_update_source", "update source SomeFork/master is not MichaIng")
+		},
+	}
+	// DIETPI-PATH-001: a refusal the operator cannot act on raises the Blocked
+	// kind and sits in the Blocked list.
+	blockedOnly := map[string]func(*patchBadgeInput){
+		reasonExtraBlocked: func(in *patchBadgeInput) {
+			in.Updates.ExtraUpdaters = models.ExtraUpdaterList{{ID: "dietpi", Status: models.ExtraStatusUpdateAvailable, Readiness: models.ExtraReadinessEnabled}}
+			in.LastRun = refusedRun("succeeded", "dpkg_locked", "dpkg lock held by pid 4242")
+		},
 	}
 	// Information-only codes: NY-7 never needs action, the two extra_update items
 	// are neutral by design.
@@ -708,9 +721,22 @@ func TestPatchBadge_EveryReasonCodeHasATest(t *testing.T) {
 			in.Updates.ExtraUpdaters = models.ExtraUpdaterList{{ID: "dietpi", Status: models.ExtraStatusUnknown, UnknownReason: models.ExtraReasonCheckDisabled}}
 		},
 	}
-	require.Len(t, scenarios, len(patchBadgeReasonCodes)-len(informationOnly), "every action reason code needs exactly one scenario")
+	require.Len(t, scenarios, len(patchBadgeReasonCodes)-len(informationOnly)-len(blockedOnly), "every action reason code needs exactly one scenario")
 	for _, code := range patchBadgeReasonCodes {
 		in := healthyInput()
+		if scenario, ok := blockedOnly[code]; ok {
+			scenario(&in)
+			b := computePatchBadge(in, badgeNow)
+			assert.Equal(t, badgeBlocked, b.Kind, code)
+			assert.NotContains(t, reasonCodes(b), code, "a blocked refusal is not an action item")
+			assert.NotContains(t, infoCodes(b), code)
+			found := false
+			for _, r := range b.Explanation.Blocked {
+				found = found || r.Code == code
+			}
+			assert.True(t, found, "scenario for %q must raise it in the Blocked list", code)
+			continue
+		}
 		if scenario, ok := scenarios[code]; ok {
 			scenario(&in)
 			b := computePatchBadge(in, badgeNow)

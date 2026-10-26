@@ -8,7 +8,7 @@ import { useFeatures } from '../hooks/useFeatures'
 import { useActivity } from '../hooks/useActivity'
 import { isExpectedOffline } from '../utils/activity'
 import { isVersionOlder } from '../utils/version'
-import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, isNeedsYou, normalizeFreshness } from '../utils/patchFlow'
+import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, isBlocked, isNeedsYou, normalizeFreshness } from '../utils/patchFlow'
 import { pendingExtraNames } from '../utils/extraUpdaters'
 
 import ActivityLabel from '../components/ActivityLabel'
@@ -54,7 +54,13 @@ export default function FleetOverview() {
     () => new Set((patchStatus ?? []).filter(p => isNeedsYou(p.patch_badge?.kind)).map(p => p.device_id)),
     [patchStatus],
   )
+  // Blocked hosts have their own count and filter and are not part of "N hosts need you".
+  const blockedIds = useMemo(
+    () => new Set((patchStatus ?? []).filter(p => isBlocked(p.patch_badge?.kind)).map(p => p.device_id)),
+    [patchStatus],
+  )
   const [needsYouOnly, setNeedsYouOnly] = useState(false)
+  const [blockedOnly, setBlockedOnly] = useState(false)
   const queryClient = useQueryClient()
   const [showGuide, setShowGuide] = useState(false)
   const [showPatchReview, setShowPatchReview] = useState(false)
@@ -143,6 +149,7 @@ export default function FleetOverview() {
     if (!devices) return []
     let list = devices.filter((d) => {
       if (needsYouOnly && !needsYouIds.has(d.id)) return false
+      if (blockedOnly && !blockedIds.has(d.id)) return false
       const q = search.toLowerCase()
       return d.hostname.toLowerCase().includes(q) ||
         d.short_id.toLowerCase().includes(q) ||
@@ -156,7 +163,7 @@ export default function FleetOverview() {
       return sortDir === 'asc' ? cmp : -cmp
     })
     return list
-  }, [devices, search, sortKey, sortDir, needsYouOnly, needsYouIds])
+  }, [devices, search, sortKey, sortDir, needsYouOnly, needsYouIds, blockedOnly, blockedIds])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -214,12 +221,24 @@ export default function FleetOverview() {
             <button
               type="button"
               aria-pressed={needsYouOnly}
-              onClick={() => setNeedsYouOnly(v => !v)}
+              onClick={() => { setNeedsYouOnly(v => !v); setBlockedOnly(false) }}
               className={`px-4 py-2 text-sm border rounded-lg font-medium transition-colors whitespace-nowrap ${
                 needsYouOnly ? 'bg-red-900/40 text-red-200 border-red-700' : 'text-red-300 hover:text-red-200 border-red-800/50'
               }`}
             >
               {needsYouIds.size} {needsYouIds.size === 1 ? 'host needs' : 'hosts need'} you
+            </button>
+          )}
+          {blockedIds.size > 0 && (
+            <button
+              type="button"
+              aria-pressed={blockedOnly}
+              onClick={() => { setBlockedOnly(v => !v); setNeedsYouOnly(false) }}
+              className={`px-4 py-2 text-sm border rounded-lg font-medium transition-colors whitespace-nowrap ${
+                blockedOnly ? 'bg-amber-900/40 text-amber-200 border-amber-700' : 'text-amber-300 hover:text-amber-200 border-amber-800/50'
+              }`}
+            >
+              {blockedIds.size} blocked
             </button>
           )}
           {outdatedCount > 0 && (

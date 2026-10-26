@@ -211,7 +211,7 @@ func newExtraRig(t *testing.T) *extraRig {
 	g.runner = &orderRunner{log: &g.log, failAt: map[string]string{}, after: map[string]func(){}}
 	g.w = &Worker{Store: g.store, Runner: g.runner, Holds: g.holds, Now: g.clock.Now}
 	g.w.Extras = &ExtraEnv{
-		FS:     extraupd.DirFS(g.root),
+		FS:     extraupd.DirFSOwnedByCaller(g.root),
 		Policy: func() ([]string, error) { return g.policy, g.policyErr },
 		Lock:   func() LockState { return g.lock() },
 		Busy:   func() (bool, string) { return g.busy() },

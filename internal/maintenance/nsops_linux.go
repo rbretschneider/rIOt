@@ -83,7 +83,15 @@ func (linuxOps) StatID(path string) (FileID, error) {
 	if err := unix.Stat(path, &st); err != nil {
 		return FileID{}, err
 	}
-	return FileID{Dev: uint64(st.Dev), Ino: st.Ino, UID: st.Uid}, nil
+	return FileID{Dev: uint64(st.Dev), Ino: st.Ino, UID: st.Uid, Mode: st.Mode}, nil
+}
+
+func (linuxOps) StatNoFollow(path string) (FileID, error) {
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil {
+		return FileID{}, err
+	}
+	return FileID{Dev: uint64(st.Dev), Ino: st.Ino, UID: st.Uid, Mode: st.Mode}, nil
 }
 
 func (linuxOps) EntryCount(path string) (int, error) {

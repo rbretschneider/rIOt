@@ -48,7 +48,9 @@ func (h *hostFixture) mkdir(rel string) *hostFixture {
 	return h
 }
 
-func (h *hostFixture) fs() FS { return DirFS(h.root) }
+// fs trusts flags owned by the test's own user: a temp tree is never root-owned
+// (DirFSOwnedBy is the fixture seam of FR-011).
+func (h *hostFixture) fs() FS { return DirFSOwnedByCaller(h.root) }
 
 // versionText renders a .version file the way DietPi writes it.
 func versionText(core, sub, rc string, extra ...string) string {
@@ -97,6 +99,13 @@ func (c *countingFS) ReadFile(name string, max int64) ([]byte, error) {
 
 func (c *countingFS) Lstat(name string) (fs.FileInfo, error) { return c.inner.Lstat(name) }
 
+func (c *countingFS) ReadTrustedFlag(name string, max int64) ([]byte, error) {
+	c.mu.Lock()
+	c.reads = append(c.reads, readCall{name, max})
+	c.mu.Unlock()
+	return c.inner.ReadTrustedFlag(name, max)
+}
+
 // blockingFS never returns from ReadFile until released.
 type blockingFS struct {
 	inner   FS
@@ -114,6 +123,14 @@ func (b *blockingFS) ReadFile(name string, max int64) ([]byte, error) {
 }
 
 func (b *blockingFS) Lstat(name string) (fs.FileInfo, error) { return b.inner.Lstat(name) }
+
+func (b *blockingFS) ReadTrustedFlag(name string, max int64) ([]byte, error) {
+	b.mu.Lock()
+	b.started++
+	b.mu.Unlock()
+	<-b.release
+	return b.inner.ReadTrustedFlag(name, max)
+}
 
 func (b *blockingFS) startedCount() int {
 	b.mu.Lock()

@@ -11,6 +11,14 @@ export function isNeedsYou(kind: PatchBadgeKind | string | undefined): boolean {
   return kind === 'needs_you'
 }
 
+/**
+ * Whether a badge kind is a refusal Ryan cannot act on (DIETPI-PATH-001 FR-017). Blocked hosts
+ * are counted and filtered on their own and are never part of "N hosts need you".
+ */
+export function isBlocked(kind: PatchBadgeKind | string | undefined): boolean {
+  return kind === 'blocked'
+}
+
 // PATCH-FLOW-001: pure decision helpers for the manual patch flow. They take only
 // data the device page already loads (NFR-011) and never fetch or render.
 

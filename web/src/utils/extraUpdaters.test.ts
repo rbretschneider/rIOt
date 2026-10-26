@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ExtraUpdater, UpdateInfo } from '../types/models'
-import { devicePatchState, isNeedsYou } from './patchFlow'
+import { devicePatchState, isBlocked, isNeedsYou } from './patchFlow'
 import {
   EXTRA_OPTION_LABEL,
   enabledPendingExtras,
@@ -177,8 +177,18 @@ describe('[EXTRA-UPD-001 AC-038 AC-054] helpers for lists and words', () => {
 describe('[EXTRA-UPD-001 AC-050] only needs_you counts', () => {
   it('treats manual, the automatic kinds, unknown kinds and absence as not needing action', () => {
     expect(isNeedsYou('needs_you')).toBe(true)
-    for (const kind of ['manual', 'auto', 'auto_reboot_date', 'auto_reboot_unknown', 'something_new', undefined]) {
+    for (const kind of ['manual', 'auto', 'auto_reboot_date', 'auto_reboot_unknown', 'blocked', 'something_new', undefined]) {
       expect(isNeedsYou(kind), String(kind)).toBe(false)
     }
+  })
+})
+
+describe('[DIETPI-PATH-001 AC-017] only blocked is blocked', () => {
+  it('names the blocked kind and nothing else, and never counts it as needing action', () => {
+    expect(isBlocked('blocked')).toBe(true)
+    for (const kind of ['needs_you', 'manual', 'auto', 'auto_reboot_date', 'auto_reboot_unknown', 'something_new', undefined]) {
+      expect(isBlocked(kind), String(kind)).toBe(false)
+    }
+    expect(isNeedsYou('blocked')).toBe(false)
   })
 })

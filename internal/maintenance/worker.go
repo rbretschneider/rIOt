@@ -58,7 +58,7 @@ const PostRefreshBudget = 5 * time.Minute
 const postRefreshMinRemaining = PostRefreshBudget + TerminationGrace + 30*time.Second
 
 // successSummary is the terminal summary of a verified run.
-const successSummary = "Package state verified; maintenance completed"
+const successSummary = SuccessSummary
 
 // maxSummaryBytes mirrors the limit enforced by Record.Validate.
 const maxSummaryBytes = 4096

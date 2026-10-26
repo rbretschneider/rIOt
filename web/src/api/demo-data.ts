@@ -729,7 +729,7 @@ export function getSecurityDevices() {
 
 // ── Patch Status ─────────────────────────────────────────────────────────────
 
-function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, needsYou: PatchBadge['explanation']['needs_you'] = [], info: PatchBadge['explanation']['needs_you'] = []): PatchBadge {
+function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, needsYou: PatchBadge['explanation']['needs_you'] = [], info: PatchBadge['explanation']['needs_you'] = [], blocked: PatchBadge['explanation']['needs_you'] = []): PatchBadge {
   return {
     kind,
     label,
@@ -737,6 +737,7 @@ function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, need
       automatic: 'Yes. Any time (within the 360-minute cooldown).',
       reboot,
       needs_you: needsYou,
+      blocked,
       info,
       needs_you_summary: needsYou.length === 0 ? 'Nothing.' : `${needsYou.length} item${needsYou.length === 1 ? '' : 's'} need${needsYou.length === 1 ? 's' : ''} you.`,
       as_of: '2026-10-19 02:00 UTC (just now)',
@@ -781,6 +782,16 @@ export function getPatchStatus(): DevicePatchInfo[] {
       reboot_class_count: 1, reboot_required: true, package_manager: 'apt',
       patch_badge: demoBadge('auto_reboot_unknown', 'Auto (reboot date Unknown)',
         'Automatic, date Unknown: the reboot happens on the next automatic patch run and the time is not predicted.'),
+    },
+    {
+      // DIETPI-PATH-001: a refusal the operator cannot act on is Blocked, not "Needs you".
+      device_id: devices.find(d => d.hostname === 'k3s-worker-02')!.id,
+      hostname: 'k3s-worker-02', pending_updates: 0, security_count: 0,
+      reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
+      patch_badge: demoBadge('blocked', 'Blocked', 'Not needed.', [], [], [{
+        code: 'extra_blocked', updater: 'dietpi', action: 'Run riot-agent doctor on this host.',
+        text: "DietPi update blocked: rIOt could not isolate /run/dietpi; this host's mount layout prevented rIOt from isolating the step",
+      }]),
     },
     {
       device_id: devices.find(d => d.hostname === 'k3s-worker-01')!.id,

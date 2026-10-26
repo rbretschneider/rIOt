@@ -6,17 +6,29 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/extraupd"
+	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
-// Outcomes an extra-updater end event may carry. An updater that was skipped
-// never ran, so it emits no event at all.
+// Outcomes an extra-updater end event may carry. "skipped" is a refusal: the
+// updater never ran, and the event carries the reason of the refusal
+// (DIETPI-PATH-001 FR-014).
 var extraEventOutcomes = map[string]string{
 	"success":     "finished",
 	"failed":      "failed",
 	"timed_out":   "timed out",
 	"interrupted": "was interrupted",
+	"skipped":     "skipped",
 }
+
+// knownSkipReasons is the closed set a skipped event's reason must belong to.
+var knownSkipReasons = func() map[string]bool {
+	out := map[string]bool{}
+	for _, r := range maintenance.SkipReasons() {
+		out[r] = true
+	}
+	return out
+}()
 
 // receiveExtraUpdaterEvent stores the start or end of an extra-updater step
 // (EXTRA-UPD-001 AD-011, SEC-005). The agent is not trusted for anything it
@@ -39,7 +51,14 @@ func (h *Handlers) receiveExtraUpdaterEvent(w http.ResponseWriter, r *http.Reque
 			reject()
 			return
 		}
-	} else if evt.Outcome != "" {
+		// The reason is accepted only from the closed skip-reason set, and only
+		// on a skipped event. An unknown reason is dropped and the event kept
+		// (ADD AD-5), so a newer agent's reason never costs Ryan the event; the
+		// stored message is composed here and never contains agent text.
+		if evt.Outcome != "skipped" || !knownSkipReasons[evt.Reason] {
+			evt.Reason = ""
+		}
+	} else if evt.Outcome != "" || evt.Reason != "" {
 		reject()
 		return
 	}
@@ -81,6 +100,9 @@ func (h *Handlers) receiveExtraUpdaterEvent(w http.ResponseWriter, r *http.Reque
 	msg := label + " update started on " + hostname + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
 	if finished {
 		msg = label + " update " + outcomeWords + " on " + hostname + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
+		if evt.Outcome == "skipped" && evt.Reason != "" {
+			msg = label + " update skipped on " + hostname + ": " + refusalWords(evt.Reason, "") + " (command " + cmd.ID + ", origin " + cmd.Origin + ")"
+		}
 		if evt.Outcome != "success" {
 			severity = models.SeverityWarning
 		}

@@ -33,6 +33,16 @@ describe('[EXTRA-UPD-001 AC-041] demo data', () => {
     expect(cams.patch_badge?.explanation.needs_you).toEqual([])
   })
 
+  it('[DIETPI-PATH-001] has one Blocked host whose item is not an action item', () => {
+    const blocked = getPatchStatus().filter(r => r.patch_badge?.kind === 'blocked')
+    expect(blocked).toHaveLength(1)
+    const ex = blocked[0].patch_badge!.explanation
+    expect(blocked[0].patch_badge!.label).toBe('Blocked')
+    expect(ex.needs_you).toEqual([])
+    expect(ex.blocked).toHaveLength(1)
+    expect(ex.blocked![0]).toMatchObject({ code: 'extra_blocked', updater: 'dietpi' })
+  })
+
   it('never has a manual or auto badge with action items', () => {
     for (const r of getPatchStatus()) {
       const ex = r.patch_badge!.explanation

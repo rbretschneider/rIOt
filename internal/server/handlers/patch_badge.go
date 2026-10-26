@@ -29,6 +29,10 @@ const (
 	badgeAutoRebootDate    = "auto_reboot_date"
 	badgeAutoRebootUnknown = "auto_reboot_unknown"
 	badgeNeedsYou          = "needs_you"
+	// badgeBlocked is the badge of a host whose only open item is a refusal the
+	// operator cannot act on: rIOt's own isolation check or a temporary condition
+	// (DIETPI-PATH-001 FR-017). It is not counted as needing the operator.
+	badgeBlocked = "blocked"
 	// badgeManual is the neutral badge of a host with nothing for the operator
 	// to do and no automatic patching (EXTRA-UPD-001 FR-081, DEC-018).
 	badgeManual = "manual"
@@ -50,6 +54,11 @@ const (
 	reasonExtraNotApplied = "extra_update_not_applied"
 	reasonExtraPending    = "extra_update_pending"
 	reasonExtraUnknown    = "extra_update_unknown"
+	// reasonExtraRefused is a refused updater of the last run that the operator
+	// can act on (needs-you) or an information line once nothing is pending.
+	// reasonExtraBlocked is a refusal the operator cannot act on (Blocked list).
+	reasonExtraRefused = "extra_refused"
+	reasonExtraBlocked = "extra_blocked"
 )
 
 // patchBadgeReasonCodes lists every code computePatchBadge can raise.
@@ -57,7 +66,7 @@ var patchBadgeReasonCodes = []string{
 	reasonAutoPatchOff, reasonPatchingDisabled, reasonAgentPatchingOff, reasonCannotPatchHost,
 	reasonHeldPackages, reasonRebootClassHeld, reasonHoldEnforcementBroke, reasonManualApproval,
 	reasonLastRunFailed, reasonManualReboot,
-	reasonExtraNotApplied, reasonExtraPending, reasonExtraUnknown,
+	reasonExtraNotApplied, reasonExtraPending, reasonExtraUnknown, reasonExtraRefused, reasonExtraBlocked,
 }
 
 const (
@@ -108,12 +117,14 @@ type patchBadgeReason struct {
 // patchBadgeExplanation is the four-line explanation: Automatic patching,
 // Reboot, Needs you (summary plus action items) and As of, plus information
 // items and optional notes. NeedsYou holds action items only; Info holds the
-// neutral ones (EXTRA-UPD-001 FR-079).
+// neutral ones (EXTRA-UPD-001 FR-079); Blocked holds the refusals the operator
+// cannot act on and is always present, possibly empty (DIETPI-PATH-001).
 type patchBadgeExplanation struct {
 	Automatic       string             `json:"automatic"`
 	Reboot          string             `json:"reboot"`
 	NeedsYou        []patchBadgeReason `json:"needs_you"`
 	NeedsYouSummary string             `json:"needs_you_summary"`
+	Blocked         []patchBadgeReason `json:"blocked"`
 	Info            []patchBadgeReason `json:"info"`
 	AsOf            string             `json:"as_of"`
 	Notes           []string           `json:"notes"`
@@ -249,9 +260,14 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 			raise(true, reasonManualApproval, text, "Start the release upgrade by hand; rIOt never starts it.")
 		}
 	}
+	// Refusals of the last run (DIETPI-PATH-001). A failed run whose only cause is
+	// a refusal (a result of a worker older than the fix) is classified here and
+	// raises no NY-9 below.
+	ref := parseRefusals(in.LastRun)
+
 	// NY-9: latest finished run failed. A failure with nothing waiting is a fact
 	// about the past: it stays visible as information and says so.
-	if r := in.LastRun; r != nil && (r.Status == string(models.CommandFailed) || r.Status == string(models.CommandTimedOut)) {
+	if r := in.LastRun; r != nil && !ref.Sole && (r.Status == string(models.CommandFailed) || r.Status == string(models.CommandTimedOut)) {
 		outcome := "failed"
 		if r.Status == string(models.CommandTimedOut) {
 			outcome = "timed out"
@@ -275,12 +291,46 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 			Action: manualRebootAction(allowReboot),
 		})
 	}
+	// Refused updaters (FR-015, FR-017). One item per refused updater that is
+	// still pending and wanted: Blocked when the operator cannot act, an action
+	// item when only the operator can. A refusal whose updater is no longer
+	// pending is one information line.
+	blocked := []patchBadgeReason{}
+	refused := map[string]bool{}
+	for _, rf := range ref.Refusals {
+		var entry *models.ExtraUpdater
+		for i := range extras {
+			if extras[i].ID == rf.Updater {
+				entry = &extras[i]
+			}
+		}
+		if entry == nil || refused[rf.Updater] {
+			continue
+		}
+		label := extraLabel(rf.Updater)
+		switch {
+		case entry.Pending() && entry.Enabled():
+			refused[rf.Updater] = true
+			text, action := refusalText(label, rf.Reason, rf.Detail)
+			if refusalClassOf(rf.Reason, rf.Detail) == refusalAction {
+				actions = append(actions, patchBadgeReason{Code: reasonExtraRefused, Text: text, Action: action, Updater: rf.Updater})
+			} else {
+				blocked = append(blocked, patchBadgeReason{Code: reasonExtraBlocked, Text: text, Action: action, Updater: rf.Updater})
+			}
+		case !entry.Pending():
+			refused[rf.Updater] = true
+			infos = append(infos, patchBadgeReason{Code: reasonExtraRefused, Text: refusalInfoText(label, rf.Reason, rf.Detail), Action: "Nothing to do.", Updater: rf.Updater})
+		}
+	}
 	// Extra updaters (FR-051, FR-052, FR-071): one item per updater entry.
 	for _, e := range extras {
 		switch {
 		case e.Pending() && !e.Enabled():
 			text, action := extraNotAppliedText(e)
 			actions = append(actions, patchBadgeReason{Code: reasonExtraNotApplied, Text: text, Action: action, Updater: e.ID})
+		case e.Pending() && refused[e.ID]:
+			// The refusal item above already says why it is not applied; the
+			// "will be applied automatically" line would contradict it.
 		case e.Pending():
 			text, action := extraPendingText(e, autoPatchSetUp, mode)
 			infos = append(infos, patchBadgeReason{Code: reasonExtraPending, Text: text, Action: action, Updater: e.ID})
@@ -290,7 +340,7 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 		}
 	}
 
-	b := patchBadge{Explanation: patchBadgeExplanation{NeedsYou: actions, Info: infos, Notes: []string{}}}
+	b := patchBadge{Explanation: patchBadgeExplanation{NeedsYou: actions, Blocked: blocked, Info: infos, Notes: []string{}}}
 	if b.Explanation.NeedsYou == nil {
 		b.Explanation.NeedsYou = []patchBadgeReason{}
 	}
@@ -309,6 +359,8 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	switch {
 	case len(actions) > 0:
 		b.Kind, b.Label = badgeNeedsYou, "Needs you"
+	case len(blocked) > 0:
+		b.Kind, b.Label = badgeBlocked, "Blocked"
 	case !autoPatchSetUp:
 		b.Kind, b.Label = badgeManual, "Manual"
 	case !autoCovers:

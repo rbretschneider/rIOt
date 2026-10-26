@@ -275,7 +275,7 @@ func TestDietPiDetect_EU_AC006_NeverUpToDateWithoutEvidence(t *testing.T) {
 		}
 	})
 	t.Run("[AC-006] an unreadable update flag is detection_failed, never up to date", func(t *testing.T) {
-		h := dietpiHost(t, "10", "8", "2").mkdir("run/dietpi/.update_available")
+		h := dietpiHost(t, "10", "8", "2").write("run/dietpi/.update_available", strings.Repeat("9", MaxReadBytes+1))
 		d := NewDietPi()
 		d.Evidence = func(FS) bool { return true }
 		got, _ := detectWith(t, d, h.fs())
@@ -539,9 +539,29 @@ func TestDietPiApply_EU_SEC004_RequiredRootsFollowVersion(t *testing.T) {
 			}
 		})
 	}
-	t.Run("[SEC-004] the trust roots cover the DietPi tree, config, flags and /var/tmp/dietpi", func(t *testing.T) {
-		if strings.Join(spec.TrustRoots, ",") != "/boot/dietpi,/boot/dietpi.txt,/run/dietpi,/var/tmp/dietpi" {
-			t.Errorf("trust roots = %v", spec.TrustRoots)
+	t.Run("[DP-AC001] the tree roots are only the DietPi code and its settings", func(t *testing.T) {
+		if strings.Join(spec.TrustRoots, ",") != "/boot/dietpi,/boot/dietpi.txt" {
+			t.Errorf("trust roots = %v, want /boot/dietpi and /boot/dietpi.txt only (no /run/dietpi, no /var/tmp/dietpi tree)", spec.TrustRoots)
+		}
+	})
+	t.Run("[DP-AC003] the exact roots are the three entries root interprets", func(t *testing.T) {
+		want := []ExactRoot{
+			{"/var/tmp/dietpi", ExactDir},
+			{"/var/tmp/dietpi/logs", ExactDir},
+			{"/var/tmp/dietpi/dietpi-update_reinstalls", ExactFile},
+		}
+		if len(spec.ExactRoots) != len(want) {
+			t.Fatalf("exact roots = %v, want %v", spec.ExactRoots, want)
+		}
+		for i := range want {
+			if spec.ExactRoots[i] != want[i] {
+				t.Errorf("exact root %d = %v, want %v", i, spec.ExactRoots[i], want[i])
+			}
+		}
+	})
+	t.Run("[DP-AC007] DietPi asks the worker to reconcile the host flags", func(t *testing.T) {
+		if !spec.ReconcileFlags {
+			t.Error("ReconcileFlags must be set for DietPi")
 		}
 	})
 }

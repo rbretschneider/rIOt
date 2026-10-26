@@ -275,7 +275,7 @@ func aptWordsOf(r commandExecResult) string {
 // a version 1 request, where the worker recorded nothing about updaters
 // (AD-010). Status is re-read after the run so a skipped update shows what is
 // still pending.
-func (a *Agent) applyExtraV1Lines(ctx context.Context, plan *extraPlan, r commandExecResult) commandExecResult {
+func (a *Agent) applyExtraV1Lines(ctx context.Context, commandID string, plan *extraPlan, r commandExecResult) commandExecResult {
 	if plan == nil || plan.sendsV2() || r.Detached || r.Step == models.StepPrecheck {
 		return r
 	}
@@ -285,7 +285,6 @@ func (a *Agent) applyExtraV1Lines(ctx context.Context, plan *extraPlan, r comman
 		fresh[e.ID] = e
 	}
 	var words, details []string
-	failing := false
 	for _, p := range plan.present {
 		e := p.entry
 		if now, ok := fresh[e.ID]; ok {
@@ -305,9 +304,11 @@ func (a *Agent) applyExtraV1Lines(ctx context.Context, plan *extraPlan, r comman
 			reason = maintenance.SkipNothingPending
 		default:
 			// Enabled and pending, but the server did not extend this run's budget,
-			// so the worker was never asked (AF-7).
+			// so the worker was never asked (AF-7). Nothing started, so the run
+			// stays successful and the refusal is reported as an event
+			// (DIETPI-PATH-001 FR-012, FR-014).
 			reason = maintenance.SkipInsufficientTime
-			failing = true
+			a.extraRefusalEvent(commandID, e.ID, reason)
 		}
 		outcome = "skipped (" + reason + ")"
 		words = append(words, e.ID+": "+outcome)
@@ -329,11 +330,6 @@ func (a *Agent) applyExtraV1Lines(ctx context.Context, plan *extraPlan, r comman
 		msg += "\n" + r.Message
 	}
 	r.Message = msg + "\n" + strings.Join(details, "\n")
-	if failing && aptOK {
-		r.Status = models.ResultStatusError
-		code := 1
-		r.ExitCode = &code
-	}
 	return r
 }
 
@@ -368,6 +364,12 @@ func extraStepName(id string, outcome string) string {
 // cannot be written, nothing is sent.
 func (a *Agent) reportExtraProgress(cr *cmdRun, commandID string, rec maintenance.Record) {
 	for _, u := range rec.ExtraUpdaters {
+		if u.Refused() {
+			// A refusal never started, so there is no start event and no step:
+			// one warning end event carries the reason (FR-014).
+			a.extraRefusalEvent(commandID, u.ID, u.Reason)
+			continue
+		}
 		if u.StartedAt == nil && u.Outcome != maintenance.UpdaterRunning {
 			continue
 		}
@@ -376,6 +378,35 @@ func (a *Agent) reportExtraProgress(cr *cmdRun, commandID string, rec maintenanc
 			a.extraEvent(cr, commandID, u.ID, "end", u.Outcome)
 		}
 	}
+}
+
+// extraRefusalEvent sends the one warning extra_updater_finished event of an
+// updater the step refused to start. It shares the durable "<id>:end" marker of
+// the normal end event, so it is sent at most once per command and updater,
+// across restarts. When the marker cannot be written nothing is sent.
+func (a *Agent) extraRefusalEvent(commandID, id, reason string) {
+	if a.inflight == nil {
+		return
+	}
+	added, err := a.inflight.AddExtraEvent(commandID, id+":end")
+	if err != nil {
+		slog.Warn("extra updater: event marker not durable; event not sent", "command_id", commandID, "updater", id, "error", err)
+		return
+	}
+	if !added {
+		return
+	}
+	evt := &models.AgentEvent{
+		Type: models.EventExtraUpdaterFinished, Severity: models.SeverityWarning,
+		Message:   fmt.Sprintf("%s update skipped: %s", id, reason),
+		CommandID: commandID, Updater: id, Outcome: maintenance.UpdaterSkipped, Reason: reason,
+	}
+	slog.Warn("extra updater step refused", "command_id", commandID, "updater", id, "reason", reason)
+	a.notifyEvent(func(ctx context.Context) {
+		if err := a.tr.ReportEvent(ctx, evt); err != nil {
+			slog.Warn("extra updater: event not delivered", "type", evt.Type, "updater", id, "error", err)
+		}
+	})
 }
 
 func (a *Agent) extraEvent(cr *cmdRun, commandID, id, kind, outcome string) {

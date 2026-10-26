@@ -195,7 +195,7 @@ func TestExtras_EU_AC022_SkipReasonsKeepSuccess(t *testing.T) {
 	}
 	t.Run("[AC-022] an up-to-date updater is skipped as nothing_pending", func(t *testing.T) {
 		g := newExtraRig(t)
-		g.w.Extras.FS = extraupd.DirFS(g.root)
+		g.w.Extras.FS = extraupd.DirFSOwnedByCaller(g.root)
 		// Row D3 is unreachable in production, so drive the worker with a fixed
 		// detector result by pointing it at a host whose flag is stale and
 		// whose check evidence is faked through a wrapper updater.
@@ -290,7 +290,7 @@ func TestExtras_EU_AC024_InsufficientTimeFails(t *testing.T) {
 	g := newExtraRig(t)
 	g.runner.after[upgradeKey] = func() { g.clock.Advance(35 * time.Minute) }
 	rec, err := g.run(v2Request("full"))
-	if err == nil || rec.Outcome != "error" || g.stepCalls() != 0 {
+	if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 		t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 	}
 	if r := g.result(rec); r.Outcome != UpdaterSkipped || r.Reason != SkipInsufficientTime {
@@ -338,7 +338,7 @@ func TestExtras_EU_AC026_LockWaitHeldUnknown(t *testing.T) {
 		waitStart := g.clock.Now()
 		rec, err := g.run(v2Request("full"))
 		waited := g.clock.Now().Sub(waitStart)
-		if err == nil || rec.Outcome != "error" || g.stepCalls() != 0 {
+		if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 			t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 		}
 		if r := g.result(rec); r.Reason != SkipDpkgLocked || !strings.Contains(r.Note, "4242") {
@@ -348,11 +348,11 @@ func TestExtras_EU_AC026_LockWaitHeldUnknown(t *testing.T) {
 			t.Errorf("waited %s, want at most %s", waited, ExtraLockWait)
 		}
 	})
-	t.Run("[AC-026] an unknown lock state also ends as dpkg_locked, failing the command", func(t *testing.T) {
+	t.Run("[AC-026] an unknown lock state also ends as dpkg_locked, leaving the run successful", func(t *testing.T) {
 		g := newExtraRig(t)
 		g.lock = func() LockState { return LockState{Kind: LockUnknown, Detail: "cannot open lock file"} }
 		rec, err := g.run(v2Request("full"))
-		if err == nil || g.stepCalls() != 0 {
+		if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 			t.Fatalf("%+v %v", rec, err)
 		}
 		if r := g.result(rec); r.Reason != SkipDpkgLocked || !strings.Contains(r.Note, "cannot open") {
@@ -589,11 +589,11 @@ func (b *bigAptRunner) Run(ctx context.Context, p string, a ...string) (CommandR
 
 func TestExtras_EU_SEC001_LauncherErrMapsToSkip(t *testing.T) {
 	for _, reason := range []string{SkipTmpNotPrivate, SkipMountPropagationUnver} {
-		t.Run("[SEC-001] a launcher refusal "+reason+" is a failing skip and DietPi never started", func(t *testing.T) {
+		t.Run("[SEC-001] a launcher refusal "+reason+" is a skip that keeps the run successful and DietPi never started", func(t *testing.T) {
 			g := newExtraRig(t)
 			g.step.out = StepOutcome{Skip: reason, SkipDetail: "mount table check failed"}
 			rec, err := g.run(v2Request("full"))
-			if err == nil || rec.Outcome != "error" {
+			if err != nil || rec.Outcome != "success" || rec.ExitCode != 0 {
 				t.Fatalf("%+v %v", rec, err)
 			}
 			r := g.result(rec)
@@ -623,7 +623,7 @@ func TestExtras_EU_SEC001_BusyAfterWaitSkips(t *testing.T) {
 	g.busy = func() (bool, string) { return true, "pid 812 runs /boot/dietpi/dietpi-update 2" }
 	g.lock = func() LockState { return LockState{Kind: LockHeld, Detail: "held"} }
 	rec, err := g.run(v2Request("full"))
-	if err == nil || g.stepCalls() != 0 {
+	if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 		t.Fatalf("%+v %v", rec, err)
 	}
 	if r := g.result(rec); r.Reason != SkipBusy || !strings.Contains(r.Note, "812") {
@@ -651,7 +651,7 @@ func TestExtras_EU_SEC002_Effective35minRefused(t *testing.T) {
 			g := newExtraRig(t)
 			g.unit = unit
 			rec, err := g.run(v2Request("full"))
-			if err == nil || g.stepCalls() != 0 {
+			if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 				t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 			}
 			if r := g.result(rec); r.Reason != SkipInsufficientTime {
@@ -688,7 +688,7 @@ func TestExtras_EU_OPS001_UnitSandboxRefused(t *testing.T) {
 			g := newExtraRig(t)
 			g.unit = unit
 			rec, err := g.run(v2Request("full"))
-			if err == nil || g.stepCalls() != 0 {
+			if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 				t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 			}
 			if r := g.result(rec); r.Reason != SkipMountPropagationUnver {
@@ -711,7 +711,7 @@ func TestExtras_EU_SEC003_NonMichaIngOwnerRefused(t *testing.T) {
 			g := newExtraRig(t)
 			writeFixture(t, g.root, "boot/dietpi.txt", body)
 			rec, err := g.run(v2Request("full"))
-			if err == nil || g.stepCalls() != 0 {
+			if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 				t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 			}
 			r := g.result(rec)
@@ -753,7 +753,7 @@ func TestExtras_EU_SEC004_ForgedFlagNotBelieved(t *testing.T) {
 	g := newExtraRig(t)
 	g.trustErr = errors.New("/run/dietpi is owned by uid 1000")
 	rec, err := g.run(v2Request("full"))
-	if err == nil || g.stepCalls() != 0 {
+	if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 {
 		t.Fatalf("%+v %v steps=%d", rec, err, g.stepCalls())
 	}
 	if r := g.result(rec); r.Reason != SkipUnsafePath || !strings.Contains(r.Note, "uid 1000") {
@@ -783,7 +783,7 @@ func TestExtras_EU_SEC006_MinInterval(t *testing.T) {
 		g := newExtraRig(t)
 		g.last, g.hasLast = g.clock.Now().Add(-30*time.Minute), true
 		rec, err := g.run(v2Request("full"))
-		if err == nil || g.stepCalls() != 0 || g.result(rec).Reason != SkipMinInterval {
+		if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 || g.result(rec).Reason != SkipMinInterval {
 			t.Fatalf("%+v %v", rec, err)
 		}
 	})
@@ -805,7 +805,7 @@ func TestExtras_EU_SEC006_MinInterval(t *testing.T) {
 		g := newExtraRig(t)
 		g.lastErr = errors.New("record unreadable")
 		rec, err := g.run(v2Request("full"))
-		if err == nil || g.stepCalls() != 0 || g.result(rec).Reason != SkipMinInterval {
+		if err != nil || rec.Outcome != "success" || g.stepCalls() != 0 || g.result(rec).Reason != SkipMinInterval {
 			t.Fatalf("%+v %v", rec, err)
 		}
 	})

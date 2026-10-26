@@ -44,10 +44,15 @@ type ApplySpec struct {
 	LogPath string
 	Label   string
 
-	// TrustRoots are paths the root worker walks before it believes any
-	// on-disk fact and before it runs the step. A root is skipped when it does
-	// not exist unless RequiredRoots names it.
-	TrustRoots    []string
+	// TrustRoots are paths the root worker walks as trees before it believes
+	// any on-disk fact and before it runs the step: the code the updater
+	// executes and the settings it reads. A root is skipped when it does not
+	// exist unless RequiredRoots names it.
+	TrustRoots []string
+	// ExactRoots are paths checked by lstat alone, with nothing below them
+	// walked: the few entries root interprets inside a directory whose other
+	// contents are data (DIETPI-PATH-001 AD-1).
+	ExactRoots    []ExactRoot
 	RequiredRoots func(installed models.ExtraUpdater) []string
 
 	// BusyMatch reports whether a process command line (its first two
@@ -60,6 +65,27 @@ type ApplySpec struct {
 	// PrivateTmp makes the worker start the step through the launcher, which
 	// gives it a private /tmp and leaves every other mount shared (AD-007).
 	PrivateTmp bool
+
+	// ReconcileFlags makes the worker remove the host's update flags after a
+	// successful step, mirroring what the updater itself removes when it
+	// finishes while its own writes stay private to the step (AD-3).
+	ReconcileFlags bool
+}
+
+// ExactKind is the kind an ExactRoot must have.
+type ExactKind int
+
+const (
+	// ExactDir is a directory.
+	ExactDir ExactKind = iota
+	// ExactFile is a regular file with exactly one link.
+	ExactFile
+)
+
+// ExactRoot is one path the trust walk lstat()s and nothing more.
+type ExactRoot struct {
+	Path string
+	Kind ExactKind
 }
 
 // Updater is the contract every extra updater fulfils (FR-001).
