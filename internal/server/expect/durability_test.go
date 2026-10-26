@@ -285,8 +285,10 @@ func TestEX_LateResultAfterTimeoutDoesNotReopen(t *testing.T) {
 
 	h.succeed(c) // the late agent result: timed_out -> succeeded
 	h.tr.CommandChanged(stale)
-	h.at("10:24:30")
-	off := h.deviceOffline("vermont")
+	late := h.command(c.ID)
+	late.WindowClosedAt = nil // a row read before the close became visible
+	h.tr.CommandChanged(late)
+	off := h.deviceOffline("vermont") // before any tick could finish a reopened window
 
 	assert.Equal(t, "succeeded", h.command(c.ID).Status, "the late result was accepted")
 	assert.Zero(t, h.tr.Stats().Windows, "a processed window is never reopened by a late result")

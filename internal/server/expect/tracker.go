@@ -1058,6 +1058,10 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 	return acts
 }
 
+// StartPublisher launches the publisher workers (Run does this too). Tests
+// that drive Tick themselves start only the workers.
+func (t *Tracker) StartPublisher(ctx context.Context) { t.pub.start(ctx) }
+
 // Run starts the publisher workers, the reconcile goroutine and the one-second
 // evaluation loop. It returns when ctx is cancelled.
 func (t *Tracker) Run(ctx context.Context) {

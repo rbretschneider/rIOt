@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
+	"github.com/DesyncTheThird/rIOt/internal/server/db"
 )
 
 // Escalator turns an escalation request into an event and delivers its push.
@@ -286,3 +287,11 @@ func (t *Tracker) runningContainers(ctx context.Context, deviceID string) (at ti
 	}
 	return ts, running, true, nil
 }
+
+// The tracker's collaborators are satisfied by the repositories as they are.
+var (
+	_ DeviceLister    = db.DeviceRepository(nil)
+	_ PolicyLister    = db.AutoUpdateRepository(nil)
+	_ TelemetryReader = db.TelemetryRepository(nil)
+	_ CommandReader   = db.CommandRepository(nil)
+)

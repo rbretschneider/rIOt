@@ -110,7 +110,9 @@ func (f *fakeEscalator) PrepareEscalation(ctx context.Context, req models.Escala
 
 func (f *fakeEscalator) PublishEscalation(ctx context.Context, evt models.Event, rule *models.AlertRule, host string) error {
 	if f.block != nil {
-		return f.block(ctx)
+		if err := f.block(ctx); err != nil {
+			return err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
