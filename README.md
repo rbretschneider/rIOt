@@ -58,6 +58,7 @@
 - **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
 - **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is truthful: a shutdown that sudo refuses reports `failed`. On a Linux host set up by the installer, remote shutdown is opt-in (SHUTDOWN-SUDO-001). The installer adds the one `systemctl poweroff` sudo rule only when you answer yes to "Allow remote shutdown from dashboard?" or when `commands.allow_shutdown` is `true` and you re-run `install.sh` as root ([how to enable it](#shutdown-on-linux-and-the-sudo-rule)). Upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
+- **Expected activity** — an update, restart, stack action, patch, reboot, shutdown or agent update that you or a schedule starts no longer raises a "container died" or "device offline" alert. rIOt records the disruption as an `info` event that names the action and who started it, shows what each device is doing on the Devices page, and raises one alert that names the action only when something is still down afterwards. Every window is bounded, the powered-off state after a shutdown is quiet, and no agent change is needed ([details](#expected-activity))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Dashboard navigation
@@ -717,6 +718,10 @@ Monitor service, network, process, USB, and UPS state changes:
 - **Nginx error rates** — alert when HTTP 5xx or 4xx error counts exceed a threshold per telemetry interval (requires `webservers` collector with `access_log` configured — see [Nginx Access Log Monitoring](#nginx-access-log-monitoring))
 - **Auth failure** — alert when any SSH, sudo, console, or su authentication failure is observed in the current telemetry interval (Linux only; matched against trusted journald sources — see [Auth Failure Alerting](#auth-failure-alerting))
 
+### Expected Activity
+
+Container deaths and device offline transitions that an action started from rIOt causes are recorded as `info` events and do not alert. See [Expected Activity](#expected-activity).
+
 ### Alert Templates
 
 Pre-built templates are available in Administration > Alert Rules > "Create from Template" for common scenarios. Templates pre-fill the metric, operator, threshold, and severity — just add a target name if needed.
@@ -732,6 +737,167 @@ From the device detail view, click the alert icon next to any service, process, 
 ### Event Acknowledgement
 
 The Alerts tab in the navigation bar shows a red badge with the count of unacknowledged warning/critical events. Events can be acknowledged individually or in bulk from the Alerts page. The badge updates in real-time via WebSocket.
+
+---
+
+## Expected Activity
+
+When you, or one of your schedules, start an action from rIOt, the action disrupts things on purpose. A container update kills and recreates a container. A reboot takes a device offline. rIOt knows about these actions, so it does not alert on the disruption they cause. It records the disruption instead, names the action, and alerts only when something is still down afterwards.
+
+The server does all of this. No agent upgrade, no agent configuration change and no `install.sh` re-run is needed.
+
+### How it works
+
+Every rIOt command is a record (see [Command Lifecycle](#command-lifecycle)). Twelve actions open an **expected-activity window** for their command. The window opens when the server dispatches the command to the agent. A command that is still queued opens no window and suppresses nothing. A window applies to user commands and to scheduled commands alike: the auto-update policies and the automated patch run.
+
+While a window covers an event, rIOt:
+
+- stores the event as an `info` event of its usual type (`container_died` or `device_offline`), linked to the command, instead of a `warning`;
+- sends no notification on any channel;
+- names the action and who started it in the message.
+
+Examples:
+
+- `Container plex died during Docker update by ryan (expected)`
+- `Container plex died during Docker update by auto-update policy for plex (expected)`
+- `Container sonarr died during Docker stack redeploy of media by ryan (expected)`
+- `Device vermont went offline during Reboot by ryan (expected, back by 14:32)`
+- `Device vermont came online after Reboot by ryan (offline 1m42s)`
+
+Nothing is dropped. Every suppressed event stays in the event list. The actor phrase is `by <name>` for a command you started, `by auto-update policy for <target>` for an auto-update policy, and `by the auto-patch schedule` for the automated patch run.
+
+### Which actions open a window
+
+| Action | What the window suppresses | How long it stays open after the command ends | Longest it can last, counted from dispatch |
+|---|---|---|---|
+| `reboot` | `device_offline` for the device, and `container_died` for every container on it | Until the device has been back online for 3 minutes after an observed return, and at most 15 minutes after success | 35 minutes (20-minute execution deadline plus 15) |
+| `os_update` (patch, with or without a reboot, manual or automatic) | The same as `reboot` | Until the device has been online for 3 minutes, and at most 15 minutes after success. A patch that does not reboot closes 3 minutes after success | 55 minutes (40 plus 15) |
+| `shutdown` | The same as `reboot` | After success, the first offline moves the device to the [powered-off state](#powered-off-after-a-shutdown). If the device never goes offline, the window closes 15 minutes after success | 35 minutes (20 plus 15) |
+| `agent_update` (one device, or the fleet **Update agents** button) | `device_offline` for the device only. A container death during an agent update still alerts | Until the device has been back online for 1 minute after an observed return, and at most 10 minutes after success | 25 minutes (15 plus 10) |
+| `docker_update`, `docker_bulk_update`, `docker_restart`, `docker_stack_redeploy`, `docker_stack_restart`, `docker_stack_up` | `container_died` for the containers the command targets | 2 minutes after the command ends, whatever the outcome | The execution deadline plus 2 minutes: 37 minutes for a single update or a stack action, 17 for a restart, up to 6 hours 2 minutes for a bulk update |
+| `docker_stop`, `docker_stack_down` | `container_died` for the containers the command targets | 2 minutes after the command ends | The execution deadline plus 2 minutes: 17 minutes for a stop, 37 for a stack down |
+
+Notes on the table:
+
+- A container is a target when its name matches one of the command's container targets, or when it belongs to a Compose project that the command targets.
+- "An observed return" for `reboot` and `agent_update` means the agent registered again, or the device went from offline to online, after the command finished. A device that never dropped off does not close the window early. The window then closes at its bound.
+- A window never outlives its longest time, even when no heartbeat, event or result ever arrives. After that, normal alerting resumes on its own.
+- Several windows can be open on one device. An event is suppressed when at least one open window covers it. The event links to the command that holds the container's own target when there is one.
+- When the command fails, times out or is cancelled, the window stops suppressing `device_offline` at once. It still covers container deaths for 2 minutes, so that a rollback or a Docker restart can be seen.
+- Actions outside the table open no window, so their disruption alerts as before: `docker_start`, `docker_stack_pull`, `docker_remove_items`, `docker_inventory_refresh`, `docker_check_updates`, `enable_auto_updates`, `fetch_logs`, `run_device_probe` and `agent_uninstall`.
+
+### What always alerts
+
+- **Out-of-memory kills.** `container_oom` is never suppressed. When a window covers the container, the alert names the action that is in progress.
+- **Containers the command does not target.** A container-class window covers only its own targets. An unrelated container that dies during an update alerts as it does without a window. This replaces the earlier per-device "update in progress" counter, which downgraded every death on the device.
+- **Containers excluded from a rule.** A container that you excluded from the `container_died` rule stays excluded, inside or outside a window.
+- **Anything after the window closes.** A death or an offline transition after the window ends alerts normally.
+- **Failures after the action.** See the next section.
+
+### Escalation: one alert that names the action
+
+When a window ends and something is still down, rIOt raises one **escalation**. It goes through your existing alert rules: `device_offline` for a device, `container_died` for a container. The rule's severity, scope and notify setting apply. When no enabled rule matches, rIOt stores the escalation as a `warning` event and sends no notification.
+
+| Situation | Escalation |
+|---|---|
+| A host or agent command ends `failed` or `timed_out` while the device is offline | One escalation within a minute, for example `hawaii is offline: Reboot by ryan timed out (command 1a2b3c4d)` |
+| A `reboot`, `os_update` or `agent_update` succeeded and the device is not back at the return bound (15 minutes for a host, 10 for an agent) | One escalation, for example `vermont still offline 15m after Reboot by ryan (command 1a2b3c4d)` |
+| A host or agent command is still active at its longest time and the device is offline | One escalation that says the action sent no result |
+| When a window closes, a container whose death it suppressed has not been seen running again | One escalation per container, for example `Container sonarr still not running 2m after Docker stack redeploy by ryan (succeeded, command 9f8e7d6c)` |
+
+The rules for escalations:
+
+- A container counts as running again when rIOt sees a start event for it, or a later telemetry snapshot that lists it as running. The check does not apply to `docker_stop`, `docker_stack_down` and `shutdown`, because those leave things down on purpose.
+- When the device is offline as the window closes, the container check waits. It runs 3 minutes after the device returns. If the device does not return within 24 hours, rIOt skips the check and stores one warning event that says so.
+- Each command and device, and each command and container, produces at most one escalation, including across server restarts. An escalation ignores the cooldown of the rule and does not start one.
+- One command raises at most 20 container escalations. After that, one summary escalation gives the number of further containers that are still not running.
+- Escalation notifications are capped at 5 per device per rolling hour. The events are always stored. Notifications beyond the cap are held, and one summary notification follows: `<N> escalation notifications for <host> were held since <HH:MM>; see Alerts`. That is at most 6 pushes per device per hour. A server restart resets the count.
+- **Escalation messages contain the operator's display name** (`by <name>`), which can be an SSO full name or an email address. Notification channels forward the message text, including to third-party services such as ntfy, Pushover, Telegram, Discord and Slack. Keep that in mind when you route the `container_died` and `device_offline` rules.
+
+### Powered off after a shutdown
+
+When a `shutdown` command succeeds and the device then goes offline, the device enters the **powered-off state**. rIOt stores an `info` event, `Device <host> powered off by ryan at 14:02`, and raises no `device_offline` alert or escalation for it. The state has no time limit and no reminder. A device that you shut down on purpose stays quiet until it comes back.
+
+- The state ends on any sign of life: a registration, or a fresh heartbeat. The online event then says `came online after Shutdown by ryan (powered off 72h)`.
+- A powered-off row never hides a later outage. If the device returns and then goes offline again, that transition alerts normally.
+- A `shutdown` that ends `failed` or `timed_out` does not create the state. A later offline alerts normally.
+- rIOt keeps at most one powered-off record per device. The record survives a server restart.
+
+### What you see on the dashboard
+
+The **Devices** page (`/`) shows what each device is doing, taken from the server. A second browser, a reload, and an action started by a schedule all show the same label. An open page changes within 5 seconds, without a reload.
+
+| Situation | Label |
+|---|---|
+| A host or agent command is queued | `<Action> queued`, for example `Reboot queued` |
+| `reboot` running | `Rebooting` |
+| `reboot` succeeded, device returning | `Rebooting, back by <time>` |
+| `shutdown` running | `Shutting down` |
+| Powered-off state | `Powered off by <name> at <time>` |
+| `os_update` running | `Patching`, with the percentage when the agent reports one |
+| `os_update` succeeded, device offline | `Rebooting after patch, back by <time>` |
+| `os_update` succeeded, device online | `Patched, settling until <time>` |
+| `agent_update` running | `Updating agent 2.77.0 → 2.78.0`, or `Updating agent` when a version is unknown |
+| `agent_update` succeeded | `Restarting agent, back by <time>` |
+| One Docker action open | `Docker: updating plex`, `Docker: recreating stack media` |
+| Two or more Docker actions open | `Docker: <N> actions in progress` |
+| Escalated device | `<Action> failed: offline` or `Not back <bound> after <Action>`, in failure styling |
+
+Beside the label, the page shows who started the action and when. The **device page** header shows the same label, with a link to the command.
+
+- The label appears under the hostname, and the status dot stays visible. A device that is offline inside a window shows a hollow dot titled `Offline (expected)`.
+- The **Offline** count excludes devices that are offline inside a window and devices in the powered-off state. A separate **Expected offline** card counts them. The card appears only when its count is above zero. An escalated device counts as offline.
+- The failure label stays until the device next reports online, or for 24 hours after the escalation, whichever comes first.
+- When a host window and a Docker window are open together, the host label shows.
+- The label `Rebooting (waiting for dpkg lock)` appears only when the agent reports that step. Current agents do not report it yet, so a reboot that waits for the lock shows `Rebooting`.
+- If `GET /api/v1/activity` fails, the page shows the plain status, as before.
+
+### Server restarts and the restart grace
+
+The windows are rebuilt from the command records, so a server restart does not turn a suppressed event into an alert, lose an escalation that became due while the server was down, or send one twice. Escalations that fell due during the downtime fire on the first check after the grace period.
+
+For 2 minutes after the server starts, it moves no device from online to offline. Heartbeats paused while the server was down, and agents need time to reconnect. After the grace, a device whose last heartbeat is older than 45 seconds goes offline. The check runs every 30 seconds, so a dead device goes offline 45 to 75 seconds after its last heartbeat. A device that was already offline before the restart stays offline and raises no new event.
+
+A restart loop does not get an endless grace. Starts less than 2 minutes apart form a series, and the total period without offline detection is at most 4 minutes from the first start of the series. Each start that continues a series writes one server log warning, `restart grace shortened`. If the server cannot read or write the series record, it allows no grace.
+
+### Safety and bounds
+
+- **Fail open.** When the server cannot tell whether a window covers an event, it alerts as it did before this feature. That covers a window cache that did not load, a cache that is more than 90 seconds out of date, and a window evaluation loop that has not completed a cycle in 15 seconds.
+- **Cross-device isolation.** A window covers events on its own device only. An agent that names another device's command gets no suppression.
+- **Unbounded growth.** There is none. Escalations are at most 22 per command. Windows are cached at most 200 per device. Commands whose window is not yet processed are exempt from command retention and from the command storage budget, so a purge never removes a pending check. That set is bounded. Names in event messages are printable text of at most 128 bytes. Suppressed events are rate limited upstream, because the server admits one Docker event per container and action per minute per device.
+- **Logs.** A suppressed event writes no log line above debug level. An escalation writes one `info` line.
+
+### Known limits
+
+- **A real problem inside a host window stays hidden until the window ends.** A genuine outage or a genuine container crash on a device during a `reboot`, `os_update` or `shutdown` window raises only `info` events. The escalation follows when the window closes: up to 15 minutes after success, or within a minute of a failed or timed-out command.
+- **A container that dies inside a window and comes back raises nothing.** The `info` event is the only record. One that dies again after the window closes alerts normally.
+- **A failed command whose targets are healthy is not pushed.** It stays a `warning` event, as before.
+- **Work outside rIOt still alerts.** An `ssh` reboot, hardware work and unattended upgrades are not expected activity.
+- **An `os_update` that reboots more than about 105 seconds after its result can close the window first.** The later offline then alerts.
+- **A reboot that reports "initiated" but never happens** keeps container-death suppression until the 15-minute bound.
+- **A push can be lost.** If the server's notification queue is full, a push takes more than 30 seconds, or the server crashes right after it stores an escalation, that one notification is lost. The event is stored.
+- **A stuck notification backend** can occupy one of the two delivery workers. Further pushes queue, then drop with a server log warning. Events and checks are unaffected.
+- **A device's own agent can open, shape and close windows on its own device only.** It cannot affect any other device. Every window has the bounds above.
+- **A command record that is deleted by hand while its window is open** cannot raise an escalation. rIOt stores one warning event, `expect_backstop_skipped`, that says the checks were skipped.
+- **Tracking limit.** More than 200 open windows on one device are not all tracked. The extra ones suppress nothing, their checks are delayed, and rIOt stores a warning event about it at most once an hour per device.
+
+### Behaviour changes from earlier versions
+
+- A container that an update does not target now alerts when it dies during that update. The earlier per-device "update in progress" counter is removed.
+- A `docker_restart`, `docker_stop` and a stack action now suppress their targets' deaths. A `shutdown` and an `agent_update` now suppress `device_offline`.
+- A reboot that waits for the dpkg lock, and a patch that runs for 30 minutes before it reboots, no longer alert. The earlier rule covered only a reboot or patch created in the last 2 minutes.
+- A device with the status `warning`, for example a UPS on battery, now goes offline when its heartbeats stop. Before this change it never did.
+- A `warning` device that registers again raises no `came online` event, because it was not offline.
+- Offline detection waits 2 minutes after a server start, not 30 seconds.
+- The `came online` event after a window names the action, the actor and the time the device was offline.
+
+### Upgrade notes
+
+- **Server only.** Upgrade the server. Agents need no upgrade, no configuration change and no `install.sh` re-run. The feature works with every released agent version.
+- **Migration `000033_expected_activity`** runs automatically at server start. It adds two columns and two indexes to `commands`, a table of escalation markers (`command_escalations`) and a table for the powered-off state (`device_powered_off`). It marks commands that finished more than an hour before the upgrade as processed, so old commands cannot raise escalations.
+- **Rollback.** The down migration removes the new columns, indexes and tables. After a down and an up migration, the markers of commands that finished in the last hour are gone, so those commands can escalate a second time.
+- Nothing changes in your alert rules. The two existing rules, `device_offline` and `container_died`, carry the escalations.
+- Two new event types appear in the event list: `expect_backstop_skipped` (a check was skipped, with the reason) and `expect_notifications_held`.
 
 ---
 
@@ -1515,6 +1681,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. By default lists only devices with at least one pending update or a reboot requirement; add `?all=true` for one row per registered device. Each row also carries the optional fields `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot`, `updates_at` and `patch_badge` — see [Patch badge](#patch-badge). Every row also carries `lists_freshness` (`fresh`, `stale` or `unknown`; always present). `reboot_required` is true only when a reboot is required now, never for a pending kernel update — see [Manual patch and reboot](#manual-patch-and-reboot) |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents. The response adds `conflicts`, the number of devices skipped because a host command was already in flight |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices. The response adds `conflicts`, as for bulk-update |
+| `GET` | `/api/v1/activity` | What each device is doing right now, computed by the server from commands and device state. See [Activity endpoint](#activity-endpoint) |
 | `GET` | `/api/v1/fleet/heartbeats` | 60-minute heartbeat history for every device in one request (query: `window`, e.g. `?window=60m`); used by the fleet dashboard |
 | `GET` | `/api/v1/fleet/containers` | Flat list of all containers across the fleet with CPU, memory, restart count, update status, Compose stack name, and auto-update state (`auto_update_policy`: `target`, `enabled`, optional `covered_by`; omitted when policies cannot be loaded); used by the fleet dashboard leaderboard and the Containers table |
 | `GET` | `/api/v1/security/overview` | Security overview |
@@ -1537,6 +1704,83 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `/ws` | Live dashboard updates (admin auth). Message types are listed under [WebSocket messages](#websocket-messages) |
 | `/ws/agent` | Agent WebSocket: command delivery, command lifecycle reports, and the terminal relay |
 | `/ws/terminal/:deviceId/:containerId` | Browser-to-container terminal (admin auth) |
+
+### Activity endpoint
+
+`GET /api/v1/activity` returns what each device is doing right now, as the server computes it from the command records and the device state (see [Expected Activity](#expected-activity)). The dashboard uses it for the labels on the Devices page and the device page.
+
+- **Authentication:** an admin session (the dashboard cookie). A request without one gets `401`. A device key is not accepted.
+- **Request:** no parameters, no body.
+- **Rate limiting:** this endpoint has none of its own.
+- **Current state, not a delta.** The server answers from memory, so the call is cheap. A client that reconnects its WebSocket calls it again.
+
+**`200`** returns an object:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `generated_at` | RFC 3339 time | When the server built the answer |
+| `newest_agent_version` | string | The newest agent version the server knows. Empty when unknown |
+| `activities` | array | At most one entry per device that has an activity. `[]` when none. Never `null` |
+
+Each entry of `activities`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `device_id` | string | The device |
+| `kind` | string | `host`, `agent`, `docker`, `powered_off` or `escalated` |
+| `phase` | string | `queued`, `in_progress`, `return`, `settling`, `powered_off` or `escalated` |
+| `action` | string | The command's action, for example `reboot` |
+| `command_id` | string | The command that caused the activity |
+| `actor_phrase` | string | Who started it: `by ryan`, `by auto-update policy for plex` or `by the auto-patch schedule`. Printable text of at most 128 bytes per name |
+| `started_at` | RFC 3339 time | When the server dispatched the command, or created it while it is queued. For `powered_off`, when the shutdown succeeded |
+| `back_by` | RFC 3339 time or `null` | When the device is due back, in the return phase |
+| `waiting_dpkg_lock` | boolean | The command reports that it waits for the dpkg lock. Always `false` with current agents |
+| `progress` | integer or `null` | The command's reported progress, in percent |
+| `agent_from_version` | string | For `agent_update`, the agent version when the command was created |
+| `target` | string | For Docker actions, the container or stack name. Empty otherwise |
+| `docker_actions` | integer | The number of Docker actions open on the device |
+| `covers_offline` | boolean | `true` when the window now suppresses `device_offline` for this device |
+| `device_online` | boolean | The server's view of the device |
+| `escalation` | object or `null` | When escalated: `reason` (`failed`, `timed_out`, `no_result` or `not_back`), `bound` (for example `"15m"`) and `at` (RFC 3339 time) |
+| `powered_off_at` | RFC 3339 time or `null` | For the powered-off state, when the shutdown succeeded |
+
+**`503`** with `{"error":"activity unavailable","code":"activity_unavailable"}` when the server runs without the tracker. The dashboard then shows the plain status. When the tracker has not finished loading, the server answers `200` with the last activities it holds. The activity is for display. Alert decisions fail open on their own.
+
+Example request:
+
+```bash
+curl -s -b "riot_session=<session cookie>" https://riot.example.com/api/v1/activity
+```
+
+Example response:
+
+```json
+{
+  "generated_at": "2026-10-26T14:05:12Z",
+  "newest_agent_version": "2.78.0",
+  "activities": [
+    {
+      "device_id": "d3f1c2a4-0000-4000-8000-000000000001",
+      "kind": "host",
+      "phase": "return",
+      "action": "reboot",
+      "command_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "actor_phrase": "by ryan",
+      "started_at": "2026-10-26T14:02:00Z",
+      "back_by": "2026-10-26T14:17:30Z",
+      "waiting_dpkg_lock": false,
+      "progress": null,
+      "agent_from_version": "",
+      "target": "",
+      "docker_actions": 0,
+      "covers_offline": true,
+      "device_online": false,
+      "escalation": null,
+      "powered_off_at": null
+    }
+  ]
+}
+```
 
 ### Command endpoints
 
@@ -1704,6 +1948,7 @@ A `result` that repeats the outcome of an already-final command returns `200` wi
 | `command_update` | Once per accepted command state change | Replaces `command_result`. `data` holds `command_id`, `device_id`, `action`, `target_key`, `target_keys`, `status`, `step`, `progress`, `message`, `failure_step`, `origin`, and `updated_at`. Rejected and coalesced reports produce no message. The silent relabelling of pre-upgrade rows produces none either |
 | `telemetry` | Each accepted live snapshot | The envelope gains `collected_at` (the agent's collection time, never more than 5 minutes ahead of `received_at`, the same allowance as the ingest clamp) and `received_at` (the server's receive time) |
 | `heartbeat` | Each heartbeat | The envelope gains `received_at` |
+| `activity_update` | A device's activity appears, changes or ends | `{"type":"activity_update","device_id":"…","data":<activity>}`. `data` has the same shape as one entry of `GET /api/v1/activity`. `data` is an explicit `null` when the activity ends. The server sends it only on a change, so a dashboard that reconnects refetches `GET /api/v1/activity` |
 
 The dashboard discards a `telemetry` message whose `collected_at` is at or before the latest one it already applied for that device. It reads a device's last-seen time from `received_at`, never from the browser clock. The server stores every snapshot for history but does not replace a device's current state with an older one.
 
@@ -2173,13 +2418,13 @@ The terminal uses a WebSocket relay: the browser connects to the server, which p
 
 ### Real-time Container Events
 
-When Docker is available, the agent watches the Docker event stream and forwards container lifecycle events (start, stop, die, OOM, pause, unpause, create, destroy) to the server in real-time. These appear in the dashboard event feed and trigger alerts for OOM kills.
+When Docker is available, the agent watches the Docker event stream and forwards container lifecycle events (start, stop, die, OOM, pause, unpause, create, destroy) to the server in real-time. These appear in the dashboard event feed. Container deaths and OOM kills trigger alerts, except a death that an action you started is expected to cause (see [Expected Activity](#expected-activity)). An OOM kill always alerts.
 
 ---
 
 ## Command Lifecycle
 
-Every command that the dashboard sends to an agent has an ID and moves through a fixed set of states. The server enforces which moves are allowed. A late or duplicate report from an agent cannot change a finished command. The dashboard follows each command by ID, so it shows the real state and the current step instead of a guess from the HTTP round trip.
+Every command that the dashboard sends to an agent has an ID and moves through a fixed set of states. The server enforces which moves are allowed. A late or duplicate report from an agent cannot change a finished command. The dashboard follows each command by ID, so it shows the real state and the current step instead of a guess from the HTTP round trip. Twelve of the actions also open an [expected-activity window](#expected-activity) that stops their disruption from alerting.
 
 ### States and what the dashboard shows
 
