@@ -75,7 +75,15 @@ func (s *Server) setupRouter() *chi.Mux {
 		regCARepo = s.CARepo
 	}
 
+	// EXPECT-001: assign the tracker into the interface only inside the guard, as
+	// with the CA repository above: a nil *expect.Tracker would look wired.
+	var activity handlers.ActivitySource
+	if s.Expect != nil {
+		activity = s.Expect
+	}
+
 	h := handlers.New(handlers.HandlerDeps{
+		Activity:                  activity,
 		Devices:                   s.DeviceRepo,
 		Telemetry:                 s.TelemetryRepo,
 		Events:                    s.EventRepo,
@@ -317,6 +325,10 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Get("/api/v1/fleet/patch-status", h.PatchStatus)
 		r.Post("/api/v1/fleet/bulk-update", h.BulkUpdateAgents)
 		r.Post("/api/v1/fleet/bulk-patch", h.BulkPatchDevices)
+
+		// Expected activity: what each device is doing (EXPECT-001). Same auth as
+		// the fleet routes: the admin session group.
+		r.Get("/api/v1/activity", h.GetActivity)
 
 		// Fleet dashboard (FLEET-DASH)
 		r.Get("/api/v1/fleet/heartbeats", h.FleetHeartbeats)
