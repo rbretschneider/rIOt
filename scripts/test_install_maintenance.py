@@ -28,10 +28,27 @@ REBOOT_LINE = 'riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot\n'
 Q_REBOOT = 'Allow remote reboot from dashboard?'
 Q_SHUTDOWN = 'Allow remote shutdown from dashboard?'
 Q_PATCHING = 'Allow remote OS patching from dashboard?'
+Q_EXTRA = 'Allow rIOt to apply DietPi updates during OS patching?'
 Q_TERMINAL = 'Allow remote terminal access to this host?'
 Q_DOCKER = 'Allow remote exec into Docker containers?'
 PROMPT_RE = re.compile(r'    (.+?) \[(?:y/N|Y/n)\]: $')
 POWER_TRACE_RE = re.compile(r'^(systemctl\s+(poweroff|reboot|halt|kexec|suspend|hibernate)\b|POWER TRIPWIRE)', re.M)
+
+# EXTRA-UPD-001. SC-001: no DietPi program may run. Every file under
+# /boot/dietpi in these fixtures is a tripwire that records itself if executed.
+# The installer only looks at the two marker files, and policy is only ever
+# listed with sudo -l.
+DIETPI_TRIPWIRE_RE = re.compile(r'^DIETPI TRIPWIRE', re.M)
+DIETPI_TRIPWIRE = '#!/bin/sh\necho "DIETPI TRIPWIRE $0 $*" >> /fixture/trace\nexit 97\n'
+DIETPI_VERSION = ("G_DIETPI_VERSION_CORE=9\nG_DIETPI_VERSION_SUB=20\nG_DIETPI_VERSION_RC=1\n"
+                  "G_GITBRANCH='master'\nG_GITOWNER='MichaIng'\n")
+EXTRA_POLICY = Path('/etc/riot-maintenance/extra-updaters.json')
+EXTRA_DROPIN = Path('/etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf')
+POLICY_ON = '{"version":1,"extra_updaters":["dietpi"]}\n'
+POLICY_OFF = '{"version":1,"extra_updaters":[]}\n'
+DROPIN_ON = '[Service]\nRuntimeMaxSec=85min\n'
+DROPIN_OFF = '[Service]\nRuntimeMaxSec=35min\n'
+EXTRA_LINE = 'allow_extra_updaters: [dietpi]'
 # Golden bytes. Both were produced by running the same fixture scenario with
 # scripts/install.sh from 71a4dea (main before SHUTDOWN-SUDO-001) inside this
 # container image. Do not regenerate them from the new installer.
@@ -146,6 +163,15 @@ case "$1" in
       *ActiveState*) cat /fixture/active;;
       *LoadState*) echo loaded;;
       *ExecStartPre*) echo '{ path=/usr/local/lib/riot/riot-agent-apply ; argv[]=/usr/local/lib/riot/riot-agent-apply --boot ; ignore_errors=yes ; }';;
+      *RuntimeMaxUSec*)
+        # EXTRA-UPD-001: answer from the drop-in as the last daemon-reload saw it,
+        # and record what the root-side policy looked like at this instant.
+        echo "POLICY-AT-VERIFY: $(cat /etc/riot-maintenance/extra-updaters.json 2>/dev/null || echo absent)" >> /fixture/trace
+        if [ -f /fixture/force-backstop ]; then cat /fixture/force-backstop
+        elif [ -f /fixture/loaded-dropin ] && grep -q 'RuntimeMaxSec=85min' /fixture/loaded-dropin; then echo '1h 25min'
+        else echo 35min; fi;;
+      *PrivateTmp*) if [ -f /fixture/private-tmp ]; then echo yes; else echo no; fi;;
+      *MountFlags*) if [ -f /fixture/mount-flags ]; then cat /fixture/mount-flags; else echo; fi;;
       *) exit 2;;
     esac;;
   stop)
@@ -167,10 +193,19 @@ LOCK
       [ -f /fixture/dbus-installed ] || exit 5
       python3 -c "import socket; socket.socket(socket.AF_UNIX).bind('/run/dbus/system_bus_socket')"
     fi;;
-  start|daemon-reload) ;;
+  daemon-reload)
+    # What systemd would now load: the drop-in as it is on disk at reload time.
+    echo "POLICY-AT-RELOAD: $(cat /etc/riot-maintenance/extra-updaters.json 2>/dev/null || echo absent)" >> /fixture/trace
+    cp /etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf /fixture/loaded-dropin 2>/dev/null || rm -f /fixture/loaded-dropin;;
+  start) ;;
   *) exit 3;;
 esac
 ''')
+        # EXTRA-UPD-001: log every atomic replacement the installer makes, in order,
+        # so write order is observable without reading timestamps.
+        if not Path('/usr/bin/mv.fixture-real').exists():
+            shutil.copy2('/usr/bin/mv', '/usr/bin/mv.fixture-real')
+        write('/usr/bin/mv', '#!/bin/sh\nfor last; do :; done\necho "INSTALLED $last" >> /fixture/trace\nexec /usr/bin/mv.fixture-real "$@"\n')
         if not Path('/usr/bin/sudo.fixture-real').exists():
             shutil.copy2('/usr/bin/sudo', '/usr/bin/sudo.fixture-real')
         Path('/usr/bin/sudo.fixture-real').chmod(0o4755)
@@ -198,11 +233,11 @@ exec /usr/sbin/visudo.fixture-real "$@"
         subprocess.run(['useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', 'riot'], check=False, capture_output=True)
 
     def setUp(self):
-        for path in ['/usr/local/lib/riot', '/etc/riot', '/var/lib/riot', '/var/lib/riot-maintenance', '/etc/systemd/system/riot-agent.service.d']:
+        for path in ['/usr/local/lib/riot', '/etc/riot', '/var/lib/riot', '/var/lib/riot-maintenance', '/etc/systemd/system/riot-agent.service.d', '/etc/riot-maintenance', '/etc/systemd/system/riot-maintenance.service.d', '/boot/dietpi']:
             p = Path(path)
             if p.is_symlink(): p.unlink()
             elif p.exists(): shutil.rmtree(p)
-        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed', '/fixture/fail-stop', '/fixture/on-stop', '/fixture/late-link', '/fixture/linked.yaml', '/fixture/real-config.yaml']:
+        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed', '/fixture/fail-stop', '/fixture/on-stop', '/fixture/late-link', '/fixture/linked.yaml', '/fixture/real-config.yaml', '/fixture/force-backstop', '/fixture/private-tmp', '/fixture/mount-flags', '/fixture/loaded-dropin', '/boot/dietpi.txt']:
             Path(path).unlink(missing_ok=True)
         self.provide_system_bus()
         write(ROOT / 'trace', '', 0o600)
@@ -240,6 +275,7 @@ exec /usr/sbin/visudo.fixture-real "$@"
 
     def tearDown(self):
         self.assert_no_power_action()
+        self.assert_no_dietpi_action()
 
     def install(self):
         return subprocess.run(['bash', str(ROOT / 'install.sh'), '--non-interactive'], capture_output=True, text=True)
@@ -334,17 +370,18 @@ exec /usr/sbin/visudo.fixture-real "$@"
         return os.waitstatus_to_exitcode(status), output, prompts
 
     @staticmethod
-    def answers(reboot='n', shutdown='n', patching='n', terminal='n', docker='n'):
-        return {Q_REBOOT: reboot, Q_SHUTDOWN: shutdown, Q_PATCHING: patching, Q_TERMINAL: terminal, Q_DOCKER: docker}
+    def answers(reboot='n', shutdown='n', patching='n', terminal='n', docker='n', extra='n'):
+        return {Q_REBOOT: reboot, Q_SHUTDOWN: shutdown, Q_PATCHING: patching, Q_EXTRA: extra, Q_TERMINAL: terminal, Q_DOCKER: docker}
 
     @staticmethod
-    def story_config(url=SERVER_URL, reboot=False, shutdown=False, patching=False, terminal=False, bootstrap_key=None):
+    def story_config(url=SERVER_URL, reboot=False, shutdown=False, patching=False, terminal=False, bootstrap_key=None, extra=False):
         """The installer's config for these answers, no Docker. With shutdown
         False this is exactly the pre-story layout (checked against the golden)."""
         low = lambda value: 'true' if value else 'false'
         commands = ''
-        if reboot or shutdown or patching:
-            commands = '\ncommands:\n  allow_reboot: ' + low(reboot) + ('\n  allow_shutdown: true' if shutdown else '') + '\n  allow_patching: ' + low(patching)
+        if reboot or shutdown or patching or extra:
+            commands = ('\ncommands:\n  allow_reboot: ' + low(reboot) + ('\n  allow_shutdown: true' if shutdown else '') + '\n  allow_patching: ' + low(patching)
+                        + ('\n  ' + EXTRA_LINE if extra else ''))
         host_terminal = '\nhost_terminal:\n  enabled: true' if terminal else ''
         bootstrap = '\n  bootstrap_key: "' + bootstrap_key + '"' if bootstrap_key else ''
         collectors = ''.join('    - ' + name + '\n' for name in ['system', 'cpu', 'memory', 'disk', 'network', 'os_info', 'updates', 'services', 'processes', 'docker', 'security', 'logs', 'ups', 'webservers', 'usb'])
@@ -1147,6 +1184,537 @@ exec /usr/sbin/visudo.fixture-real "$@"
         self.assert_refused_without_replacement(result)
         self.assertIn('exists but is not a regular file', result.stderr)
         self.assertIn('no files changed', result.stderr)
+
+
+    # ---- EXTRA-UPD-001: DietPi opt-in (AC-015 to AC-019, AC-044, AC-045) ----
+
+    def assert_no_dietpi_action(self):
+        trace = (ROOT / 'trace').read_text()
+        self.assertIsNone(DIETPI_TRIPWIRE_RE.search(trace), 'SC-001/AC-045: a DietPi program was executed:\n' + trace)
+
+    def dietpi(self, executable=False):
+        """A fake DietPi host. Every program is a tripwire; the marker files only
+        need to exist as regular files. executable=True is for sudo -l listings,
+        which need the command to exist and never run it."""
+        mode = 0o755 if executable else 0o644
+        write('/boot/dietpi/.version', DIETPI_VERSION, 0o644)
+        for name in ('dietpi-update', 'dietpi-software', 'dietpi-services', 'func/dietpi-set_software'):
+            write('/boot/dietpi/' + name, DIETPI_TRIPWIRE, mode)
+        write('/boot/dietpi.txt', 'CONFIG_CHECK_DIETPI_UPDATES=1\n', 0o644)
+
+    def listed_config(self, body='  allow_extra_updaters: [dietpi]\n', extra_top=''):
+        return extra_top + 'commands:\n' + body
+
+    def opted_in(self):
+        return EXTRA_POLICY.exists() and EXTRA_POLICY.read_text() == POLICY_ON
+
+    def assert_recorded(self, on):
+        """Both root-side files agree: opted in (85min) or recorded as revoked (35min)."""
+        if on:
+            self.assertEqual(EXTRA_POLICY.read_text(), POLICY_ON)
+            self.assertEqual(EXTRA_DROPIN.read_text(), DROPIN_ON)
+        else:
+            self.assertEqual(EXTRA_POLICY.read_text(), POLICY_OFF)
+            self.assertEqual(EXTRA_DROPIN.read_text(), DROPIN_OFF)
+
+    def assert_nothing_recorded(self):
+        self.assertFalse(EXTRA_POLICY.exists(), 'no policy file may be created')
+        self.assertFalse(EXTRA_DROPIN.exists(), 'no drop-in may be created')
+        self.assertFalse(Path('/etc/riot-maintenance').exists())
+        self.assertFalse(Path('/etc/systemd/system/riot-maintenance.service.d').exists())
+
+    def installed_order(self):
+        return [line[len('INSTALLED '):] for line in (ROOT / 'trace').read_text().splitlines() if line.startswith('INSTALLED ')]
+
+    def test_EU_AC015_fresh_question_dietpi_only(self):
+        with self.subTest(case='interactive yes on DietPi'):
+            self.dietpi()
+            self.fresh()
+            rc, out, prompts = self.install_tty(self.answers(extra='y'), SERVER_URL)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(prompts, [Q_REBOOT, Q_SHUTDOWN, Q_PATCHING, Q_EXTRA, Q_TERMINAL], 'the DietPi question sits directly after the OS patching question')
+            shown = re.findall(r'^    (Allow rIOt to apply DietPi[^\n]*?) (\[[yYnN/]+\]): ', out, re.M)
+            self.assertEqual(shown, [(Q_EXTRA, '[y/N]')], 'the question shows the [y/N] hint')
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(extra=True))
+            self.assert_recorded(True)
+            self.assert_agreement(False)
+        for answer in ('', 'n', 'no', 'maybe'):
+            with self.subTest(case='answer %r on DietPi' % answer):
+                self.reinit()
+                self.dietpi()
+                self.fresh()
+                rc, out, prompts = self.install_tty(self.answers(extra=answer), SERVER_URL)
+                self.assertEqual(rc, 0, out)
+                self.assertIn(Q_EXTRA, prompts)
+                self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+                self.assert_nothing_recorded()
+        with self.subTest(case='-y on DietPi'):
+            self.reinit()
+            self.dietpi()
+            self.fresh()
+            result = self.run_installer('-y', SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('    ' + Q_EXTRA + ' [y/N]: y (auto)\n', result.stdout)
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(reboot=True, shutdown=True, patching=True, terminal=True, extra=True))
+            self.assert_recorded(True)
+        with self.subTest(case='--non-interactive on DietPi'):
+            self.reinit()
+            self.dietpi()
+            self.fresh()
+            result = self.run_installer('--non-interactive', SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('DietPi updates during', result.stdout)
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+            self.assert_nothing_recorded()
+        with self.subTest(case='no terminal on DietPi'):
+            self.reinit()
+            self.dietpi()
+            self.fresh()
+            tty, aside = Path('/dev/tty'), Path('/dev/tty.aside')
+            moved = tty.exists()
+            if moved:
+                tty.rename(aside)
+            try:
+                result = self.run_installer(SERVER_URL)
+            finally:
+                if moved:
+                    aside.rename(tty)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_nothing_recorded()
+        with self.subTest(case='interactive on a host without DietPi'):
+            self.reinit()
+            self.fresh()
+            rc, out, prompts = self.install_tty(self.answers(extra='y'), SERVER_URL)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(prompts, [Q_REBOOT, Q_SHUTDOWN, Q_PATCHING, Q_TERMINAL], 'the question is not asked without DietPi')
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+            self.assert_nothing_recorded()
+        with self.subTest(case='-y on a host without DietPi'):
+            self.reinit()
+            self.fresh()
+            result = self.run_installer('-y', SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('DietPi', result.stdout)
+            self.assert_nothing_recorded()
+        with self.subTest(case='only one of the two DietPi files'):
+            self.reinit()
+            write('/boot/dietpi/.version', DIETPI_VERSION, 0o644)
+            self.fresh()
+            result = self.run_installer('-y', SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('DietPi updates during', result.stdout)
+            self.assert_nothing_recorded()
+
+    def test_EU_AC016_reinstall_fail_closed_shapes(self):
+        self.dietpi()
+        cases = {
+            'a flow list': ('commands:\n  allow_extra_updaters: [dietpi]\n', True),
+            'b flow list with spaces and a comment': ('commands:\n  allow_reboot: false\n  allow_extra_updaters: [ snap , dietpi ]   # both\n', True),
+            'c block list': ('commands:\n  allow_extra_updaters:\n    - dietpi\n  allow_patching: true\n', True),
+            'd block list with a comment': ('commands:\n  allow_extra_updaters:   # list\n    - snap\n    - dietpi # ours\n', True),
+            'e no key': ('commands:\n  allow_patching: true\n', False),
+            'f commented line': ('commands:\n  # allow_extra_updaters: [dietpi]\n  allow_patching: true\n', False),
+            'g scalar': ('commands:\n  allow_extra_updaters: dietpi\n', False),
+            'h scalar true': ('commands:\n  allow_extra_updaters: true\n', False),
+            'i quoted items': ('commands:\n  allow_extra_updaters: ["dietpi"]\n', False),
+            'j list under docker': ('docker:\n  allow_extra_updaters: [dietpi]\ncommands:\n  allow_patching: true\n', False),
+            'k list under a nested key': ('commands:\n  sub:\n    allow_extra_updaters: [dietpi]\n', False),
+            'l unparseable yaml': ('commands: [unclosed\n  allow_extra_updaters: [dietpi]\n', False),
+            'm duplicate key': ('commands:\n  allow_extra_updaters: [dietpi]\n  allow_extra_updaters: [dietpi]\n', False),
+            'n duplicate commands': ('commands:\n  allow_extra_updaters: [dietpi]\ncommands:\n  allow_patching: true\n', False),
+            'o other identifier only': ('commands:\n  allow_extra_updaters: [snap]\n', False),
+            'p empty list': ('commands:\n  allow_extra_updaters: []\n', False),
+            'q upper case identifier': ('commands:\n  allow_extra_updaters: [DietPi]\n', False),
+            'r items at the key indentation': ('commands:\n  allow_extra_updaters:\n  - dietpi\n', False),
+            's tab indentation': ('commands:\n\tallow_extra_updaters: [dietpi]\n', False),
+            't NUL byte': (b'commands:\n  allow_extra_updaters: [dietpi]\n\x00', False),
+            'u nested sequence item': ('commands:\n  allow_extra_updaters:\n    - [dietpi]\n', False),
+        }
+        for name, (config, recorded) in cases.items():
+            with self.subTest(case=name):
+                self.reinit()
+                self.dietpi()
+                self.set_config(config, 0o640, ('riot', 'riot'))
+                path = Path('/etc/riot/agent.yaml')
+                before = (path.read_bytes(), path.stat().st_uid, path.stat().st_gid, stat.S_IMODE(path.stat().st_mode))
+                result = self.run_installer('--non-interactive')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn('Allow rIOt', result.stdout, 'a reinstall asks no question')
+                after = (path.read_bytes(), path.stat().st_uid, path.stat().st_gid, stat.S_IMODE(path.stat().st_mode))
+                self.assertEqual(after, before, 'the preserved config bytes, owner and mode are unchanged')
+                if recorded:
+                    self.assert_recorded(True)
+                    self.assertIn('lists dietpi in /etc/riot/agent.yaml; recording root-side opt-in', result.stdout)
+                else:
+                    self.assertFalse(self.opted_in(), 'no opt-in may be recorded for ' + name)
+                    self.assertNotIn('recording root-side opt-in', result.stdout)
+        with self.subTest(case='reinstall asks nothing on a terminal'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            rc, out, prompts = self.install_tty({})
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(prompts, [])
+            self.assert_recorded(True)
+        with self.subTest(case='a symlinked config is never read'):
+            self.reinit()
+            self.dietpi()
+            write(ROOT / 'real-config.yaml', self.listed_config(), 0o600)
+            config = Path('/etc/riot/agent.yaml')
+            config.unlink()
+            config.symlink_to(ROOT / 'real-config.yaml')
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(self.opted_in())
+
+    def test_EU_AC016_transparency_line_on_every_dietpi_reinstall(self):
+        def lines(output):
+            return [line for line in output.splitlines() if line.startswith('==> DietPi updates:')]
+        with self.subTest(case='listed on DietPi'):
+            self.dietpi()
+            self.set_config(self.listed_config())
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(lines(result.stdout)[0], '==> DietPi updates: commands.allow_extra_updaters lists dietpi in /etc/riot/agent.yaml; recording root-side opt-in')
+        with self.subTest(case='not listed on DietPi'):
+            self.reinit()
+            self.dietpi()
+            self.set_config('commands:\n  allow_patching: true\n')
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(lines(result.stdout), ['==> DietPi updates: commands.allow_extra_updaters does not list dietpi in /etc/riot/agent.yaml; no root-side opt-in'])
+        with self.subTest(case='listed but DietPi absent'):
+            self.reinit()
+            self.set_config(self.listed_config())
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(lines(result.stdout), ['==> DietPi updates: commands.allow_extra_updaters lists dietpi in /etc/riot/agent.yaml but DietPi is not present; nothing recorded'])
+        with self.subTest(case='re-enrolment on DietPi'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            result = self.run_installer('--non-interactive', SERVER_URL, '--bootstrap-key', 'K')
+            self.assertEqual(lines(result.stdout), ['==> DietPi updates: re-enrolment resets remote features; no root-side opt-in'])
+            self.assertFalse(self.opted_in())
+        with self.subTest(case='a plain host prints nothing about DietPi'):
+            self.reinit()
+            self.set_config('commands:\n  allow_patching: true\n')
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(lines(result.stdout), [])
+            self.assertNotIn('DietPi', result.stdout)
+
+    def test_EU_AC017_non_dietpi_records_nothing_and_root_owned(self):
+        with self.subTest(case='a config that lists dietpi on a host without DietPi'):
+            self.set_config(self.listed_config())
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assert_nothing_recorded()
+        with self.subTest(case='files after an opt-in install are root-owned and not writable by riot'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for path, mode in ((EXTRA_POLICY, 0o644), (EXTRA_DROPIN, 0o644), (EXTRA_POLICY.parent, 0o755), (EXTRA_DROPIN.parent, 0o755)):
+                info = path.stat()
+                self.assertEqual((info.st_uid, info.st_gid, stat.S_IMODE(info.st_mode)), (0, 0, mode), str(path))
+            for path in (EXTRA_POLICY, EXTRA_DROPIN):
+                probe = subprocess.run(['runuser', '-u', 'riot', '--', 'test', '-w', str(path)], capture_output=True)
+                self.assertNotEqual(probe.returncode, 0, 'riot must not be able to write ' + str(path))
+                write_try = subprocess.run(['runuser', '-u', 'riot', '--', 'sh', '-c', 'echo x >> "$1"', '_', str(path)], capture_output=True)
+                self.assertNotEqual(write_try.returncode, 0)
+            probe = subprocess.run(['runuser', '-u', 'riot', '--', 'sh', '-c', 'touch "$1/new"', '_', str(EXTRA_POLICY.parent)], capture_output=True)
+            self.assertNotEqual(probe.returncode, 0, 'riot must not create files beside the policy')
+            self.assertTrue(os.access(EXTRA_POLICY, os.R_OK), 'readable so the agent can compute readiness')
+        with self.subTest(case='a symlinked policy is refused before any change'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            EXTRA_POLICY.parent.mkdir(parents=True, exist_ok=True)
+            EXTRA_POLICY.symlink_to('/etc/passwd')
+            result = self.run_installer('--non-interactive')
+            self.assert_refused_without_replacement(result)
+            self.assertIn('Unsafe privileged file', result.stderr)
+        with self.subTest(case='a writable policy directory is refused'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            EXTRA_POLICY.parent.mkdir(parents=True, exist_ok=True)
+            EXTRA_POLICY.parent.chmod(0o777)
+            result = self.run_installer('--non-interactive')
+            self.assert_refused_without_replacement(result)
+            self.assertIn('root-owned and not group/world writable', result.stderr)
+
+    def test_EU_AC018_revocation_policy_first_then_35min(self):
+        self.dietpi()
+        self.set_config(self.listed_config())
+        first = self.run_installer('--non-interactive')
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assert_recorded(True)
+        write(ROOT / 'trace', '', 0o600)
+        self.set_config('commands:\n  allow_patching: true\n')
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_recorded(False)
+        self.assertTrue(EXTRA_POLICY.exists() and EXTRA_DROPIN.exists(), 'revocation rewrites the files, it never deletes them')
+        order = self.installed_order()
+        policy_at, unit_at, dropin_at = order.index(str(EXTRA_POLICY)), order.index('/etc/systemd/system/riot-maintenance.service'), order.index(str(EXTRA_DROPIN))
+        self.assertLess(policy_at, unit_at, 'the policy is emptied before any unit file is installed')
+        self.assertLess(policy_at, dropin_at, 'the policy is emptied before the backstop is lowered')
+        trace = (ROOT / 'trace').read_text()
+        self.assertIn('POLICY-AT-RELOAD: ' + POLICY_OFF.strip(), trace, 'the policy was already empty at daemon-reload')
+        self.assertIn('==> DietPi updates: root-side opt-in revoked', result.stdout)
+        with self.subTest(case='a repeated run keeps both files byte-identical'):
+            again = self.run_installer('--non-interactive')
+            self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+            self.assert_recorded(False)
+
+    def test_EU_AC018_re_adding_dietpi_opts_in_again(self):
+        self.dietpi()
+        self.set_config(self.listed_config())
+        self.assertEqual(self.run_installer('--non-interactive').returncode, 0)
+        self.set_config('commands:\n  allow_patching: true\n')
+        self.assertEqual(self.run_installer('--non-interactive').returncode, 0)
+        self.assert_recorded(False)
+        self.set_config(self.listed_config())
+        self.assertEqual(self.run_installer('--non-interactive').returncode, 0)
+        self.assert_recorded(True)
+
+    def test_EU_AC016_bootstrap_reenrolment_revokes(self):
+        self.dietpi()
+        self.set_config(self.listed_config())
+        self.assertEqual(self.run_installer('--non-interactive').returncode, 0)
+        self.assert_recorded(True)
+        result = self.run_installer('--non-interactive', SERVER_URL, '--bootstrap-key', 'K')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_recorded(False)
+        self.assertNotIn('allow_extra_updaters', Path('/etc/riot/agent.yaml').read_text())
+
+    def test_EU_AC019_sudo_lists_no_dietpi_program(self):
+        self.dietpi(executable=True)
+        self.set_config(self.listed_config())
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_recorded(True)
+        self.assertNotIn('dietpi', self.dropin().lower(), 'FR-021: no sudoers line names a DietPi program')
+        refused = [
+            ['/boot/dietpi/dietpi-update', '1'], ['/boot/dietpi/dietpi-update', '2'], ['/boot/dietpi/dietpi-update'],
+            ['/boot/dietpi/dietpi-software'], ['/boot/dietpi/dietpi-services', 'stop'], ['/boot/dietpi/func/dietpi-set_software', 'x'],
+        ]
+        for argv in refused:
+            with self.subTest(refused=argv):
+                self.assertTrue(Path(argv[0]).exists(), 'a refusal only proves policy when the command exists: ' + argv[0])
+                probe = self.riot_lists_as_riot(*argv)
+                self.assertNotEqual(probe.returncode, 0, 'AF-6: must be refused: %r\n%s%s' % (argv, probe.stdout, probe.stderr))
+        listing = self.riot_lists_as_riot().stdout
+        self.assertNotIn('dietpi', listing.lower())
+
+    def test_EU_AC044_sudoers_golden_unchanged(self):
+        with self.subTest(case='non-DietPi host'):
+            self.fresh()
+            self.assertEqual(self.install_tty(self.answers(), SERVER_URL)[0], 0)
+            self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), PRE_STORY_DROPIN.encode(), 'AC-044: the drop-in equals the pre-story golden')
+            self.assert_nothing_recorded()
+        with self.subTest(case='DietPi host, opted in: still no sudoers change'):
+            self.reinit()
+            self.dietpi()
+            self.fresh()
+            self.assertEqual(self.install_tty(self.answers(extra='y'), SERVER_URL)[0], 0)
+            self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), PRE_STORY_DROPIN.encode(), 'the opt-in adds no sudoers line')
+        with self.subTest(case='the unit file is the signed asset, unchanged'):
+            self.assertEqual(Path('/etc/systemd/system/riot-maintenance.service').read_bytes(), (ROOT / 'assets/riot-maintenance.service').read_bytes())
+
+    def test_EU_AC044_non_dietpi_install_leaves_the_same_paths_as_before(self):
+        listed = self.measured_run(lambda: self.set_config(self.listed_config()), lambda: self.run_installer('--non-interactive'))
+        plain = self.measured_run(lambda: self.set_config('commands:\n  allow_patching: true\n'), lambda: self.run_installer('--non-interactive'))
+        self.assertEqual(listed[0] ^ plain[0], set(), 'a host without DietPi gains no policy file, no drop-in and no directory, whatever the config lists')
+        self.assertEqual(listed[1], plain[1], 'the backup holds the same files')
+        self.assertEqual(listed[2], plain[2])
+
+    def test_EU_AC029_opt_in_growth_is_bounded(self):
+        def prepare(config):
+            def go():
+                self.dietpi()
+                self.set_config(config)
+            return go
+        plain = self.measured_run(prepare('commands:\n  allow_patching: true\n'), lambda: self.run_installer('--non-interactive'))
+        opted = self.measured_run(prepare(self.listed_config()), lambda: self.run_installer('--non-interactive'))
+        def opted_in_already():
+            prepare(self.listed_config())()
+            self.assertEqual(self.run_installer('--non-interactive').returncode, 0)
+            for stale in Path('/var/backups').glob('riot_install.*'):
+                shutil.rmtree(stale)
+        twice = self.measured_run(opted_in_already, lambda: self.run_installer('--non-interactive'))
+        live = lambda paths: {p for p in paths if not p.startswith('/var/backups')}
+        self.assertEqual(sorted(live(opted[0]) - live(plain[0])),
+                         ['/etc/riot-maintenance', '/etc/riot-maintenance/extra-updaters.json', '/etc/systemd/system/riot-maintenance.service.d', '/etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf'],
+                         'an opt-in creates exactly the policy, the drop-in and their two directories')
+        self.assertEqual(live(twice[0]), live(opted[0]), 'a repeated run creates no further path outside the one backup it always makes')
+        kept = [p for p in twice[1] if p.endswith('etc/riot-maintenance') or '/riot-maintenance/' in p or p.endswith('riot-maintenance.service.d') or '/riot-maintenance.service.d/' in p]
+        self.assertEqual(len(kept), 4, 'the backup of an opted-in host holds the two files and their two directories: %r' % kept)
+        self.assertEqual(EXTRA_POLICY.stat().st_size, len(POLICY_ON), 'NFR-002: the policy is one small fixed-size record')
+        self.assertEqual(opted[3], plain[3], 'no extra network request')
+
+    def test_EU_SEC002_write_order_optin_and_revoke(self):
+        self.dietpi()
+        self.set_config(self.listed_config())
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        trace = (ROOT / 'trace').read_text()
+        order = self.installed_order()
+        self.assertLess(order.index(str(EXTRA_DROPIN)), order.index(str(EXTRA_POLICY)), 'opt-in: the drop-in is written before the policy')
+        self.assertIn('POLICY-AT-RELOAD: absent', trace, 'opt-in: the policy does not exist when systemd reloads')
+        self.assertIn('POLICY-AT-VERIFY: absent', trace, 'opt-in: the effective backstop is verified before the policy is written')
+        self.assertLess(trace.index('systemctl daemon-reload'), trace.index('POLICY-AT-VERIFY'))
+        self.assertLess(trace.index('POLICY-AT-VERIFY'), trace.index('systemctl start riot-agent'))
+        self.assertEqual(trace.count('systemctl show riot-maintenance.service -p RuntimeMaxUSec --value'), 1)
+        with self.subTest(case='an effective 35 minute backstop leaves no policy behind'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            write(ROOT / 'force-backstop', '35min\n', 0o600)
+            result = self.run_installer('--non-interactive')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('The effective maintenance backstop is', result.stderr)
+            self.assertFalse(EXTRA_POLICY.exists(), 'SEC-002: the policy is never written while the backstop is not in force')
+        with self.subTest(case='an unreadable backstop answer is refused'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            write(ROOT / 'force-backstop', 'infinity\n', 0o600)
+            result = self.run_installer('--non-interactive')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertFalse(EXTRA_POLICY.exists())
+
+    def test_EU_OPS001_dropin_has_no_sandboxing(self):
+        self.dietpi()
+        self.set_config(self.listed_config())
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(EXTRA_DROPIN.read_bytes(), DROPIN_ON.encode(), 'the drop-in bytes are exactly the fixed literal')
+        unit = Path('/etc/systemd/system/riot-maintenance.service').read_text()
+        for directive in ('PrivateTmp', 'MountFlags', 'ProtectSystem', 'ProtectHome', 'ReadOnlyPaths', 'InaccessiblePaths', 'ProtectProc', 'TemporaryFileSystem', 'PrivateMounts'):
+            self.assertNotIn(directive, EXTRA_DROPIN.read_text())
+            self.assertNotIn(directive, unit)
+        for prop, value in (('PrivateTmp', 'no'), ('MountFlags', '')):
+            self.assertIn('systemctl show riot-maintenance.service -p ' + prop + ' --value', (ROOT / 'trace').read_text())
+        with self.subTest(case='PrivateTmp=yes in the effective unit refuses the opt-in'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            write(ROOT / 'private-tmp', '', 0o600)
+            result = self.run_installer('--non-interactive')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('PrivateTmp=', result.stderr)
+            self.assertFalse(EXTRA_POLICY.exists())
+        with self.subTest(case='MountFlags=slave in the effective unit refuses the opt-in'):
+            self.reinit()
+            self.dietpi()
+            self.set_config(self.listed_config())
+            write(ROOT / 'mount-flags', 'slave\n', 0o600)
+            result = self.run_installer('--non-interactive')
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('MountFlags=', result.stderr)
+            self.assertFalse(EXTRA_POLICY.exists())
+
+    def test_EU_SEC007_current_json_v2_closed(self):
+        def record(**changes):
+            base = {'version': 2, 'command_id': '3db2d182-61f4-4a4a-b515-243000a43d34', 'mode': 'full', 'include_reboot_class': False,
+                    'started_at': '2026-10-26T03:00:00Z', 'updated_at': '2026-10-26T03:30:00Z', 'finished_at': '2026-10-26T03:30:00Z',
+                    'phase': 'finished', 'outcome': 'error', 'exit_code': 1, 'interrupted': False, 'summary': 'apt: succeeded; dietpi: failed (exit 1)',
+                    'output': 'x', 'output_truncated': False, 'holds': {}, 'holds_released': False, 'hold_cleanup_failed': False,
+                    'requested_extra_updaters': ['dietpi'], 'apt_outcome': 'success',
+                    'extra_updaters': [{'id': 'dietpi', 'outcome': 'failed', 'exit_code': 1, 'started_at': '2026-10-26T03:00:00Z', 'finished_at': '2026-10-26T03:30:00Z', 'version_before': '9.20.1', 'note': 'x'}]}
+            base.update(changes)
+            return base
+        import json
+        good = {'valid failed run': record(),
+                'valid skipped run': record(outcome='success', exit_code=0, extra_updaters=[{'id': 'dietpi', 'outcome': 'skipped', 'reason': 'not_enabled'}]),
+                'a version 1 record still passes': {k: v for k, v in record(version=1).items() if k not in ('requested_extra_updaters', 'apt_outcome', 'extra_updaters')}}
+        for name, body in good.items():
+            with self.subTest(valid=name):
+                self.reinit()
+                write('/var/lib/riot-maintenance/current.json', json.dumps(body), 0o640)
+                result = self.install()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        bad = {
+            'a running updater entry': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'running'}]),
+            'an unknown top-level key': record(argv=['x']),
+            'an unknown entry key': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'failed', 'argv': ['x']}]),
+            'an unknown skip reason': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'skipped', 'reason': 'because'}]),
+            'a reason on a non-skip': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'failed', 'reason': 'not_enabled'}]),
+            'an unknown outcome': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'partial'}]),
+            'an unknown apt outcome': record(apt_outcome='partial'),
+            'a missing apt outcome': {k: v for k, v in record().items() if k != 'apt_outcome'},
+            'success after a failed updater': record(outcome='success', exit_code=0),
+            'success after a failed apt part': record(outcome='success', exit_code=0, apt_outcome='error', extra_updaters=[]),
+            'nine results': record(extra_updaters=[{'id': 'u%d' % i, 'outcome': 'failed'} for i in range(9)]),
+            'a bad identifier': record(extra_updaters=[{'id': 'Bad Id', 'outcome': 'failed'}]),
+            'a duplicate identifier': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'failed'}, {'id': 'dietpi', 'outcome': 'failed'}]),
+            'a note over 256 bytes': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'failed', 'note': 'n' * 257}]),
+            'a version over 32 bytes': record(extra_updaters=[{'id': 'dietpi', 'outcome': 'failed', 'version_after': '9' * 33}]),
+            'a repair run with updaters': record(mode='repair'),
+            'a version 1 record with updater keys': record(version=1),
+            'version 3': record(version=3),
+            'an empty requested list': record(requested_extra_updaters=[]),
+            'a requested list of numbers': record(requested_extra_updaters=[1]),
+        }
+        for name, body in bad.items():
+            with self.subTest(refused=name):
+                self.reinit()
+                write('/var/lib/riot-maintenance/current.json', json.dumps(body), 0o640)
+                self.assert_refused_without_replacement(self.install())
+
+    def test_EU_AC017_agreement_holds_when_the_extra_list_changes_under_the_run(self):
+        flip_off = "#!/bin/sh\nprintf 'commands:\\n  allow_patching: true\\n' > /etc/riot/agent.yaml\n"
+        flip_on = "#!/bin/sh\nprintf 'commands:\\n  allow_extra_updaters: [dietpi]\\n' > /etc/riot/agent.yaml\n"
+        cases = [('listed then removed', self.listed_config(), flip_off), ('not listed then added', 'commands:\n  allow_patching: true\n', flip_on)]
+        for name, config, hook in cases:
+            with self.subTest(case=name):
+                self.reinit()
+                self.dietpi()
+                self.set_config(config)
+                write(ROOT / 'on-stop', hook, 0o755)
+                result = self.run_installer('--non-interactive')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('commands.allow_extra_updaters changed during installation; previous managed policy restored', result.stderr)
+                self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy)
+                self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+                self.assert_nothing_recorded()
+
+    def test_EU_AC016_shutdown_grant_survives_a_list_valued_key(self):
+        """The classifier used to reject any list under commands:, silently dropping the poweroff grant."""
+        self.dietpi()
+        for name, body in {'flow list': '  allow_shutdown: true\n  allow_extra_updaters: [dietpi]\n',
+                           'block list': '  allow_extra_updaters:\n    - dietpi\n  allow_shutdown: true\n',
+                           'quoted items (no ids, file still read)': '  allow_shutdown: true\n  allow_extra_updaters: ["dietpi"]\n',
+                           'scalar value (no ids, file still read)': '  allow_extra_updaters: dietpi\n  allow_shutdown: true\n'}.items():
+            with self.subTest(case=name):
+                self.reinit()
+                self.dietpi()
+                self.set_config('commands:\n' + body)
+                result = self.run_installer('--non-interactive')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()], 'the poweroff grant is kept')
+                self.assertEqual(self.opted_in(), name in ('flow list', 'block list'))
+                self.assert_transparency(result.stdout, 'granting')
+
+    def test_EU_AC016_extra_decision_does_not_change_shutdown_for_non_list_files(self):
+        self.set_config('commands:\n  allow_shutdown: false\n  allow_extra_updaters: [dietpi]\n')
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.grant_lines(self.dropin()), [])
+        self.assert_transparency(result.stdout, 'not_enabled')
+
+    def test_EU_AC045_no_dietpi_program_runs_in_any_installer_fixture(self):
+        self.dietpi(executable=True)
+        self.fresh()
+        rc, out, _ = self.install_tty(self.answers(extra='y'), SERVER_URL)
+        self.assertEqual(rc, 0, out)
+        self.assert_recorded(True)
+        self.assert_no_dietpi_action()
+        trace = (ROOT / 'trace').read_text()
+        self.assertNotIn('dietpi-update', trace)
+        for tripwire in Path('/boot/dietpi').rglob('dietpi-*'):
+            self.assertEqual(tripwire.read_text(), DIETPI_TRIPWIRE, 'a fixture program was modified')
 
 
 if __name__ == '__main__':
