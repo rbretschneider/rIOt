@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/DesyncTheThird/rIOt/internal/extraupd"
 )
 
 type Config struct {
@@ -38,6 +40,88 @@ type CommandsConfig struct {
 	AllowPatching   bool `yaml:"allow_patching"`    // opt-in for remote OS patching
 	AllowProbes     bool `yaml:"allow_probes"`      // opt-in for device probe execution
 	HoldRebootClass bool `yaml:"hold_reboot_class"` // opt-in: hold GPU-driver/kernel packages outside maintenance windows (PATCH-GATE)
+
+	// AllowExtraUpdaters lists the platform updaters outside the package manager
+	// (today only "dietpi") that rIOt may apply during OS patching
+	// (EXTRA-UPD-001 FR-017). Empty by default. This is the agent-side half of the
+	// opt-in: the root-side half is written only by install.sh, and an updater
+	// runs only when both agree.
+	AllowExtraUpdaters ExtraUpdaterIDs `yaml:"allow_extra_updaters,omitempty"`
+}
+
+// ExtraUpdaterIDs is a list of updater identifiers read leniently from YAML. A
+// value that is not a list of plain strings does not stop the agent from
+// starting: it decodes to the marker "<invalid>", which is never an implemented
+// updater and is reported once by the load warning.
+type ExtraUpdaterIDs []string
+
+// invalidExtraUpdaterID stands for anything in the list that is not a string.
+const invalidExtraUpdaterID = "<invalid>"
+
+// UnmarshalYAML never fails.
+func (l *ExtraUpdaterIDs) UnmarshalYAML(n *yaml.Node) error {
+	*l = nil
+	if n.Kind != yaml.SequenceNode {
+		*l = ExtraUpdaterIDs{invalidExtraUpdaterID}
+		return nil
+	}
+	for _, item := range n.Content {
+		if item.Kind != yaml.ScalarNode || item.Tag != "!!str" {
+			*l = append(*l, invalidExtraUpdaterID)
+			continue
+		}
+		*l = append(*l, item.Value)
+	}
+	return nil
+}
+
+// EnabledExtraUpdaters returns the listed identifiers this agent implements, in
+// registry order, without duplicates. Anything else is ignored (FR-017).
+func (c CommandsConfig) EnabledExtraUpdaters() []string {
+	listed := make(map[string]bool, len(c.AllowExtraUpdaters))
+	for _, id := range c.AllowExtraUpdaters {
+		listed[id] = true
+	}
+	var out []string
+	for _, u := range extraupd.Registry() {
+		if listed[u.ID()] {
+			out = append(out, u.ID())
+		}
+	}
+	return out
+}
+
+// ignoredExtraUpdaters returns the listed entries that are not implemented,
+// deduplicated, each cut to the identifier bound, at most eight of them.
+func (c CommandsConfig) ignoredExtraUpdaters() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range c.AllowExtraUpdaters {
+		if extraupd.IsImplemented(id) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if len(out) < 8 {
+			out = append(out, truncateConfigValue(id, 40))
+		}
+	}
+	return out
+}
+
+func truncateConfigValue(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// warnExtraUpdaters logs one warning per config load when the list names
+// something this agent does not implement.
+func (c CommandsConfig) warnExtraUpdaters() {
+	if ignored := c.ignoredExtraUpdaters(); len(ignored) > 0 {
+		slog.Warn("commands.allow_extra_updaters lists updaters this agent does not implement; they are ignored",
+			"ignored", strings.Join(ignored, ","))
+	}
 }
 
 // HostTerminalConfig controls host-level terminal access.
@@ -162,6 +246,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	cfg.Docker.normalizeComposeRoots()
 	cfg.Validate()
+	cfg.Commands.warnExtraUpdaters()
 
 	return cfg, nil
 }
@@ -252,6 +337,7 @@ commands:
   allow_shutdown: false    # Allow remote shutdown commands
   allow_patching: false    # Allow remote OS patching commands
   hold_reboot_class: false # Hold GPU driver + kernel packages at the OS level (release only during rIOt maintenance-window patch runs)
+  # allow_extra_updaters: [] # Updaters outside apt that rIOt may apply after it, e.g. [dietpi]; also needs install.sh re-run as root
 
 host_terminal:
   enabled: false           # Allow remote shell access to this host

@@ -102,7 +102,7 @@ func (a *Agent) executeOSUpdate(cr *cmdRun) commandExecResult {
 	if err != nil {
 		return precheckFailure(err.Error())
 	}
-	return a.attachRebootDecision(cr, authorized, a.handleOSUpdateWithOutput(cr.ctx, cr.payload))
+	return a.attachRebootDecision(cr, authorized, a.handleOSUpdateWithRun(cr.ctx, cr.payload, cr))
 }
 
 // attachRebootDecision wires the reboot behavior of a finished os_update.

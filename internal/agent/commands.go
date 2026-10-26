@@ -495,6 +495,12 @@ func (a *Agent) execShutdown(p powerPermit) error {
 
 // handleOSUpdateWithOutput runs package manager updates and captures full output.
 func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.CommandPayload) commandExecResult {
+	return a.handleOSUpdateWithRun(ctx, payload, nil)
+}
+
+// handleOSUpdateWithRun is handleOSUpdateWithOutput with the command's run
+// context, which receives the extra-updater progress steps (EXTRA-UPD-001).
+func (a *Agent) handleOSUpdateWithRun(ctx context.Context, payload models.CommandPayload, cr *cmdRun) commandExecResult {
 	if !a.config.Commands.AllowPatching {
 		return commandExecResult{Status: "error", Message: "patching not allowed by agent config (set commands.allow_patching: true)"}
 	}
@@ -531,7 +537,12 @@ func (a *Agent) handleOSUpdateWithOutput(ctx context.Context, payload models.Com
 	switch {
 	case aptErr == nil:
 		_ = aptPath
-		result := a.runDetachedMaintenance(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled)
+		// Extra updaters (DietPi) on an apt host: detect, decide, then let the root
+		// worker apply them after apt. A host without one gets a nil plan and the
+		// exact pre-story request and message.
+		extras := a.planExtras(a.commandContext(), mode, payload.Params)
+		result := a.runDetachedMaintenanceWith(a.commandContext(), payload, mode, includeRC && a.holdMgr != nil && a.holdMgr.Enabled, extras, cr)
+		result = a.applyExtraV1Lines(a.commandContext(), extras, result)
 		result.PackageManager = pmAPT
 		return result
 	case dnfErr == nil:

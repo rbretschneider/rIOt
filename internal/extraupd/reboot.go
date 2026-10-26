@@ -60,3 +60,6 @@ func RebootIndicators(fsys FS) (required bool, reasons []string) {
 	}
 	return required, reasons
 }
+
+// ModulesMissingReason is the reason line reported for ModulesMissing.
+func ModulesMissingReason(release string) string { return fmt.Sprintf(modulesMissingText, release) }

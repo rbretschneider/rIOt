@@ -46,8 +46,11 @@ type Agent struct {
 	holdMgr *collectors.HoldManager
 
 	// runner overrides external command execution in tests; nil = real exec.
-	runner             collectors.CommandRunner
-	maintenanceClient  *maintenanceClient
+	runner            collectors.CommandRunner
+	maintenanceClient *maintenanceClient
+	// extra caches the root-side facts extra-updater readiness is computed from
+	// (EXTRA-UPD-001); its zero value is ready to use.
+	extra              extraState
 	updateStatusReader func() (maintenance.UpdateStatus, error)
 	updateDigestReader func() (string, error)
 	// rebootDelay is the pause between sending an os_update result and the

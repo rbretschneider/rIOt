@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DesyncTheThird/rIOt/internal/extraupd"
 	"github.com/DesyncTheThird/rIOt/internal/models"
 )
 
@@ -75,7 +76,27 @@ func (c *UpdatesCollector) Collect(ctx context.Context) (interface{}, error) {
 		info.PackageManager = "apk"
 	}
 
+	// Platform updaters outside the package manager (EXTRA-UPD-001). They ride
+	// the existing updates collector, so no collector.enabled change is needed.
+	info.ExtraUpdaters = c.detectExtraUpdaters(ctx)
+
 	return info, nil
+}
+
+// extraRootFS is the filesystem view extra-updater detection reads: the real
+// root, or a fixture tree when a test sets the root.
+func extraRootFS(root string) extraupd.FS {
+	if root == "" {
+		return extraupd.OSRoot()
+	}
+	return extraupd.DirFS(root)
+}
+
+// detectExtraUpdaters reports every present extra updater, at most eight. It
+// reads files only and never starts a process (FR-003). The kernel root seam
+// doubles as its root, so one fixture tree serves both.
+func (c *UpdatesCollector) detectExtraUpdaters(ctx context.Context) []models.ExtraUpdater {
+	return extraupd.DetectAll(ctx, extraRootFS(c.kernelRoot))
 }
 
 func (c *UpdatesCollector) collectAPT(ctx context.Context, info *models.UpdateInfo) {
@@ -248,6 +269,12 @@ func (c *UpdatesCollector) detectRebootRequiredAPT(info *models.UpdateInfo) {
 	if newer, installed, running, ok := kernelNewerThanRunning(c.kernelRoot); ok && newer {
 		info.RebootRequired = true
 		info.RebootRequiredReasons = append(info.RebootRequiredReasons, kernelReason(installed, running))
+	}
+	// DietPi's own test: a running kernel without its modules directory needs a
+	// reboot (EXTRA-UPD-001 FR-016). It is false on every other host.
+	if missing, release := extraupd.ModulesMissing(extraRootFS(c.kernelRoot)); missing {
+		info.RebootRequired = true
+		info.RebootRequiredReasons = append(info.RebootRequiredReasons, extraupd.ModulesMissingReason(release))
 	}
 }
 

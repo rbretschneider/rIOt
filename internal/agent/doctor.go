@@ -306,6 +306,13 @@ func Doctor(configPath string) {
 		checkMaintenancePolicy()
 	}
 
+	// ── Extra Updaters (EXTRA-UPD-001 FR-061, FR-062) ──
+	// Reads only: DietPi presence, the root-side opt-in, the helper and the
+	// unit backstop. It never runs dietpi-update or any other updater.
+	if runtime.GOOS == "linux" && len(cfg.Commands.AllowExtraUpdaters) > 0 {
+		reportExtraUpdaters(&Agent{config: cfg}, cfg.Commands, runtime.GOOS, 20*time.Second)
+	}
+
 	// ── Files ──
 	fmt.Println()
 	section("Files")

@@ -25,6 +25,13 @@ type maintenanceClient struct {
 	active   func(context.Context) (bool, error)
 	present  func() bool
 	wait     func(context.Context) error
+
+	// EXTRA-UPD-001 seams. A nil member reads as "not available": the updater is
+	// then not enabled (unsupported_helper or root_side_missing), never run.
+	capabilities func(context.Context) ([]byte, error) // riot-maintenance --capabilities, bounded
+	rootPolicy   func() ([]byte, error)                // the root-owned opt-in policy file, bounded
+	unitShow     func(context.Context) (string, error) // systemctl show of the three fixed unit properties
+	signature    func() string                         // stat signature of helper, policy and drop-in; "" disables the cache
 }
 
 func (a *Agent) maintenance() *maintenanceClient {
@@ -80,6 +87,15 @@ func (a *Agent) maintenance() *maintenanceClient {
 				return ctx.Err()
 			}
 		},
+		capabilities: extraCapabilities,
+		rootPolicy:   extraRootPolicy,
+		unitShow: func(ctx context.Context) (string, error) {
+			probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			out, err := a.runCommand(probe, "/usr/bin/systemctl", append([]string{}, maintenance.UnitShowArgs()...)...)
+			return string(out), err
+		},
+		signature: extraSignature,
 	}
 }
 
@@ -155,7 +171,17 @@ func finishedRunOf(id string, record maintenance.Record, err error) bool {
 }
 
 func (a *Agent) runDetachedMaintenance(ctx context.Context, payload models.CommandPayload, mode string, include bool) commandExecResult {
+	return a.runDetachedMaintenanceWith(ctx, payload, mode, include, nil, nil)
+}
+
+// runDetachedMaintenanceWith is runDetachedMaintenance with the extra-updater
+// plan and the command's run context. A nil plan, or one that enables nothing,
+// sends the version 1 request exactly as before (FR-066, AC-044).
+func (a *Agent) runDetachedMaintenanceWith(ctx context.Context, payload models.CommandPayload, mode string, include bool, plan *extraPlan, cr *cmdRun) commandExecResult {
 	req := maintenance.Request{Version: maintenance.ProtocolVersion, CommandID: payload.CommandID, Mode: mode, IncludeRebootClass: include}
+	if plan.sendsV2() {
+		req.Version, req.ExtraUpdaters = maintenance.RequestVersionExtra, append([]string(nil), plan.request...)
+	}
 	if err := maintenance.ValidateRequest(req); err != nil {
 		return precheckFailure(err.Error())
 	}
@@ -184,7 +210,7 @@ func (a *Agent) runDetachedMaintenance(ctx context.Context, payload models.Comma
 	if _, err := a.runCommand(ctx, "sudo", "-n", "/usr/bin/systemctl", "start", "--no-block", maintenance.UnitName); err != nil {
 		return precheckFailure("cannot start fixed maintenance service: " + err.Error())
 	}
-	return a.observeMaintenance(ctx, req.CommandID, false)
+	return a.observeMaintenanceWith(ctx, req.CommandID, false, cr)
 }
 
 func maintenanceResult(rec maintenance.Record) commandExecResult {
@@ -201,6 +227,10 @@ func maintenanceResult(rec maintenance.Record) commandExecResult {
 					r.RebootClassApplied = append(r.RebootClassApplied, change.Package)
 				}
 			}
+			// A scheduled run treats "an updater succeeded and a reboot is now
+			// required" as a reboot-class change; the gate rules then apply
+			// unchanged (EXTRA-UPD-001 DEC-008, OQ-A5).
+			r.RebootClassApplied = append(r.RebootClassApplied, extraRebootEntries(rec)...)
 		}
 	} else if rec.Interrupted {
 		r.Reason = models.ReasonRestarted
@@ -212,11 +242,18 @@ func maintenanceResult(rec maintenance.Record) commandExecResult {
 }
 
 func (a *Agent) observeMaintenance(ctx context.Context, id string, recovered bool) commandExecResult {
+	return a.observeMaintenanceWith(ctx, id, recovered, nil)
+}
+
+// observeMaintenanceWith polls the root record. cr, when set, receives the
+// extra-updater progress steps; the events are reported with or without it.
+func (a *Agent) observeMaintenanceWith(ctx context.Context, id string, recovered bool, cr *cmdRun) commandExecResult {
 	m := a.maintenance()
 	// A missing observer is never an instruction to cancel package work. The
 	// service's independent budget is authoritative.
 	for attempts := 0; ; attempts++ {
 		if rec, err := m.terminal(id); err == nil {
+			a.reportExtraProgress(cr, id, rec)
 			r := maintenanceResult(rec)
 			if recovered && len(r.RebootClassApplied) > 0 {
 				r.Message += "; reboot required (recovered result; automatic reboot not replayed)"
@@ -228,6 +265,7 @@ func (a *Agent) observeMaintenance(ctx context.Context, id string, recovered boo
 		}
 		rec, err := m.current()
 		if err == nil && rec.CommandID == id {
+			a.reportExtraProgress(cr, id, rec)
 			if rec.Terminal() {
 				r := maintenanceResult(rec)
 				if recovered {
@@ -235,7 +273,7 @@ func (a *Agent) observeMaintenance(ctx context.Context, id string, recovered boo
 				}
 				return r
 			}
-			a.notifyProgress(id, models.CommandRunning, models.StepVerify, nil)
+			a.notifyProgress(id, models.CommandRunning, extraProgressStep(rec.Phase), nil)
 		}
 		active, unitErr := m.active(ctx)
 		if attempts >= 10 && unitErr == nil && !active {
@@ -278,7 +316,7 @@ func (a *Agent) recoverMaintenanceCommand(id string, marker inflightMarker) bool
 		cr := a.newCmdRun(models.CommandPayload{CommandID: id, Action: models.ActionOSUpdate})
 		defer cr.cancel()
 		cr.start = marker.StartedAt
-		res := a.observeMaintenance(a.commandContext(), id, true)
+		res := a.observeMaintenanceWith(a.commandContext(), id, true, cr)
 		if marker.RebootIfRequired && !res.Detached {
 			a.noteRecoveredAuthorization(a.commandContext(), &res)
 		}

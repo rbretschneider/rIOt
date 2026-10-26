@@ -108,3 +108,12 @@ func allDigits(s string) bool {
 	}
 	return s != ""
 }
+
+// UnitShowArgs is the fixed argument list of the unit probe, shared by the root
+// worker (which runs it as root) and the unprivileged agent (which runs it over
+// D-Bus to compute readiness).
+func UnitShowArgs() []string { return append([]string(nil), unitShowArgs...) }
+
+// ParseUnitShow parses the output of the fixed unit probe with the worker's
+// closed grammar.
+func ParseUnitShow(out string) (UnitState, error) { return parseUnitShow(out) }

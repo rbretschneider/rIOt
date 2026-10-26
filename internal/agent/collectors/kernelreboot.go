@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/DesyncTheThird/rIOt/internal/extraupd"
 )
 
 // Kernel comparison limits (PATCH-FLOW-001 AD-002, NFR-004).
@@ -48,7 +50,7 @@ func RebootRequiredNow(ctx context.Context, pm string) bool {
 func (p rebootProbe) required(ctx context.Context, pm string) bool {
 	switch pm {
 	case "apt":
-		return p.markerExists() || p.kernelNewer()
+		return p.markerExists() || p.kernelNewer() || p.modulesMissing()
 	case "dnf":
 		return p.dnfNeedsRestart(ctx)
 	default:
@@ -68,6 +70,13 @@ func (p rebootProbe) markerExists() bool {
 func (p rebootProbe) kernelNewer() bool {
 	newer, _, _, ok := kernelNewerThanRunning(p.root)
 	return ok && newer
+}
+
+// modulesMissing is FR-016: on a DietPi host, the running kernel has no modules
+// directory. The updates collector and the reboot decision share it.
+func (p rebootProbe) modulesMissing() bool {
+	missing, _ := extraupd.ModulesMissing(extraRootFS(p.root))
+	return missing
 }
 
 func (p rebootProbe) dnfNeedsRestart(ctx context.Context) bool {

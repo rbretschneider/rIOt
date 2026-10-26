@@ -187,6 +187,9 @@ func (a *Agent) collectAll(ctx context.Context) models.FullTelemetryData {
 				v.HoldRebootClass = &holdRebootClass
 				// This agent understands os_update's reboot_if_required (PATCH-FLOW-001 AD-004).
 				v.SupportsRebootIfRequired = true
+				// Updaters outside apt (EXTRA-UPD-001): the collector detected them;
+				// the agent adds the facts only it knows (config, helper, root policy).
+				a.stampExtraReadiness(ctx, v.ExtraUpdaters)
 			}
 		case []models.ServiceInfo:
 			data.Services = v
