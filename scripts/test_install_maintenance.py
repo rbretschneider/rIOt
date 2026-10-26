@@ -1033,5 +1033,121 @@ exec /usr/sbin/visudo.fixture-real "$@"
                 self.assertNotIn('WARNING', result.stderr)
 
 
+    # ---- Added by QA Engineer: adversarial probes (SHUTDOWN-SUDO-001) -------
+
+    # Added by QA Engineer. Covers AC-001, AC-005, AC-017, FR-022. A Docker host
+    # answered yes to everything, with an API key and a certificate pin, still
+    # gets the grant and a config the agreement check accepts.
+    def test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement(self):
+        docker = Path('/usr/bin/docker')
+        write(docker, '#!/bin/sh\nexit 0\n')
+        try:
+            self.fresh()
+            result = self.run_installer('-y', '--key', 'k#1:x', '--fingerprint', 'SHA256:AA:BB:CC', SERVER_URL)
+        finally:
+            docker.unlink()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = Path('/etc/riot/agent.yaml').read_text()
+        self.assertIn('terminal_enabled: true', config)
+        self.assertIn('allow_shutdown: true', config)
+        self.assertIn('api_key: "k#1:x"', config)
+        self.assert_agreement(True)
+
+    # Added by QA Engineer. Covers AC-010, AC-017, AC-029. The same action twice
+    # in a row: the second run is a reinstall, asks nothing, and leaves the
+    # drop-in byte-identical with exactly one grant.
+    def test_QA_second_run_after_a_yes_install_is_stable(self):
+        self.fresh()
+        first = self.run_installer('-y', SERVER_URL)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        first_dropin = Path('/etc/sudoers.d/riot-agent').read_bytes()
+        first_config = Path('/etc/riot/agent.yaml').read_bytes()
+        second = self.run_installer('-y')
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertNotIn('Allow remote', second.stdout)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), first_dropin)
+        self.assertEqual(Path('/etc/riot/agent.yaml').read_bytes(), first_config)
+        self.assert_transparency(second.stdout, 'granting')
+        self.assert_agreement(True)
+
+    # Added by QA Engineer. Covers OQ-A2, SEC-003, AD-006. TERM sent to the
+    # installer while the agent is being stopped (after the grant is installed,
+    # before the agreement check): the trap puts the previous policy back.
+    def test_QA_sigterm_between_install_and_agreement_restores_previous_policy(self):
+        self.fresh()
+        hook = "#!/bin/sh\ninstaller=$(awk '{print $4}' /proc/$PPID/stat)\nkill -TERM \"$installer\"\nsleep 3\n"
+        write(ROOT / 'on-stop', hook, 0o755)
+        result = self.run_installer('-y', SERVER_URL)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy, 'AD-006: TERM must not leave the new grant behind')
+        self.assertEqual(self.grant_lines(self.dropin()), [])
+        self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+        self.assertFalse(Path('/etc/riot/agent.yaml').exists())
+        self.assertNotIn('WARNING', result.stderr)
+
+    # Added by QA Engineer. Covers OQ-A1, AD-001. Ctrl-C at a prompt, after the
+    # shutdown question was answered yes, leaves the host exactly as it was.
+    def test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched(self):
+        import pty
+        import select
+        import time
+        self.fresh()
+        backups_before = set(Path('/var/backups').glob('riot_install.*'))
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ['TERM'] = 'dumb'
+            os.execv('/bin/bash', ['bash', str(ROOT / 'install.sh'), SERVER_URL])
+            os._exit(127)
+        raw, sent = b'', set()
+        script = [(b'Allow remote reboot from dashboard? [y/N]: ', b'n\n'),
+                  (b'Allow remote shutdown from dashboard? [y/N]: ', b'y\n'),
+                  (b'Allow remote OS patching from dashboard? [y/N]: ', b'\x03')]
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([fd], [], [], 5)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            raw += chunk
+            for marker, reply in script:
+                if marker in raw and marker not in sent:
+                    sent.add(marker)
+                    os.write(fd, reply)
+        finished, status = os.waitpid(pid, os.WNOHANG)
+        if finished == 0:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+            self.fail('installer did not stop after Ctrl-C:\n' + raw.decode(errors='replace'))
+        os.close(fd)
+        self.assertEqual(len(sent), 3, raw.decode(errors='replace'))
+        self.assertNotEqual(os.waitstatus_to_exitcode(status), 0)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy)
+        self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+        self.assertFalse(Path('/etc/riot/agent.yaml').exists())
+        self.assertEqual(set(Path('/var/backups').glob('riot_install.*')), backups_before, 'no backup directory is created before the prompts end')
+        self.assertEqual(list(Path('/tmp').glob('riot_install.*')), [], 'the stage directory is removed by the trap')
+        trace = (ROOT / 'trace').read_text()
+        self.assertNotIn('systemctl stop', trace)
+        self.assertNotIn('PACKAGE', trace)
+
+    # Added by QA Engineer. Covers AC-011 (h), SEC-001. A FIFO in place of
+    # agent.yaml is refused before any change and cannot hang the run.
+    def test_QA_fifo_agent_yaml_is_refused_without_hanging(self):
+        self.reinit()
+        config = Path('/etc/riot/agent.yaml')
+        config.unlink()
+        os.mkfifo(config)
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--non-interactive', SERVER_URL], capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, start_new_session=True, timeout=90)
+        self.assert_refused_without_replacement(result)
+        self.assertIn('exists but is not a regular file', result.stderr)
+        self.assertIn('no files changed', result.stderr)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
