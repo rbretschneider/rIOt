@@ -1,3 +1,5 @@
+> **RESOLVED by ADD revision 3** (`docs/architecture/SHUTDOWN-DPKG-001-add.md`, Changelog): the architect accepted both AQ-1 and AQ-2 as implemented.
+
 # Blockers and ARCH-QUESTIONs
 
 - **Story ID:** SHUTDOWN-DPKG-001

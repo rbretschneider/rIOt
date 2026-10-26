@@ -3,6 +3,8 @@
 - **Story ID:** SHUTDOWN-DPKG-001
 - **FRD Reference:** `docs/requirements/SHUTDOWN-DPKG-001-frd.md` (revision 2)
 - **Security review:** `docs/security/SHUTDOWN-DPKG-001-security-review.md` (APPROVED WITH CONDITIONS C-1 to C-6)
+- **Blockers / architect questions:** `docs/architecture/SHUTDOWN-DPKG-001-blockers.md` (resolved by revision 3)
+- **QA report:** `docs/qa/SHUTDOWN-DPKG-001-qa-report.md`
 - **Reuses:** REBOOT-DPKG-001 (`docs/architecture/REBOOT-DPKG-001-add.md`, FINAL revision 3; security review
   `docs/security/REBOOT-DPKG-001-security-review.md`, conditions C-1 to C-7)
 - **Amends:** the power-class budgets of CMD-LIFECYCLE-001 AD-005 / AD-013 and REBOOT-DPKG-001 AD-004, for `shutdown`
@@ -12,9 +14,18 @@
   - an unnumbered follow-up: a dashboard cancel and progress display for a waiting shutdown (NFR-007).
 - **Author:** Architect Agent
 - **Date:** 2026-10-25
-- **Status:** FINAL, revision 2 (security conditions and FRD revision 2 resolved)
+- **Status:** FINAL, revision 3 (implementation questions and a QA note resolved)
 
 ## Changelog
+
+### Revision 3: implementation questions (senior_dev blockers file) and QA note 3
+
+| Item | Source | Decision |
+|---|---|---|
+| AQ-1: C-4(b) forbids the poweroff text placed in `poweroff.go` | blockers file AQ-1 | **Accepted as implemented.** `errPoweroffStillRunning` is removed from `poweroff.go`. `execShutdown`, which C-4 exempts, builds the error itself, and the result text is unchanged: `shutdown: a previous poweroff command is still running`. C-4 rule (b) stays strict, with no exemption for `poweroff.go`. The fallback text in `classifyPoweroff` for an unclassified launch now reads `shutdown command did not start`. §4 and AD-009 are updated |
+| AQ-2: the reaper Warn has no command id | blockers file AQ-2 | **Accepted as implemented.** `execShutdown` keeps its single permit argument, and the permit carries no command id, so the late-failure Warn carries `error` only. The line stays attributable: one child per agent and at most one Warn per command. §6 and AD-009 are updated |
+| `poweroffRunning` cleared before the exit hand-off | QA report note 3 (fixed after QA) | The reaper clears `poweroffRunning` **before** it hands the exit over to `execShutdown` or logs the late Warn, not in a `defer` after the hand-off. A shutdown sent after the child has exited is therefore never refused as `still running` while the hand-off is still in progress. AD-009 step 2 is updated |
+| `pendingTimers()` accessor | implementation | **Not added.** Tests use the existing `fakeClock.timerDurations()` to wait for the start-check timer. §4 and §12 note 5 are updated |
 
 ### Revision 2: security conditions C-1 to C-6 and FRD revision 2
 
@@ -544,12 +555,12 @@ every reboot log message. **No reboot-visible string changes.**
 ### AD-009: Truthful poweroff result: start check, shared mapping, single reaper (SEC-002 Option A; FR-027 to FR-032; OQ-013)
 
 **Decision.** In `execShutdown(p)`, after the permit check:
-1. **One child per agent.** `if !a.poweroffRunning.CompareAndSwap(false, true)`, return `errPoweroffStillRunning`
-   (`a previous poweroff command is still running`).
+1. **One child per agent.** `if !a.poweroffRunning.CompareAndSwap(false, true)`, return an error that
+   `execShutdown` builds itself (revision 3, AQ-1). Its text is `a previous poweroff command is still running`, and no
+   package-level variable holds it, so C-4 rule (b) stays strict.
 2. **Launch in one goroutine** (a func literal inside `execShutdown`, so it is lexically covered by AD-006.3 and
    AD-010). The goroutine:
-   1. runs `defer a.poweroffRunning.Store(false)`;
-   2. computes `x := poweroffExitFrom(out, err)`, where `out, err` come from:
+   1. computes `x := poweroffExitFrom(out, err)`, where `out, err` come from:
       - **the seam**, when `a.runner != nil`: `a.runner(context.Background(), "sudo", "systemctl", "poweroff")`;
       - **the AD-010 guard** otherwise: `if inTestBinary() { return …errPowerProcessInTest }`;
       - **production** otherwise:
@@ -560,8 +571,11 @@ every reboot log message. **No reboot-visible string changes.**
         - `cmd.WaitDelay = time.Second`, so a grandchild that holds the pipe cannot hold up `Wait`;
         - `err = cmd.Start()`; if that succeeds, `err = cmd.Wait()`;
         - `out` is the captured output;
+   2. runs `a.poweroffRunning.Store(false)` as soon as the child has exited, **before** the hand-off (revision 3,
+      QA note 3);
    3. hands `x` over with `select { case done <- x: case <-abandoned: if !x.initiated() { slog.Warn("shutdown:
-      poweroff command failed after the start check", "command_id", …, "error", <sanitized>) } }`.
+      poweroff command failed after the start check", "error", <sanitized>) } }`. The Warn carries no `command_id`,
+      because `execShutdown` takes only the permit (revision 3, AQ-2).
 3. **Start check.** `t := a.clock().NewTimer(models.ShutdownStartCheckBound)`, then `defer t.Stop()`, then
    `select`:
    - `x := <-done` → `return classifyPoweroff(x)`;
@@ -600,7 +614,7 @@ func classifyPoweroff(x poweroffExit) error // nil = initiated
 |---|---|
 | `exitedZero`, `signaled` | `nil` (initiated) |
 | `exitedNonZero` | `errors.New(err.Error() + optional ": " + Output)`, for example `exit status 1: sudo: a terminal is required to read the password; …` |
-| `launchFailed` | `err` |
+| `launchFailed` | `err`; with no error text, the fallback `shutdown command did not start` (revision 3, AQ-1) |
 
 `handleShutdown` turns any error into `shutdown: ` + `sanitizePowerErr(err.Error())`:
 1. `models.SanitizeText`;
@@ -694,8 +708,8 @@ var errPowerProcessInTest = errors.New("refusing to start a real power command i
 | Action | File Path | Purpose |
 |---|---|---|
 | MODIFY | `internal/agent/reboot_clearance.go` | Header comment. `powerAction`, `powerGate` (with `allowed` and `allowOffText`), `rebootGate()`, `shutdownGate()`. `powerGuards`, `powerClearance` with `Bound`, and `reason()`. `awaitPowerClearance` (the moved loop with the five AD-001 changes), `awaitRebootClearance` (wrapper, same signature), `awaitShutdownClearance(ctx, commandID)` (binds its own guards). `powerPermit{permitID, permitAction}`, `mintPowerPermit`, `consumePowerPermit`, `errShutdownNotCleared`. `guardAllowShutdownOff`. `commonPowerGuards`, `commonRebootGuards`, `commonShutdownGuards` |
-| MODIFY | `internal/agent/commands.go` | `case "shutdown": return a.handleShutdown(cr)`. `handleShutdown(cr) commandExecResult` (AD-003). `powerSkippedResult`, `rebootSkippedResult`, `shutdownSkippedResult`. `execReboot`: `consumePowerPermit`, plus the AD-010 guard; otherwise unchanged. New `execShutdown`: permit, `poweroffRunning`, launch closure (seam, guard, real branch), start-check `select`, reaper hand-off (AD-009) |
-| CREATE | `internal/agent/poweroff.go` | `poweroffExitKind`, `poweroffExit`, `poweroffExitFrom`, `classifyPoweroff`, `sanitizePowerErr`, `cappedWriter`, `poweroffOutputCap = 4 << 10`, `poweroffErrMax = 200`, `errPoweroffStillRunning` |
+| MODIFY | `internal/agent/commands.go` | `case "shutdown": return a.handleShutdown(cr)`. `handleShutdown(cr) commandExecResult` (AD-003). `powerSkippedResult`, `rebootSkippedResult`, `shutdownSkippedResult`. `execReboot`: `consumePowerPermit`, plus the AD-010 guard; otherwise unchanged. New `execShutdown`: permit, `poweroffRunning` (the "still running" error is built here, revision 3), launch closure (seam, guard, real branch), start-check `select`, reaper hand-off (AD-009) |
+| CREATE | `internal/agent/poweroff.go` | `poweroffExitKind`, `poweroffExit`, `poweroffExitFrom`, `classifyPoweroff` (fallback `shutdown command did not start`), `sanitizePowerErr`, `cappedWriter`, `poweroffOutputCap = 4 << 10`, `poweroffErrMax = 200`. **It contains no `poweroff` / `halt` string literal**, so C-4 rule (b) applies to it unchanged (revision 3, AQ-1) |
 | CREATE | `internal/agent/powerguard.go` | `inTestBinary()`, `errPowerProcessInTest` (AD-010) |
 | MODIFY | `internal/agent/agent.go` | `rebootPermitSeq` / `rebootPermitLive` → `powerPermitSeq` / `powerPermitLive`; new `poweroffRunning atomic.Bool`; comments |
 | MODIFY | `internal/models/command_policy.go` | `ShutdownDpkgLockWaitBound`, `ShutdownAgentHardMax`, `ShutdownExecDeadline`, `ShutdownStartCheckBound`; `ClassPower` `switch action`; doc comments |
@@ -707,7 +721,7 @@ var errPowerProcessInTest = errors.New("refusing to start a real power command i
 | CREATE | `internal/agent/powerguard_test.go` | AD-010: the C-1 state, AST and self-tests |
 | CREATE | `internal/agent/poweroff_test.go` | `poweroffExitFrom`, `classifyPoweroff` and `sanitizePowerErr` tests, including the helper-process pattern (§12 note 6) |
 | CREATE | `internal/agent/shutdown_clearance_test.go` | `shutdownRig` (§12 note 4) and every `TestShutdown_SD_*`, `TestShutdownClearance_SD_*`, `TestPowerClearance_SD_*`, `TestExecShutdown_SD_*`, `TestExecReboot_SD_*` and `TestRebootGate_SD_*` test of §8 |
-| MODIFY | the fake clock test helper (where `fakeClock` is defined) | If it is missing, add a `pendingTimers() int` accessor so tests can `Advance` once the start-check timer exists (§12 note 5) |
+| UNCHANGED | the fake clock test helper | **No `pendingTimers()` accessor was added** (revision 3). Tests use the existing `fakeClock.timerDurations()` to wait for the start-check timer before they `Advance` (§12 note 5) |
 | MODIFY | `internal/server/commands/service_test.go` | Shutdown `dl` 600 → 1200 |
 | MODIFY | `internal/server/commands/sweeper_test.go` | Move the shutdown subtest; add `TestSweep_SD_AC016_ShutdownNotTimedOutBefore20m` |
 
@@ -743,7 +757,7 @@ the anchor `#reboots-and-the-dpkg-lock` stays valid.
   - Any local user who holds the dpkg lock can delay or block a rIOt shutdown. Each block shows in the result with
     the holder's pid and uid.
 - "Agent log": add the message `dpkg lock held, waiting before shutdown`, the `path` value `shutdown`, and the reaper
-  Warn `shutdown: poweroff command failed after the start check`.
+  Warn `shutdown: poweroff command failed after the start check`, which carries an `error` field only.
 - "Time limits": shutdown rows (wait 10 minutes, start check 3 seconds, agent 12 minutes, server 20 minutes /
   `exec_deadline_s` 1200, queued 15 minutes). State that the reboot and shutdown limits are independent. Delete L2747.
 - "Local users can block reboots" → "… reboots and shutdowns".
@@ -825,7 +839,8 @@ Typical `<err>` values:
 - `exit status 1: sudo: a terminal is required to read the password; either use the -S option …` (truncated at 200
   bytes);
 - `exec: "sudo": executable file not found in $PATH`;
-- `a previous poweroff command is still running`;
+- `a previous poweroff command is still running` (built inside `execShutdown`, revision 3);
+- `shutdown command did not start` (the `classifyPoweroff` fallback for a launch error with no text, revision 3);
 - `shutdown refused: no dpkg-lock clearance for this attempt`;
 - `exit status 1190: …` (Windows);
 - `refusing to start a real power command inside a test binary` (test binaries only).
@@ -837,8 +852,11 @@ Typical `<err>` values:
 ```
 INFO dpkg lock held, waiting before shutdown  path=shutdown command_id=<uuid> holder="<holderText>"
 INFO dpkg lock wait ended                     path=shutdown command_id=<uuid> outcome=<…> waited=<d> holder="<holderText>"
-WARN shutdown: poweroff command failed after the start check  command_id=<uuid> error="<sanitized>"   (≤ 1, only after a 3 s timeout)
+WARN shutdown: poweroff command failed after the start check  error="<sanitized>"   (≤ 1 per command, only after a 3 s timeout)
 ```
+
+The Warn has no `command_id` (revision 3, AQ-2): `execShutdown` takes only the permit. It is still attributable,
+because at most one poweroff child runs per agent and each command writes at most one such line.
 
 ### Agent events
 
@@ -857,8 +875,8 @@ None new. A failed result raises the existing `command_completed` warning `Comma
    writes one Info line (`wait ended`).
 6. `execShutdown`: the permit is consumed, `poweroffRunning` goes false → true, the goroutine launches `sudo systemctl
    poweroff`, and a 3 s timer starts.
-7. `systemctl` enqueues the job and exits 0 after about 50 ms. The goroutine hands over `exitedZero`, and the result
-   is `nil`.
+7. `systemctl` enqueues the job and exits 0 after about 50 ms. The goroutine clears `poweroffRunning`, then hands over
+   `exitedZero`, and the result is `nil`.
 8. The result `success, "shutdown initiated after waiting 3m for the dpkg lock"` goes to the outbox. `runAction`
    releases the host lock.
 9. systemd stops `riot-agent.service`, sending SIGTERM to the agent and to any child still alive. `shuttingDown` is
@@ -868,7 +886,7 @@ None new. A failed result raises the existing `command_completed` warning `Comma
 
 Steps 1–6 are as in 7.1. Then:
 1. `sudo` exits 1 within milliseconds, with `sudo: a terminal is required to read the password; …` on stderr.
-2. The goroutine hands over `exitedNonZero(1)` and clears `poweroffRunning`.
+2. The goroutine clears `poweroffRunning` and hands over `exitedNonZero(1)`.
 3. The result is `error, "shutdown: exit status 1: sudo: a terminal is required to read the password; either use the
    -S …"` (≤ 200 bytes). The existing failed-command warning event follows. The host stays up, and the result says so.
 
@@ -876,11 +894,11 @@ Steps 1–6 are as in 7.1. Then:
 
 1. The 3 s timer fires first. `abandoned` is closed, and the result is initiated.
 2. The goroutine keeps waiting.
-3. When the child exits:
+3. When the child exits, the goroutine clears `poweroffRunning` first, then:
    - exit 0 or killed by a signal: nothing is logged;
    - non-zero: one Warn line.
-4. `poweroffRunning` returns to false. A second `shutdown` sent while the child is alive fails with `shutdown: a
-   previous poweroff command is still running`.
+4. A second `shutdown` sent while the child is alive fails with `shutdown: a previous poweroff command is still
+   running`.
 
 ### 7.4 Timeout, unknown, held then absent
 
@@ -987,7 +1005,8 @@ This is as in revision 1. The old 600 s deadline can produce `timed_out`, and th
   - the runtime check is action-bound and single-use, and a wrong-action permit is refused without being consumed;
   - the AST checks cover call sites, entry points and guards (AD-006).
 - **Only power paths (C-4).** A recursive structural scan of the agent code and its binary covers process launches,
-  `systemctl` verbs and targets, shells, constant-folded strings, and `syscall`/`unix`/`windows` power calls.
+  `systemctl` verbs and targets, shells, constant-folded strings, and `syscall`/`unix`/`windows` power calls. Rule (b)
+  has no file exemption: `poweroff.go` holds no `poweroff` / `halt` string literal (revision 3, AQ-1).
 - **Test safety (C-1).** In a test binary, no power process can start, whatever the harness (AD-010).
 - **Truthful result (BR-006).** A refusal is reported as failed. Success means the OS accepted the command, or it was
   still running or signal-killed at the 3 s bound (R-10).
@@ -1076,9 +1095,9 @@ This is as in revision 1. The old 600 s deadline can produce `timed_out`, and th
    - `newShutdownRig` ends with `require.NotNil(t, r.a.runner)`.
    - It is the only way tests submit a `shutdown`. AD-010 backs this up if a test forgets.
 5. **The start-check timer under the fake clock.** `execShutdown` uses `a.clock().NewTimer`. In AC-030 tests, block
-   the runner, wait until the fake clock has a pending timer (with `require.Eventually` on `pendingTimers()`; add the
-   accessor if it is missing), then `Advance(models.ShutdownStartCheckBound)`. Runners that do not block return before
-   the timer matters.
+   the runner, wait until the fake clock has the start-check timer pending (with `require.Eventually` on the existing
+   `fakeClock.timerDurations()`; revision 3: no new accessor), then `Advance(models.ShutdownStartCheckBound)`. Runners
+   that do not block return before the timer matters.
 6. **The AC-032 helper-process pattern.** `poweroff_test.go` re-executes `os.Args[0]` with
    `-test.run=TestPoweroffHelperProcess` and an environment variable that makes it exit with a given code. On Linux
    it can also send itself SIGTERM. This yields a real `*exec.ExitError` without any power tool. `TestPoweroffHelperProcess` returns at once when the
@@ -1086,7 +1105,7 @@ This is as in revision 1. The old 600 s deadline can produce `timed_out`, and th
 7. **Never call a power exec with a nil runner in a test, even to "prove" the guard** (C-1 b).
 8. **Never use `exec.CommandContext` for the poweroff.** Never `Kill` the child. Always reach `Wait` in the goroutine.
 9. **`sanitizePowerErr` is applied once, in `handleShutdown`**, to every `execShutdown` error. Only `poweroff.go`
-   builds the raw text.
+   builds the raw text, with one exception: `execShutdown` builds the "still running" error itself (revision 3).
 10. **The constant folder** (AD-006.3) reads `const` declarations only. Keep it in the test file, with no `go/types`
     and no new dependency.
 11. **Host verification (read-only, optional).** Record in the implementation report whether `riot` has a poweroff
