@@ -764,7 +764,7 @@ Examples:
 - `Device vermont went offline during Reboot by ryan (expected, back by 14:32)`
 - `Device vermont came online after Reboot by ryan (offline 1m42s)`
 
-Nothing is dropped. Every suppressed event stays in the event list. The actor phrase is `by <name>` for a command you started, `by auto-update policy for <target>` for an auto-update policy, and `by the auto-patch schedule` for the automated patch run.
+Nothing is dropped. Every suppressed event stays in the event list. The actor phrase is `by <name>` for a command you started, `by auto-update policy for <target>` for an auto-update policy, and `by the auto-patch schedule` for the automated patch run. A command from a session without a display name reads `by an operator`.
 
 ### Which actions open a window
 
@@ -849,6 +849,7 @@ Beside the label, the page shows who started the action and when. The **device p
 - The **Offline** count excludes devices that are offline inside a window and devices in the powered-off state. A separate **Expected offline** card counts them. The card appears only when its count is above zero. An escalated device counts as offline.
 - The failure label stays until the device next reports online, or for 24 hours after the escalation, whichever comes first.
 - When a host window and a Docker window are open together, the host label shows.
+- Times in labels follow the UTC or local choice in the utility bar (see [Time Display](#time-display)). Times in event messages, such as `back by 14:32`, use the server's local time zone, so the two can differ.
 - The label `Rebooting (waiting for dpkg lock)` appears only when the agent reports that step. Current agents do not report it yet, so a reboot that waits for the lock shows `Rebooting`.
 - If `GET /api/v1/activity` fails, the page shows the plain status, as before.
 
@@ -2009,6 +2010,17 @@ make test-web
 # Go coverage report
 make coverage
 ```
+
+Run one test or one group by name:
+
+```bash
+go test ./internal/server/ -run TestEX_AC048 -v
+go test ./... -run TestEX_ -count=1
+```
+
+A passing run ends each package with `ok`. The `TestEX_` tests cover [Expected Activity](#expected-activity).
+
+Some tests in `internal/server/db`, `storage`, `commands`, `handlers` and `server` need a real PostgreSQL. They skip, and do not fail, unless `RIOT_TEST_PG_URL` is set. The database name in the URL must contain `test`, for example `postgres://user:pass@localhost:5432/riot_test?sslmode=disable`, because these tests create schemas and run migrations up and down. Set `RIOT_TEST_PG_ALLOW=1` only if you accept that the tests run against a database whose name has no `test` in it. Use a throwaway database.
 
 CI runs automatically on push to main and on PRs via GitHub Actions (`.github/workflows/ci.yml`). One job, `test-go-integration`, spins up a disposable PostgreSQL 16 service and runs the partitioning integration suite (`go test -tags=integration ./internal/server/partition/...`) against it — this is the only CI job that requires Postgres; `test-go` and `test-web` do not. Running that suite locally requires your own PostgreSQL 16 instance (set `RIOT_TEST_DB_URL`); without it, the integration tests skip cleanly rather than fail.
 
