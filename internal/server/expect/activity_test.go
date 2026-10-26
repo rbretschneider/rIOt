@@ -258,3 +258,31 @@ func TestEX_Activity_EscalationSurvivesRestart(t *testing.T) {
 	assert.Equal(t, "by ryan", a.ActorPhrase)
 	assert.Equal(t, models.EscalationReasonNotBack, a.Escalation.Reason)
 }
+
+// The web matches an activity_update to a device by the envelope's device_id and
+// ignores a payload whose own device_id differs; GET /activity has one entry per
+// device (ADD 6.1, 6.4; the web report's contract items 1 to 3).
+func TestEX_Contract_ActivityEnvelopeAndOneEntryPerDevice(t *testing.T) {
+	h := newHarness(t)
+	for _, d := range allDevices {
+		h.dispatch(d.id, models.ActionAgentUpdate)
+	}
+	h.dispatch("hawaii", models.ActionDockerRestart, withKeys(plexKey))
+	h.tick()
+
+	seen := map[string]int{}
+	for _, a := range h.tr.Activities().Activities {
+		seen[a.DeviceID]++
+		assert.NotEmpty(t, a.CommandID, "the web's View command link needs a command id (%s)", a.DeviceID)
+	}
+	assert.Len(t, seen, len(allDevices), "every device has an entry")
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "[contract] exactly one activity entry for %s", id)
+	}
+	recs := h.bc.Activities()
+	require.NotEmpty(t, recs)
+	for _, rec := range recs {
+		require.NotNil(t, rec.Activity)
+		assert.Equal(t, rec.DeviceID, rec.Activity.DeviceID, "[contract] the envelope's device_id equals the payload's")
+	}
+}
