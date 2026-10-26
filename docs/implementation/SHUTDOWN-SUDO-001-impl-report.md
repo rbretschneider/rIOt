@@ -408,3 +408,238 @@ Nothing in `execShutdown`, the C-3 call-site checks, the server, the API or the 
 - **Timing:** the prompts now appear before prerequisite failures such as an old sudo or a busy maintenance service. A user can answer and then see a refusal, with no change made (ADD AD-001 consequence).
 - **Residuals unchanged from the ADD:** R-1 to R-5. R-2 (SIGKILL or power loss between the drop-in install and the agreement check) still needs a re-run to reconcile.
 - **Leftovers outside the repo, mine:** Docker images `riot-fixture:bookworm` and `riot-fixture:trixie`, the directory `D:\rIOt_fixture_src`, `D:\rIOt_npm_cache`, and `web/node_modules` (git-ignored). None of them is needed by the repo.
+
+
+---
+
+## Addendum 1: QA-1 fix (2026-10-26)
+
+QA returned FAIL for one defect, QA-1 (FR-017, MEDIUM): `config_enables_shutdown` accepted a file whose first content line is indented. yaml.v3 closes that first mapping at the next column-0 line and starts a second implicit document, which `Unmarshal` ignores. The agent then read `commands.allow_shutdown` as false while the installer classifier said enabled and granted poweroff. The story's differential corpus had no such file.
+
+### Fix
+
+Commit `39aba1a` `[SHUTDOWN-SUDO-001] fix: reject a config whose first content line is indented (QA-1)`.
+
+- `scripts/install.sh`: in the awk program, directly after the tab check, `if (seen == 0 && ind > 0) reject()`. This is the line QA suggested. It was checked against the program's order of rules: blank and comment lines are skipped before `ind` is computed, and a `---` line does `next` before `seen` is incremented. So a leading blank line, a leading comment or a document-start marker followed by an indented first line is still rejected, and a comment or blank line before a column-0 first line is still accepted. The program still has no single quote and no non-portable construct (`TestInstallSh_SS_ClassifierIsPortableAwk` passes).
+- `scripts/shutdown_grant_test.go`, `classifierCorpus`: seven cases added. Six are pinned "not enabled": an indented first line, a one-space first line, a blank line then an indented line, a comment then an indented line, `---` then an indented line, and an orphaned indented `url:`. One is pinned "enabled": a comment and blank line before a column-0 `commands:`.
+- The QA tests in `scripts/shutdown_grant_qa_test.go` are unchanged and now pass. Nothing else was touched.
+
+### Results
+
+Run from an LF export of `HEAD` (`git -c core.autocrlf=false -c core.eol=lf archive HEAD scripts .github`, extracted to `D:\rIOt_fixture_export`). The export's `install.sh` and `test_install_maintenance.py` were compared byte for byte with `git show HEAD:...` and are identical, with no carriage return. Same safety rules as before: no power command, no installed `riot-agent`, no SSH. The fixtures ran only in disposable containers with `systemctl` stubbed and the power tools replaced by tripwires.
+
+| Run | Result |
+|---|---|
+| `go test ./... -count=1` (Windows, includes both QA Go tests, default `QA_FUZZ_N`) | 29 packages `ok`, exit 0 |
+| `go vet ./...` (Windows) | no output, exit 0 |
+| `GOOS=linux go vet ./...` | no output, exit 0 |
+| `go test ./scripts -run FR017` on Windows with `QA_FUZZ_N=800` | story differential test, QA mutation test (800 mutants, default awk) and QA minimal repro all PASS |
+| Linux containers (`riot-fixture:bookworm` and `riot-fixture:trixie`), cross-compiled `scripts` test binary, `QA_FUZZ_N=800`, default awk, mawk, busybox awk and gawk | all `InstallSh` tests PASS on both images (below) |
+| Installer fixture, `debian:bookworm-slim`, CI step body, export mounted read-only | `Ran 49 tests ... OK` (44 story and earlier, 5 QA) |
+| Installer fixture, `debian:trixie-slim`, same | `Ran 49 tests ... OK` |
+
+The 800-mutant run: the agent reads true for 179, cannot load 509, and the classifier enables 145. Of those 145, 51 are files the agent cannot load at all, which is the accepted residual R-1. None is a file the agent loads and reads as false. The four awks give identical counts. Before the fix QA saw 9 such violations in 600 mutants.
+
+Not run again: web suite and `-race` (no web or agent Go code changed in this fix; the previous results stand), shellcheck (the awk program is inside one quoted string and shellcheck does not read it; `bash -n` is covered by the fixtures that run the script).
+
+#### `go test ./... -count=1` (Windows)
+
+```
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-agent-apply	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-maintenance	[no test files]
+?   	github.com/DesyncTheThird/rIOt/cmd/riot-server	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/cmd/riot-signer	1.083s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent	21.407s
+ok  	github.com/DesyncTheThird/rIOt/internal/agent/collectors	12.039s
+ok  	github.com/DesyncTheThird/rIOt/internal/logbudget	0.716s
+ok  	github.com/DesyncTheThird/rIOt/internal/maintenance	0.862s
+ok  	github.com/DesyncTheThird/rIOt/internal/models	0.759s
+ok  	github.com/DesyncTheThird/rIOt/internal/redact	0.454s
+ok  	github.com/DesyncTheThird/rIOt/internal/releasekey	0.764s
+ok  	github.com/DesyncTheThird/rIOt/internal/resilient	1.038s
+ok  	github.com/DesyncTheThird/rIOt/internal/server	3.714s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/auth	0.583s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ca	0.497s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/commands	1.630s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/db	1.672s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/events	0.734s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/handlers	9.455s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/ingest	0.633s
+?   	github.com/DesyncTheThird/rIOt/internal/server/logstore	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/internal/server/middleware	1.129s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/notify	1.081s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/oidc	2.003s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/partition	0.644s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/probes	1.156s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/quota	0.328s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/scoring	0.637s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/storage	0.902s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/summary	0.798s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/updates	0.359s
+ok  	github.com/DesyncTheThird/rIOt/internal/server/websocket	0.721s
+?   	github.com/DesyncTheThird/rIOt/internal/testutil	[no test files]
+ok  	github.com/DesyncTheThird/rIOt/scripts	46.278s
+exit 0
+```
+
+#### Linux containers: QA mutation test (800 mutants) and installer source and differential tests
+
+```
+== riot-fixture:bookworm
+    shutdown_grant_qa_test.go:190: [default-awk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [mawk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [busybox] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [gawk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+--- PASS: TestInstallSh_QA_FR017_MutationsNeverExceedAgentLoader (18.93s)
+--- PASS: TestInstallSh_QA_FR017_IndentedFirstLineHidesCommandsFromAgent (0.03s)
+--- PASS: TestInstallSh_SS_AC003_PromptOrder (0.00s)
+--- PASS: TestInstallSh_SS_AC007_RebootLineUnchangedAndPoweroffLineExact (0.00s)
+--- PASS: TestInstallSh_SS_AC008_NoOtherPowerGrant (0.00s)
+--- PASS: TestInstallSh_SS_AC018_ShutdownIsLinuxOnly (0.00s)
+--- PASS: TestInstallSh_SS_AC026_FlagsAndUsageUnchanged (0.00s)
+--- PASS: TestInstallSh_SS_OQA1_PromptsPrecedeLocksAndStop (0.00s)
+--- PASS: TestInstallSh_SS_ClassifierIsPortableAwk (0.00s)
+--- PASS: TestInstallSh_SS_SEC003_RuntimeChecksFollowTheLockdownAndPrecedeAnyWrite (0.00s)
+--- PASS: TestInstallSh_SS_SEC001_AgentYamlIsOnlyWrittenWhenAbsentAndLinksAreCounted (0.00s)
+    shutdown_grant_test.go:610: [FR-017] classifier runs with: [default-awk mawk busybox gawk]
+--- PASS: TestInstallSh_SS_FR017_ClassifierNeverExceedsAgentLoader (1.57s)
+PASS
+== riot-fixture:trixie
+    shutdown_grant_qa_test.go:190: [default-awk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [mawk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [busybox] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+    shutdown_grant_qa_test.go:190: [gawk] 800 mutants: agent reads true 179, agent cannot load 509, classifier enables 145 (of which the agent cannot load, residual R-1: 51)
+--- PASS: TestInstallSh_QA_FR017_MutationsNeverExceedAgentLoader (19.50s)
+--- PASS: TestInstallSh_QA_FR017_IndentedFirstLineHidesCommandsFromAgent (0.03s)
+--- PASS: TestInstallSh_SS_AC003_PromptOrder (0.00s)
+--- PASS: TestInstallSh_SS_AC007_RebootLineUnchangedAndPoweroffLineExact (0.00s)
+--- PASS: TestInstallSh_SS_AC008_NoOtherPowerGrant (0.00s)
+--- PASS: TestInstallSh_SS_AC018_ShutdownIsLinuxOnly (0.00s)
+--- PASS: TestInstallSh_SS_AC026_FlagsAndUsageUnchanged (0.00s)
+--- PASS: TestInstallSh_SS_OQA1_PromptsPrecedeLocksAndStop (0.00s)
+--- PASS: TestInstallSh_SS_ClassifierIsPortableAwk (0.00s)
+--- PASS: TestInstallSh_SS_SEC003_RuntimeChecksFollowTheLockdownAndPrecedeAnyWrite (0.00s)
+--- PASS: TestInstallSh_SS_SEC001_AgentYamlIsOnlyWrittenWhenAbsentAndLinksAreCounted (0.00s)
+    shutdown_grant_test.go:610: [FR-017] classifier runs with: [default-awk mawk busybox gawk]
+--- PASS: TestInstallSh_SS_FR017_ClassifierNeverExceedsAgentLoader (1.63s)
+PASS
+```
+
+#### Installer fixture, `debian:bookworm-slim`
+
+```
+test_AC011_changed_signed_asset_preserves_running_install (__main__.InstallerFixtures.test_AC011_changed_signed_asset_preserves_running_install) ... ok
+test_AC011_invalid_signature_preserves_running_install (__main__.InstallerFixtures.test_AC011_invalid_signature_preserves_running_install) ... ok
+test_AC011_missing_helper_preserves_running_install (__main__.InstallerFixtures.test_AC011_missing_helper_preserves_running_install) ... ok
+test_AC012_active_worker_refuses_before_stop (__main__.InstallerFixtures.test_AC012_active_worker_refuses_before_stop) ... ok
+test_AC012_candidate_policy_failure_preserves_old_policy (__main__.InstallerFixtures.test_AC012_candidate_policy_failure_preserves_old_policy) ... ok
+test_AC012_duplicate_status_keys_refuse_before_stop (__main__.InstallerFixtures.test_AC012_duplicate_status_keys_refuse_before_stop) ... ok
+test_AC012_effective_policy_failure_restores_old_policy_before_stop (__main__.InstallerFixtures.test_AC012_effective_policy_failure_restores_old_policy_before_stop) ... ok
+test_AC012_invalid_signed_unit_preserves_binary_unit_policy (__main__.InstallerFixtures.test_AC012_invalid_signed_unit_preserves_binary_unit_policy) ... ok
+test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity (__main__.InstallerFixtures.test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity) ... ok
+test_AC012_multilink_root_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_multilink_root_lock_refuses_before_stop) ... ok
+test_AC012_native_dpkg_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_native_dpkg_lock_refuses_before_stop) ... ok
+test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation (__main__.InstallerFixtures.test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation) ... ok
+test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection (__main__.InstallerFixtures.test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection) ... ok
+test_AC012_root_lock_contention_preserves_running_install (__main__.InstallerFixtures.test_AC012_root_lock_contention_preserves_running_install) ... ok
+test_AC012_symlink_helper_directory_refuses_before_stop (__main__.InstallerFixtures.test_AC012_symlink_helper_directory_refuses_before_stop) ... ok
+test_AC012_unfinished_root_record_refuses_before_stop (__main__.InstallerFixtures.test_AC012_unfinished_root_record_refuses_before_stop) ... ok
+test_DBUS001_AC005_present_system_bus_needs_no_package_operation (__main__.InstallerFixtures.test_DBUS001_AC005_present_system_bus_needs_no_package_operation) ... ok
+test_DBUS001_AC006_missing_system_bus_is_installed_and_started_before_stop (__main__.InstallerFixtures.test_DBUS001_AC006_missing_system_bus_is_installed_and_started_before_stop) ... ok
+test_DBUS001_AC007_failed_dbus_install_preserves_running_install (__main__.InstallerFixtures.test_DBUS001_AC007_failed_dbus_install_preserves_running_install) ... ok
+test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched (__main__.InstallerFixtures.test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched) ... ok
+test_QA_fifo_agent_yaml_is_refused_without_hanging (__main__.InstallerFixtures.test_QA_fifo_agent_yaml_is_refused_without_hanging) ... ok
+test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement (__main__.InstallerFixtures.test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement) ... ok
+test_QA_second_run_after_a_yes_install_is_stable (__main__.InstallerFixtures.test_QA_second_run_after_a_yes_install_is_stable) ... ok
+test_QA_sigterm_between_install_and_agreement_restores_previous_policy (__main__.InstallerFixtures.test_QA_sigterm_between_install_and_agreement_restores_previous_policy) ... ok
+test_SS_A003_bare_systemctl_resolves_to_granted_path (__main__.InstallerFixtures.test_SS_A003_bare_systemctl_resolves_to_granted_path) ... ok
+test_SS_AC001_fresh_yes_grants_poweroff_and_config_agrees (__main__.InstallerFixtures.test_SS_AC001_fresh_yes_grants_poweroff_and_config_agrees) ... ok
+test_SS_AC002_fresh_no_or_unrecognised_answer_grants_nothing (__main__.InstallerFixtures.test_SS_AC002_fresh_no_or_unrecognised_answer_grants_nothing) ... ok
+test_SS_AC003_prompt_text_and_order (__main__.InstallerFixtures.test_SS_AC003_prompt_text_and_order) ... ok
+test_SS_AC004_reboot_and_shutdown_independent (__main__.InstallerFixtures.test_SS_AC004_reboot_and_shutdown_independent) ... ok
+test_SS_AC004_template_helper_matches_pre_story_golden (__main__.InstallerFixtures.test_SS_AC004_template_helper_matches_pre_story_golden) ... ok
+test_SS_AC005_yes_flag_answers_yes (__main__.InstallerFixtures.test_SS_AC005_yes_flag_answers_yes) ... ok
+test_SS_AC006_non_interactive_and_no_terminal_answer_no (__main__.InstallerFixtures.test_SS_AC006_non_interactive_and_no_terminal_answer_no) ... ok
+test_SS_AC007_existing_lines_byte_identical (__main__.InstallerFixtures.test_SS_AC007_existing_lines_byte_identical) ... ok
+test_SS_AC008_only_exact_poweroff_is_granted (__main__.InstallerFixtures.test_SS_AC008_only_exact_poweroff_is_granted) ... ok
+test_SS_AC009_policy_validation_still_guards_yes_install (__main__.InstallerFixtures.test_SS_AC009_policy_validation_still_guards_yes_install) ... ok
+test_SS_AC010_reinstall_true_emits_grant_without_question (__main__.InstallerFixtures.test_SS_AC010_reinstall_true_emits_grant_without_question) ... ok
+test_SS_AC011_reinstall_fails_closed (__main__.InstallerFixtures.test_SS_AC011_reinstall_fails_closed) ... ok
+test_SS_AC012_flags_do_not_override_config (__main__.InstallerFixtures.test_SS_AC012_flags_do_not_override_config) ... ok
+test_SS_AC013_reinstall_revokes_stale_grant (__main__.InstallerFixtures.test_SS_AC013_reinstall_revokes_stale_grant) ... ok
+test_SS_AC014_preserved_config_untouched (__main__.InstallerFixtures.test_SS_AC014_preserved_config_untouched) ... ok
+test_SS_AC015_bootstrap_reenrolment_resets_shutdown (__main__.InstallerFixtures.test_SS_AC015_bootstrap_reenrolment_resets_shutdown) ... ok
+test_SS_AC016_bootstrap_on_fresh_install_asks_and_grants (__main__.InstallerFixtures.test_SS_AC016_bootstrap_on_fresh_install_asks_and_grants) ... ok
+test_SS_AC017_agreement_holds_when_the_config_changes_under_the_run (__main__.InstallerFixtures.test_SS_AC017_agreement_holds_when_the_config_changes_under_the_run) ... ok
+test_SS_AC018_stubbed_darwin_install_unchanged (__main__.InstallerFixtures.test_SS_AC018_stubbed_darwin_install_unchanged) ... ok
+test_SS_AC029_bounded_growth (__main__.InstallerFixtures.test_SS_AC029_bounded_growth) ... ok
+test_SS_OQA2_failure_before_agreement_restores_previous_policy (__main__.InstallerFixtures.test_SS_OQA2_failure_before_agreement_restores_previous_policy) ... ok
+test_SS_OQA2_failure_with_no_previous_dropin_leaves_none (__main__.InstallerFixtures.test_SS_OQA2_failure_with_no_previous_dropin_leaves_none) ... ok
+test_SS_SEC001_hardlinked_config_refused_before_any_change (__main__.InstallerFixtures.test_SS_SEC001_hardlinked_config_refused_before_any_change) ... ok
+test_SS_SEC001_late_checks_run_after_the_stop_and_roll_back_the_grant (__main__.InstallerFixtures.test_SS_SEC001_late_checks_run_after_the_stop_and_roll_back_the_grant) ... ok
+
+----------------------------------------------------------------------
+Ran 49 tests in 26.921s
+
+OK
+```
+
+#### Installer fixture, `debian:trixie-slim`
+
+```
+test_AC011_changed_signed_asset_preserves_running_install (__main__.InstallerFixtures.test_AC011_changed_signed_asset_preserves_running_install) ... ok
+test_AC011_invalid_signature_preserves_running_install (__main__.InstallerFixtures.test_AC011_invalid_signature_preserves_running_install) ... ok
+test_AC011_missing_helper_preserves_running_install (__main__.InstallerFixtures.test_AC011_missing_helper_preserves_running_install) ... ok
+test_AC012_active_worker_refuses_before_stop (__main__.InstallerFixtures.test_AC012_active_worker_refuses_before_stop) ... ok
+test_AC012_candidate_policy_failure_preserves_old_policy (__main__.InstallerFixtures.test_AC012_candidate_policy_failure_preserves_old_policy) ... ok
+test_AC012_duplicate_status_keys_refuse_before_stop (__main__.InstallerFixtures.test_AC012_duplicate_status_keys_refuse_before_stop) ... ok
+test_AC012_effective_policy_failure_restores_old_policy_before_stop (__main__.InstallerFixtures.test_AC012_effective_policy_failure_restores_old_policy_before_stop) ... ok
+test_AC012_invalid_signed_unit_preserves_binary_unit_policy (__main__.InstallerFixtures.test_AC012_invalid_signed_unit_preserves_binary_unit_policy) ... ok
+test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity (__main__.InstallerFixtures.test_AC012_legacy_migration_uses_fresh_signed_inode_and_preserves_identity) ... ok
+test_AC012_multilink_root_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_multilink_root_lock_refuses_before_stop) ... ok
+test_AC012_native_dpkg_lock_refuses_before_stop (__main__.InstallerFixtures.test_AC012_native_dpkg_lock_refuses_before_stop) ... ok
+test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation (__main__.InstallerFixtures.test_AC012_old_sudo_preserves_binary_unit_policy_before_mutation) ... ok
+test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection (__main__.InstallerFixtures.test_AC012_real_sudo_lists_safe_hold_names_and_denies_injection) ... ok
+test_AC012_root_lock_contention_preserves_running_install (__main__.InstallerFixtures.test_AC012_root_lock_contention_preserves_running_install) ... ok
+test_AC012_symlink_helper_directory_refuses_before_stop (__main__.InstallerFixtures.test_AC012_symlink_helper_directory_refuses_before_stop) ... ok
+test_AC012_unfinished_root_record_refuses_before_stop (__main__.InstallerFixtures.test_AC012_unfinished_root_record_refuses_before_stop) ... ok
+test_DBUS001_AC005_present_system_bus_needs_no_package_operation (__main__.InstallerFixtures.test_DBUS001_AC005_present_system_bus_needs_no_package_operation) ... ok
+test_DBUS001_AC006_missing_system_bus_is_installed_and_started_before_stop (__main__.InstallerFixtures.test_DBUS001_AC006_missing_system_bus_is_installed_and_started_before_stop) ... ok
+test_DBUS001_AC007_failed_dbus_install_preserves_running_install (__main__.InstallerFixtures.test_DBUS001_AC007_failed_dbus_install_preserves_running_install) ... ok
+test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched (__main__.InstallerFixtures.test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched) ... ok
+test_QA_fifo_agent_yaml_is_refused_without_hanging (__main__.InstallerFixtures.test_QA_fifo_agent_yaml_is_refused_without_hanging) ... ok
+test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement (__main__.InstallerFixtures.test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement) ... ok
+test_QA_second_run_after_a_yes_install_is_stable (__main__.InstallerFixtures.test_QA_second_run_after_a_yes_install_is_stable) ... ok
+test_QA_sigterm_between_install_and_agreement_restores_previous_policy (__main__.InstallerFixtures.test_QA_sigterm_between_install_and_agreement_restores_previous_policy) ... ok
+test_SS_A003_bare_systemctl_resolves_to_granted_path (__main__.InstallerFixtures.test_SS_A003_bare_systemctl_resolves_to_granted_path) ... ok
+test_SS_AC001_fresh_yes_grants_poweroff_and_config_agrees (__main__.InstallerFixtures.test_SS_AC001_fresh_yes_grants_poweroff_and_config_agrees) ... ok
+test_SS_AC002_fresh_no_or_unrecognised_answer_grants_nothing (__main__.InstallerFixtures.test_SS_AC002_fresh_no_or_unrecognised_answer_grants_nothing) ... ok
+test_SS_AC003_prompt_text_and_order (__main__.InstallerFixtures.test_SS_AC003_prompt_text_and_order) ... ok
+test_SS_AC004_reboot_and_shutdown_independent (__main__.InstallerFixtures.test_SS_AC004_reboot_and_shutdown_independent) ... ok
+test_SS_AC004_template_helper_matches_pre_story_golden (__main__.InstallerFixtures.test_SS_AC004_template_helper_matches_pre_story_golden) ... ok
+test_SS_AC005_yes_flag_answers_yes (__main__.InstallerFixtures.test_SS_AC005_yes_flag_answers_yes) ... ok
+test_SS_AC006_non_interactive_and_no_terminal_answer_no (__main__.InstallerFixtures.test_SS_AC006_non_interactive_and_no_terminal_answer_no) ... ok
+test_SS_AC007_existing_lines_byte_identical (__main__.InstallerFixtures.test_SS_AC007_existing_lines_byte_identical) ... ok
+test_SS_AC008_only_exact_poweroff_is_granted (__main__.InstallerFixtures.test_SS_AC008_only_exact_poweroff_is_granted) ... ok
+test_SS_AC009_policy_validation_still_guards_yes_install (__main__.InstallerFixtures.test_SS_AC009_policy_validation_still_guards_yes_install) ... ok
+test_SS_AC010_reinstall_true_emits_grant_without_question (__main__.InstallerFixtures.test_SS_AC010_reinstall_true_emits_grant_without_question) ... ok
+test_SS_AC011_reinstall_fails_closed (__main__.InstallerFixtures.test_SS_AC011_reinstall_fails_closed) ... ok
+test_SS_AC012_flags_do_not_override_config (__main__.InstallerFixtures.test_SS_AC012_flags_do_not_override_config) ... ok
+test_SS_AC013_reinstall_revokes_stale_grant (__main__.InstallerFixtures.test_SS_AC013_reinstall_revokes_stale_grant) ... ok
+test_SS_AC014_preserved_config_untouched (__main__.InstallerFixtures.test_SS_AC014_preserved_config_untouched) ... ok
+test_SS_AC015_bootstrap_reenrolment_resets_shutdown (__main__.InstallerFixtures.test_SS_AC015_bootstrap_reenrolment_resets_shutdown) ... ok
+test_SS_AC016_bootstrap_on_fresh_install_asks_and_grants (__main__.InstallerFixtures.test_SS_AC016_bootstrap_on_fresh_install_asks_and_grants) ... ok
+test_SS_AC017_agreement_holds_when_the_config_changes_under_the_run (__main__.InstallerFixtures.test_SS_AC017_agreement_holds_when_the_config_changes_under_the_run) ... ok
+test_SS_AC018_stubbed_darwin_install_unchanged (__main__.InstallerFixtures.test_SS_AC018_stubbed_darwin_install_unchanged) ... ok
+test_SS_AC029_bounded_growth (__main__.InstallerFixtures.test_SS_AC029_bounded_growth) ... ok
+test_SS_OQA2_failure_before_agreement_restores_previous_policy (__main__.InstallerFixtures.test_SS_OQA2_failure_before_agreement_restores_previous_policy) ... ok
+test_SS_OQA2_failure_with_no_previous_dropin_leaves_none (__main__.InstallerFixtures.test_SS_OQA2_failure_with_no_previous_dropin_leaves_none) ... ok
+test_SS_SEC001_hardlinked_config_refused_before_any_change (__main__.InstallerFixtures.test_SS_SEC001_hardlinked_config_refused_before_any_change) ... ok
+test_SS_SEC001_late_checks_run_after_the_stop_and_roll_back_the_grant (__main__.InstallerFixtures.test_SS_SEC001_late_checks_run_after_the_stop_and_roll_back_the_grant) ... ok
+
+----------------------------------------------------------------------
+Ran 49 tests in 29.215s
+
+OK
+```
