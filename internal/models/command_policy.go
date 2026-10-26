@@ -687,3 +687,33 @@ const (
 	ParamRebootIfRequired   = "reboot_if_required"
 	ParamIncludeRebootClass = "include_reboot_class"
 )
+
+// os_update extra-updater parameters (EXTRA-UPD-001 AD-006, section 6.3).
+// exclude_extra_updaters is the operator's per-command opt-out. The budget
+// stamp is server-owned: Dispatch sets it and deletes every client-supplied
+// variant first.
+const (
+	ParamExcludeExtraUpdaters = "exclude_extra_updaters"
+	ParamExtraUpdaterBudget   = "extra_updater_budget"
+)
+
+// Extended os_update bounds for a host with an enabled extra updater
+// (EXTRA-UPD-001 AD-006). The chain is strictly nested: DietPi step limit 40m <
+// worker budget 80m < service backstop 85m < agent hard max 88m < deadline 95m.
+const (
+	OSUpdateExtraAgentHardMax = 88 * time.Minute
+	OSUpdateExtraExecDeadline = 95 * time.Minute
+)
+
+// ExtraUpdaterBudget reports whether params carry the server's extended-budget
+// stamp. Only a JSON boolean true counts.
+func ExtraUpdaterBudget(params map[string]interface{}) bool {
+	stamped, _ := params[ParamExtraUpdaterBudget].(bool)
+	return stamped
+}
+
+// ExtendedOSUpdate reports whether a command runs under the extended os_update
+// bounds: an os_update that carries the server's budget stamp.
+func ExtendedOSUpdate(action string, params map[string]interface{}) bool {
+	return action == ActionOSUpdate && ExtraUpdaterBudget(params)
+}

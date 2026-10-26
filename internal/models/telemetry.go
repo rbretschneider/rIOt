@@ -306,6 +306,11 @@ type UpdateInfo struct {
 	// reboot_if_required param. Only JSON true counts; the server uses it to
 	// reject, never to widen (PATCH-FLOW-001 NFR-003).
 	SupportsRebootIfRequired LenientBool `json:"supports_reboot_if_required,omitempty"`
+	// ExtraUpdaters lists the platform updaters outside the package manager that
+	// are present on the host, at most MaxExtraUpdaters (EXTRA-UPD-001). Absent
+	// from older agents and on hosts with no updater. The decoder normalises and
+	// never fails.
+	ExtraUpdaters ExtraUpdaterList `json:"extra_updaters,omitempty"`
 }
 
 // Freshness returns the normalized package-list freshness: fresh, stale or
