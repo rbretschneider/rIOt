@@ -57,7 +57,7 @@
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
 - **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
-- **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is now truthful: on Linux hosts set up by the installer, which grants no poweroff sudo rule, a shutdown reports `failed` until SHUTDOWN-SUDO-001 ships. No `install.sh` re-run or sudoers change is needed; upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
+- **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is truthful: a shutdown that sudo refuses reports `failed`. On a Linux host set up by the installer, remote shutdown is opt-in (SHUTDOWN-SUDO-001). The installer adds the one `systemctl poweroff` sudo rule only when you answer yes to "Allow remote shutdown from dashboard?" or when `commands.allow_shutdown` is `true` and you re-run `install.sh` as root ([how to enable it](#shutdown-on-linux-and-the-sudo-rule)). Upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
 - **Dead man's switch** — optional agent heartbeat to external healthcheck services (e.g., Healthchecks.io)
 
 ## Dashboard navigation
@@ -257,6 +257,45 @@ curl ... | sudo bash -s -- https://server:7331 --bootstrap-key <KEY> --key mykey
 
 By default, registration is **open** — any device that can reach the server can register. You can optionally set a registration key in **Settings > General** to gate registration. See [Device Registration and Re-registration](#device-registration-and-re-registration) for the exact rules, including what happens when an agent loses its API key.
 
+### Installer questions
+
+On a fresh install the installer asks which remote features to allow. Every question defaults to no. The installer asks all of them first, before it takes a package lock, stops the agent or changes a file. Pressing Ctrl-C at a question leaves the host untouched. You can answer a question and then see the installer refuse for another reason, such as an old `sudo`. Nothing has changed in that case.
+
+| Order | Question | Platform | Config setting it controls |
+|---|---|---|---|
+| 1 | `Allow remote reboot from dashboard?` | Linux, macOS | `commands.allow_reboot` |
+| 2 | `Allow remote shutdown from dashboard?` | Linux only | `commands.allow_shutdown` |
+| 3 | `Allow remote OS patching from dashboard?` | Linux, macOS | `commands.allow_patching` |
+| 4 | `Allow remote terminal access to this host?` | Linux, macOS | `host_terminal.enabled` |
+| 5 | `Allow remote exec into Docker containers?` | Only when Docker is installed | `docker.terminal_enabled` |
+
+The shutdown question and the reboot question are independent. Each has its own config key and its own sudo rule.
+
+How each mode answers:
+
+| Mode | Answer to every question, including shutdown |
+|---|---|
+| Interactive (default) | `y` or `yes`, in any case, means yes. An empty answer or any other text means no. The installer reads the answer from the terminal, so it works with `curl ... \| sudo bash`. |
+| `-y` or `--yes` | Yes. The installer prints `y (auto)` after each question. This is the documented "enable all remote features" mode, so it includes remote shutdown. |
+| `--non-interactive` | No. The installer asks nothing. |
+| No terminal available | No. The installer asks nothing. |
+
+**Only a fresh install asks.** The installer treats a run as fresh when `/etc/riot/agent.yaml` does not exist. A reinstall asks no question, whatever the flags (including `-y`). It keeps the existing config byte for byte and never edits it. To change a remote feature later, edit `/etc/riot/agent.yaml` yourself. For remote shutdown, also re-run the installer: see [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
+
+**Reinstall with `--bootstrap-key`.** If a config already exists, the installer deletes it and writes a new one, and it asks no questions. Every remote feature in the new config is off, including shutdown, and the installer adds no poweroff rule. If the host had shutdown enabled before, turn it on again as described in the shutdown section.
+
+**Reinstall and remote shutdown.** On Linux, a reinstall decides the poweroff rule from the existing config and prints one line saying what it decided:
+
+```text
+==> Remote shutdown: commands.allow_shutdown is true in /etc/riot/agent.yaml; granting sudo systemctl poweroff
+==> Remote shutdown: not enabled in /etc/riot/agent.yaml; no poweroff grant (only a plain "allow_shutdown: true" under "commands:" in a regular file enables it)
+==> Remote shutdown: re-enrolment resets remote features; no poweroff grant
+```
+
+The first line appears when the config enables shutdown. The second appears when it does not. The third appears with `--bootstrap-key`. A fresh install prints no such line.
+
+**Config file safety checks.** On Linux, the installer stops with an error, before it changes anything, when `/etc/riot/agent.yaml` exists but is not a regular file (for example a directory or a broken symlink), or when the file has more than one hard link. Move the file aside and re-run. The installer repeats the check after it locks `/etc/riot`. If the check fails then, the installer leaves the agent stopped and restores the previous sudo policy where it had added a poweroff rule. Fix the file and re-run the installer.
+
 ### Device Registration and Re-registration
 
 Every agent calls `POST /api/v1/devices/register` when it starts and once every 24 hours afterwards. The request carries a `device_id` when the agent has one. The server treats a device ID as a label, not a secret. Knowing a device's ID never lets a caller change that device's record or obtain a key for it.
@@ -387,6 +426,15 @@ Then re-run `riot-agent doctor` to confirm the check passes.
 When Docker is enabled, `doctor` also checks every Compose project directory against the agent's [compose directory trust](#compose-directory-trust) rules and prints the rule that fails. Run it as the agent's service user (`sudo -u riot riot-agent doctor`) so it sees what the agent sees.
 
 On Linux, when auto-update is enabled (the default), `doctor` also prints an **Agent Update** section for the fixed signed-update privilege and helper. On apt hosts with `commands.allow_patching: true`, it also checks detached maintenance prerequisites, trusted helper paths, the lock-aware apply protocol, and effective service/sudo policy. Run it as the service account: `sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor`. These checks list privileges and inspect status; they do not run repair or start maintenance. See the [maintenance guide](docs/ops/os-maintenance.md).
+
+On Linux, when `commands.allow_shutdown` is `true`, `doctor` also prints a **Remote Shutdown** section. It asks sudo whether the `riot` user may run `systemctl poweroff` without a password. It lists the rule and never runs the command. It cannot prompt for a password, and it gives up after 10 seconds. Run as root, it checks the `riot` user's rules, not root's. The section appears only on Linux and only when `allow_shutdown` is `true`. With `allow_shutdown: false` it prints nothing. The `Shutdown:` line under **Permissions** is unchanged. The two outcomes:
+
+```text
+✓ shutdown sudo rule present: riot may run systemctl poweroff without a password
+✗ shutdown sudo rule missing or unverifiable (systemctl poweroff): <reason>; remote shutdown will report failed
+```
+
+`<reason>` is `not allowed without a password`, `sudo not found` or `timed out after 10s`. The fail line is followed by a hint to re-run the install script as root. A missing rule means the host is in the "config only" state: `allow_shutdown: true` is set but the installer has not added the rule. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
 
 `doctor` also prints a **Collection Limits** section with the values the agent actually uses, after clamping. On Linux it prints a **Memory Limit** section for the installed service unit. See [Agent Resource Bounds](#agent-resource-bounds).
 
@@ -549,6 +597,7 @@ The root installer creates `/etc/sudoers.d/riot-agent` with platform-specific fi
 | `/usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply` | Run the signed root-owned update verifier, with maintenance exclusion |
 | `/usr/bin/systemctl reset-failed riot-agent-update` | Clear a previous update unit failure |
 | `/usr/bin/systemctl reboot` | Existing separate reboot privilege |
+| `/usr/bin/systemctl poweroff` | Opt-in remote shutdown privilege (SHUTDOWN-SUDO-001). The installer writes this one rule only when `commands.allow_shutdown` is `true` for the run (see [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule)). The rule is `riot ALL=(root) NOPASSWD: <systemctl path> poweroff`, with no extra arguments and no wildcard. It does not allow `halt`, `kexec`, `suspend`, `poweroff --force` or the `shutdown`, `poweroff` and `halt` programs. |
 | Exact nginx `-t` / `-T` and SMART read commands, when present | Collector reads; SMART rules name discovered disks rather than allowing arbitrary options |
 
 Executable paths are resolved on the host. The installer validates candidate and complete sudo policy with `visudo`, and service units with `systemd-analyze verify`. Do not restore broad shell, bare `smartctl`, or wildcard hold rules to bypass a failed check. See the [fixed privilege contract and migration procedure](docs/ops/os-maintenance.md).
@@ -600,7 +649,7 @@ New installs via `install.sh` include all rules automatically.
 | `docker.check_updates` | `true` | Check container registries for newer images (30-min cache) |
 | `docker.compose_roots` | not enforced | List of absolute directories, for example `[/opt/stacks]`. When set, compose updates run only in a project directory inside one of them. An entry that is empty or relative makes every compose update fail until it is fixed. Required on Windows. Restart the agent after changing it. See [Compose directory trust](#compose-directory-trust) |
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard, and the reboot that **Reboot automatically if the patch requires it** requests after a manual patch (see [Manual patch and reboot](#manual-patch-and-reboot)). Nothing the server sends overrides it. The agent also reports this value to the server (display-only) so the patch badge can say a reboot is manual — see [Patch badge](#patch-badge) |
-| `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on). The shutdown waits for the dpkg lock, and on installer-managed Linux hosts it reports `failed` until SHUTDOWN-SUDO-001 adds a poweroff privilege; see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock) |
+| `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on). The shutdown waits for the dpkg lock; see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock). On a Linux host set up by the installer, shutdown also needs the one `systemctl poweroff` sudo rule. Setting this key to `true` does not add the rule: re-run `install.sh` as root, and `doctor` reports the rule's state. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). The agent applies reboot-class packages only when the run asks for them, this setting is `true` and hold enforcement works; otherwise it never applies them or reboots automatically. Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
@@ -1110,6 +1159,8 @@ After migration run:
 ```bash
 sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
 ```
+
+**Remote shutdown (SHUTDOWN-SUDO-001).** The same root re-run also applies the opt-in poweroff sudo rule on a server whose `/etc/riot/agent.yaml` has `allow_shutdown: true` under `commands:`. A server that needs the AGENT-HARDEN-001 or PATCH-FLOW-001 re-run can get all of it in one run. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
 
 The [maintenance guide](docs/ops/os-maintenance.md) covers prerequisites, legacy/current/unsupported installations, result inspection and recovery. A real systemd PID 1 smoke test remains required before production rollout of this feature. Helpers are not refreshed by future agent-only updates; use the matching reviewed root installer to update privileged assets.
 
@@ -2650,7 +2701,7 @@ An agent downgraded after it wrote the version 2 file cannot read it, and refuse
 
 Every reboot and every shutdown the agent starts waits until no process holds the dpkg lock, so neither cuts through a running `apt`, `dpkg` or unattended upgrade. The wait applies to hosts that have dpkg (Debian, Ubuntu and derivatives). A host without dpkg, and any Windows or macOS host, reboots and shuts down as before with no wait.
 
-The change needs no install step. The check runs as the unprivileged `riot` user with no sudo and no new sudoers rule, so no `install.sh` re-run is needed. No configuration key, collector or environment variable changes. It ships with the normal agent update. One thing changes for shutdown: its result is now truthful, so a Linux host that has no poweroff sudo rule reports `failed`. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
+The wait itself needs no install step. The check runs as the unprivileged `riot` user with no sudo and no new sudoers rule, so the wait needs no `install.sh` re-run. No configuration key, collector or environment variable changes. It ships with the normal agent update. Remote shutdown itself is separate: its result is truthful, so a Linux host that has no poweroff sudo rule reports `failed`. That rule is an opt-in that only a root run of `install.sh` adds. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
 
 ### Which power actions wait
 
@@ -2764,19 +2815,85 @@ A shutdown whose poweroff command fails after the 3-second check writes one more
 
 ### Shutdown on Linux and the sudo rule
 
-The installer grants the `riot` user no sudo rule for `systemctl poweroff`. No installer version has ever granted one. Its only power rule is `systemctl reboot` (see [Sudoers Rules](#sudoers-rules)).
+Remote shutdown on Linux is opt-in. The agent runs `sudo systemctl poweroff` as the unprivileged `riot` user. That works only when `/etc/sudoers.d/riot-agent` contains a rule for it. The installer writes that rule only for a host that opts in. Installers before SHUTDOWN-SUDO-001 never wrote it, so a host installed by one of them still has no poweroff rule. The installer's reboot rule is separate (see [Sudoers Rules](#sudoers-rules)).
 
-The agent still runs `sudo systemctl poweroff`, as before. On a Linux host set up by the installer, sudo refuses the command because it has no terminal to ask for a password. Earlier releases did not check the result. They reported `shutdown initiated` and the host stayed on.
+On a Linux host with no poweroff rule, sudo refuses the command because it has no terminal to ask for a password. Releases before SHUTDOWN-DPKG-001 did not check the result. They reported `shutdown initiated` and the host stayed on.
 
-This release reports the refusal. On those hosts a shutdown now ends `failed`, for example:
+Since SHUTDOWN-DPKG-001 the agent reports the refusal. On a host with no poweroff rule a shutdown ends `failed`, for example:
 
 ```
 shutdown: exit status 1: sudo: a terminal is required to read the password; either use the -S option ...
 ```
 
-This is the true result: a remote shutdown has never worked on a host like this. It stays failed until the follow-up story SHUTDOWN-SUDO-001 ships. That story adds a poweroff privilege through the agent capability path. This release adds no sudo rule, changes no installer file and does not change the poweroff command.
+This is the true result: a remote shutdown never worked on a host like this. The agent's shutdown command, its arguments and its `allow_shutdown` gate are unchanged. The only change is that the installer can now add the missing rule.
 
 On Windows, `shutdown /s /t 5` returns at once with status 0, so a working Windows host still reports `shutdown initiated`. A refusal now shows as `failed` there too.
+
+#### What the installer grants
+
+When shutdown is enabled for the run, the installer adds exactly one line to `/etc/sudoers.d/riot-agent`, directly after the reboot line:
+
+```text
+riot ALL=(root) NOPASSWD: <systemctl path> poweroff
+```
+
+`<systemctl path>` is the same absolute `systemctl` path as in the reboot line, for example `/usr/bin/systemctl`. The rule names only the `riot` user and has no extra arguments and no wildcard. It does not allow `systemctl halt`, `kexec` or `suspend`, `systemctl poweroff --force`, or the `shutdown`, `poweroff` and `halt` programs. Every other line of the file is unchanged. The installer validates the file with `visudo` before and after it installs it, as it does for every run.
+
+The installer enables shutdown for a run in these cases:
+
+| Run | Shutdown is enabled when |
+|---|---|
+| Fresh install (no `/etc/riot/agent.yaml`) | You answer yes to `Allow remote shutdown from dashboard?`, or you pass `-y`. `--non-interactive` and a missing terminal answer no. The installer then writes `allow_shutdown: true` into the new config. |
+| Reinstall (config exists), no `--bootstrap-key` | The existing config enables it, and nothing else decides: `-y` does not turn it on and `--non-interactive` does not turn it off. |
+| Reinstall with `--bootstrap-key` | Never. The installer rewrites the config with every remote feature off. |
+| macOS | Never. The question is not asked. |
+
+The config enables shutdown only when a top-level `commands:` block contains the plain line `allow_shutdown: true`: lowercase, no quotes, in a regular file. The installer treats anything else as not enabled, so a doubtful file never gets the rule. These all count as not enabled: `false`, a missing key, a commented-out line, the key under another section such as `docker:`, and values such as `True`, `yes`, `on` or `"true"`. So do unusual file layouts, such as tab indentation, Windows line endings, more than one YAML document, flow style (`commands: {...}`), anchors, a first line that is indented, a symlink, or a file over 64 KiB. If the installer reads your `true` as not enabled, rewrite the line as `allow_shutdown: true`, indented under `commands:`, and re-run. The config and the rule always agree after a successful run: the rule exists only when the final config enables shutdown.
+
+#### Turn on remote shutdown on an existing server
+
+Do this on each server where you want the dashboard's Shutdown command to work. The fleet servers are hawaii, vermont, PiVPN and PiCUPS. Servers where you do not want remote shutdown need nothing.
+
+1. On the server, open `/etc/riot/agent.yaml`. Under the top-level `commands:` block, set `allow_shutdown: true`. Create the block if it is missing:
+
+   ```yaml
+   commands:
+     allow_shutdown: true
+   ```
+
+2. Re-run the installer as root, with your existing server URL. Use an installer that includes SHUTDOWN-SUDO-001. An older installer ignores `allow_shutdown` and writes a sudo file without the poweroff rule. Do not pass `--bootstrap-key`; it resets the config.
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331
+   ```
+
+3. Check the output. The installer prints `==> Remote shutdown: commands.allow_shutdown is true in /etc/riot/agent.yaml; granting sudo systemctl poweroff`. If it prints `not enabled`, it did not read your `true`; see the rules above.
+4. Run `riot-agent doctor`. The **Remote Shutdown** section must show the `✓ shutdown sudo rule present` line.
+
+Editing the config alone does not add the rule. With `allow_shutdown: true` and no rule, a shutdown reports `failed` and `doctor` prints the `✗` line.
+
+The same re-run also applies the other privileges that need an `install.sh` re-run (AGENT-HARDEN-001 and PATCH-FLOW-001; see [Upgrading existing agents](#upgrading-existing-agents)). If a server still needs those, do one re-run for all three. Agent-only updates never add or remove the poweroff rule. No server or agent upgrade order is required for it.
+
+#### Turn off remote shutdown
+
+1. In `/etc/riot/agent.yaml`, set `allow_shutdown: false`, or remove the line.
+2. Re-run the installer as root, as above. The new `/etc/sudoers.d/riot-agent` has no poweroff line, and the installer prints `==> Remote shutdown: not enabled in /etc/riot/agent.yaml; no poweroff grant ...`.
+
+If you set the value to `false` and do not re-run the installer, the sudo rule stays until the next run. The agent still refuses a shutdown, because its own `allow_shutdown` gate is `false`. `doctor` does not check the rule when the value is `false`, so it does not report the leftover rule.
+
+#### If the installer stops or the result looks wrong
+
+| What you see | What it means | What to do |
+|---|---|---|
+| `shutdown: exit status 1: sudo: a terminal is required ...` in a shutdown result, and `doctor` prints `✗ shutdown sudo rule missing or unverifiable` | `allow_shutdown` is `true` but the host has no poweroff rule. This is the case after an agent-only update, or after you edited the config without re-running the installer. | Re-run the installer as root. |
+| `==> Remote shutdown: not enabled ...` although the file says `true` | The installer reads only the plain form described above. | Rewrite the line as `allow_shutdown: true` under `commands:` and re-run. |
+| `agent.yaml exists but is not a regular file` or `has N links` | The config is a directory, a broken symlink or a hard-linked file. The installer changed nothing. | Move the file aside and re-run. |
+| `agent.yaml commands.allow_shutdown changed during installation; previous managed policy restored; the agent is left stopped` | The config changed between the installer's first read and its final check. The installer put the previous sudo policy back. | Check the file, then re-run the installer. It starts the agent again. |
+| Installer fails after it wrote the sudo file but before it replaced the agent binary | The installer restores the previous sudo file on its way out when that run had added the poweroff rule. | Fix the cause and re-run. |
+
+#### Security note
+
+`/etc/riot/agent.yaml` belongs to the `riot` user. A compromised agent could set `allow_shutdown: true` there, and your next root re-run of the installer would then add the poweroff rule. That can only turn the host off. It needs your deliberate re-run, and the installer prints a `Remote shutdown:` line that tells you what it read. Read that line on every reinstall.
 
 ### How long a shutdown can take, and how to cancel it
 
@@ -2822,7 +2939,9 @@ A process can choose its own name, so do not trust the name alone. A real packag
 
 - A waiting reboot or shutdown cannot be cancelled from the dashboard. It can start up to 10 minutes after the command reaches the agent. Stopping the agent ends the wait.
 - A shutdown for a device that was offline can power the host off about 25 minutes after you sent it (15 minutes queued, plus the wait). The host then stays off. See [How long a shutdown can take, and how to cancel it](#how-long-a-shutdown-can-take-and-how-to-cancel-it).
-- On Linux hosts set up by the installer, shutdown reports `failed` until SHUTDOWN-SUDO-001 adds a poweroff privilege. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
+- On a Linux host set up by the installer, shutdown reports `failed` until the host has the poweroff sudo rule. Only a root run of `install.sh` adds it, and only when `commands.allow_shutdown` is `true`. Agent-only updates never add or remove it. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule).
+- If you set `allow_shutdown: false` and do not re-run the installer, the poweroff sudo rule stays on the host. The agent still refuses a shutdown, and `doctor` does not report the leftover rule.
+- The installer reads `allow_shutdown` with a strict, narrow reader. A valid but unusual spelling of `true` (`yes`, `True`, quoted) counts as not enabled, and the host stays without the rule.
 - A shutdown reported as `initiated` may still not power the host off. A signal that ends the poweroff command within the first 3 seconds counts as accepted. An unrelated signal in that window, such as an agent restart or the out-of-memory killer, can make the result wrong.
 - A gap of up to a few seconds remains between the final lock check and the moment systemd begins the reboot or shutdown. A package process that takes the lock in that gap can still be interrupted.
 - The result of a ticked Patch is written before the wait. Its `reboot started: yes` can be followed by a skip. Read the warning event.
