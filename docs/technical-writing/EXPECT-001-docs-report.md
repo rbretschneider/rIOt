@@ -65,7 +65,8 @@ Discrepancies between the ADD or FRD and what the code does. Documented as the c
 | Mutation: removed "105 seconds" from the README | `TestEX_AC048_ReadmeDescribesExpectedActivity` FAIL with the missing term named. The README was then restored |
 | README anchors `#expected-activity`, `#activity-endpoint`, `#time-display`, `#command-lifecycle` | Each heading exists |
 | README facts against code | Policy table and bounds from `internal/models/expect.go`; deadlines from `ExecDeadline`; messages from `models/expect.go` and `expect/messages.go`; activity fields from `models.DeviceActivity` JSON tags; the 503 body from `handlers/activity.go`; the 401 for a device key from `TestEX_Activity_RouteRequiresAnAdminSession` |
-| Full suites | See the final report of the run (`go test ./...`, `cd web && npx vitest run`) |
+| `go test ./... -count=1` (Windows, no database, no `-race`) | 30 packages `ok`, 0 FAIL. The AC-047 scan in `internal/server/expect` still passes with the new doc test in its file set |
+| `cd web && npx vitest run` | `Test Files 101 passed (101)`, `Tests 1813 passed (1813)` |
 
 ## Notes for Future Writers
 
