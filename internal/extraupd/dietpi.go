@@ -255,7 +255,22 @@ func (d *DietPi) Apply() ApplySpec {
 		DescendantSettle: DietPiDescendantSettle,
 		LogPath:          DietPiLogPath,
 		Label:            "DietPi",
-		TrustRoots:       []string{"/boot/dietpi", "/boot/dietpi.txt", "/run/dietpi", "/var/tmp/dietpi"},
+		// Root executes /boot/dietpi and reads /boot/dietpi.txt, so both are
+		// walked as trees. /run/dietpi is never read by dietpi-update and stock
+		// DietPi makes it 0777, so it is not trusted: the launcher gives the step
+		// a private one. Of /var/tmp/dietpi only the entries root interprets are
+		// proved, because DietPi-RAMlog mirrors /var/log below logs/ with its
+		// original ownership. Root also writes into logs/ and Patch_10_4 globs
+		// logs/*; both are safe because logs/ and its parent are proved root-only
+		// (mode 0777 and 1777 refused), and entries are copied as data with cp -a
+		// (DIETPI-PATH-001 AD-1, DP-SEC-005).
+		TrustRoots: []string{"/boot/dietpi", "/boot/dietpi.txt"},
+		ExactRoots: []ExactRoot{
+			{Path: "/var/tmp/dietpi", Kind: ExactDir},
+			{Path: "/var/tmp/dietpi/logs", Kind: ExactDir},
+			{Path: "/var/tmp/dietpi/dietpi-update_reinstalls", Kind: ExactFile},
+		},
+		ReconcileFlags: true,
 		RequiredRoots: func(installed models.ExtraUpdater) []string {
 			// While Patch_10_4 is pending, DietPi migrates /var/tmp/dietpi, so it
 			// must exist and pass the trust walk (D-10).
@@ -313,6 +328,12 @@ func isAbsent(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
+// flagAbsent reports that a flag read means "no flag": the file does not exist
+// or did not pass the trust proof.
+func flagAbsent(err error) bool {
+	return isAbsent(err) || errors.Is(err, ErrUntrustedFlag)
+}
+
 func unknownEntry(e models.ExtraUpdater, reason string) models.ExtraUpdater {
 	e.Status = models.ExtraStatusUnknown
 	e.UnknownReason = reason
@@ -332,16 +353,21 @@ func (d *DietPi) detect(fsys FS) (models.ExtraUpdater, bool) {
 	}
 	e.InstalledVersion = ver.version.String()
 
-	// Facts read from DietPi's own flag files.
-	flagData, flagErr := fsys.ReadFile(dietpiFlagRel, MaxReadBytes)
-	flagPresent, flagUnreadable := flagErr == nil, flagErr != nil && !isAbsent(flagErr)
+	// Facts read from DietPi's own flag files. A flag counts only when root
+	// wrote it, proved on the opened descriptor (FR-010, DP-SEC-002): one that
+	// fails the proof is absent, never an error.
+	flagData, flagErr := fsys.ReadTrustedFlag(dietpiFlagRel, MaxReadBytes)
+	flagPresent, flagUnreadable := flagErr == nil, flagErr != nil && !flagAbsent(flagErr)
 	var flagVersion dietpiVersion
 	flagParsed := false
 	if flagPresent {
 		flagVersion, flagParsed = parseVersionString(strings.TrimSpace(firstLine(string(flagData))))
 	}
-	_, liveErr := fsys.Lstat(dietpiLivePatches)
-	livePatches, liveUnreadable := liveErr == nil, liveErr != nil && !isAbsent(liveErr)
+	// .live_patches is a presence flag: its contents are ignored, so a trusted
+	// file longer than the read bound still counts as present.
+	_, liveErr := fsys.ReadTrustedFlag(dietpiLivePatches, MaxReadBytes)
+	livePatches := liveErr == nil || errors.Is(liveErr, ErrTooLarge)
+	liveUnreadable := !livePatches && !flagAbsent(liveErr)
 
 	cfgData, cfgErr := fsys.ReadFile(dietpiTxtRel, MaxReadBytes)
 	cfgReadable := cfgErr == nil
