@@ -228,6 +228,29 @@ export interface UpdateInfo {
   lists_freshness?: 'fresh' | 'stale' | 'unknown'
   // The agent understands os_update reboot_if_required (only true counts).
   supports_reboot_if_required?: boolean
+  // EXTRA-UPD-001: platform updaters outside the package manager (at most 8). Absent from older agents.
+  extra_updaters?: ExtraUpdater[]
+}
+
+export type ExtraUpdaterStatus = 'update_available' | 'up_to_date' | 'unknown'
+
+export interface ExtraUpdaterNotice {
+  code: string
+  branch?: string
+  owner?: string
+}
+
+export interface ExtraUpdater {
+  id: string
+  status: ExtraUpdaterStatus
+  unknown_reason?: string
+  installed_version?: string
+  available_version?: string
+  pending_count: number
+  pending_items?: string[]
+  // Whether the agent would apply the updater: 'enabled' or the reason it would not.
+  readiness?: string
+  notices?: ExtraUpdaterNotice[]
 }
 
 export interface PendingUpdate {

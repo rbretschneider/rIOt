@@ -1,12 +1,16 @@
 import { useId } from 'react'
 import type { UpdateInfo } from '../types/models'
 import { REBOOT_OPTION_LABEL, patchDialogStatements, rebootOption } from '../utils/patchFlow'
+import { EXTRA_OPTION_LABEL, extraDialogState } from '../utils/extraUpdaters'
 
 interface PatchConfirmOptionsProps {
   /** The host's latest update telemetry; undefined when none was reported. */
   updates: UpdateInfo | undefined
   checked: boolean
   onChange: (checked: boolean) => void
+  /** EXTRA-UPD-001: the "Apply DietPi update in this run" box. Ticked unless the caller says otherwise. */
+  extrasChecked?: boolean
+  onExtrasChange?: (checked: boolean) => void
 }
 
 /**
@@ -15,10 +19,11 @@ interface PatchConfirmOptionsProps {
  * unavailable, and what the run will do about pending kernel/GPU updates.
  * The checked state belongs to the caller, which resets it on every open.
  */
-export function PatchConfirmOptions({ updates, checked, onChange }: PatchConfirmOptionsProps) {
+export function PatchConfirmOptions({ updates, checked, onChange, extrasChecked = true, onExtrasChange }: PatchConfirmOptionsProps) {
   const option = rebootOption(updates)
   const ticked = checked && option.enabled
-  const statements = patchDialogStatements(updates, ticked)
+  const extras = extraDialogState(updates, extrasChecked)
+  const statements = [...patchDialogStatements(updates, ticked), ...extras.statements]
   const reasonId = useId()
 
   return (
@@ -40,6 +45,16 @@ export function PatchConfirmOptions({ updates, checked, onChange }: PatchConfirm
           </p>
         )}
       </div>
+      {extras.options.length > 0 && (
+        <label className="flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox"
+            checked={extrasChecked}
+            onChange={event => onExtrasChange?.(event.target.checked)}
+          />
+          <span>{EXTRA_OPTION_LABEL}</span>
+        </label>
+      )}
       {statements.length > 0 && (
         <ul className="max-h-40 list-disc space-y-1 overflow-y-auto pl-5 text-text-muted scrollbar-thin">
           {statements.map(statement => (
