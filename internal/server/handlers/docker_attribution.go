@@ -4,6 +4,7 @@ import (
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/go-chi/chi/v5"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -13,9 +14,6 @@ func (h *Handlers) validateDockerEventCommand(r *http.Request, e *models.DockerE
 	original := e.CommandID
 	e.CommandID = ""
 	e.CommandAttr = ""
-	if h.commandRepo == nil {
-		return
-	}
 	keys := map[string]bool{models.TargetKeyContainer(strings.TrimLeft(e.ContainerName, "/")): true}
 	if s, ok := h.dockerSnapshot(r, device); ok {
 		for _, c := range s.Data.Docker.Containers {
@@ -25,6 +23,19 @@ func (h *Handlers) validateDockerEventCommand(r *http.Request, e *models.DockerE
 				}
 			}
 		}
+	}
+	// The keys go to the expected-activity lookup whether or not a command
+	// repository exists, and whatever the agent claimed about its command ID: the
+	// window of a command on this device covers a death by its own targets, not by
+	// anything the agent sends (EXPECT-001 AD-005, AC-044). Sorted, so the slice
+	// is deterministic.
+	e.TargetKeys = make([]string, 0, len(keys))
+	for k := range keys {
+		e.TargetKeys = append(e.TargetKeys, k)
+	}
+	sort.Strings(e.TargetKeys)
+	if h.commandRepo == nil {
+		return
 	}
 	valid := func(c *models.Command) bool {
 		if c == nil || c.DeviceID != device {

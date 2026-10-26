@@ -204,9 +204,11 @@ func (h *Handlers) BulkUpdateAgents(w http.ResponseWriter, r *http.Request) {
 			tally.skipped++
 			continue
 		}
-		tally.dispatch(r.Context(), h, commands.DispatchRequest{
-			DeviceID: d.ID, Action: models.ActionAgentUpdate, Params: map[string]interface{}{},
-		}, "bulk update: dispatch command")
+		// The command records the logged-in operator, so the dashboard and the
+		// events can say who started it (EXPECT-001 AD-016, FR-018).
+		tally.dispatch(r.Context(), h,
+			dockerDispatchRequest(r, d.ID, models.ActionAgentUpdate, map[string]interface{}{}),
+			"bulk update: dispatch command")
 	}
 
 	slog.Info("bulk agent update", "version", req.Version, "sent", tally.sent, "queued", tally.queued,
@@ -282,9 +284,9 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 			tally.skipped++
 			continue
 		}
-		tally.dispatch(r.Context(), h, commands.DispatchRequest{
-			DeviceID: d.ID, Action: models.ActionOSUpdate, Params: map[string]interface{}{"mode": req.Mode},
-		}, "bulk patch: dispatch command")
+		tally.dispatch(r.Context(), h,
+			dockerDispatchRequest(r, d.ID, models.ActionOSUpdate, map[string]interface{}{"mode": req.Mode}),
+			"bulk patch: dispatch command")
 	}
 
 	slog.Info("bulk patch", "mode", req.Mode, "sent", tally.sent, "queued", tally.queued,

@@ -80,6 +80,11 @@ type HandlerDeps struct {
 	// REG-HARDEN-001: nil unless mTLS is active; nil => certificate proof
 	// unavailable for device re-registration.
 	CARepo db.CARepository
+
+	// EXPECT-001: the expected-activity tracker. nil (an unwired router) makes
+	// GET /api/v1/activity answer 503 and skips the registration hook. Assign it
+	// only when non-nil: a nil *expect.Tracker would be a non-nil interface.
+	Activity ActivitySource
 }
 
 type Handlers struct {
@@ -128,6 +133,9 @@ type Handlers struct {
 	// a client certificate is offered as proof of device identity at
 	// re-registration. nil unless mTLS is active (see HandlerDeps.CARepo).
 	caRepo db.CARepository
+
+	// activity is the expected-activity tracker (EXPECT-001); nil when unwired.
+	activity ActivitySource
 
 	// ingestClock is the server receive-time source for telemetry and heartbeat
 	// timestamp clamping (REG-HARDEN-001). nil (the production default) means
@@ -288,6 +296,7 @@ func New(deps HandlerDeps) *Handlers {
 	if deps.Hub != nil {
 		h.hub = deps.Hub
 	}
+	h.activity = deps.Activity
 	return h
 }
 
@@ -348,7 +357,9 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			wasOnline := existing.Status == models.DeviceStatusOnline
+			// A warning device is live too (EXPECT-001 C-4): only a device that
+			// had gone offline comes back online.
+			wasLive := models.DeviceIsLive(existing.Status)
 			// Update existing device
 			existing.Hostname = reg.Hostname
 			existing.Arch = reg.Arch
@@ -364,6 +375,14 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			device = existing
+
+			// A registration is evidence of life, so the tracker is told on every
+			// re-registration, whether or not the device was live, and BEFORE
+			// DeviceOnline below: that call reads what this one records
+			// (EXPECT-001 AD-006).
+			if h.activity != nil {
+				h.activity.NoteRegistration(device.ID, h.clock())
+			}
 
 			// Issue a new key only when the proof was a certificate or the
 			// registration key (device created by mTLS enrollment has no key).
@@ -385,7 +404,7 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 				APIKey:   apiKey,
 			})
 			h.hub.BroadcastDeviceUpdate(device)
-			if !wasOnline {
+			if !wasLive {
 				h.eventGen.DeviceOnline(r.Context(), device.ID, device.Hostname)
 			}
 			return
