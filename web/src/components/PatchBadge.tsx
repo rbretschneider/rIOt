@@ -1,4 +1,5 @@
-import { useId, useRef, useState } from 'react'
+import { useId, useState } from 'react'
+import { useFloating, autoUpdate, offset, flip, shift, size, FloatingPortal } from '@floating-ui/react'
 import type { PatchBadge as PatchBadgeData } from '../api/client'
 
 // Per-host patch badge. The label and the four explanation lines are written by
@@ -24,45 +25,59 @@ function itemKey(r: { code: string; updater?: string }): string {
 
 export default function PatchBadge({ badge }: { badge: PatchBadgeData }) {
   const popoverId = useId()
-  const ref = useRef<HTMLSpanElement>(null)
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
   const [dismissed, setDismissed] = useState(false)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const open = (hover || focus) && !dismissed
   const ex = badge.explanation
   const info = ex.info ?? []
   const blocked = ex.blocked ?? []
 
-  function show() {
-    const r = ref.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 4, left: Math.max(8, r.left) })
-    setDismissed(false)
-  }
+  // Same positioning as the shared Tooltip: flips above when there is no room
+  // below, shifts to stay inside the viewport, and scrolls what still does not fit.
+  const { refs, floatingStyles } = useFloating({
+    open,
+    placement: 'bottom-start',
+    strategy: 'fixed',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(4),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableHeight, elements }) {
+          elements.floating.style.maxHeight = `${Math.max(availableHeight, 120)}px`
+        },
+      }),
+    ],
+  })
 
   return (
     <span className="relative inline-block">
       <span
-        ref={ref}
+        ref={refs.setReference}
         tabIndex={0}
         data-testid="patch-badge"
         data-kind={badge.kind}
         aria-describedby={open ? popoverId : undefined}
-        onMouseEnter={() => { show(); setHover(true) }}
+        onMouseEnter={() => { setDismissed(false); setHover(true) }}
         onMouseLeave={() => { setHover(false); setDismissed(false) }}
-        onFocus={() => { show(); setFocus(true) }}
+        onFocus={() => { setDismissed(false); setFocus(true) }}
         onBlur={() => { setFocus(false); setDismissed(false) }}
         onKeyDown={e => { if (e.key === 'Escape') setDismissed(true) }}
         className={`px-1.5 py-0.5 rounded border text-[10px] font-medium whitespace-nowrap cursor-help focus:outline-none focus:ring-1 focus:ring-blue-500 ${TONE[badge.kind] ?? NEUTRAL_TONE}`}
       >
         {badge.label}
       </span>
-      {open && pos && (
+      {open && (
+        <FloatingPortal>
         <div
+          ref={refs.setFloating}
           id={popoverId}
           role="tooltip"
-          style={{ position: 'fixed', top: pos.top, left: pos.left }}
-          className="z-50 w-80 max-w-[90vw] rounded-lg border border-gray-700 bg-gray-900 p-3 text-xs text-gray-200 shadow-xl space-y-1.5"
+          style={floatingStyles}
+          className="z-(--z-tooltip) w-80 max-w-[90vw] overflow-y-auto scrollbar-thin rounded-lg border border-gray-700 bg-gray-900 p-3 text-xs text-gray-200 shadow-xl space-y-1.5"
         >
           <p><span className="font-semibold text-gray-400">Automatic patching: </span>{ex.automatic}</p>
           <p><span className="font-semibold text-gray-400">Reboot: </span>{ex.reboot}</p>
@@ -111,6 +126,7 @@ export default function PatchBadge({ badge }: { badge: PatchBadgeData }) {
             </ul>
           )}
         </div>
+        </FloatingPortal>
       )}
     </span>
   )
