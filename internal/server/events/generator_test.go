@@ -258,6 +258,9 @@ func (m *mockEventRepo) AcknowledgeAll(context.Context) error             { retu
 func (m *mockEventRepo) HasCommandEvent(context.Context, string, string, models.EventType) (bool, error) {
 	return false, nil
 }
+func (m *mockEventRepo) ListByCommandSplit(context.Context, string, string, int, int) (models.CommandEvents, error) {
+	return models.CommandEvents{}, nil
+}
 
 type mockAlertRuleRepo struct {
 	rules []models.AlertRule

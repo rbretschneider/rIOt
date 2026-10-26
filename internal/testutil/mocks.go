@@ -9,6 +9,7 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"
+	"github.com/google/uuid"
 )
 
 // --- MockDeviceRepo ---
@@ -587,6 +588,49 @@ func (m *MockEventRepo) HasCommandEvent(_ context.Context, deviceID, commandID s
 	return false, nil
 }
 
+// ListByCommandSplit mirrors db.EventRepo.ListByCommandSplit: server-authored
+// and agent-sourced events linked to one command of one device, oldest first,
+// each group limited, with the number of rows not returned.
+func (m *MockEventRepo) ListByCommandSplit(_ context.Context, deviceID, commandID string, serverLimit, agentLimit int) (models.CommandEvents, error) {
+	if m.Err != nil {
+		return models.CommandEvents{}, m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := models.CommandEvents{ServerEvents: []models.Event{}, AgentEvents: []models.Event{}}
+	var server, agent []models.Event
+	for _, e := range m.Events {
+		if e.DeviceID != deviceID || e.CommandID != commandID {
+			continue
+		}
+		switch {
+		case models.IsServerAuthoredEvent(e):
+			server = append(server, e)
+		case e.CommandAttr == models.CommandAttrInferred || e.CommandAttr == "agent":
+			agent = append(agent, e)
+		}
+	}
+	cut := func(list []models.Event, limit int) ([]models.Event, int) {
+		sort.SliceStable(list, func(i, j int) bool {
+			if list[i].CreatedAt.Equal(list[j].CreatedAt) {
+				return list[i].ID < list[j].ID
+			}
+			return list[i].CreatedAt.Before(list[j].CreatedAt)
+		})
+		if len(list) > limit {
+			return list[:limit], len(list) - limit
+		}
+		return list, 0
+	}
+	if server != nil {
+		out.ServerEvents, out.ServerEventsOmitted = cut(server, serverLimit)
+	}
+	if agent != nil {
+		out.AgentEvents, out.AgentEventsOmitted = cut(agent, agentLimit)
+	}
+	return out, nil
+}
+
 func (m *MockEventRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
 	m.mu.Lock()
 	m.PurgeCalled = true
@@ -854,10 +898,32 @@ type MockCommandRepo struct {
 	Err    error
 	failOn map[string]error
 	calls  []string
+	// Events, when set, receives the rate-cap event of CreateSelfUpdate and is
+	// read for its once-per-24h rule (EXPECT-002). Link it with LinkEvents.
+	Events *MockEventRepo
+	// selfUpdateIDs, when non-empty, supplies the ids of the next created
+	// self-update records (tests that need known ids).
+	selfUpdateIDs []string
 }
 
 func NewMockCommandRepo() *MockCommandRepo {
 	return &MockCommandRepo{Commands: make(map[string]*models.Command)}
+}
+
+// LinkEvents makes the mock write its rate-cap event into evts and read the
+// once-per-24h rule from it (the SQL does both on the events table).
+func (m *MockCommandRepo) LinkEvents(evts *MockEventRepo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Events = evts
+}
+
+// QueueSelfUpdateIDs sets the ids the next created self-update records get, in
+// order (test helper; not recorded).
+func (m *MockCommandRepo) QueueSelfUpdateIDs(ids ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.selfUpdateIDs = append(m.selfUpdateIDs, ids...)
 }
 
 // Seed stores c under the mock's lock. Use it instead of writing Commands
@@ -1059,6 +1125,9 @@ func (m *MockCommandRepo) CreateIfNoConflict(_ context.Context, cmd *models.Comm
 		stored.UpdatedAt = stored.CreatedAt
 	}
 	stored.TargetKeys = keys
+	if err := m.insertCheckLocked(&stored); err != nil {
+		return nil, err
+	}
 	m.Commands[stored.ID] = &stored
 	cmd.Status = stored.Status
 	cmd.Origin = stored.Origin
@@ -1271,6 +1340,16 @@ func (m *MockCommandRepo) Transition(_ context.Context, t models.CommandTransiti
 	if !ok || (t.DeviceID != "" && c.DeviceID != t.DeviceID) || !rawStatusIn(c.Status, guard) {
 		return nil, false, nil
 	}
+	// The four-actor origin guard of buildTransitionSQL (EXPECT-002 C-2): the
+	// self-update actor matches only self-update rows (and needs the device
+	// scope); every other actor matches anything but them.
+	if t.Actor == models.ActorSelfUpdate {
+		if t.DeviceID == "" || c.Origin != models.OriginAgentSelfUpdate {
+			return nil, false, nil
+		}
+	} else if c.Origin == models.OriginAgentSelfUpdate {
+		return nil, false, nil
+	}
 	to := t.To.Canonical()
 	now := t.Now
 	c.Status = string(to)
@@ -1361,7 +1440,7 @@ func (m *MockCommandRepo) ListOverdue(_ context.Context, deviceID string, now ti
 	result := []models.Command{}
 	for _, c := range m.Commands {
 		if (deviceID == "" || c.DeviceID == deviceID) && rawStatusIn(c.Status, mockInflightStates) &&
-			c.DeadlineAt != nil && !c.DeadlineAt.After(now) {
+			c.DeadlineAt != nil && !c.DeadlineAt.After(now) && c.Origin != models.OriginAgentSelfUpdate {
 			result = append(result, copyCommand(c))
 		}
 	}
@@ -1397,6 +1476,204 @@ func (m *MockCommandRepo) GetCommandOutput(_ context.Context, commandID string) 
 		return nil, nil
 	}
 	return m.Outputs[commandID], nil
+}
+
+// --- Self-update records (EXPECT-002) ---
+
+// selfUpdateOpenLocked returns the device's running or verifying record. The
+// caller holds m.mu.
+func (m *MockCommandRepo) selfUpdateOpenLocked(deviceID string) *models.Command {
+	var best *models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID || c.Origin != models.OriginAgentSelfUpdate {
+			continue
+		}
+		if c.Status != string(models.CommandRunning) && c.Status != string(models.CommandVerifying) {
+			continue
+		}
+		if best == nil || c.CreatedAt.After(best.CreatedAt) {
+			best = c
+		}
+	}
+	return best
+}
+
+// insertCheckLocked emulates the commands_self_update_shape CHECK and the
+// idx_commands_self_update_open unique index of migration 000034 for a row about
+// to be stored. The caller holds m.mu.
+func (m *MockCommandRepo) insertCheckLocked(c *models.Command) error {
+	if c.Origin != models.OriginAgentSelfUpdate {
+		return nil
+	}
+	switch models.CommandState(c.Status) {
+	case models.CommandRunning, models.CommandVerifying, models.CommandSucceeded, models.CommandFailed, models.CommandTimedOut:
+	default:
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": status %q`, c.Status)
+	}
+	switch {
+	case c.Action != models.ActionAgentUpdate:
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": action %q`, c.Action)
+	case c.DispatchedAt == nil || c.DeadlineAt == nil:
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": dispatched_at and deadline_at are required`)
+	case c.DeadlineAt.After(c.DispatchedAt.Add(models.ExpectSelfUpdateBound)):
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": deadline_at is more than 10 minutes after dispatched_at`)
+	case c.ExecDeadlineS > models.SelfUpdateExecDeadlineS:
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": exec_deadline_s %d > 600`, c.ExecDeadlineS)
+	case len(c.TargetKeys) != 0:
+		return fmt.Errorf(`new row violates check constraint "commands_self_update_shape": target_keys must be empty`)
+	}
+	if c.Status == string(models.CommandRunning) || c.Status == string(models.CommandVerifying) {
+		if open := m.selfUpdateOpenLocked(c.DeviceID); open != nil && open.ID != c.ID {
+			return fmt.Errorf(`duplicate key value violates unique constraint "idx_commands_self_update_open"`)
+		}
+	}
+	return nil
+}
+
+// CreateSelfUpdate mirrors db.CommandRepo.CreateSelfUpdate under the mock's one
+// mutex, which stands in for the per-device advisory lock.
+func (m *MockCommandRepo) CreateSelfUpdate(ctx context.Context, s models.SelfUpdateStart) (models.SelfUpdateCreateResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var res models.SelfUpdateCreateResult
+	if err := m.begin("CreateSelfUpdate"); err != nil {
+		return res, err
+	}
+
+	// 1. FR-004.
+	var attributed *models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID != s.DeviceID || c.Action != models.ActionAgentUpdate || c.Origin == models.OriginAgentSelfUpdate || c.DispatchedAt == nil {
+			continue
+		}
+		recent := c.FinishedAt != nil && !c.FinishedAt.Before(s.At.Add(-models.SelfUpdateAttributionWindow))
+		if !rawStatusIn(c.Status, mockInflightStates) && !recent {
+			continue
+		}
+		if attributed == nil || c.CreatedAt.After(attributed.CreatedAt) || (c.CreatedAt.Equal(attributed.CreatedAt) && c.ID < attributed.ID) {
+			attributed = c
+		}
+	}
+	if attributed != nil {
+		return models.SelfUpdateCreateResult{Disposition: models.SelfUpdateAttributedCommand, LinkID: attributed.ID}, nil
+	}
+
+	// 2. C-4 (b): retire a stale open record.
+	open := m.selfUpdateOpenLocked(s.DeviceID)
+	if open != nil && open.DeadlineAt != nil && open.DeadlineAt.Before(s.At.Add(-models.SelfUpdateStuckAfter)) {
+		open.Status = string(models.CommandTimedOut)
+		open.UpdatedAt = s.At
+		finished := s.At
+		open.FinishedAt = &finished
+		open.ResultMsg = models.SelfUpdateStaleResultMessage
+		open.FailureStep = models.SelfUpdateFailureUnresolved
+		cp := copyCommand(open)
+		res.Retired = &cp
+		open = nil
+	}
+
+	// 3. FR-006.
+	if open != nil {
+		res.Disposition, res.LinkID = models.SelfUpdateOpenRecord, open.ID
+		return res, nil
+	}
+
+	// 4. FR-007.
+	count := 0
+	for _, c := range m.Commands {
+		if c.DeviceID == s.DeviceID && c.Origin == models.OriginAgentSelfUpdate && c.CreatedAt.After(s.At.Add(-models.SelfUpdateRateWindow)) {
+			count++
+		}
+	}
+	if count >= models.SelfUpdateRateCap {
+		res.Disposition = models.SelfUpdateCapped
+		if !m.capEventSeenLocked(s) {
+			evt := models.Event{DeviceID: s.DeviceID, Type: models.EventAgentSelfUpdatePaused, Severity: models.SeverityWarning,
+				Message: models.SelfUpdateRateCapMessage(s.Hostname), CreatedAt: s.At}
+			if m.Events != nil {
+				if err := m.Events.Create(ctx, &evt); err != nil {
+					return res, err
+				}
+			}
+			res.CapEvent = &evt
+		}
+		return res, nil
+	}
+
+	// 5. The insert.
+	id := uuid.New().String()
+	if len(m.selfUpdateIDs) > 0 {
+		id, m.selfUpdateIDs = m.selfUpdateIDs[0], m.selfUpdateIDs[1:]
+	}
+	at := s.At
+	deadline := s.At.Add(models.ExpectSelfUpdateBound)
+	row := &models.Command{
+		ID: id, DeviceID: s.DeviceID, Action: models.ActionAgentUpdate, Params: models.SelfUpdateParams(s.From, s.To),
+		Status: string(models.CommandRunning), CreatedAt: at, UpdatedAt: at, ExpiresAt: at,
+		ExecDeadlineS: models.SelfUpdateExecDeadlineS, DeadlineAt: &deadline, DispatchedAt: &at, StartedAt: &at,
+		Step: models.SelfUpdateStepWaitingForRestart, Origin: models.OriginAgentSelfUpdate, TargetKeys: []string{},
+		ActorKind: "system",
+	}
+	if err := m.insertCheckLocked(row); err != nil {
+		return res, err
+	}
+	m.Commands[id] = row
+	cp := copyCommand(row)
+	res.Disposition, res.Command, res.LinkID = models.SelfUpdateCreated, &cp, id
+	return res, nil
+}
+
+// capEventSeenLocked reports whether a rate-cap event (not linked to a record)
+// exists for the device in the last 24 h. The caller holds m.mu.
+func (m *MockCommandRepo) capEventSeenLocked(s models.SelfUpdateStart) bool {
+	if m.Events == nil {
+		return false
+	}
+	m.Events.mu.Lock()
+	defer m.Events.mu.Unlock()
+	for _, e := range m.Events.Events {
+		if e.DeviceID == s.DeviceID && e.Type == models.EventAgentSelfUpdatePaused && e.CommandID == "" &&
+			e.CreatedAt.After(s.At.Add(-models.SelfUpdateRateWindow)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MockCommandRepo) OpenSelfUpdate(_ context.Context, deviceID string) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("OpenSelfUpdate"); err != nil {
+		return nil, err
+	}
+	c := m.selfUpdateOpenLocked(deviceID)
+	if c == nil {
+		return nil, nil
+	}
+	cp := copyCommand(c)
+	return &cp, nil
+}
+
+func (m *MockCommandRepo) LatestSelfUpdateSince(_ context.Context, deviceID string, since time.Time) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("LatestSelfUpdateSince"); err != nil {
+		return nil, err
+	}
+	var best *models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID || c.Origin != models.OriginAgentSelfUpdate || c.CreatedAt.Before(since) {
+			continue
+		}
+		if best == nil || c.CreatedAt.After(best.CreatedAt) {
+			best = c
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	cp := copyCommand(best)
+	return &cp, nil
 }
 
 // --- MockProbeRepo ---
@@ -2564,4 +2841,5 @@ var (
 	_ db.ContainerMetricRepository  = (*MockContainerMetricRepo)(nil)
 	_ db.DeviceProbeRepository      = (*MockDeviceProbeRepo)(nil)
 	_ db.ExternalIdentityRepository = (*MockExternalIdentityRepo)(nil)
+	_ db.SelfUpdateRepository       = (*MockCommandRepo)(nil)
 )
