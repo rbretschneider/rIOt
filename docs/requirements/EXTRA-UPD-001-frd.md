@@ -143,7 +143,7 @@ Terms used below:
 
 - **FR-044:** The updater step must report progress through the existing `os_update` command progress steps: one step when it starts and one when it ends, naming the updater and its outcome.
 - **FR-045:** The agent must emit one agent event when an updater step starts and one when it ends. Each event must carry the command ID, the updater identifier, the command origin (`user` or `auto_patch`) and, for the end event, the outcome. At most two such events may be emitted per updater per command.
-- **FR-046:** This story must not depend on any EXPECT-001 code or schema.
+- **FR-046:** This story must not depend on any EXPECT-001 code or schema. *Amended 2026-10-26, after EXPECT-001 (PR #37) merged first:* the extra-updater code must not build an expected-activity mechanism of its own. The os_update command's EXPECT-001 window derives from the command's stamped execution deadline, so a run with the extra-updater budget is covered for its 95-minute deadline.
 
 ### F. Server and scheduler
 
@@ -527,7 +527,7 @@ Detection criteria use fixture directories (SC-004). Apply criteria use an injec
 - **When** each ends
 - **Then** the command shows a start step and an end step for DietPi
 - **And** exactly two agent events were emitted per run, carrying the command ID, `dietpi`, the origin (`auto_patch` or `user`) and, on the end event, the outcome
-- **And** the build contains no EXPECT-001 code
+- **And** the extra-updater code contains no expected-activity mechanism of its own, and the EXPECT-001 window of an os_update stamped with the extra-updater budget uses its 95-minute deadline (amended 2026-10-26, see FR-046)
 
 ### AC-035: Server accepts and bounds telemetry [Maps to FR-047, NFR-005]
 - **Given** telemetry from an older agent, telemetry with 12 updater entries, and an entry with status `bogus` and a 500-character version

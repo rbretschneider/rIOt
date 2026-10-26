@@ -190,3 +190,16 @@ func TestEX_Window_ExecBudgetFallbacks(t *testing.T) {
 	c.DeadlineAt = &dl
 	assert.Equal(t, 7*time.Minute, execBudget(&c), "deadline_at wins")
 }
+
+// EXTRA-UPD-001 AC-034: an os_update stamped with the extra-updater budget keeps
+// its window open for the longer 95-minute deadline, not the plain patch one.
+func TestEX_Window_ExecBudgetExtraUpdaterDeadline(t *testing.T) {
+	d := t0
+	c := models.Command{Action: models.ActionOSUpdate, DispatchedAt: &d,
+		ExecDeadlineS: int(models.OSUpdateExtraExecDeadline / time.Second)}
+	assert.Equal(t, models.OSUpdateExtraExecDeadline, execBudget(&c), "exec_deadline_s carries the extra-updater deadline")
+	dl := d.Add(models.OSUpdateExtraExecDeadline)
+	c.DeadlineAt = &dl
+	assert.Equal(t, models.OSUpdateExtraExecDeadline, execBudget(&c), "deadline_at derived from it agrees")
+	assert.Greater(t, execBudget(&c), models.ExecDeadline(models.ActionOSUpdate, 0), "longer than the plain patch deadline")
+}

@@ -208,3 +208,11 @@ No FAIL items. For the pipeline, before merge:
 ## Late addendum: final-tree Linux race run
 
 Second full run, `go test -race -count=1 ./...` in the same `golang:1.24` container setup, on the tree that includes the three QA test additions (exported with `git archive` after the QA commit): 32 packages ok, 0 FAIL, EXIT 0. `internal/agent` 117 s, `internal/agent/collectors` 81 s, `internal/maintenance` 15 s, `cmd/riot-maintenance` 1 s, `scripts` 5 s. `TestShutdown_SD_AC030_...` passed in both full runs. The two full Linux runs agree, so no flakiness was seen in this story's tests.
+
+## Addendum: rebase on main after EXPECT-001 (PR #37) merged
+
+The branch was rebased on `origin/main` (edc1300, PR #37 merged). Three textual conflicts were resolved by keeping both sides: `internal/models/events.go` (event constants), `web/src/api/client.ts` and `web/src/api/demo-data.ts` (type imports), and `CHANGELOG.md`. No migration was added; EXPECT-001's `000033_expected_activity` is the highest.
+
+`TestNoExpectCode_EU_AC034` then failed by design, because it asserted that the build contained no EXPECT-001 code. FR-046 and AC-034 were amended: the extra-updater code builds no expected-activity mechanism of its own, and EXPECT-001's os_update window derives from the stamped deadline (`execBudget` in `internal/server/expect/window.go` reads `deadline_at`, then `exec_deadline_s`). The test now scans only the extra-updater code, and the new `TestEX_Window_ExecBudgetExtraUpdaterDeadline` proves a stamped os_update window uses the 95-minute deadline. QA note 3 above is closed.
+
+The post-rebase suite results are in the PR description.

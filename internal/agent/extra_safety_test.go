@@ -244,36 +244,37 @@ func TestSafety_EU_AC045_DetectionTestsUseNoNetworkAndNoRealBoot(t *testing.T) {
 	}
 }
 
-// The extra-updater step reports through the command and event path only. It
-// must not depend on EXPECT-001, which is unmerged (FR-046).
+// The extra-updater step reports through the command and event path only and
+// builds no expected-activity mechanism of its own (FR-046, amended after
+// EXPECT-001 merged): the os_update command's EXPECT-001 window derives from
+// the stamped deadline, which internal/server/expect tests.
 func TestNoExpectCode_EU_AC034(t *testing.T) {
 	root := filepath.Join("..", "..")
+	var files []string
+	for _, pattern := range []string{
+		filepath.Join(root, "internal", "extraupd", "*.go"),
+		filepath.Join(root, "internal", "maintenance", "*.go"),
+		filepath.Join(root, "cmd", "riot-maintenance", "*.go"),
+		filepath.Join(root, "internal", "agent", "extra_updaters*.go"),
+		filepath.Join(root, "internal", "server", "handlers", "agent_event_extra.go"),
+	} {
+		m, err := filepath.Glob(pattern)
+		require.NoError(t, err)
+		files = append(files, m...)
+	}
+	require.NotEmpty(t, files)
 	var offenders []string
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules", ".claude", "docs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
-			return nil
+	for _, p := range files {
+		if strings.HasSuffix(p, "_test.go") {
+			continue
 		}
 		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(strings.ToLower(string(data)), "internal/expect") || strings.Contains(string(data), "ExpectedActivity") {
+		require.NoError(t, err)
+		s := string(data)
+		if strings.Contains(s, "internal/server/expect") || strings.Contains(s, "ExpectedActivity") ||
+			strings.Contains(strings.ToLower(s), "expect_window") || strings.Contains(s, "ExpectWindow") {
 			offenders = append(offenders, filepath.ToSlash(p))
 		}
-		return nil
-	})
-	require.NoError(t, err)
-	assert.Empty(t, offenders, "[AC-034] the build contains no EXPECT-001 code: %v", offenders)
-	_, err = os.Stat(filepath.Join(root, "internal", "expect"))
-	assert.True(t, os.IsNotExist(err), "[AC-034] there is no internal/expect package in this build")
+	}
+	assert.Empty(t, offenders, "[AC-034] extra-updater code builds no expected-activity mechanism of its own: %v", offenders)
 }
