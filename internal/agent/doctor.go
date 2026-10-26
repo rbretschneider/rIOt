@@ -270,6 +270,10 @@ func Doctor(configPath string) {
 	fmt.Printf("  Hold pkgs:    %v\n", cfg.Commands.HoldRebootClass)
 	fmt.Printf("  Host shell:   %v\n", cfg.HostTerminal.Enabled)
 
+	// ── Remote Shutdown (SHUTDOWN-SUDO-001) ──
+	// Only when shutdown is enabled: lists the sudo rule, never runs it.
+	reportShutdownPrivilege(runtime.GOOS, cfg.Commands.AllowShutdown, agentPolicyRunner(os.Geteuid(), execRunner), shutdownProbeTimeout)
+
 	// ── Hold Enforcement (PATCH-GATE, SEC-PATCH-GATE-004) ──
 	// Runs the same sudo -n -l probes the agent's runtime preflight uses so
 	// operators discover missing sudoers rules here instead of during an outage.

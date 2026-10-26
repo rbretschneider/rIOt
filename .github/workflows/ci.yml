@@ -109,14 +109,18 @@ jobs:
             -w /src -e GOPROXY=off -e GOSUMDB=off golang:1.24 \
             go test -race -count=1 ./internal/maintenance ./cmd/riot-agent-apply ./cmd/riot-maintenance
       - name: Signed installer and legacy migration fixtures
+        # bookworm is Debian 12; trixie is Debian 13, which hawaii runs, so the
+        # bare `systemctl` the agent sudoes resolves to the granted path on both.
         run: |
-          docker run --rm \
-            --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
-            -e DEBIAN_FRONTEND=noninteractive debian:bookworm-slim bash -ec '
-              apt-get update -qq
-              apt-get install -y -qq --no-install-recommends python3 openssl sudo systemd ca-certificates
-              RIOT_INSTALLER_FIXTURE=1 python3 /src/scripts/test_install_maintenance.py -v
-            '
+          for image in debian:bookworm-slim debian:trixie-slim; do
+            docker run --rm \
+              --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
+              -e DEBIAN_FRONTEND=noninteractive "$image" bash -ec '
+                apt-get update -qq
+                apt-get install -y -qq --no-install-recommends python3 openssl sudo systemd ca-certificates
+                RIOT_INSTALLER_FIXTURE=1 python3 /src/scripts/test_install_maintenance.py -v
+              '
+          done
       - name: Real apt recovery and no-removal fixtures
         run: |
           docker run --rm --network none \

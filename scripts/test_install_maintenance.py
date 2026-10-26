@@ -7,6 +7,7 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -16,6 +17,81 @@ import unittest
 ROOT = Path('/fixture')
 SOURCE = Path(__file__).resolve().parent / 'install.sh'
 PIN = '31W+lKF8LVms4ar/Qb9DI0//nj8CUT3zEx2aRhVbBjY='
+
+# SHUTDOWN-SUDO-001. SC-001: nothing here may run a power command. The power
+# tools are replaced by tripwires, systemctl is a stub, and policy is only ever
+# listed with sudo -l.
+POWER_TOOLS = ('poweroff', 'halt', 'shutdown', 'reboot')
+SERVER_URL = 'https://new.test:7331'
+GRANT_LINE = 'riot ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff\n'
+REBOOT_LINE = 'riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot\n'
+Q_REBOOT = 'Allow remote reboot from dashboard?'
+Q_SHUTDOWN = 'Allow remote shutdown from dashboard?'
+Q_PATCHING = 'Allow remote OS patching from dashboard?'
+Q_TERMINAL = 'Allow remote terminal access to this host?'
+Q_DOCKER = 'Allow remote exec into Docker containers?'
+PROMPT_RE = re.compile(r'    (.+?) \[(?:y/N|Y/n)\]: $')
+POWER_TRACE_RE = re.compile(r'^(systemctl\s+(poweroff|reboot|halt|kexec|suspend|hibernate)\b|POWER TRIPWIRE)', re.M)
+# Golden bytes. Both were produced by running the same fixture scenario with
+# scripts/install.sh from 71a4dea (main before SHUTDOWN-SUDO-001) inside this
+# container image. Do not regenerate them from the new installer.
+PRE_STORY_DROPIN = '''# rIOt fixed privileges; package transactions run only in the detached worker.
+riot ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block riot-maintenance.service
+riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^hold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$
+riot ALL=(root) NOPASSWD: /usr/bin/apt-mark ^unhold [a-z0-9][a-z0-9+._:-]*( [a-z0-9][a-z0-9+._:-]*)*$
+riot ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
+riot ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=riot-agent-update /usr/local/lib/riot/riot-agent-apply
+riot ALL=(root) NOPASSWD: /usr/bin/systemctl reset-failed riot-agent-update
+# smartmontools absent: install separately if SMART monitoring is wanted.
+'''
+# Fresh install on a stubbed Darwin host, answered with -y, server URL SERVER_URL.
+PRE_STORY_DARWIN_CONFIG = '''server:
+  url: "https://new.test:7331"
+  tls_verify: true
+
+agent:
+  poll_interval: 60
+  heartbeat_interval: 15
+
+collectors:
+  enabled:
+    - system
+    - cpu
+    - memory
+    - disk
+    - network
+    - os_info
+    - updates
+    - services
+    - processes
+    - docker
+    - security
+    - logs
+    - ups
+    - webservers
+    - usb
+
+commands:
+  allow_reboot: true
+  allow_patching: true
+
+host_terminal:
+  enabled: true
+
+'''
+PRE_STORY_DARWIN_STDOUT = '''==> rIOt Agent Installer
+==> Platform: darwin/arm64 (riot-agent-darwin-arm64)
+
+==> Configure remote management features
+    These can be changed later in /etc/riot/agent.yaml
+
+    Allow remote reboot from dashboard? [y/N]: y (auto)
+    Allow remote OS patching from dashboard? [y/N]: y (auto)
+    Allow remote terminal access to this host? [y/N]: y (auto)
+
+==> Writing config to /etc/riot/agent.yaml
+==> rIOt agent installed at /usr/local/bin/riot-agent; run manually with -config /etc/riot/agent.yaml
+'''
 
 
 def run(*args, **kwargs):
@@ -46,6 +122,7 @@ dest=""; url=""
 while [ $# -gt 0 ]; do
   if [ "$1" = -o ]; then dest="$2"; shift 2; else url="$1"; shift; fi
 done
+echo "DOWNLOAD ${url##*/}" >> /fixture/trace
 cp "/fixture/assets/${url##*/}" "$dest"
 ''')
         write('/usr/bin/apt-get', '''#!/bin/sh
@@ -82,6 +159,8 @@ with open('/var/lib/dpkg/lock-frontend','a') as f:
     else:
         raise SystemExit('installer did not retain native package exclusion')
 LOCK
+    [ ! -f /fixture/fail-stop ] || exit 1
+    [ ! -x /fixture/on-stop ] || /fixture/on-stop
     ;;
   enable)
     if [ "$*" = 'enable --now dbus.socket' ]; then
@@ -109,6 +188,13 @@ esac
 if [ "$*" = '-cf /etc/sudoers' ] && [ -f /fixture/fail-merged-policy ] && grep -q 'start --no-block' /etc/sudoers.d/riot-agent; then exit 1; fi
 exec /usr/sbin/visudo.fixture-real "$@"
 ''')
+        # SHUTDOWN-SUDO-001 SC-001: the power tools are tripwires, not tools. On
+        # systemd-sysv hosts they are symlinks to systemctl, so unlink first and
+        # never write through the link. sudo -l needs the paths to exist.
+        for name in POWER_TOOLS:
+            tool = Path('/usr/sbin') / name
+            tool.unlink(missing_ok=True)
+            write(tool, '#!/bin/sh\necho "POWER TRIPWIRE ' + name + ' $*" >> /fixture/trace\nexit 99\n')
         subprocess.run(['useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', 'riot'], check=False, capture_output=True)
 
     def setUp(self):
@@ -116,7 +202,7 @@ exec /usr/sbin/visudo.fixture-real "$@"
             p = Path(path)
             if p.is_symlink(): p.unlink()
             elif p.exists(): shutil.rmtree(p)
-        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed']:
+        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed', '/fixture/fail-stop', '/fixture/on-stop', '/fixture/late-link', '/fixture/linked.yaml', '/fixture/real-config.yaml']:
             Path(path).unlink(missing_ok=True)
         self.provide_system_bus()
         write(ROOT / 'trace', '', 0o600)
@@ -152,8 +238,193 @@ exec /usr/sbin/visudo.fixture-real "$@"
         with socket.socket(socket.AF_UNIX) as sock:
             sock.bind(str(bus))
 
+    def tearDown(self):
+        self.assert_no_power_action()
+
     def install(self):
         return subprocess.run(['bash', str(ROOT / 'install.sh'), '--non-interactive'], capture_output=True, text=True)
+
+    # ---- SHUTDOWN-SUDO-001 helpers -------------------------------------------
+
+    def assert_no_power_action(self):
+        trace = (ROOT / 'trace').read_text()
+        self.assertIsNone(POWER_TRACE_RE.search(trace), 'SC-001: a power verb or power tool reached the fixture:\n' + trace)
+
+    def reinit(self):
+        """Back to the setUp state (a legacy reinstall), between subtests."""
+        self.setUp()
+
+    def fresh(self, keep_dropin=True):
+        """Turn the setUp reinstall state into a fresh install: no agent.yaml."""
+        config = Path('/etc/riot/agent.yaml')
+        if config.is_symlink() or config.is_file():
+            config.unlink()
+        elif config.is_dir():
+            shutil.rmtree(config)
+        if not keep_dropin:
+            Path('/etc/sudoers.d/riot-agent').unlink(missing_ok=True)
+
+    def set_config(self, data, mode=0o600, owner=None):
+        path = Path('/etc/riot/agent.yaml')
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        path.write_bytes(data.encode() if isinstance(data, str) else data)
+        path.chmod(mode)
+        if owner:
+            shutil.chown(path, *owner)
+
+    def set_dropin(self, text):
+        write('/etc/sudoers.d/riot-agent', text, 0o440)
+        self.old_policy = Path('/etc/sudoers.d/riot-agent').read_bytes()
+
+    def run_installer(self, *args, env=None):
+        """No terminal: new session, stdin from /dev/null."""
+        return subprocess.run(['bash', str(ROOT / 'install.sh'), *args], capture_output=True, text=True,
+                              stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+
+    def install_tty(self, answers, *args, timeout=180):
+        """Run the installer on a pty and answer its yes/no prompts by text.
+
+        Returns (exit code, output, prompts seen in order). A prompt that is not
+        in answers fails the test, so a question that must not be asked is caught.
+        """
+        import pty
+        import select
+        import time
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ['TERM'] = 'dumb'
+            os.execv('/bin/bash', ['bash', str(ROOT / 'install.sh'), *args])
+            os._exit(127)
+        raw, pending, prompts, unexpected = b'', '', [], []
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                timed_out = True
+                os.kill(pid, 9)
+                break
+            ready, _, _ = select.select([fd], [], [], min(left, 10))
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            raw += chunk
+            pending += chunk.decode(errors='replace')
+            match = PROMPT_RE.search(pending)
+            if match:
+                text = match.group(1)
+                prompts.append(text)
+                if text not in answers:
+                    unexpected.append(text)
+                os.write(fd, (answers.get(text, '') + '\n').encode())
+                pending = ''
+        _, status = os.waitpid(pid, 0)
+        os.close(fd)
+        output = raw.decode(errors='replace').replace('\r\n', '\n')
+        self.assertFalse(timed_out, 'installer did not finish on the pty:\n' + output)
+        self.assertEqual(unexpected, [], 'prompts that were not expected:\n' + output)
+        return os.waitstatus_to_exitcode(status), output, prompts
+
+    @staticmethod
+    def answers(reboot='n', shutdown='n', patching='n', terminal='n', docker='n'):
+        return {Q_REBOOT: reboot, Q_SHUTDOWN: shutdown, Q_PATCHING: patching, Q_TERMINAL: terminal, Q_DOCKER: docker}
+
+    @staticmethod
+    def story_config(url=SERVER_URL, reboot=False, shutdown=False, patching=False, terminal=False, bootstrap_key=None):
+        """The installer's config for these answers, no Docker. With shutdown
+        False this is exactly the pre-story layout (checked against the golden)."""
+        low = lambda value: 'true' if value else 'false'
+        commands = ''
+        if reboot or shutdown or patching:
+            commands = '\ncommands:\n  allow_reboot: ' + low(reboot) + ('\n  allow_shutdown: true' if shutdown else '') + '\n  allow_patching: ' + low(patching)
+        host_terminal = '\nhost_terminal:\n  enabled: true' if terminal else ''
+        bootstrap = '\n  bootstrap_key: "' + bootstrap_key + '"' if bootstrap_key else ''
+        collectors = ''.join('    - ' + name + '\n' for name in ['system', 'cpu', 'memory', 'disk', 'network', 'os_info', 'updates', 'services', 'processes', 'docker', 'security', 'logs', 'ups', 'webservers', 'usb'])
+        return ('server:\n  url: "' + url + '"\n  tls_verify: true' + bootstrap + '\n\nagent:\n  poll_interval: 60\n  heartbeat_interval: 15\n\n'
+                'collectors:\n  enabled:\n' + collectors + commands + '\n' + host_terminal + '\n\n')
+
+    def dropin(self):
+        return Path('/etc/sudoers.d/riot-agent').read_text()
+
+    @staticmethod
+    def grant_lines(text):
+        return [line for line in text.splitlines() if 'poweroff' in line]
+
+    def riot_lists(self, *argv):
+        """Listing only: does riot's sudo policy allow argv? Never runs argv."""
+        cmd = ['/usr/bin/sudo.fixture-real', '-n', '-U', 'riot', '-l', *argv]
+        return subprocess.run(cmd, capture_output=True, text=True).returncode
+
+    def riot_lists_as_riot(self, *argv):
+        cmd = ['runuser', '-u', 'riot', '--', '/usr/bin/sudo.fixture-real', '-n', '-l', *argv]
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    @staticmethod
+    def python_reads_enabled(path='/etc/riot/agent.yaml'):
+        """Independent strict reader for the shapes the installer and these tests
+        write: one column-0 commands:, and in its block a plain allow_shutdown: true."""
+        p = Path(path)
+        if p.is_symlink() or not p.is_file():
+            return False
+        lines = p.read_text().splitlines()
+        if sum(1 for line in lines if re.match(r'^commands:\s*(#.*)?$', line)) != 1:
+            return False
+        inside, hits = False, 0
+        for line in lines:
+            if re.match(r'^commands:\s*(#.*)?$', line):
+                inside = True
+            elif line and not line.startswith((' ', '#')):
+                inside = False
+            elif inside and re.match(r'^ +allow_shutdown: true *(#.*)?$', line):
+                hits += 1
+        return hits == 1
+
+    def assert_agreement(self, expected):
+        """FR-022: the drop-in grants poweroff exactly when the final config enables shutdown."""
+        grants = self.grant_lines(self.dropin())
+        self.assertEqual(len(grants), 1 if expected else 0, 'poweroff grant lines: %r' % grants)
+        self.assertEqual(self.python_reads_enabled(), expected, 'final config disagrees with the expected shutdown state')
+        self.assertEqual(self.python_reads_enabled(), bool(grants), 'FR-022: grant and config disagree')
+
+    def assert_transparency(self, output, kind):
+        """SEC-004 / AD-008: exactly one 'Remote shutdown' line on a reinstall, none on a fresh install."""
+        lines = [line for line in output.splitlines() if line.startswith('==> Remote shutdown:')]
+        if kind is None:
+            self.assertEqual(lines, [], 'a fresh install prints no AD-008 line')
+            return
+        self.assertEqual(len(lines), 1, 'exactly one AD-008 line expected: %r' % lines)
+        expected = {
+            'granting': '==> Remote shutdown: commands.allow_shutdown is true in /etc/riot/agent.yaml; granting sudo systemctl poweroff',
+            'not_enabled': '==> Remote shutdown: not enabled in /etc/riot/agent.yaml; no poweroff grant (only a plain "allow_shutdown: true" under "commands:" in a regular file enables it)',
+            'reenrol': '==> Remote shutdown: re-enrolment resets remote features; no poweroff grant',
+        }[kind]
+        self.assertEqual(lines[0], expected)
+
+    def resign(self):
+        """Rebuild and sign the manifest over every asset currently present."""
+        assets = ROOT / 'assets'
+        names = sorted(p.name for p in assets.iterdir() if p.name not in ('checksums.txt', 'checksums.txt.sig'))
+        manifest = ''.join(hashlib.sha256((assets / name).read_bytes()).hexdigest() + '  ' + name + '\n' for name in names)
+        write(assets / 'checksums.txt', manifest, 0o600)
+        sig = run('openssl', 'pkeyutl', '-sign', '-inkey', str(ROOT / 'private.pem'), '-rawin', '-in', str(assets / 'checksums.txt')).stdout
+        write(assets / 'checksums.txt.sig', base64.b64encode(sig).decode() + '\n', 0o600)
+
+    def darwin_install(self, *args):
+        """Run the installer as if on macOS: a uname stub, a darwin asset. Nothing
+        macOS-specific is executed; the installer's non-Linux branch only writes files."""
+        write(ROOT / 'assets/riot-agent-darwin-arm64', '#!/bin/sh\n# signed fixture darwin\nexit 0\n')
+        self.resign()
+        write(ROOT / 'darwin-bin/uname', '#!/bin/sh\ncase "$1" in\n  -m) echo arm64;;\n  -s) echo Darwin;;\n  *) echo Darwin;;\nesac\n')
+        env = dict(os.environ, PATH=str(ROOT / 'darwin-bin') + ':' + os.environ['PATH'])
+        return self.run_installer(*args, env=env)
 
     def assert_refused_without_replacement(self, result):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -326,6 +597,556 @@ exec /usr/sbin/visudo.fixture-real "$@"
         self.assert_refused_without_replacement(result)
         self.assertIn('PACKAGE LISTS update', (ROOT / 'trace').read_text(), 'one list refresh before giving up')
         self.assertIn('Could not install dbus', result.stderr)
+
+    # ---- SHUTDOWN-SUDO-001: fresh-install prompt (AC-001 to AC-006) ----------
+
+    def test_SS_AC001_fresh_yes_grants_poweroff_and_config_agrees(self):
+        self.fresh()
+        rc, out, prompts = self.install_tty(self.answers(shutdown='y'), SERVER_URL)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(prompts, [Q_REBOOT, Q_SHUTDOWN, Q_PATCHING, Q_TERMINAL])
+        self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(shutdown=True), 'AC-001: config has commands.allow_shutdown: true')
+        self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()], 'AC-001: the poweroff grant appears exactly once')
+        self.assertEqual(self.riot_lists('/usr/bin/systemctl', 'poweroff'), 0, 'AC-001: sudo -l (listing only) must allow the command')
+        self.assert_transparency(out, None)
+        self.assert_agreement(True)
+
+    def test_SS_AC002_fresh_no_or_unrecognised_answer_grants_nothing(self):
+        for answer in ('', 'n', 'no', 'maybe'):
+            with self.subTest(answer=answer):
+                self.reinit()
+                self.fresh()
+                rc, out, prompts = self.install_tty(self.answers(shutdown=answer), SERVER_URL)
+                self.assertEqual(rc, 0, out)
+                self.assertIn(Q_SHUTDOWN, prompts)
+                self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+                self.assertEqual(self.grant_lines(self.dropin()), [])
+                self.assert_agreement(False)
+        with self.subTest(answer='unreadable terminal'):
+            self.reinit()
+            self.fresh()
+            result = self.run_installer(SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+            self.assertEqual(self.grant_lines(self.dropin()), [])
+            self.assert_agreement(False)
+
+    def test_SS_AC003_prompt_text_and_order(self):
+        docker = Path('/usr/bin/docker')
+        write(docker, '#!/bin/sh\nexit 0\n')
+        try:
+            self.fresh()
+            rc, out, prompts = self.install_tty(self.answers(), SERVER_URL)
+        finally:
+            docker.unlink()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(prompts, [Q_REBOOT, Q_SHUTDOWN, Q_PATCHING, Q_TERMINAL, Q_DOCKER], 'AC-003: shutdown sits directly between reboot and patching')
+        shown = re.findall(r'^    (Allow [^\n]*?) (\[[yYnN/]+\]): ', out, re.M)
+        self.assertEqual(shown, [(q, '[y/N]') for q in prompts], 'AC-003: every question shows its [y/N] hint')
+        self.assertLess(out.index('==> Docker detected'), out.index(Q_REBOOT))
+        self.assertIn('terminal_enabled: false', Path('/etc/riot/agent.yaml').read_text())
+
+    def test_SS_AC004_template_helper_matches_pre_story_golden(self):
+        self.assertEqual(self.story_config(reboot=True, patching=True, terminal=True), PRE_STORY_DARWIN_CONFIG)
+
+    def test_SS_AC004_reboot_and_shutdown_independent(self):
+        for reboot in (True, False):
+            for shutdown in (True, False):
+                with self.subTest(reboot=reboot, shutdown=shutdown):
+                    self.reinit()
+                    self.fresh()
+                    answers = self.answers(reboot='y' if reboot else 'n', shutdown='y' if shutdown else 'n')
+                    rc, out, _ = self.install_tty(answers, SERVER_URL)
+                    self.assertEqual(rc, 0, out)
+                    config = Path('/etc/riot/agent.yaml').read_text()
+                    self.assertEqual(config, self.story_config(reboot=reboot, shutdown=shutdown))
+                    if not shutdown:
+                        self.assertNotIn('allow_shutdown', config)
+                    self.assertIn(REBOOT_LINE, self.dropin(), 'FR-033: the reboot grant is always present')
+                    self.assertEqual(len(self.grant_lines(self.dropin())), 1 if shutdown else 0)
+                    self.assert_agreement(shutdown)
+
+    def test_SS_AC005_yes_flag_answers_yes(self):
+        self.fresh()
+        result = self.run_installer('-y', SERVER_URL)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('    Allow remote shutdown from dashboard? [y/N]: y (auto)\n', result.stdout)
+        self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(reboot=True, shutdown=True, patching=True, terminal=True))
+        self.assert_transparency(result.stdout, None)
+        self.assert_agreement(True)
+
+    def test_SS_AC006_non_interactive_and_no_terminal_answer_no(self):
+        with self.subTest(mode='--non-interactive'):
+            self.fresh()
+            result = self.run_installer('--non-interactive', SERVER_URL)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('Allow remote', result.stdout)
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+            self.assert_agreement(False)
+        with self.subTest(mode='no terminal'):
+            self.reinit()
+            self.fresh()
+            tty, aside = Path('/dev/tty'), Path('/dev/tty.aside')
+            moved = tty.exists()
+            if moved:
+                tty.rename(aside)
+            try:
+                result = self.run_installer(SERVER_URL)
+            finally:
+                if moved:
+                    aside.rename(tty)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn('Allow remote shutdown', result.stdout)
+            self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config())
+            self.assertEqual(self.grant_lines(self.dropin()), [])
+            self.assert_agreement(False)
+
+    # ---- sudoers content and validation (AC-007 to AC-009) -------------------
+
+    def test_SS_AC007_existing_lines_byte_identical(self):
+        self.fresh()
+        self.assertEqual(self.install_tty(self.answers(), SERVER_URL)[0], 0)
+        without = Path('/etc/sudoers.d/riot-agent').read_bytes()
+        self.reinit()
+        self.fresh()
+        self.assertEqual(self.install_tty(self.answers(shutdown='y'), SERVER_URL)[0], 0)
+        with_grant = Path('/etc/sudoers.d/riot-agent').read_bytes()
+        self.assertEqual(without, PRE_STORY_DROPIN.encode(), 'AC-007: the "no" drop-in equals the pre-story drop-in')
+        self.assertEqual(with_grant.replace(GRANT_LINE.encode(), b''), without, 'AC-007: removing the grant line from the "yes" drop-in gives the "no" drop-in')
+        self.assertEqual(with_grant.decode(), PRE_STORY_DROPIN.replace(REBOOT_LINE, REBOOT_LINE + GRANT_LINE), 'the grant line directly follows the reboot line')
+
+    def test_SS_AC008_only_exact_poweroff_is_granted(self):
+        self.fresh()
+        self.assertEqual(self.install_tty(self.answers(shutdown='y'), SERVER_URL)[0], 0)
+        listing = self.riot_lists_as_riot('/usr/bin/systemctl', 'poweroff')
+        self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+        self.assertEqual(self.riot_lists_as_riot('/usr/bin/systemctl', 'reboot').returncode, 0, 'control: the reboot grant is still allowed')
+        refused = [
+            ['/usr/bin/systemctl', 'poweroff', '--force'], ['/usr/bin/systemctl', 'poweroff', '-i'], ['/usr/bin/systemctl', '-i', 'poweroff'],
+            ['/usr/bin/systemctl', 'halt'], ['/usr/bin/systemctl', 'kexec'], ['/usr/bin/systemctl', 'suspend'],
+            ['/usr/sbin/shutdown'], ['/usr/sbin/poweroff'], ['/usr/sbin/halt'],
+        ]
+        for argv in refused:
+            with self.subTest(refused=argv):
+                self.assertTrue(Path(argv[0]).exists(), 'a refusal only proves policy when the command exists: ' + argv[0])
+                probe = self.riot_lists_as_riot(*argv)
+                self.assertNotEqual(probe.returncode, 0, 'AC-008: must be refused: %r\n%s%s' % (argv, probe.stdout, probe.stderr))
+        text = self.dropin()
+        lines = self.grant_lines(text)
+        self.assertEqual(lines, [GRANT_LINE.strip()])
+        self.assertTrue(lines[0].startswith('riot '))
+        self.assertFalse(set('*^$') & set(lines[0]), 'AC-008: no wildcard or argument pattern on the new line')
+        for word in ('halt', 'kexec', 'suspend', '/shutdown'):
+            self.assertNotIn(word, text, 'AC-008: nothing else power-related is granted: ' + word)
+
+    def test_SS_AC009_policy_validation_still_guards_yes_install(self):
+        with self.subTest(failure='candidate policy'):
+            self.fresh()
+            write(ROOT / 'fail-policy', '', 0o600)
+            result = self.run_installer('-y', SERVER_URL)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('Candidate sudo policy is invalid', result.stderr)
+            self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy)
+            self.assertNotIn('systemctl stop', (ROOT / 'trace').read_text())
+        with self.subTest(failure='effective policy'):
+            self.reinit()
+            self.fresh()
+            write(ROOT / 'fail-merged-policy', '', 0o600)
+            result = self.run_installer('-y', SERVER_URL)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('previous managed policy restored', result.stderr)
+            self.assertNotIn('WARNING', result.stderr, 'the policy is restored once, not again by the trap')
+            self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy)
+            self.assertNotIn('systemctl stop', (ROOT / 'trace').read_text())
+
+    # ---- reinstall with a preserved config (AC-010 to AC-014) ----------------
+
+    def test_SS_AC010_reinstall_true_emits_grant_without_question(self):
+        config = 'commands:\n  allow_shutdown: true\n'
+        for flags in ((), ('-y',)):
+            with self.subTest(flags=flags):
+                self.reinit()
+                self.set_config(config)
+                rc, out, prompts = self.install_tty({}, *flags)
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(prompts, [])
+                self.assertNotIn('Allow remote', out, 'FR-007: a reinstall asks no question')
+                self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()])
+                self.assert_transparency(out, 'granting')
+                self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), config)
+                self.assert_agreement(True)
+
+    def test_SS_AC011_reinstall_fails_closed(self):
+        cases = {
+            'a no commands section': 'server:\n  url: "https://old.test:7331"\n',
+            'b commands without the key': 'commands:\n  allow_reboot: true\n',
+            'c false': 'commands:\n  allow_shutdown: false\n',
+            'd commented out': 'commands:\n  # allow_shutdown: true\n  allow_reboot: true\n',
+            'e under docker': 'docker:\n  allow_shutdown: true\ncommands:\n  allow_reboot: true\n',
+            'f maybe': 'commands:\n  allow_shutdown: "maybe"\n',
+            'g1 tab indentation': 'commands:\n\tallow_shutdown: true\n',
+            'g2 unterminated quote before commands': 'agent:\n  device_name: "abc\ncommands:\n  allow_shutdown: true\n',
+            'g3 duplicate commands': 'commands:\n  allow_shutdown: true\ncommands:\n  allow_reboot: true\n',
+            'g4 NUL byte': b'commands:\n  allow_shutdown: true\n\x00',
+            'x True': 'commands:\n  allow_shutdown: True\n',
+            'x yes': 'commands:\n  allow_shutdown: yes\n',
+            'x unparseable': 'commands: [unclosed\n  allow_shutdown: true\n',
+        }
+        for name, config in cases.items():
+            with self.subTest(case=name):
+                self.reinit()
+                self.set_config(config)
+                result = self.run_installer('--non-interactive')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.grant_lines(self.dropin()), [], 'AC-011: no poweroff grant for ' + name)
+                self.assert_transparency(result.stdout, 'not_enabled')
+                if name[0] in 'abcdef':
+                    self.assert_agreement(False)
+        with self.subTest(case='h1 symlink to a regular file holding true'):
+            self.reinit()
+            write(ROOT / 'real-config.yaml', 'commands:\n  allow_shutdown: true\n', 0o600)
+            config = Path('/etc/riot/agent.yaml')
+            config.unlink()
+            config.symlink_to(ROOT / 'real-config.yaml')
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.grant_lines(self.dropin()), [], 'a symlink is never read')
+            self.assertEqual((ROOT / 'real-config.yaml').read_text(), 'commands:\n  allow_shutdown: true\n', 'nothing is written through the link')
+            self.assert_transparency(result.stdout, 'not_enabled')
+            self.assert_agreement(False)
+        for name, make in (('h2 dangling symlink', lambda p: p.symlink_to('/nonexistent-target')), ('h3 directory', lambda p: p.mkdir())):
+            with self.subTest(case=name):
+                self.reinit()
+                config = Path('/etc/riot/agent.yaml')
+                config.unlink()
+                make(config)
+                result = self.run_installer('--non-interactive', SERVER_URL)
+                self.assert_refused_without_replacement(result)
+                self.assertIn('exists but is not a regular file', result.stderr)
+                self.assertIn('no files changed', result.stderr)
+                self.assertEqual([l for l in result.stdout.splitlines() if l.startswith('==> Remote shutdown:')], [])
+
+    def test_SS_AC012_flags_do_not_override_config(self):
+        with self.subTest(case='false with -y'):
+            self.set_config('commands:\n  allow_shutdown: false\n')
+            result = self.run_installer('-y')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.grant_lines(self.dropin()), [])
+            self.assert_agreement(False)
+        with self.subTest(case='true with --non-interactive'):
+            self.reinit()
+            self.set_config('commands:\n  allow_shutdown: true\n')
+            result = self.run_installer('--non-interactive')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()])
+            self.assert_agreement(True)
+
+    def test_SS_AC013_reinstall_revokes_stale_grant(self):
+        self.set_dropin(PRE_STORY_DROPIN.replace(REBOOT_LINE, REBOOT_LINE + GRANT_LINE))
+        self.set_config('commands:\n  allow_shutdown: false\n')
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.dropin(), PRE_STORY_DROPIN, 'AC-013: the grant is gone and every other line is unchanged')
+        self.assert_transparency(result.stdout, 'not_enabled')
+        self.assert_agreement(False)
+
+    def test_SS_AC014_preserved_config_untouched(self):
+        config = ('# kept by hand\nserver:\n    url:   "https://old.test:7331"    # odd spacing\n\n'
+                  'commands:\n    allow_reboot: false\n\n\n    # remote shutdown on purpose\n    allow_shutdown: true     # yes\n    allow_patching: false\n')
+        self.set_config(config, 0o640, ('riot', 'riot'))
+        path = Path('/etc/riot/agent.yaml')
+        before = (path.read_bytes(), path.stat().st_uid, path.stat().st_gid, stat.S_IMODE(path.stat().st_mode))
+        result = self.run_installer('--non-interactive')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        after = (path.read_bytes(), path.stat().st_uid, path.stat().st_gid, stat.S_IMODE(path.stat().st_mode))
+        self.assertEqual(after, before, 'AC-014: bytes, owner and mode are unchanged')
+        self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()], 'the odd formatting is still read as enabled')
+        self.assert_agreement(True)
+
+    # ---- bootstrap and agreement (AC-015 to AC-017) --------------------------
+
+    def test_SS_AC015_bootstrap_reenrolment_resets_shutdown(self):
+        for flags in ((), ('-y',)):
+            with self.subTest(flags=flags):
+                self.reinit()
+                self.set_config('commands:\n  allow_shutdown: true\n')
+                self.set_dropin(PRE_STORY_DROPIN.replace(REBOOT_LINE, REBOOT_LINE + GRANT_LINE))
+                rc, out, prompts = self.install_tty({}, SERVER_URL, '--bootstrap-key', 'K', *flags)
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(prompts, [], 'a re-enrolment asks no question')
+                self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(bootstrap_key='K'))
+                self.assertEqual(self.grant_lines(self.dropin()), [])
+                self.assert_transparency(out, 'reenrol')
+                self.assert_agreement(False)
+
+    def test_SS_AC016_bootstrap_on_fresh_install_asks_and_grants(self):
+        self.fresh()
+        rc, out, prompts = self.install_tty(self.answers(shutdown='y'), SERVER_URL, '--bootstrap-key', 'K')
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(prompts, [Q_REBOOT, Q_SHUTDOWN, Q_PATCHING, Q_TERMINAL])
+        self.assertEqual(Path('/etc/riot/agent.yaml').read_text(), self.story_config(shutdown=True, bootstrap_key='K'))
+        self.assertEqual(self.grant_lines(self.dropin()), [GRANT_LINE.strip()])
+        self.assert_transparency(out, None)
+        self.assert_agreement(True)
+
+    def test_SS_AC017_agreement_holds_when_the_config_changes_under_the_run(self):
+        # The hook runs while the agent is being stopped, the moment riot could still write the file.
+        flip_false = "#!/bin/sh\nprintf 'commands:\\n  allow_shutdown: false\\n' > /etc/riot/agent.yaml\n"
+        flip_true = "#!/bin/sh\nprintf 'commands:\\n  allow_shutdown: true\\n' > /etc/riot/agent.yaml\n"
+        cases = [
+            ('reinstall true flipped to false', 'commands:\n  allow_shutdown: true\n', flip_false, ()),
+            ('reinstall false flipped to true', 'commands:\n  allow_shutdown: false\n', flip_true, ()),
+            ('fresh yes with a planted false config', None, flip_false, ('-y', SERVER_URL)),
+        ]
+        for name, config, hook, args in cases:
+            with self.subTest(case=name):
+                self.reinit()
+                if config is None:
+                    self.fresh()
+                else:
+                    self.set_config(config)
+                write(ROOT / 'on-stop', hook, 0o755)
+                result = self.run_installer(*(args or ('--non-interactive',)))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('changed during installation; previous managed policy restored', result.stderr)
+                self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy, 'AD-005: the previous policy is back')
+                self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary, 'no binary is replaced before agreement')
+                self.assertNotIn('WARNING', result.stderr)
+
+    # ---- non-Linux (AC-018) --------------------------------------------------
+
+    def test_SS_AC018_stubbed_darwin_install_unchanged(self):
+        self.fresh()
+        result = self.darwin_install('-y', SERVER_URL)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, PRE_STORY_DARWIN_STDOUT, 'FR-024: the non-Linux output is the pre-story output')
+        self.assertNotIn('shutdown', result.stdout.lower(), 'FR-024: no shutdown question or line on a non-Linux install')
+        config = Path('/etc/riot/agent.yaml').read_text()
+        self.assertEqual(config, PRE_STORY_DARWIN_CONFIG)
+        self.assertNotIn('allow_shutdown', config)
+
+    # ---- containment, failure, bounded growth --------------------------------
+
+    def test_SS_OQA2_failure_before_agreement_restores_previous_policy(self):
+        self.fresh()
+        write(ROOT / 'fail-stop', '', 0o600)
+        result = self.run_installer('-y', SERVER_URL)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy, 'AD-006: no grant is left behind without a config')
+        self.assertEqual(self.grant_lines(self.dropin()), [])
+        self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+        self.assertFalse(Path('/etc/riot/agent.yaml').exists(), 'the failed fresh run wrote no config')
+
+    def test_SS_OQA2_failure_with_no_previous_dropin_leaves_none(self):
+        self.fresh(keep_dropin=False)
+        write(ROOT / 'fail-stop', '', 0o600)
+        result = self.run_installer('-y', SERVER_URL)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(Path('/etc/sudoers.d/riot-agent').exists(), 'AD-006: a clean host is returned to a clean host')
+
+    def test_SS_A003_bare_systemctl_resolves_to_granted_path(self):
+        self.fresh()
+        self.assertEqual(self.install_tty(self.answers(shutdown='y'), SERVER_URL)[0], 0)
+        listing = self.riot_lists_as_riot('systemctl', 'poweroff')
+        self.assertEqual(listing.returncode, 0, listing.stdout + listing.stderr)
+        self.assertIn('/usr/bin/systemctl poweroff', listing.stdout, 'sudo resolves the bare command to the path the installer wrote')
+
+    def fs_paths(self):
+        paths = set()
+        for top in ('/etc', '/var', '/usr/local', '/run'):
+            for dirpath, dirs, files in os.walk(top):
+                if dirpath.startswith('/run/lock'):
+                    dirs[:] = []
+                    continue
+                for name in dirs + files:
+                    paths.add(re.sub(r'riot_install\.[A-Za-z0-9]+', 'riot_install.X', os.path.join(dirpath, name)))
+        return paths
+
+    def backup_files(self):
+        backups = [p for p in Path('/var/backups').glob('riot_install.*') if p.is_dir()]
+        self.assertEqual(len(backups), 1, 'exactly one backup directory per run')
+        return sorted(str(p.relative_to(backups[0])) for p in backups[0].rglob('*'))
+
+    def measured_run(self, setup, runner):
+        self.reinit()
+        for stale in Path('/var/backups').glob('riot_install.*'):
+            shutil.rmtree(stale)
+        setup()
+        write(ROOT / 'trace', '', 0o600)
+        result = runner()
+        self.assertEqual(result.returncode if hasattr(result, 'returncode') else result[0], 0, str(result))
+        downloads = [line for line in (ROOT / 'trace').read_text().splitlines() if line.startswith('DOWNLOAD')]
+        return self.fs_paths(), self.backup_files(), len(self.dropin().splitlines()), downloads
+
+    def test_SS_AC029_bounded_growth(self):
+        expected_downloads = ['DOWNLOAD checksums.txt', 'DOWNLOAD checksums.txt.sig', 'DOWNLOAD riot-agent-linux-amd64',
+                              'DOWNLOAD riot-agent-apply-linux-amd64', 'DOWNLOAD riot-maintenance-linux-amd64', 'DOWNLOAD riot-maintenance.service']
+        fresh_no = self.measured_run(self.fresh, lambda: self.install_tty(self.answers(), SERVER_URL))
+        fresh_yes = self.measured_run(self.fresh, lambda: self.install_tty(self.answers(shutdown='y'), SERVER_URL))
+        self.assertEqual(fresh_yes[0] ^ fresh_no[0], set(), 'NFR-002: a "yes" install creates no extra path')
+        self.assertEqual(fresh_yes[1], fresh_no[1], 'the backup holds the same files')
+        self.assertEqual(fresh_yes[2] - fresh_no[2], 1, 'the drop-in grows by exactly one line')
+        self.assertEqual(fresh_no[3], expected_downloads)
+        self.assertEqual(fresh_yes[3], expected_downloads, 'NFR-003: no extra network request')
+        re_off = self.measured_run(lambda: self.set_config('commands:\n  allow_shutdown: false\n'), lambda: self.run_installer('--non-interactive'))
+        re_on = self.measured_run(lambda: self.set_config('commands:\n  allow_shutdown: true\n'), lambda: self.run_installer('--non-interactive'))
+        self.assertEqual(re_on[0] ^ re_off[0], set(), 'a reinstall with the grant creates no extra path')
+        self.assertEqual(re_on[1], re_off[1])
+        self.assertEqual(re_on[2] - re_off[2], 1)
+        self.assertEqual(re_on[3], expected_downloads)
+        self.assertEqual(re_off[3], expected_downloads)
+
+    # ---- security review conditions (SEC-001, SEC-003) -----------------------
+
+    def test_SS_SEC001_hardlinked_config_refused_before_any_change(self):
+        for flags in (('--non-interactive',), ('--non-interactive', '--bootstrap-key', 'K', SERVER_URL)):
+            with self.subTest(flags=flags):
+                self.reinit()
+                self.set_config('commands:\n  allow_shutdown: true\n')
+                path = Path('/etc/riot/agent.yaml')
+                os.link(path, ROOT / 'linked.yaml')
+                before = (path.read_bytes(), path.stat().st_ino, path.stat().st_nlink)
+                result = self.run_installer(*flags)
+                self.assert_refused_without_replacement(result)
+                self.assertIn('has 2 links', result.stderr)
+                self.assertIn('no files changed', result.stderr)
+                self.assertEqual((path.read_bytes(), path.stat().st_ino, path.stat().st_nlink), before, 'SEC-001: the linked file is neither read into a decision nor changed')
+                (ROOT / 'linked.yaml').unlink()
+
+    def test_SS_SEC001_late_checks_run_after_the_stop_and_roll_back_the_grant(self):
+        hooks = {
+            'hard link appears': ("#!/bin/sh\nln /etc/riot/agent.yaml /fixture/late-link\n", 'has 2 links'),
+            'dangling symlink appears': ("#!/bin/sh\nrm -f /etc/riot/agent.yaml\nln -s /nonexistent-late /etc/riot/agent.yaml\n", 'is not a regular file'),
+            'directory appears': ("#!/bin/sh\nrm -f /etc/riot/agent.yaml\nmkdir /etc/riot/agent.yaml\n", 'is not a regular file'),
+        }
+        for name, (hook, message) in hooks.items():
+            with self.subTest(case=name):
+                self.reinit()
+                self.set_config('commands:\n  allow_shutdown: true\n')
+                write(ROOT / 'on-stop', hook, 0o755)
+                result = self.run_installer('--non-interactive')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('changed during installation and', result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy, 'SEC-003: the pending grant is rolled back on the late refusal')
+                self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+                self.assertNotIn('WARNING', result.stderr)
+
+
+    # ---- Added by QA Engineer: adversarial probes (SHUTDOWN-SUDO-001) -------
+
+    # Added by QA Engineer. Covers AC-001, AC-005, AC-017, FR-022. A Docker host
+    # answered yes to everything, with an API key and a certificate pin, still
+    # gets the grant and a config the agreement check accepts.
+    def test_QA_fresh_yes_with_docker_key_and_pin_keeps_agreement(self):
+        docker = Path('/usr/bin/docker')
+        write(docker, '#!/bin/sh\nexit 0\n')
+        try:
+            self.fresh()
+            result = self.run_installer('-y', '--key', 'k#1:x', '--fingerprint', 'SHA256:AA:BB:CC', SERVER_URL)
+        finally:
+            docker.unlink()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = Path('/etc/riot/agent.yaml').read_text()
+        self.assertIn('terminal_enabled: true', config)
+        self.assertIn('allow_shutdown: true', config)
+        self.assertIn('api_key: "k#1:x"', config)
+        self.assert_agreement(True)
+
+    # Added by QA Engineer. Covers AC-010, AC-017, AC-029. The same action twice
+    # in a row: the second run is a reinstall, asks nothing, and leaves the
+    # drop-in byte-identical with exactly one grant.
+    def test_QA_second_run_after_a_yes_install_is_stable(self):
+        self.fresh()
+        first = self.run_installer('-y', SERVER_URL)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        first_dropin = Path('/etc/sudoers.d/riot-agent').read_bytes()
+        first_config = Path('/etc/riot/agent.yaml').read_bytes()
+        second = self.run_installer('-y')
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertNotIn('Allow remote', second.stdout)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), first_dropin)
+        self.assertEqual(Path('/etc/riot/agent.yaml').read_bytes(), first_config)
+        self.assert_transparency(second.stdout, 'granting')
+        self.assert_agreement(True)
+
+    # Added by QA Engineer. Covers OQ-A2, SEC-003, AD-006. TERM sent to the
+    # installer while the agent is being stopped (after the grant is installed,
+    # before the agreement check): the trap puts the previous policy back.
+    def test_QA_sigterm_between_install_and_agreement_restores_previous_policy(self):
+        self.fresh()
+        hook = "#!/bin/sh\ninstaller=$(awk '{print $4}' /proc/$PPID/stat)\nkill -TERM \"$installer\"\nsleep 3\n"
+        write(ROOT / 'on-stop', hook, 0o755)
+        result = self.run_installer('-y', SERVER_URL)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy, 'AD-006: TERM must not leave the new grant behind')
+        self.assertEqual(self.grant_lines(self.dropin()), [])
+        self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+        self.assertFalse(Path('/etc/riot/agent.yaml').exists())
+        self.assertNotIn('WARNING', result.stderr)
+
+    # Added by QA Engineer. Covers OQ-A1, AD-001. Ctrl-C at a prompt, after the
+    # shutdown question was answered yes, leaves the host exactly as it was.
+    def test_QA_ctrl_c_at_a_prompt_leaves_the_host_untouched(self):
+        import pty
+        import select
+        import time
+        self.fresh()
+        backups_before = set(Path('/var/backups').glob('riot_install.*'))
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.environ['TERM'] = 'dumb'
+            os.execv('/bin/bash', ['bash', str(ROOT / 'install.sh'), SERVER_URL])
+            os._exit(127)
+        raw, sent = b'', set()
+        script = [(b'Allow remote reboot from dashboard? [y/N]: ', b'n\n'),
+                  (b'Allow remote shutdown from dashboard? [y/N]: ', b'y\n'),
+                  (b'Allow remote OS patching from dashboard? [y/N]: ', b'\x03')]
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([fd], [], [], 5)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            raw += chunk
+            for marker, reply in script:
+                if marker in raw and marker not in sent:
+                    sent.add(marker)
+                    os.write(fd, reply)
+        finished, status = os.waitpid(pid, os.WNOHANG)
+        if finished == 0:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+            self.fail('installer did not stop after Ctrl-C:\n' + raw.decode(errors='replace'))
+        os.close(fd)
+        self.assertEqual(len(sent), 3, raw.decode(errors='replace'))
+        self.assertNotEqual(os.waitstatus_to_exitcode(status), 0)
+        self.assertEqual(Path('/etc/sudoers.d/riot-agent').read_bytes(), self.old_policy)
+        self.assertEqual(Path('/usr/local/bin/riot-agent').read_bytes(), self.old_binary)
+        self.assertFalse(Path('/etc/riot/agent.yaml').exists())
+        self.assertEqual(set(Path('/var/backups').glob('riot_install.*')), backups_before, 'no backup directory is created before the prompts end')
+        self.assertEqual(list(Path('/tmp').glob('riot_install.*')), [], 'the stage directory is removed by the trap')
+        trace = (ROOT / 'trace').read_text()
+        self.assertNotIn('systemctl stop', trace)
+        self.assertNotIn('PACKAGE', trace)
+
+    # Added by QA Engineer. Covers AC-011 (h), SEC-001. A FIFO in place of
+    # agent.yaml is refused before any change and cannot hang the run.
+    def test_QA_fifo_agent_yaml_is_refused_without_hanging(self):
+        self.reinit()
+        config = Path('/etc/riot/agent.yaml')
+        config.unlink()
+        os.mkfifo(config)
+        result = subprocess.run(['bash', str(ROOT / 'install.sh'), '--non-interactive', SERVER_URL], capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, start_new_session=True, timeout=90)
+        self.assert_refused_without_replacement(result)
+        self.assertIn('exists but is not a regular file', result.stderr)
+        self.assertIn('no files changed', result.stderr)
 
 
 if __name__ == '__main__':

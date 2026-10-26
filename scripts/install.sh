@@ -163,7 +163,15 @@ MAINT_BIN=${RIOT_APPLY_DIR}/riot-maintenance
 STAGE=$(mktemp -d /tmp/riot_install.XXXXXXXX)
 chmod 0700 "$STAGE"
 NATIVE_LOCK_PID=""
+# True from the moment this run installs a drop-in carrying the poweroff grant
+# until the config and the grant are confirmed to agree. While it is true, any
+# exit restores the previous managed policy (SHUTDOWN-SUDO-001 AD-006).
+GRANT_PENDING=false
 cleanup() {
+    if [ "$GRANT_PENDING" = true ]; then
+        GRANT_PENDING=false
+        restore_policy || echo "WARNING: could not restore the previous rIOt sudo policy" >&2
+    fi
     if [ -n "$NATIVE_LOCK_PID" ]; then
         kill "$NATIVE_LOCK_PID" 2>/dev/null || true
         wait "$NATIVE_LOCK_PID" 2>/dev/null || true
@@ -185,6 +193,148 @@ restore_policy() {
         atomic_install "$BACKUP/etc/sudoers.d/riot-agent" /etc/sudoers.d/riot-agent 0440
     else
         rm -f -- /etc/sudoers.d/riot-agent
+    fi
+}
+
+# The agent config is writable by the unprivileged riot user, so the installer
+# reads it as untrusted input. The reader accepts exactly one spelling and
+# rejects the whole file on anything it cannot classify. It runs inside "if"
+# conditions, where set -e is off, so every step ends in "|| return 1".
+# BEGIN shutdown-config-classifier
+config_enables_shutdown() {
+    local p="$1" snap="$STAGE/shutdown-config.snapshot" size plain out
+    [ -f "$p" ] && [ ! -L "$p" ] || return 1
+    timeout 5 head -c 65537 -- "$p" > "$snap" 2>/dev/null || return 1
+    size=$(wc -c < "$snap") || return 1
+    [ "$size" -le 65536 ] || return 1
+    plain=$(LC_ALL=C tr -d '\000' < "$snap" | wc -c) || return 1
+    [ "$plain" -eq "$size" ] || return 1
+    out=$(LC_ALL=C awk '
+function reject() { bad = 1; exit 0 }
+function cnt(s, ch,    n, i) {
+    n = 0
+    for (i = 1; i <= length(s); i++) if (substr(s, i, 1) == ch) n++
+    return n
+}
+function chk(t,    c, u, q) {
+    c = substr(t, 1, 1)
+    if (c == "|" || c == ">" || c == "&" || c == "*" || c == "!" || c == "%" || c == "@" || c == bt) reject()
+    if (c == dq) {
+        u = substr(t, 2)
+        gsub(/\\\\/, "", u)
+        gsub(/\\"/, "", u)
+        q = index(u, dq)
+        if (q == 0) reject()
+        u = substr(u, q + 1)
+        if (u !~ /^ *$/ && u !~ /^ +#/ && u !~ /^ *:/) reject()
+    } else if (c == sq) {
+        u = substr(t, 2)
+        gsub(sq sq, "", u)
+        q = index(u, sq)
+        if (q == 0) reject()
+        u = substr(u, q + 1)
+        if (u !~ /^ *$/ && u !~ /^ +#/ && u !~ /^ *:/) reject()
+    } else if (c == "[") {
+        if (cnt(t, "[") != cnt(t, "]")) reject()
+    } else if (c == "{") {
+        if (cnt(t, "{") != cnt(t, "}")) reject()
+    }
+}
+BEGIN {
+    sq = sprintf("%c", 39); dq = sprintf("%c", 34); bt = sprintf("%c", 96)
+    tab = sprintf("%c", 9); cr = sprintf("%c", 13)
+    bad = 0; seen = 0; docstart = 0; incmd = 0; ncmd = 0; cmdindent = -1; nshut = 0; shutval = ""
+}
+{
+    line = $0
+    if (index(line, cr) > 0) reject()
+    if (line ~ /^ *$/) next
+    if (line ~ /^ *#/) next
+    match(line, /^ */)
+    ind = RLENGTH
+    rest = substr(line, ind + 1)
+    if (substr(rest, 1, 1) == tab) reject()
+    if (seen == 0 && ind > 0) reject()
+    if (ind == 0) {
+        if (line == "---" || substr(line, 1, 4) == "--- ") {
+            if (seen > 0 || docstart > 0) reject()
+            if (line != "---" && line !~ /^--- *$/ && line !~ /^--- +#/) reject()
+            docstart = 1
+            next
+        }
+        if (line == "..." || substr(line, 1, 4) == "... ") reject()
+        if (substr(line, 1, 1) == "%") reject()
+    }
+    seen++
+    s = rest
+    isseq = 0
+    while (substr(s, 1, 2) == "- ") { s = substr(s, 3); sub(/^ +/, "", s); isseq = 1 }
+    v = s
+    p = index(s, ": ")
+    if (p > 0) v = substr(s, p + 2)
+    else if (substr(s, length(s)) == ":") v = ""
+    sub(/^ +/, "", v)
+    chk(v)
+    if (isseq) chk(s)
+    if (ind == 0) {
+        key = line
+        sub(/:.*$/, "", key)
+        if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) reject()
+        after = substr(line, length(key) + 2, 1)
+        if (after != "" && after != " ") reject()
+        if (key in top) reject()
+        top[key] = 1
+        incmd = 0
+        if (key == "commands") {
+            ncmd++
+            if (line !~ /^commands: *$/ && line !~ /^commands: +#/) reject()
+            incmd = 1
+        }
+        next
+    }
+    if (incmd) {
+        if (line !~ /^ +[a-z_]+: +[A-Za-z0-9_.-]+ *$/ && line !~ /^ +[a-z_]+: +[A-Za-z0-9_.-]+ +#/) reject()
+        if (cmdindent < 0) cmdindent = ind
+        else if (ind != cmdindent) reject()
+        k = rest
+        sub(/:.*$/, "", k)
+        if (k in ck) reject()
+        ck[k] = 1
+        val = rest
+        sub(/^[a-z_]+: +/, "", val)
+        sub(/ .*$/, "", val)
+        if (k == "allow_shutdown") { nshut++; shutval = val }
+    }
+}
+END {
+    if (!bad && ncmd == 1 && nshut == 1 && shutval == "true") print "enabled"
+}
+' "$snap") || return 1
+    [ "$out" = enabled ] || return 1
+    return 0
+}
+# END shutdown-config-classifier
+
+# The agent config must be a regular file with a single link: a symlink,
+# directory, FIFO or extra hard link is never read or written through.
+refuse_unsafe_config_path() {
+    local p="${RIOT_CONFIG_DIR}/agent.yaml" links
+    if [ -e "$p" ] || [ -L "$p" ]; then
+        [ -f "$p" ] || fail "${p} $1 is not a regular file; $2"
+        links=$(stat -c %h -- "$p") || fail "Cannot inspect ${p}; $2"
+        [ "$links" = 1 ] || fail "${p} $1 has ${links} links; $2"
+    fi
+}
+
+# The drop-in was built from an earlier decision. Re-read the config and
+# require the decision to still hold; otherwise put the old policy back.
+require_shutdown_agreement() {
+    local final=false
+    if config_enables_shutdown "${RIOT_CONFIG_DIR}/agent.yaml"; then final=true; fi
+    if [ "$final" != "$SHUTDOWN_GRANT" ]; then
+        GRANT_PENDING=false
+        restore_policy
+        fail "agent.yaml commands.allow_shutdown changed during installation; previous managed policy restored; the agent is left stopped; re-run the installer"
     fi
 }
 
@@ -249,6 +399,117 @@ if [ "$OS" = linux ]; then
     verify_asset "riot-agent-apply-${SUFFIX}"
     verify_asset "riot-maintenance-${SUFFIX}"
     verify_asset riot-maintenance.service
+fi
+
+# ── Refuse an unsafe agent.yaml before anything is changed ───────────
+if [ "$OS" = linux ]; then
+    refuse_unsafe_config_path "exists but" "move it aside and re-run; no files changed"
+fi
+# A reinstall keeps the existing config; a fresh install asks the questions.
+# The questions come first, before any lock is taken or file changed, because
+# the sudoers policy built below depends on the shutdown answer.
+CONFIG_EXISTED=true
+[ -f "$RIOT_CONFIG_DIR/agent.yaml" ] || CONFIG_EXISTED=false
+
+# ── Helper: ask yes/no question ──────────────────────────────────────
+# Reads from /dev/tty so it works even when piped (curl | bash).
+# Usage: ask_yn "prompt" default_value
+#   default_value: "y" or "n"
+#   Returns 0 for yes, 1 for no
+ask_yn() {
+    local prompt="$1" default="$2"
+    local hint="[y/N]"
+    [ "$default" = "y" ] && hint="[Y/n]"
+
+    # Non-interactive modes
+    if [ "$RIOT_INTERACTIVE" = "yes-all" ]; then
+        echo "    ${prompt} ${hint}: y (auto)"
+        return 0
+    elif [ "$RIOT_INTERACTIVE" = "defaults" ]; then
+        [ "$default" = "y" ] && return 0 || return 1
+    fi
+
+    # Interactive: read from /dev/tty
+    if [ -t 0 ] || [ -e /dev/tty ]; then
+        printf "    %s %s: " "$prompt" "$hint"
+        local answer
+        read -r answer < /dev/tty 2>/dev/null || answer=""
+        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
+        case "$answer" in
+            y|yes) return 0 ;;
+            n|no)  return 1 ;;
+            "")    [ "$default" = "y" ] && return 0 || return 1 ;;
+        esac
+        [ "$default" = "y" ] && return 0 || return 1
+    else
+        # No tty available, use defaults
+        [ "$default" = "y" ] && return 0 || return 1
+    fi
+}
+
+# ── Detect Docker for config ─────────────────────────────────────────
+HAS_DOCKER="false"
+if command -v docker >/dev/null 2>&1; then
+    HAS_DOCKER="true"
+    echo "==> Docker detected, enabling container monitoring"
+fi
+
+# ── Interactive feature configuration ────────────────────────────────
+ALLOW_REBOOT="false"
+ALLOW_SHUTDOWN="false"
+ALLOW_PATCHING="false"
+ALLOW_TERMINAL="false"
+ALLOW_DOCKER_TERMINAL="false"
+
+# Only ask on fresh install (no existing config)
+if [ "$CONFIG_EXISTED" = false ]; then
+    echo ""
+    echo "==> Configure remote management features"
+    echo "    These can be changed later in ${RIOT_CONFIG_DIR}/agent.yaml"
+    echo ""
+
+    if ask_yn "Allow remote reboot from dashboard?" "n"; then
+        ALLOW_REBOOT="true"
+    fi
+
+    if [ "$OS" = "linux" ]; then
+        if ask_yn "Allow remote shutdown from dashboard?" "n"; then
+            ALLOW_SHUTDOWN="true"
+        fi
+    fi
+
+    if ask_yn "Allow remote OS patching from dashboard?" "n"; then
+        ALLOW_PATCHING="true"
+    fi
+
+    if ask_yn "Allow remote terminal access to this host?" "n"; then
+        ALLOW_TERMINAL="true"
+    fi
+
+    if [ "$HAS_DOCKER" = "true" ]; then
+        if ask_yn "Allow remote exec into Docker containers?" "n"; then
+            ALLOW_DOCKER_TERMINAL="true"
+        fi
+    fi
+
+    echo ""
+fi
+
+# ── Decide the poweroff grant (Linux) ────────────────────────────────
+# One decision drives both the sudoers line and the config line, so the two
+# cannot disagree. The config is the source of truth on a reinstall.
+SHUTDOWN_GRANT=false
+if [ "$OS" = "linux" ]; then
+    if [ "$CONFIG_EXISTED" = false ]; then
+        SHUTDOWN_GRANT="$ALLOW_SHUTDOWN"
+    elif [ -n "$RIOT_BOOTSTRAP_KEY" ]; then
+        echo "==> Remote shutdown: re-enrolment resets remote features; no poweroff grant"
+    elif config_enables_shutdown "$RIOT_CONFIG_DIR/agent.yaml"; then
+        SHUTDOWN_GRANT=true
+        echo "==> Remote shutdown: commands.allow_shutdown is true in ${RIOT_CONFIG_DIR}/agent.yaml; granting sudo systemctl poweroff"
+    else
+        echo "==> Remote shutdown: not enabled in ${RIOT_CONFIG_DIR}/agent.yaml; no poweroff grant (only a plain \"allow_shutdown: true\" under \"commands:\" in a regular file enables it)"
+    fi
 fi
 
 # Validate privileged path parents before using them as root write destinations.
@@ -434,6 +695,9 @@ PY
             echo 'riot ALL=(root) NOPASSWD: /usr/bin/rm -f /etc/dnf/libdnf5.conf.d/60-riot-holds.conf'
         fi
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reboot"
+        if [ "$SHUTDOWN_GRANT" = true ]; then
+            echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} poweroff"
+        fi
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMD_RUN_PATH} --unit=riot-agent-update ${RIOT_APPLY_BIN}"
         echo "riot ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} reset-failed riot-agent-update"
         if command -v nginx >/dev/null 2>&1; then
@@ -499,7 +763,9 @@ EOF
     # Validate the effective policy before stopping the old agent or replacing
     # any executable/unit. A failed merged policy restores the working drop-in.
     atomic_install "$STAGE/riot-agent.sudoers" /etc/sudoers.d/riot-agent 0440
+    GRANT_PENDING="$SHUTDOWN_GRANT"
     if ! visudo -cf /etc/sudoers >/dev/null; then
+        GRANT_PENDING=false
         restore_policy
         fail "Effective candidate policy failed; previous managed policy restored"
     fi
@@ -519,6 +785,12 @@ EOF
     mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
     chown root:root "$RIOT_CONFIG_DIR"
     chmod 0700 "$RIOT_CONFIG_DIR"
+    # The config directory is now root-only and the agent is stopped, so nothing
+    # can change agent.yaml between these checks and the write below.
+    refuse_unsafe_config_path "changed during installation and" "the agent is left stopped; re-run the installer"
+    if [ "$CONFIG_EXISTED" = true ] && [ -z "$RIOT_BOOTSTRAP_KEY" ]; then
+        require_shutdown_agreement
+    fi
     chown riot:riot "$RIOT_DATA_DIR"
     mkdir -p "$RIOT_APPLY_DIR" /var/lib/riot-maintenance
     chmod 0755 "$RIOT_APPLY_DIR"
@@ -528,49 +800,6 @@ EOF
 else
     mkdir -p "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"
 fi
-# ── Helper: ask yes/no question ──────────────────────────────────────
-# Reads from /dev/tty so it works even when piped (curl | bash).
-# Usage: ask_yn "prompt" default_value
-#   default_value: "y" or "n"
-#   Returns 0 for yes, 1 for no
-ask_yn() {
-    local prompt="$1" default="$2"
-    local hint="[y/N]"
-    [ "$default" = "y" ] && hint="[Y/n]"
-
-    # Non-interactive modes
-    if [ "$RIOT_INTERACTIVE" = "yes-all" ]; then
-        echo "    ${prompt} ${hint}: y (auto)"
-        return 0
-    elif [ "$RIOT_INTERACTIVE" = "defaults" ]; then
-        [ "$default" = "y" ] && return 0 || return 1
-    fi
-
-    # Interactive: read from /dev/tty
-    if [ -t 0 ] || [ -e /dev/tty ]; then
-        printf "    %s %s: " "$prompt" "$hint"
-        local answer
-        read -r answer < /dev/tty 2>/dev/null || answer=""
-        answer=$(echo "$answer" | tr '[:upper:]' '[:lower:]')
-        case "$answer" in
-            y|yes) return 0 ;;
-            n|no)  return 1 ;;
-            "")    [ "$default" = "y" ] && return 0 || return 1 ;;
-        esac
-        [ "$default" = "y" ] && return 0 || return 1
-    else
-        # No tty available, use defaults
-        [ "$default" = "y" ] && return 0 || return 1
-    fi
-}
-
-# ── Detect Docker for config ─────────────────────────────────────────
-HAS_DOCKER="false"
-if command -v docker >/dev/null 2>&1; then
-    HAS_DOCKER="true"
-    echo "==> Docker detected, enabling container monitoring"
-fi
-
 # ── Build optional config sections ────────────────────────────────────
 API_KEY_LINE=""
 if [ -n "$RIOT_KEY" ]; then
@@ -590,46 +819,17 @@ if [ -n "$RIOT_BOOTSTRAP_KEY" ]; then
   bootstrap_key: \"${RIOT_BOOTSTRAP_KEY}\""
 fi
 
-# ── Interactive feature configuration ────────────────────────────────
-ALLOW_REBOOT="false"
-ALLOW_PATCHING="false"
-ALLOW_TERMINAL="false"
-ALLOW_DOCKER_TERMINAL="false"
-
-# Only ask on fresh install (no existing config)
-if [ ! -f "$RIOT_CONFIG_DIR/agent.yaml" ]; then
-    echo ""
-    echo "==> Configure remote management features"
-    echo "    These can be changed later in ${RIOT_CONFIG_DIR}/agent.yaml"
-    echo ""
-
-    if ask_yn "Allow remote reboot from dashboard?" "n"; then
-        ALLOW_REBOOT="true"
-    fi
-
-    if ask_yn "Allow remote OS patching from dashboard?" "n"; then
-        ALLOW_PATCHING="true"
-    fi
-
-    if ask_yn "Allow remote terminal access to this host?" "n"; then
-        ALLOW_TERMINAL="true"
-    fi
-
-    if [ "$HAS_DOCKER" = "true" ]; then
-        if ask_yn "Allow remote exec into Docker containers?" "n"; then
-            ALLOW_DOCKER_TERMINAL="true"
-        fi
-    fi
-
-    echo ""
-fi
-
 # ── Build config sections from answers ───────────────────────────────
 COMMANDS_SECTION=""
-if [ "$ALLOW_REBOOT" = "true" ] || [ "$ALLOW_PATCHING" = "true" ]; then
+if [ "$ALLOW_REBOOT" = "true" ] || [ "$SHUTDOWN_GRANT" = "true" ] || [ "$ALLOW_PATCHING" = "true" ]; then
+    SHUTDOWN_LINE=""
+    if [ "$SHUTDOWN_GRANT" = "true" ]; then
+        SHUTDOWN_LINE="
+  allow_shutdown: true"
+    fi
     COMMANDS_SECTION="
 commands:
-  allow_reboot: ${ALLOW_REBOOT}
+  allow_reboot: ${ALLOW_REBOOT}${SHUTDOWN_LINE}
   allow_patching: ${ALLOW_PATCHING}"
 fi
 
@@ -717,6 +917,10 @@ fi
 
 # Fresh temporary inodes prevent retained write descriptors from modifying an installed binary.
 if [ "$OS" = linux ]; then
+    # The config is final and the directory is root-only. Confirm the drop-in
+    # installed earlier still matches it before any binary is replaced.
+    require_shutdown_agreement
+    GRANT_PENDING=false
     atomic_install "$STAGE/$BINARY_NAME" "$RIOT_BIN" 0755
     atomic_install "$STAGE/riot-agent-apply-${SUFFIX}" "$RIOT_APPLY_BIN" 0755
     atomic_install "$STAGE/riot-maintenance-${SUFFIX}" "$MAINT_BIN" 0755
@@ -733,6 +937,7 @@ EOF
     chown riot:riot "$RIOT_CONFIG_DIR"
     chmod 0700 "$RIOT_CONFIG_DIR"
     if ! visudo -cf /etc/sudoers >/dev/null; then
+        GRANT_PENDING=false
         restore_policy
         fail "Effective policy changed during installation; previous managed policy restored; backup: $BACKUP"
     fi
