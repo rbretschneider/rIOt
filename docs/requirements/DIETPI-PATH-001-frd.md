@@ -88,15 +88,12 @@ Doctor was green beforehand.
   The reasons split into two classes (revision 2, security review DP-SEC-001).
   - **Blocked** (rIOt's own isolation check, or a temporary condition; Ryan has nothing to do): `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked`.
     - Also Blocked: the known stock false positive from a worker older than this fix, `unsafe_dietpi_path` whose detail starts with `/run/dietpi `. Its text says the fix arrives with a root `install.sh` re-run on that host.
+    - The badge shows a new warning state, **Blocked**, not "Needs you", and it is not counted in "N hosts need you".
+    - The explanation gives the plain reason, e.g. `DietPi update blocked: /run/dietpi permissions`, plus the bounded detail from the run. It never claims the update "will be applied automatically".
     - The texts for `tmp_not_private`, `mount_propagation_unverified` and `rundir_not_private` say the host's mount layout prevented isolation. They must not claim the next run fixes it.
-  - Every other `unsafe_dietpi_path` is an **Action**. After this fix, a stock host passes, so this reason means DietPi's code, its settings or `/var/tmp/dietpi` is not root-only: a possible tampering signal that never clears by retrying.
-    - Its action is "Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only."
-    - It counts in "N hosts need you".
-    - The badge shows a new warning state, **Blocked**, not "Needs you".
-    - It is not counted in "N hosts need you".
-    - The explanation gives the plain reason, e.g. `DietPi update blocked: /run/dietpi permissions`, plus the bounded detail from the run.
-    - It never claims the update "will be applied automatically".
-  - **Action** (a setting only Ryan can change): `non_default_update_source` (the host's update source) and `insufficient_time` (the patch window is too short). These stay action items ("Needs you"), with the per-reason action.
+  - **Action** (Ryan can act; "Needs you", counted in "N hosts need you"):
+    - Every `unsafe_dietpi_path` other than the false positive above. After this fix, a stock host passes, so this reason means DietPi's code, its settings or `/var/tmp/dietpi` is not root-only: a possible tampering signal that never clears by retrying. The action is "Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only."
+    - `non_default_update_source` (the host's update source) and `insufficient_time` (the patch window is too short), each with its per-reason action.
 - **FR-016:** A failed last run (NY-9) whose only failure is such a refusal (the old worker's FR-038 behaviour) must be classified by FR-015, not as "the last patch run failed". The server fix alone must therefore clear PiCUPS's red badge, with no new patch run and no new agent or worker.
 - **FR-017:** Badge precedence: any true action item makes the badge "Needs you". With no action item, a Blocked refusal makes it **Blocked**. Otherwise the badge is Auto, Manual or Unknown, as today. Blocked hosts have their own filter count and are not part of "N hosts need you".
 
@@ -161,7 +158,7 @@ Doctor was green beforehand.
 - **AC-012** [FR-015, FR-017]
   - **Given** a last run with status success and first line `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, a detail line `dietpi: skipped (unsafe_dietpi_path); /run/dietpi is writable by group or others (mode 0777)`, DietPi still pending and enabled, auto-patch on, and nothing else waiting
   - **Then** the badge kind is `blocked`, not `needs_you`.
-  - **And** the explanation holds one item: `DietPi update blocked: /run/dietpi permissions` with the bounded detail.
+  - **And** the explanation holds one item: `DietPi update blocked: /run/dietpi permissions (fixed by this rIOt release; re-run install.sh as root on this host to apply the fix)` (ADD revision 2), with the bounded detail.
   - **And** it is not counted by the "hosts need you" filter.
   - **And** no text says it "will be applied automatically".
 - **AC-014** [FR-015] Each Blocked reason gives `blocked`. `non_default_update_source` and `insufficient_time` give `needs_you` with their action. With DietPi no longer pending, the refusal is information only, and the badge is Auto, Manual or Unknown. A neutral skip raises nothing.
