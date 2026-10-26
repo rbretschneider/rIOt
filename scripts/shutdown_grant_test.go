@@ -577,6 +577,15 @@ host_terminal:
 		{"commands inline scalar", []byte("commands: true\n  allow_shutdown: true\n"), false},
 		{"commands list", []byte("commands:\n  - allow_shutdown: true\n"), false},
 		{"indented document", []byte("  commands:\n    allow_shutdown: true\n"), false},
+		// QA-1: an indented first content line makes yaml.v3 start a second implicit
+		// document at the next column-0 line, which the agent never reads.
+		{"indented first line", []byte("  a: 1\ncommands:\n  allow_shutdown: true\n"), false},
+		{"one-space first line", []byte(" a: 1\ncommands:\n  allow_shutdown: true\n"), false},
+		{"blank line then indented first line", []byte("\n  a: 1\ncommands:\n  allow_shutdown: true\n"), false},
+		{"comment then indented first line", []byte("# note\n  a: 1\ncommands:\n  allow_shutdown: true\n"), false},
+		{"document start then indented first line", []byte("---\n  a: 1\ncommands:\n  allow_shutdown: true\n"), false},
+		{"orphaned indented url", []byte("  url: \"https://old.test:7331\"\nagent:\n  poll_interval: 60\ncommands:\n  allow_shutdown: true\n"), false},
+		{"comment then column-0 first line stays enabled", []byte("# note\n\ncommands:\n  allow_shutdown: true\n"), true},
 		{"value with trailing text", cmds("  allow_shutdown: true false\n"), false},
 	}
 	return cases

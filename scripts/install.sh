@@ -254,6 +254,7 @@ BEGIN {
     ind = RLENGTH
     rest = substr(line, ind + 1)
     if (substr(rest, 1, 1) == tab) reject()
+    if (seen == 0 && ind > 0) reject()
     if (ind == 0) {
         if (line == "---" || substr(line, 1, 4) == "--- ") {
             if (seen > 0 || docstart > 0) reject()
