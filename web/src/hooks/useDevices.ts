@@ -109,9 +109,15 @@ export function useDevices() {
     } else if (msg.type === 'activity_update') {
       // EXPECT-001 (ADD 6.4): data is the device's new DeviceActivity, or null
       // when its activity ended. Applied to the cache seeded by useActivity.
-      queryClient.setQueryData<ActivityResponse>(['activity'], (old) =>
-        applyActivityUpdate(old, msg.device_id, msg.data as DeviceActivity | null | undefined),
-      )
+      if (queryClient.getQueryData<ActivityResponse>(['activity'])) {
+        queryClient.setQueryData<ActivityResponse>(['activity'], (old) =>
+          applyActivityUpdate(old, msg.device_id, msg.data as DeviceActivity | null | undefined),
+        )
+      } else {
+        // The first fetch has not landed, so there is nothing to patch and that fetch
+        // may predate this message: refetch (a no-op when no page observes the query).
+        void queryClient.invalidateQueries({ queryKey: ['activity'] })
+      }
     } else if (msg.type === 'docker_update' && msg.device_id) {
       const evt = msg.data as DockerEvent
       // Significant actions get a targeted state update in the device detail

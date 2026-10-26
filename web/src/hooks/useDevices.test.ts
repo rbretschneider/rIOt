@@ -939,6 +939,18 @@ describe('[AC-040] activity_update keeps the activity cache live', () => {
     expect(qc.getQueryData(['activity'])).toBeUndefined()
   })
 
+  it('refetches instead of patching when the first fetch has not landed, since that fetch may predate the message', () => {
+    const qc = makeQC()
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    renderHook(() => useDevices(), { wrapper: makeWrapper(qc) })
+
+    act(() => {
+      wsState.handler!({ type: 'activity_update', device_id: 'dev-1', data: hostActivity() })
+    })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['activity'] })
+  })
+
   it('does not touch the device list or the device detail caches', () => {
     const qc = makeQC()
     qc.setQueryData(['activity'], seededActivity)
