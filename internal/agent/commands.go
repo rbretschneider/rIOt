@@ -468,8 +468,11 @@ func (a *Agent) execShutdown(p powerPermit) error {
 	done := make(chan poweroffExit)
 	abandoned := make(chan struct{})
 	go func() {
-		defer a.poweroffRunning.Store(false)
 		x := poweroffExitFrom(launch())
+		// The child has exited, so clear the flag before handing the exit over: the
+		// caller may start the next shutdown as soon as it receives x (AD-007 allows at
+		// most one live child, and none is alive now).
+		a.poweroffRunning.Store(false)
 		select {
 		case done <- x:
 		case <-abandoned:

@@ -142,3 +142,11 @@ Interpretation recorded (not a deviation): `poweroffExitKind` declares `launchFa
 - **QA gate (security C-6).** The AC-004, AC-007, AC-009, AC-012, AC-013, AC-014, AC-016, AC-018, AC-019, AC-020, AC-023 and AC-027 to AC-032 tests, `TestPowerGuard_SD_C1_*`, the C-3 runtime and AST tests including both cross-action refusal tests, `TestPowerPaths_SD_C4_*`, and `TestRebootAuth_PF_C8_ExecRebootHasExactlyThreeGuardedCallSites` all pass. The docs checklist of ADD §13 is open until deviation 1 is done.
 - **New environment variables:** none. No new configuration key.
 - **Migration:** none.
+
+## Post-QA fix
+
+QA note 3 found a microsecond race in `execShutdown`: `poweroffRunning` was cleared by a `defer` in the reaper goroutine, which runs after the exit is handed over on `done`. A second `shutdown` starting in that window was refused with "a previous poweroff command is still running", although the child had already exited.
+
+- **Fix:** the goroutine now clears `poweroffRunning` right after the child's exit is known and before the hand-off. The at-most-one-live-child rule (AD-007) is unchanged, because the child has exited at that point. A child that never exits still holds the flag.
+- **Regression test:** `TestExecShutdown_SD_AC030_FlagClearedBeforeHandOffAllowsBackToBackLaunches` makes 2000 back-to-back launches and requires each to succeed and the flag to be clear on return. With the flag cleared first, the clear happens-before the receive, so the test passes deterministically. The window cannot be forced without a test hook, so under the old ordering the test fails by repetition: it failed on 3 of 3 runs when the old `defer` was temporarily restored.
+- The existing `TestShutdown_SD_AC030_SecondLaunchWhileChildRunsIsRefused` and the QA one-flag tests still pass.

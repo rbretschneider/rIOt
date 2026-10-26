@@ -852,6 +852,27 @@ func TestShutdown_SD_AC030_SecondLaunchWhileChildRunsIsRefused(t *testing.T) {
 	assert.EqualValues(t, 1, r.poweroffs.Load(), "[AC-030] at most one poweroff child runs per agent")
 }
 
+// Post-QA regression: the one-poweroff flag is cleared before the exit is handed
+// over, so the next shutdown can start the moment the previous one has returned.
+// Under the old ordering (a deferred clear after the hand-off) a launch in that
+// window was refused as "a previous poweroff command is still running". The window
+// cannot be forced without a hook, so this test repeats back-to-back launches; with
+// the flag cleared first, the clear happens-before the receive and every iteration
+// passes deterministically.
+func TestExecShutdown_SD_AC030_FlagClearedBeforeHandOffAllowsBackToBackLaunches(t *testing.T) {
+	r := newShutdownRig(t)
+	const rounds = 2000
+
+	for i := 0; i < rounds; i++ {
+		require.NoError(t, r.a.execShutdown(r.a.mintPowerPermit(powerActionShutdown)),
+			"[AC-030] launch %d must not be refused: the previous child had already exited", i)
+		require.False(t, r.a.poweroffRunning.Load(),
+			"[AC-030] once the exit is handed over the one-child flag must already be clear (launch %d)", i)
+	}
+
+	assert.EqualValues(t, rounds, r.poweroffs.Load(), "[AC-030] every launch ran its poweroff once")
+}
+
 func TestShutdown_SD_AC030_LateNonZeroExitLogsOneWarn(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
