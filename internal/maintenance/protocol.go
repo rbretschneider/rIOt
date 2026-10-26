@@ -103,6 +103,12 @@ const (
 	SkipRunDirNotPrivate      = "rundir_not_private"
 )
 
+// SuccessSummary is the second line of a version 2 summary whose apt part
+// succeeded, and the whole summary of a version 1 run. The server reads it to
+// tell a failed run that only refused an updater from one that failed otherwise
+// (DIETPI-PATH-001 DP-SEC-004).
+const SuccessSummary = "Package state verified; maintenance completed"
+
 // Phases and apt outcomes of a v2 record.
 const (
 	phasePrefixExtraRun  = "extra_run:"
