@@ -161,10 +161,14 @@ func TestRecord_EU_AC028_V2Validation(t *testing.T) {
 		}
 	})
 	mutate := map[string]func(*Record){
-		"success with a failed updater":      func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterFailed },
-		"success with a timed out updater":   func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterTimedOut },
-		"success with dpkg_locked":           func(r *Record) { r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipDpkgLocked },
-		"success with insufficient_time":     func(r *Record) { r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipInsufficientTime },
+		"success with a failed updater":    func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterFailed },
+		"success with a timed out updater": func(r *Record) { r.ExtraUpdaters[0].Outcome = UpdaterTimedOut },
+		"success with dpkg_locked": func(r *Record) {
+			r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipDpkgLocked
+		},
+		"success with insufficient_time": func(r *Record) {
+			r.ExtraUpdaters[0].Outcome, r.ExtraUpdaters[0].Reason = UpdaterSkipped, SkipInsufficientTime
+		},
 		"success after a failed apt part":    func(r *Record) { r.AptOutcome = "error" },
 		"terminal without an apt outcome":    func(r *Record) { r.AptOutcome = "" },
 		"unknown apt outcome":                func(r *Record) { r.AptOutcome = "partial" },

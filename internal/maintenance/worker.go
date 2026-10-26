@@ -42,6 +42,9 @@ type Worker struct {
 	// TouchLists stamps /var/lib/apt/lists after a successful refresh so the
 	// agent's freshness rule sees no-change refreshes. Nil disables the stamp.
 	TouchLists func() error
+	// Extras is the environment of the extra-updater step. It is required for a
+	// version 2 request and ignored for version 1 (EXTRA-UPD-001).
+	Extras *ExtraEnv
 }
 
 // PostRefreshBudget bounds the single extra package list refresh a run may
@@ -70,8 +73,17 @@ func aptOptions() []string {
 	return []string{"-y", "--no-remove", "-o", "DPkg::Lock::Timeout=120", "-o", "Acquire::Retries=0", "-o", "Dpkg::Options::=--force-confold", "-o", "Dpkg::Options::=--force-confdef"}
 }
 
+// aptState carries what the apt part leaves for the finaliser.
+type aptState struct {
+	postRefreshNote string
+}
+
 // Execute is called only while the root exclusion is held. Its context belongs
 // to the service, never to an agent observer or an HTTP request.
+//
+// A version 1 request runs the apt part and finalises exactly as before
+// EXTRA-UPD-001. A version 2 request runs the same apt part, then the
+// extra-updater step (extra.go), and finalises with the per-updater results.
 func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr error) {
 	if err := ValidateRequest(req); err != nil {
 		return rec, err
@@ -79,15 +91,44 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 	if w.Store == nil || w.Runner == nil {
 		return rec, errors.New("maintenance worker is not configured")
 	}
+	if req.Version == RequestVersionExtra && w.Extras == nil {
+		return rec, errors.New("extra-updater environment is not configured")
+	}
 	now := w.now()
-	rec = Record{Version: ProtocolVersion, CommandID: req.CommandID, Mode: req.Mode, IncludeRebootClass: req.IncludeRebootClass, StartedAt: now, UpdatedAt: now, Phase: "accepted", Outcome: "running"}
+	rec = Record{Version: req.Version, CommandID: req.CommandID, Mode: req.Mode, IncludeRebootClass: req.IncludeRebootClass, StartedAt: now, UpdatedAt: now, Phase: "accepted", Outcome: "running"}
+	if req.Version == RequestVersionExtra {
+		rec.RequestedExtraUpdaters = append([]string(nil), req.ExtraUpdaters...)
+	}
 	if err := w.Store.Begin(rec); err != nil {
 		return rec, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, WorkerBudget)
+	budget := WorkerBudget
+	if req.Version == RequestVersionExtra {
+		budget = ExtendedWorkerBudget
+	}
+	runCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
+	aptCtx := runCtx
+	if req.Version == RequestVersionExtra {
+		var cancelApt context.CancelFunc
+		aptCtx, cancelApt = context.WithTimeout(runCtx, WorkerBudget)
+		defer cancelApt()
+	}
+	var st aptState
+	aptErr := w.executeApt(aptCtx, req, &rec, &st)
+	if req.Version == ProtocolVersion {
+		err := w.finalizeV1(aptCtx, &rec, &st, aptErr)
+		return rec, err
+	}
+	err := w.executeExtras(ctx, runCtx, aptCtx, req, &rec, &st, aptErr, now)
+	return rec, err
+}
+
+// executeApt is the apt part of a run: hold release, recovery, refresh, upgrade,
+// verification and the post-run refresh, then (in the deferred cleanup) hold
+// restoration and the version changes. It never finishes the record.
+func (w *Worker) executeApt(ctx context.Context, req Request, rec *Record, st *aptState) (retErr error) {
 	releaseAttempted := false
-	var postRefreshNote string
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.Background(), CleanupBudget)
 		defer stop()
@@ -97,7 +138,7 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 		if releaseAttempted && rec.HoldsReleased {
 			rec.Phase = "hold_restore"
 			rec.UpdatedAt = w.now()
-			if err := w.Store.Save(rec); err != nil {
+			if err := w.Store.Save(*rec); err != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("persist hold cleanup phase: %w", err))
 			}
 			err := w.Holds.Restore(cleanup, rec.Holds)
@@ -117,32 +158,6 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 				rec.VersionChanges = changes
 			}
 		}
-		rec.UpdatedAt = w.now()
-		finished := rec.UpdatedAt
-		rec.FinishedAt = &finished
-		rec.Phase = "finished"
-		if retErr == nil {
-			rec.Outcome = "success"
-			rec.ExitCode = 0
-			rec.Summary = successSummary
-			if postRefreshNote != "" {
-				rec.Summary = boundedText(successSummary+"; "+postRefreshNote, maxSummaryBytes)
-			}
-		} else {
-			rec.Outcome = "error"
-			if rec.ExitCode == 0 {
-				rec.ExitCode = 1
-			}
-			rec.Summary = boundedText(retErr.Error(), 4096)
-			if rec.Interrupted || ctx.Err() != nil {
-				rec.Outcome = "interrupted"
-				rec.Interrupted = true
-				rec.Summary = "Maintenance interrupted; package state requires manual review: " + boundedText(retErr.Error(), 3900)
-			}
-		}
-		if err := w.Store.Finish(rec); err != nil {
-			retErr = errors.Join(retErr, fmt.Errorf("persist maintenance result: %w", err))
-		}
 	}()
 	step := func(phase, path string, args ...string) (CommandResult, error) {
 		if err := ctx.Err(); err != nil {
@@ -150,7 +165,7 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 		}
 		rec.Phase = phase
 		rec.UpdatedAt = w.now()
-		if err := w.Store.Save(rec); err != nil {
+		if err := w.Store.Save(*rec); err != nil {
 			return CommandResult{}, fmt.Errorf("%w: phase %s: %v", errPersistence, phase, err)
 		}
 		out, err := w.Runner.Run(ctx, path, args...)
@@ -181,23 +196,23 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 	}
 	if req.IncludeRebootClass {
 		if w.Holds == nil {
-			return rec, errors.New("authorized hold adapter unavailable")
+			return errors.New("authorized hold adapter unavailable")
 		}
 		snapshot, err := w.Holds.Snapshot(ctx)
 		if err != nil {
-			return rec, fmt.Errorf("snapshot managed holds: %w", err)
+			return fmt.Errorf("snapshot managed holds: %w", err)
 		}
 		rec.Holds = snapshot
 		rec.HoldsReleased = true
 		rec.Phase = "hold_release"
 		rec.UpdatedAt = w.now()
-		if err = w.Store.Save(rec); err != nil {
+		if err = w.Store.Save(*rec); err != nil {
 			rec.HoldsReleased = false
-			return rec, err
+			return err
 		}
 		releaseAttempted = true
 		if err = w.Holds.Release(ctx, snapshot); err != nil {
-			return rec, fmt.Errorf("release managed holds: %w", err)
+			return fmt.Errorf("release managed holds: %w", err)
 		}
 	}
 	// Recovery always precedes refresh. A failed repair is terminal, not a
@@ -208,47 +223,79 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 		verified = verify()
 	}
 	if errors.Is(configured, errPersistence) {
-		return rec, configured
+		return configured
 	}
 	if errors.Is(verified, errPersistence) {
-		return rec, verified
+		return verified
 	}
 	if configured != nil || verified != nil {
 		if ctx.Err() != nil {
-			return rec, ctx.Err()
+			return ctx.Err()
 		}
 		args := append(aptOptions(), "--fix-broken", "install")
 		if _, err := step("repair", "/usr/bin/apt-get", args...); err != nil {
-			return rec, err
+			return err
 		}
 		if err := configure(); err != nil {
-			return rec, err
+			return err
 		}
 		if err := verify(); err != nil {
-			return rec, err
+			return err
 		}
 	}
 	if req.Mode == "repair" {
-		return rec, nil
+		return nil
 	}
 
 	sourcesBefore, sourcesBeforeErr := w.fingerprintSources()
 	if _, err := step("refresh", "/usr/bin/apt-get", aptRefreshArgs()...); err != nil {
-		return rec, err
+		return err
 	}
-	w.stampLists(&rec)
+	w.stampLists(rec)
 	action := "dist-upgrade"
 	if req.Mode == "security" {
 		action = "upgrade"
 	}
 	if _, err := step("upgrade", "/usr/bin/apt-get", append(aptOptions(), action)...); err != nil {
-		return rec, err
+		return err
 	}
 	if err := verify(); err != nil {
-		return rec, err
+		return err
 	}
-	postRefreshNote = w.postRunRefresh(ctx, &rec, sourcesBefore, sourcesBeforeErr)
-	return rec, nil
+	st.postRefreshNote = w.postRunRefresh(ctx, rec, sourcesBefore, sourcesBeforeErr)
+	return nil
+}
+
+// finalizeV1 finishes a version 1 record. Its bytes and outcomes equal the
+// pre-EXTRA-UPD-001 finaliser (AC-044).
+func (w *Worker) finalizeV1(ctx context.Context, rec *Record, st *aptState, retErr error) error {
+	rec.UpdatedAt = w.now()
+	finished := rec.UpdatedAt
+	rec.FinishedAt = &finished
+	rec.Phase = "finished"
+	if retErr == nil {
+		rec.Outcome = "success"
+		rec.ExitCode = 0
+		rec.Summary = successSummary
+		if st.postRefreshNote != "" {
+			rec.Summary = boundedText(successSummary+"; "+st.postRefreshNote, maxSummaryBytes)
+		}
+	} else {
+		rec.Outcome = "error"
+		if rec.ExitCode == 0 {
+			rec.ExitCode = 1
+		}
+		rec.Summary = boundedText(retErr.Error(), 4096)
+		if rec.Interrupted || ctx.Err() != nil {
+			rec.Outcome = "interrupted"
+			rec.Interrupted = true
+			rec.Summary = "Maintenance interrupted; package state requires manual review: " + boundedText(retErr.Error(), 3900)
+		}
+	}
+	if err := w.Store.Finish(*rec); err != nil {
+		retErr = errors.Join(retErr, fmt.Errorf("persist maintenance result: %w", err))
+	}
+	return retErr
 }
 
 func aptRefreshArgs() []string {
@@ -342,7 +389,29 @@ func (w *Worker) RecoverInterrupted(ctx context.Context, rec Record) (Record, er
 	rec.UpdatedAt = w.now()
 	finished := rec.UpdatedAt
 	rec.FinishedAt = &finished
+	markExtraInterrupted(&rec, finished)
 	return rec, errors.Join(cleanupErr, w.Store.Finish(rec))
+}
+
+// markExtraInterrupted closes a version 2 record that a dead worker left behind.
+// An updater step that was running becomes interrupted, never re-run, and never
+// reported as success (FR-035, FR-040). The apt outcome is unknown unless the
+// apt part had already ended.
+func markExtraInterrupted(rec *Record, at time.Time) {
+	if rec.Version != RequestVersionExtra {
+		return
+	}
+	if rec.AptOutcome == "" {
+		rec.AptOutcome = aptOutcomeInterrupt
+	}
+	for i := range rec.ExtraUpdaters {
+		if rec.ExtraUpdaters[i].Outcome == UpdaterRunning {
+			finished := at
+			rec.ExtraUpdaters[i].Outcome = UpdaterInterrupted
+			rec.ExtraUpdaters[i].FinishedAt = &finished
+			rec.ExtraUpdaters[i].Note = "worker stopped during the step; state uncertain, never re-run"
+		}
+	}
 }
 
 func boundedText(s string, n int) string {
