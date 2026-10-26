@@ -103,6 +103,9 @@ export const EVENT_TYPES = [
   'tls_expiring',
   'expect_backstop_skipped',
   'expect_notifications_held',
+  'agent_self_update_failed',
+  'agent_self_update_unconfirmed',
+  'agent_self_update_paused',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -204,6 +207,9 @@ export const LABELS: {
     tls_expiring: 'TLS certificate expiring',
     expect_backstop_skipped: 'Expected-activity check skipped',
     expect_notifications_held: 'Escalation notifications held',
+    agent_self_update_failed: 'Agent self-update failed',
+    agent_self_update_unconfirmed: 'Agent self-update not confirmed',
+    agent_self_update_paused: 'Agent self-update tracking paused',
   },
 }
 

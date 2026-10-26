@@ -3,7 +3,7 @@ import { ApiError } from './errors'
 
 export { ApiError }
 
-import type { BulkConflict, BulkDockerUpdateResult, CommandConflictBody } from '../types/models'
+import type { BulkConflict, BulkDockerUpdateResult, CommandConflictBody, CommandEventsResponse } from '../types/models'
 
 const BASE = '/api/v1'
 
@@ -221,6 +221,12 @@ export const api = {
   // CMD-LIFECYCLE-001: command by ID (tracking and the 5s re-fetch fallback).
   getCommand: (deviceId: string, commandId: string) =>
     fetchJSON<Command>(`${BASE}/devices/${deviceId}/commands/${encodeURIComponent(commandId)}`),
+
+  // EXPECT-002 (ADD 6.3): events linked to one command, server and agent events separated.
+  getCommandEvents: (deviceId: string, commandId: string) =>
+    fetchJSON<CommandEventsResponse>(
+      `${BASE}/devices/${encodeURIComponent(deviceId)}/commands/${encodeURIComponent(commandId)}/events`,
+    ),
 
   // Non-terminal commands for a device, optionally narrowed to one target key.
   getActiveCommands: (deviceId: string, targetKey?: string) => {

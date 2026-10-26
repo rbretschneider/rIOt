@@ -318,3 +318,120 @@ describe('[AC-024] indexing the response', () => {
     expect(indexActivities(undefined).size).toBe(0)
   })
 })
+
+// EXPECT-002 (AD-009): an agent's own self-update names both versions from the
+// record, and its escalation does too. Command windows keep the EXPECT-001 text.
+function selfUpdateActivity(over: Partial<DeviceActivity> = {}): DeviceActivity {
+  return activity({
+    kind: 'agent',
+    action: 'agent_update',
+    actor_phrase: 'by agent auto-update',
+    agent_from_version: '2.78.0',
+    agent_to_version: '2.80.0',
+    back_by: null,
+    ...over,
+  })
+}
+
+describe('EXPECT-002 [AC-001] self-update label names both versions', () => {
+  it('labels an in-progress self-update "Updating agent <from> → <to>" from the record, not the newest version', () => {
+    expect(activityLabel(selfUpdateActivity(), { ...ctx, newestAgentVersion: '9.9.9' })).toBe('Updating agent 2.78.0 → 2.80.0')
+  })
+
+  it('labels it the same while the device is offline', () => {
+    expect(activityLabel(selfUpdateActivity({ device_online: false }), ctx)).toBe('Updating agent 2.78.0 → 2.80.0')
+  })
+
+  it('keeps the actor line, which carries "by agent auto-update"', () => {
+    const a = selfUpdateActivity()
+    expect(showsActorLine(a)).toBe(true)
+    expect(a.actor_phrase).toBe('by agent auto-update')
+  })
+
+  it('leaves a command agent update on the EXPECT-001 wording (FR-029)', () => {
+    const command = activity({ kind: 'agent', action: 'agent_update', agent_from_version: '2.77.0', agent_to_version: '' })
+    expect(activityLabel(command, ctx)).toBe('Updating agent 2.77.0 → 2.78.0')
+    expect(activityLabel({ ...command, agent_from_version: '' }, ctx)).toBe('Updating agent')
+  })
+
+  it('leaves a command agent update from an older server (no agent_to_version field) unchanged', () => {
+    const command = activity({ kind: 'agent', action: 'agent_update', agent_from_version: '2.77.0' })
+    expect(command.agent_to_version).toBeUndefined()
+    expect(activityLabel(command, ctx)).toBe('Updating agent 2.77.0 → 2.78.0')
+  })
+})
+
+describe('EXPECT-002 [AC-016] hostile or malformed versions are never shown', () => {
+  it.each([
+    ['markup', '<img src=x onerror=alert(1)>'],
+    ['a control character', '2.78.0\u0000'],
+    ['a bidi override', '2.78.0‮'],
+    ['a name that is not a version', 'dev'],
+    ['too many bytes', '2.78.0-' + 'a'.repeat(40)],
+    ['the same version as the other end', '2.80.0'],
+    ['the same version with a leading v', 'v2.80.0'],
+  ])('falls back to the plain wording and never prints <from> when it is %s', (_name, from) => {
+    const label = activityLabel(selfUpdateActivity({ agent_from_version: from }), { ...ctx, newestAgentVersion: '' })
+    expect(label).toBe('Updating agent')
+  })
+
+  it('falls back when <to> is invalid', () => {
+    expect(activityLabel(selfUpdateActivity({ agent_to_version: '2.80' }), { ...ctx, newestAgentVersion: '' })).toBe('Updating agent')
+  })
+
+  it('accepts a leading v and a build suffix', () => {
+    expect(activityLabel(selfUpdateActivity({ agent_from_version: 'v2.78.0', agent_to_version: '2.80.0-rc.1' }), ctx)).toBe(
+      'Updating agent v2.78.0 → 2.80.0-rc.1',
+    )
+  })
+})
+
+describe('EXPECT-002 [AC-008] not-back label names versions', () => {
+  const escalation = (reason: 'not_back' | 'failed') => ({ reason, bound: '10m', at: '2026-10-26T14:10:00Z' })
+
+  it('labels a not-back self-update "Not back 10m after Agent update <from> → <to>"', () => {
+    const a = selfUpdateActivity({ kind: 'escalated', phase: 'escalated', covers_offline: false, escalation: escalation('not_back') })
+    expect(activityLabel(a, ctx)).toBe('Not back 10m after Agent update 2.78.0 → 2.80.0')
+  })
+
+  it('labels a failed self-update with the device offline "Agent update <from> → <to> failed: offline"', () => {
+    const a = selfUpdateActivity({ kind: 'escalated', phase: 'escalated', covers_offline: false, escalation: escalation('failed') })
+    expect(activityLabel(a, ctx)).toBe('Agent update 2.78.0 → 2.80.0 failed: offline')
+  })
+
+  it('keeps the plain wording when the escalation carries no valid versions', () => {
+    const a = selfUpdateActivity({
+      kind: 'escalated', phase: 'escalated', covers_offline: false, agent_from_version: '', agent_to_version: '', escalation: escalation('not_back'),
+    })
+    expect(activityLabel(a, ctx)).toBe('Not back 10m after Agent update')
+  })
+
+  it('counts an escalated self-update as offline, not expected offline', () => {
+    const a = selfUpdateActivity({ kind: 'escalated', phase: 'escalated', covers_offline: false, escalation: escalation('not_back') })
+    expect(isEscalated(a)).toBe(true)
+    expect(isExpectedOffline(a, 'offline')).toBe(false)
+  })
+})
+
+describe('EXPECT-002 [AC-023] label clears on activity_update null', () => {
+  const base: ActivityResponse = { generated_at: '', newest_agent_version: '2.80.0', activities: [selfUpdateActivity({ device_id: 'a' })] }
+
+  it('counts an offline device inside the self-update window as expected offline', () => {
+    expect(isExpectedOffline(selfUpdateActivity(), 'offline')).toBe(true)
+    expect(isExpectedOffline(selfUpdateActivity(), 'online')).toBe(false)
+  })
+
+  it('opens the record in a modal (an agent action has no detail page)', () => {
+    expect(activityLink(selfUpdateActivity())).toEqual({ type: 'modal' })
+  })
+
+  it('removes the entry when the server pushes null for the device', () => {
+    const next = applyActivityUpdate(base, 'a', null)
+    expect(next?.activities, 'the label must clear with no reload').toEqual([])
+  })
+
+  it('replaces the entry when the server pushes the new activity', () => {
+    const next = applyActivityUpdate(base, 'a', selfUpdateActivity({ device_id: 'a', agent_to_version: '2.81.0' }))
+    expect(next?.activities.map(a => a.agent_to_version)).toEqual(['2.81.0'])
+  })
+})

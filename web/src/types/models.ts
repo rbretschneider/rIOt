@@ -695,6 +695,10 @@ export interface Event {
   container_name?: string
   created_at: string
   acknowledged_at?: string
+  // EXPECT-002: the command an event is linked to and how the link was made
+  // (`expected`, `escalation`, `outcome`, `inferred`, `agent`). Absent on unlinked events.
+  command_id?: string
+  command_attr?: string
 }
 
 export interface FleetSummary {
@@ -745,6 +749,9 @@ export interface DeviceActivity {
   waiting_dpkg_lock: boolean
   progress: number | null
   agent_from_version: string
+  // EXPECT-002: the version an agent self-update goes to; '' for command windows.
+  // Optional so an older server (and older fixtures) still typecheck.
+  agent_to_version?: string
   target: string
   docker_actions: number
   covers_offline: boolean
@@ -874,7 +881,7 @@ export type CommandState =
 /** Values a pre-lifecycle server may still return (FR-083). */
 export type LegacyCommandStatus = 'pending' | 'sent' | 'success' | 'error'
 
-export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch'
+export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch' | 'agent_self_update'
 
 export interface Command {
   target_results?: {container:string;outcome:string;message?:string;step?:string}[]
@@ -910,6 +917,18 @@ export interface Command {
   policy_id?: number | null
   target_key?: string
   target_keys?: string[]
+}
+
+/**
+ * EXPECT-002 (ADD 6.3): the events linked to one command, server-authored events
+ * kept apart from agent-sourced ones so a flood of agent events cannot hide the
+ * server's account. Go nil slices may arrive as null.
+ */
+export interface CommandEventsResponse {
+  server_events: Event[] | null
+  server_events_omitted: number
+  agent_events: Event[] | null
+  agent_events_omitted: number
 }
 
 /** WS `command_update` payload (ADD 6.5), one per accepted transition. */

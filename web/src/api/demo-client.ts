@@ -61,6 +61,8 @@ export const api: ApiClient = {
   getCommandOutput: () => Promise.resolve([]),
   // CMD-LIFECYCLE-001: demo commands are never in flight, so there is nothing to track or cancel.
   getCommand: (_deviceId: string, commandId: string): Promise<Command> => Promise.resolve(demo.getCommands().find(c => c.id === commandId) ?? demo.getCommands()[0]),
+  getCommandEvents: (_deviceId: string, _commandId: string) =>
+    Promise.resolve({ server_events: [], server_events_omitted: 0, agent_events: [], agent_events_omitted: 0 }),
   getActiveCommands: (_deviceId: string, _targetKey?: string): Promise<Command[]> => Promise.resolve([]),
   cancelCommand: async (_deviceId: string, _commandId: string): Promise<Command> => { await delay(); return demo.getCommands()[0] },
   getProbes: () => Promise.resolve(demo.getProbes()),

@@ -44,9 +44,9 @@ describe('[UIF AC-015] command status labels', () => {
 })
 
 describe('[UIF AC-016] event type labels have no underscores', () => {
-  it('knows all 51 server event types', () => {
-    expect(EVENT_TYPES).toHaveLength(51)
-    expect(new Set(EVENT_TYPES).size).toBe(51)
+  it('knows all 54 server event types', () => {
+    expect(EVENT_TYPES).toHaveLength(54)
+    expect(new Set(EVENT_TYPES).size).toBe(54)
   })
 
   it.each(EVENT_TYPES)('maps %s to an explicit label without underscores', value => {
