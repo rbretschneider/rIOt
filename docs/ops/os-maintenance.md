@@ -66,6 +66,7 @@ The step is opt-in per host. A host that has not opted in behaves exactly as des
 - It runs only in the `full` and `security` modes. It never runs in `repair` mode.
 - It runs at most once per command. Redelivery, an agent restart or recovery of an interrupted run never starts it again.
 - It never runs when the apt part did not succeed, including a failed hold restoration. The result then says `skipped (apt_not_successful)`.
+- A refusal before it starts never fails a good apt run. See [Results and truthful outcomes](#results-and-truthful-outcomes).
 - It never reboots the host. See [Reboots](#reboots-and-the-extra-updater-step).
 
 The root worker starts the step only when every gate below passes. The first gate that fails decides the result, and DietPi is not started.
@@ -79,6 +80,8 @@ The root worker starts the step only when every gate below passes. The first gat
 7. At least 47 minutes 30 seconds of the worker's 80-minute budget remain.
 8. DietPi was not started in the last 60 minutes.
 9. No other DietPi program runs and the dpkg lock is free. The worker waits up to 5 minutes for this.
+
+After the gates pass, the launcher gives the step a private `/tmp` and a private `/run/dietpi`, and proves both. If it cannot, DietPi is not started and the result says `skipped (tmp_not_private)`, `skipped (rundir_not_private)` or `skipped (mount_propagation_unverified)`. See [How the step is isolated](#how-the-step-is-isolated).
 
 ### Opt in
 
@@ -136,7 +139,7 @@ These longer bounds apply only when the server stamps the command with `extra_up
 - the operator did not exclude extra updaters;
 - the device's latest telemetry shows an updater that is enabled.
 
-An operator cannot send the stamp. The server removes every capitalization of it from every command. Every other command keeps today's bounds: 30 minutes of apt, a 35-minute backstop, 31 minutes 30 seconds at the agent and a 40-minute deadline. If an enabled DietPi update is pending but the server did not stamp the command, the result says `skipped (insufficient_time)` and the command fails.
+An operator cannot send the stamp. The server removes every capitalization of it from every command. Every other command keeps today's bounds: 30 minutes of apt, a 35-minute backstop, 31 minutes 30 seconds at the agent and a 40-minute deadline. If an enabled DietPi update is pending but the server did not stamp the command, the result says `skipped (insufficient_time)`. DietPi is not started. The command stays `success` when apt succeeded, and the badge shows an action item (see [Results and truthful outcomes](#results-and-truthful-outcomes)).
 
 **Choose a patch window of at least 90 minutes.** A run on an opted-in host can last up to 88 minutes at the agent, and the host stays reserved for up to about 87 minutes. A shorter window can end while DietPi is still running. The window and its times are in UTC (see [Time display](../../README.md#time-display)).
 
@@ -150,7 +153,7 @@ The step never starts a reboot, and the DietPi step cannot start one. A reboot g
 - If the host reboots during the step, the outcome is `interrupted`.
 - A manual run reboots only when the operator ticked **Reboot automatically if the patch requires it**, `commands.allow_reboot` is `true` and a reboot is required after the run.
 - A scheduled run treats "DietPi succeeded and a reboot is now required" as a reboot-class change. It adds the entry `dietpi` to the applied reboot-class list only when all four hold: the run released reboot-class holds, the run succeeded, DietPi succeeded and a reboot is required after it. The usual rules then apply: `commands.allow_reboot`, the dpkg lock wait and one reboot per command.
-- A failed DietPi step makes the command `failed`, so "reboot if required" does not reboot.
+- A DietPi step that started and did not succeed makes the command `failed`, so "reboot if required" does not reboot. A step that was refused before it started does not make the command fail, so the reboot rules apply to the apt part as usual.
 
 ### The meaning of unknown
 
@@ -167,6 +170,19 @@ rIOt never reports DietPi as up to date unless it has proof that DietPi's own ch
 An update is "waiting" only when DietPi's own flag file `/run/dietpi/.update_available` names a newer version, or `/run/dietpi/.live_patches` exists. DietPi writes the flag from its own update check, which runs from its daily cron job and its post-boot job. rIOt reports `check_disabled` when `CONFIG_CHECK_DIETPI_UPDATES` is not `1`.
 
 rIOt reads these files as data. It never runs DietPi to detect an update.
+
+#### Which flags rIOt believes
+
+`/run/dietpi` is world-writable on stock DietPi, so any local user can create a file there. The agent and the worker therefore believe a flag only when root wrote it. A flag counts only when all of these hold, checked on the file that is actually read:
+
+- it is a regular file, and not a symlink;
+- it is owned by root (uid 0);
+- no group or other user can write to it;
+- it has exactly one link.
+
+A flag that fails any check counts as absent. It is not an error and never produces `detection_failed`. A forged flag therefore cannot make a host look like it has a pending update, and cannot start auto-patch. DietPi, running as root with umask 0022, writes its flags as root-owned 0644 files, so a real flag passes.
+
+A containerised agent that reads the host through a mount of `/` and runs in a user namespace with a uid mapping is **not supported** for DietPi detection (DP-SEC-006). With such a mapping, the uid that the container sees as 0 may not be host root, so the owner check cannot prove that root wrote the flag. Where host root is not mapped into the container, it appears as the overflow uid, so no flag is believed and the host reads `unknown`. Run the agent on the host for DietPi detection.
 
 ### What DietPi does during a run
 
@@ -193,7 +209,19 @@ The result names each updater's outcome, and a first line that states both parts
 | `interrupted` | The service stopped or the host rebooted during the step. State is uncertain. The worker never runs the step again |
 | `skipped` | DietPi was not started. The reason says why (see below) |
 
-The command is `success` only when apt succeeded and every updater either succeeded or was skipped for a neutral reason. The neutral reasons are `not_enabled`, `status_unknown`, `nothing_pending` and, on the agent side, `excluded_by_operator`. Every other outcome makes the command `failed`. Apt's own results (version changes and hold restoration) are reported unchanged.
+The command is `failed` only when one of these is true:
+
+- the apt part did not succeed;
+- an updater **started** and did not succeed (`failed`, `timed_out` or `interrupted`).
+
+An updater that was skipped before it started leaves a successful apt run `success`, whatever the reason. Nothing on the host changed, so the command is not red. This replaces the EXTRA-UPD-001 rule that made any refusal fail the whole command (DIETPI-PATH-001). A launcher problem that is reported as `failed` (`launcher setup failed: ...`) is not a skip, so it still fails the command. Apt's own results (version changes and hold restoration) are reported unchanged.
+
+A refusal is not hidden. The first line of the result still names it, for example `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, and the detail line stays. A refusal is any skip except the neutral ones: `not_enabled`, `status_unknown`, `nothing_pending`, `excluded_by_operator` and `apt_not_successful`. For a refusal, rIOt also does two things:
+
+- The agent sends one warning event, `DietPi update skipped on <host>: <reason in words> (command <id>, origin <origin>)`. It sends at most one per command and updater, across agent restarts. A neutral skip sends none. The server composes the message from its own table of reasons. If an event carries a reason the server does not know, it keeps the event with generic text and drops the reason.
+- The patch badge reports the refusal. See [The patch badge on DietPi hosts](#the-patch-badge-on-dietpi-hosts).
+
+**Results from an older worker.** A worker older than this change recorded a refused updater as an `error`, so the dashboard showed a red failed command even though apt had succeeded. That history stays as it was. The server recognises such a run when the first line is `apt: succeeded; ...`, every other part of it is a refusal, and the result has no other failure signal. It then shows the Blocked badge, not "the last patch run failed". Any other failure signal keeps the red item: an apt failure, a hold restoration error, a version verification error, an interrupted part, a timeout, or an extra line in the result.
 
 DietPi's output is captured in its own labelled section. The section is capped at 128 KiB inside the existing 256 KiB cap for the whole run. When output is cut, the end is kept and the cut is marked. The section always ends with DietPi's own log path, `/var/lib/dietpi/logs/dietpi-update.log`.
 
@@ -201,7 +229,7 @@ The result also records the update source that was used, whether a reboot is req
 
 ### Refusal reasons
 
-Each reason below means the step did not start, so DietPi changed nothing on the host. The reason appears as `skipped (<reason>)` in the result.
+Each reason below means the step did not start, so DietPi changed nothing on the host. The reason appears as `skipped (<reason>)` in the result. A skip never fails a successful apt run (see [Results and truthful outcomes](#results-and-truthful-outcomes)). The badge class of each refusal is in [The patch badge on DietPi hosts](#the-patch-badge-on-dietpi-hosts).
 
 | Reason | Meaning | Fix |
 |---|---|---|
@@ -211,15 +239,16 @@ Each reason below means the step did not start, so DietPi changed nothing on the
 | `nothing_pending` | DietPi had no update at the start of the step | None. Neutral |
 | `insufficient_time` | One of these: the service's effective backstop is below 83 minutes 30 seconds, or the worker cannot read it; fewer than 47 minutes 30 seconds of the 80-minute budget remain; or the server did not stamp the extended budget | Re-run `install.sh` as root so the drop-in is in force. Check with `riot-agent doctor`. If apt took very long, run Patch again later. Make sure `commands.allow_patching` is true |
 | `non_default_update_source` | The resolved `DEV_GITOWNER` in `/boot/dietpi.txt` is not `MichaIng`, or the file could not be read | Remove or empty `DEV_GITOWNER` in `/boot/dietpi.txt`. See [Update source rule](#update-source-rule) |
-| `unsafe_dietpi_path` | A DietPi file or one of its parent directories failed the root trust walk. The note names the first problem | See [The root trust rule](#the-root-trust-rule-and-vartmpdietpi) |
+| `unsafe_dietpi_path` | A path that root executes or reads failed the root trust walk: DietPi's code or settings under `/boot`, a parent directory, or the three entries of `/var/tmp/dietpi` that root interprets. The note names the first problem. On a stock DietPi host the walk passes, so this reason is a **possible tampering signal**: something that should be root-only is not. It does not clear by retrying | Investigate the named path as root: check its owner and mode, and find out who changed it. Restore root ownership and remove group and other write permission. rIOt does not run DietPi until the path is root-only. See [The root trust rule](#the-root-trust-rule-and-vartmpdietpi). A note that starts with `/run/dietpi` comes from a worker older than this fix: re-run `install.sh` as root (see [Upgrading a host that was refused for `/run/dietpi`](#upgrading-a-host-that-was-refused-for-rundietpi)) |
 | `min_interval` | DietPi was started less than 60 minutes ago, or the start history could not be read | Wait, then run Patch again. If the note says the history cannot be read, review `/var/lib/riot-maintenance/` as root |
 | `tmp_not_private` | The launcher could not give the step its own empty `/tmp` (see [How the step is isolated](#how-the-step-is-isolated)). `/tmp` is not its own mount point, is not tmpfs, or is not empty | DietPi normally mounts `/tmp` as tmpfs from `/etc/fstab`. Restore that default and reboot |
-| `mount_propagation_unverified` | The launcher could not prove that `/`, `/boot` (and `/boot/firmware`, when mounted) are shared with the host's mounts. Or the service itself has `PrivateTmp` or `MountFlags` set | Run `systemctl show riot-maintenance.service -p PrivateTmp -p MountFlags`. It must print `PrivateTmp=no` and an empty `MountFlags=`. Remove any drop-in that sandboxes the unit, then re-run `install.sh` as root |
+| `rundir_not_private` | The launcher could not give the step its own empty `/run/dietpi` (see [How the step is isolated](#how-the-step-is-isolated)). It stopped before DietPi started. Causes: `/run` is not its own mount point; making `/run` private failed; mounting the tmpfs failed; the proof of the new tmpfs failed; `/run/dietpi` exists but is a symlink, is not a directory or is not owned by root; or the check of `/run/dietpi` failed with an error other than "does not exist" | The host's mount layout prevented the isolation, and a retry does not change that. On DietPi `/run` is a tmpfs from systemd, so a layout where it is not its own mount is unusual. Run `findmnt /run` and `ls -ld /run/dietpi` on the host, restore the default layout, and make sure `/run/dietpi` is a plain directory owned by root. Then run Patch again. Doctor does not check this yet (see [Known limits](#known-limits)) |
+| `mount_propagation_unverified` | The launcher could not prove that `/`, `/boot` (and `/boot/firmware`, when mounted) are shared with the host's mounts. Or the service itself has `PrivateTmp` or `MountFlags` set. Or, after the `/run/dietpi` setup, the same check failed again | Run `systemctl show riot-maintenance.service -p PrivateTmp -p MountFlags`. It must print `PrivateTmp=no` and an empty `MountFlags=`. Remove any drop-in that sandboxes the unit, then re-run `install.sh` as root |
 | `dietpi_busy` | Another DietPi program ran for the whole 5-minute wait. This covers any `/boot/dietpi/` program except the cloudshell, and the daily `cron.daily` job | Wait for the other run to end, and keep the patch window clear of 06:25. Then run Patch again |
 | `dpkg_locked` | Another apt or dpkg process held the dpkg lock for the whole 5-minute wait, or the lock state could not be read | Wait for the other package work to end, then run Patch again |
 | `excluded_by_operator` | The operator unticked **Apply DietPi update in this run**. Written by the agent. Neutral | None |
 
-A launcher problem other than the two named above is reported as `failed` with `launcher setup failed: ...`. DietPi was not started in that case either.
+A launcher problem other than the three isolation reasons above (`tmp_not_private`, `rundir_not_private`, `mount_propagation_unverified`) is reported as `failed` with `launcher setup failed: ...`. DietPi was not started in that case either, but the command fails, because the result is `failed`, not `skipped`.
 
 ### Update source rule
 
@@ -234,16 +263,34 @@ This rule exists because the step runs DietPi as root. A compromised agent canno
 
 ### The root trust rule and /var/tmp/dietpi
 
-Before it runs DietPi, the worker walks the DietPi files as root and refuses with `unsafe_dietpi_path` when any of them could be changed by a non-root user. DietPi runs as root, so a file that another user controls would run as root.
+Before it runs DietPi, the worker checks as root the files that root executes or reads. It refuses with `unsafe_dietpi_path` when a non-root user could change any of them. DietPi runs as root, so a file that another user controls would run as root.
 
-The walk covers `/`, `/boot`, `/run`, `/var` and `/var/tmp` as parents, and these roots:
+The check has three parts.
 
-- `/boot/dietpi` (the whole tree, to a depth of 4 and 4096 entries);
-- `/boot/dietpi.txt`;
-- `/run/dietpi`, when it exists;
-- `/var/tmp/dietpi`, when it exists.
+**Parents.** `/`, `/boot`, `/run`, `/var` and `/var/tmp` must be root-owned. A parent that is group- or world-writable fails unless it has the sticky bit. `/run` itself stays a checked parent.
+
+**Trees.** These are walked entry by entry, to a depth of 4 and 4096 entries:
+
+- `/boot/dietpi`, the code that DietPi executes;
+- `/boot/dietpi.txt`, the settings that DietPi reads.
 
 Every entry must be owned by root, with no group or world write permission. Symlinks are allowed only when root owns them. A limit that is reached counts as a failure. A FAT `/boot` that is mounted with permissive file modes (for example world-writable) fails the walk, because FAT has no owners.
+
+**Exact paths.** Only these three entries under `/var/tmp/dietpi` are checked, each by one `lstat`. Nothing below them is walked:
+
+- `/var/tmp/dietpi`, a directory;
+- `/var/tmp/dietpi/logs`, a directory, when it exists;
+- `/var/tmp/dietpi/dietpi-update_reinstalls`, a regular file, when it exists.
+
+Each must be owned by root, must not be a symlink and must not be group- or world-writable. A sticky bit does not excuse a writable mode here: root-owned `0777` and `1777` both fail. The file must also have exactly one link.
+
+**What is not checked, and why.**
+
+- `/run/dietpi` is not checked. Stock DietPi creates it at every boot as `0777`, root-owned and without the sticky bit, so the old check refused every DietPi host. `dietpi-update` never reads it. It only writes and removes flag files there. The launcher gives the step a private empty one instead (see [How the step is isolated](#how-the-step-is-isolated)).
+- The contents of `/var/tmp/dietpi/logs` are not checked. With DietPi-RAMlog, the default, `logs/dietpi-ramlog_store` mirrors `/var/log` with its original owners and modes. That includes `0664` files and service-owned directories, so a tree walk could never pass on DietPi 9. Root copies those entries as data (DietPi's Patch_10_4 uses `cp -a`, which does not follow links and keeps the owner), and never runs them. The only file root acts on is `dietpi-update_reinstalls`, and it is checked.
+- During a DietPi 9 run, root also writes into `logs/` (the update log, the apt log and a backup database), and follows symlinks when it does. That is safe because `logs` and `/var/tmp/dietpi` are proved root-only and cannot be replaced by a non-root user.
+
+**Reading an `unsafe_dietpi_path` refusal.** On a stock DietPi host the check passes. A refusal therefore means that DietPi's code or settings, or one of the three exact paths, is not root-only. Treat it as a possible tampering signal. The badge shows **Needs you** with an action to investigate the named path. rIOt will not run DietPi until the path is root-only, and retrying does not change that.
 
 DietPi 10.4 and later migrate `/var/tmp/dietpi` to `/var/lib/dietpi`. That migration runs as root during the update, and it reads from `/var/tmp/dietpi`. While the installed DietPi is older than 10.4, the directory must therefore exist and pass the walk. Otherwise the step is refused.
 
@@ -260,6 +307,35 @@ DietPi's working directory is `/tmp/DietPi-Update`. If a non-root user owned tha
 
 The tmpfs, and DietPi's working directory in it, disappear when the last step process ends. No stale `/tmp/DietPi-Update` survives a killed run.
 
+#### A private /run/dietpi
+
+Stock DietPi makes `/run/dietpi` world-writable (`0777`) without the sticky bit. During `dietpi-update 1`, root writes flag files there and removes others, and each of those operations follows a symlink. A local user without root rights could plant a symlink there and make root truncate or overwrite an arbitrary file with a version string or a package count. The kernel protection against this (`fs.protected_symlinks`) does not apply to a directory without the sticky bit. To close this for the runs that rIOt starts, the launcher gives the step its own `/run/dietpi`. When `/run/dietpi` exists, the launcher:
+
+1. proves, without following links, that `/run/dietpi` is a directory owned by root;
+2. checks that `/run` is a mount point of its own;
+3. makes `/run` and what is mounted below it private in the step's namespace only;
+4. mounts a fresh tmpfs on `/run/dietpi` with mode `0755`, `nosuid`, `nodev` and `noexec`, limited to 1 MiB and 64 inodes;
+5. proves that the new `/run/dietpi` is a tmpfs, owned by root, mode `0755`, empty, not the host's directory and not shared with the host;
+6. checks again that `/`, `/boot` and `/boot/firmware` still propagate to the host, and only then starts DietPi.
+
+Any failure stops the step before DietPi starts, with `skipped (rundir_not_private)`. A failed re-check in step 6 is reported as `mount_propagation_unverified`. When the host has no `/run/dietpi`, the launcher creates and mounts nothing, and DietPi creates the directory itself as root.
+
+**What DietPi sees.** An empty `/run/dietpi`. Everything it writes there, and every removal it makes, dies with the step. DietPi never reads these files during `dietpi-update 1`, so this changes nothing about what the update does. The rest of `/run` is the host's own: the systemd sockets and `/run/lock` are the same mounts, so `dietpi-services` and systemd work as before. The host's `/run/dietpi` is not touched by the step.
+
+**Side effect.** Mounts and unmounts that happen under `/run` on the host while the step runs do not reach the step. For example, the `/run/user/<uid>` directory of a user who logs out stays in place until the step ends. The 85-minute service backstop bounds this. It is the same kind of effect as the private `/tmp`.
+
+#### Flag cleanup after a successful step
+
+Because the step's own writes land in the private directory, its removal of DietPi's two flags also dies with the step. DietPi removes `.update_available` and `.live_patches` itself after a successful update. To keep the host's flags truthful, the worker does the same on the host after a step with outcome `success`:
+
+- It removes `/run/dietpi/.update_available` and `/run/dietpi/.live_patches`. It removes nothing else: `.apt_updates` and `.dietpi_motd` stay.
+- It opens `/run/dietpi` without following a symlink and requires the directory to be owned by root. If it is not, nothing is removed and the updater result carries the note `/run/dietpi not root-owned; flags left`.
+- It removes each name through that directory handle. A symlink with a flag's name is removed itself, and its target is never touched. A missing file is not an error.
+- It never creates or writes anything there.
+- It runs after a `success` only, never after `failed`, `timed_out`, `interrupted` or a skip.
+- It runs before the worker reads DietPi's state again after the step. A stale `.live_patches` would otherwise read as a pending update and trigger auto-patch again.
+- Any other problem becomes a note of at most 200 bytes on the updater result, such as `flag cleanup failed: ...`. A note never changes the outcome, which stays `success`.
+
 **DietPi's own mounts take effect normally.** The launcher keeps every mount except `/tmp` shared with the host, and proves it against the host's mount table. Anything DietPi mounts or unmounts, and every edit of `/etc/fstab`, behaves as if DietPi ran unconfined as root. The service unit itself carries no `PrivateTmp`, `MountFlags` or `Protect*` settings. The worker refuses a unit that does (`mount_propagation_unverified`).
 
 This matters for the DietPi 9 to 10 update on a Raspberry Pi. That update (DietPi's `rpi_firmware_migration`) moves the FAT boot partition from `/boot` to `/boot/firmware`, rewrites `/etc/fstab` and remounts. DietPi's files in `/boot/dietpi` then live on the root file system. The change is visible to the host at once, so rIOt's detection keeps working. The host still needs a reboot afterwards. See [Reboots](#reboots-and-the-extra-updater-step).
@@ -268,12 +344,56 @@ This matters for the DietPi 9 to 10 update on a Raspberry Pi. That update (DietP
 
 - **The `cron.daily` race.** Because DietPi's own guard cannot see a run in the host's `/tmp`, the worker scans for other DietPi programs before it starts and waits up to 5 minutes. A DietPi run that starts after the last poll is not seen. In practice this is the daily `cron.daily` check at 06:25, or an administrator's manual run. The overlap lasts at most the 40-minute step. A check-only run can rewrite the flag file. With `CONFIG_CHECK_APT_UPDATES` set to 1 or 2 it can also run apt. The run that meets the apt lock second fails at once, and the result says so. Keep the patch window away from 06:25.
 - **DietPi's own exposure, which exists without rIOt.** DietPi's `cron.daily` job and its post-boot job run `dietpi-update 2` as root in the host's shared `/tmp`, with the same working directory. A local user who can win a race there could attack those runs. rIOt's step avoids this exposure, but it cannot remove it from DietPi's own jobs. Consider reporting this to DietPi upstream at <https://github.com/MichaIng/DietPi/issues>.
+- **DietPi's own exposure in `/run/dietpi`, which also exists without rIOt.** DietPi's `cron.daily` job runs `dietpi-update 2` as root every day. It writes `.update_available` into the world-writable, non-sticky `/run/dietpi`, and the write follows a symlink. A local user who plants a symlink there can make that root run truncate or overwrite a file with a version string. rIOt's private `/run/dietpi` protects only the runs that rIOt starts. It cannot protect DietPi's own jobs. The next section lists host settings that reduce this exposure.
 - **A remount of `/tmp` inside the step.** A `mount -o remount /tmp` by DietPi would act on the step's private tmpfs. `dietpi-update` does not do this today.
+
+### Host hardening for DietPi hosts (recommended)
+
+These are recommendations for the DietPi hosts you run, PiVPN and PiCUPS. rIOt does not apply them: it does not change DietPi-owned system state outside the step, and DietPi's tmpfiles rule recreates `/run/dietpi` at every boot. Each one is optional. The realistic attacker is a compromised network-facing service account on the host, such as the account that runs CUPS.
+
+1. **Make `/run/dietpi` sticky.** DietPi creates the directory at every boot with the line `d /run/dietpi 0777` in its tmpfiles file, which is `dietpi.conf` in `/etc/tmpfiles.d`. Do not edit that file: a DietPi update can overwrite it. Add a local override instead. `systemd-tmpfiles` reads the files in name order, uses the first line for a path and ignores later lines for the same path. The override must therefore have a name that sorts before `dietpi.conf`, for example `/etc/tmpfiles.d/00-dietpi-run.conf`, with this content:
+
+   ```
+   d /run/dietpi 1777 root root -
+   ```
+
+   Check the result with `systemd-tmpfiles --cat-config`: the `1777` line must come before DietPi's line. The reverse order keeps `0777`, because the later line is ignored with a `Duplicate line for path` message. With the sticky bit, a user cannot replace or remove another user's file in the directory, and `fs.protected_symlinks` then applies to root's writes. Test on one host first: DietPi's own scripts must still write their flag files there after a reboot.
+
+2. **Turn on the kernel's link and file protections.** On PiCUPS, `fs.protected_symlinks` and `fs.protected_regular` were `0` when the DIETPI-PATH-001 security review looked. Read the current values on each host first with `sysctl fs.protected_symlinks fs.protected_hardlinks fs.protected_regular`. Then create `/etc/sysctl.d/99-riot-protected.conf` with:
+
+   ```
+   fs.protected_symlinks = 1
+   fs.protected_hardlinks = 1
+   fs.protected_regular = 2
+   ```
+
+   Apply it with `sudo sysctl --system`. These settings protect every sticky temporary directory on the host, `/tmp` and `/var/tmp` included, not only `/run/dietpi`. They do not protect a non-sticky directory, which is why item 1 comes first.
+
+3. **Report it upstream.** Tell the DietPi project that `/run/dietpi` is created world-writable without the sticky bit, and that root writes follow symlinks there. Open an issue at <https://github.com/MichaIng/DietPi/issues> and ask for `1777` in the tmpfiles rule, or for a root-only directory.
+
+Check each step on one host first. A wrong tmpfiles file or sysctl value takes effect at the next boot or the next `sysctl --system`, and rIOt does not monitor it.
+
+### Upgrading a host that was refused for /run/dietpi
+
+A worker older than this fix refuses every stock DietPi host with `unsafe_dietpi_path` and a note that starts with `/run/dietpi `, because DietPi makes that directory `0777`. This is a false positive. The fix is in the worker, and a worker reaches a host only through a root run of `install.sh`:
+
+1. Update the rIOt server first. The server alone changes the badge of such a host from **Needs you** to **Blocked** and removes its "last patch run failed" item, with the text `DietPi update blocked: /run/dietpi permissions (fixed by this rIOt release; re-run install.sh as root on this host to apply the fix)`. It changes nothing on the host.
+2. On the host, re-run `install.sh` as root with the matching `--version` (without `v`) and your existing server URL, and without `--bootstrap-key`. The re-run installs the new worker and agent together. Never copy the worker binary alone: a new worker with an old agent is not a supported pairing.
+3. Run doctor, then one manual Patch.
+
+The **Blocked** badge does not clear when the installer finishes. The badge reads the latest finished OS patch run, so it stays until the next OS patch run ends after the fix is installed. The manual Patch in step 3 clears it. The per-host steps for the fleet are in the [README](../../README.md#fix-for-stock-dietpi-hosts-dietpi-path-001).
+
+### Downgrading below this release
+
+Archive `/var/lib/riot-maintenance/current.json` as root before you downgrade the worker or the agent below this release. The new release records a `success` result that carries a refused updater. A worker or agent from before this release treats that combination as invalid and can reject the stored history. Do not delete the file; copy it somewhere safe. Downgrades are otherwise not supported.
 
 ### Known limits
 
 - **A backward clock jump disables the 60-minute interval while it lasts.** The worker measures the 60 minutes from the start times it recorded in its root-owned history. It ignores a record dated in the future. If the host clock jumps backward (for example a Pi without a hardware clock that boots with a stale time before NTP corrects it), the newest recorded start can lie in the future. The worker then skips the interval check for as long as the clock stays behind that time, not only once. The other gates still apply: an update must be pending from the `MichaIng` source, the trust walk, the busy and lock checks, and the time budget. A compromised agent cannot move the clock. The fix is tracked as a follow-up.
 - **Event de-duplication works for a single server process only.** The server stores one "DietPi update started" and one "finished" event per command. It drops repeats with an in-memory lock around a database check, not with a database constraint. With one rIOt server process, which is today's deployment, this is exact. Two server replicas on one database could store a duplicate event. The check also keys on the command and the event type, not on the updater, so a second updater will need the key extended.
+- **DietPi's own daily job still writes into a world-writable `/run/dietpi`.** `cron.daily` runs `dietpi-update 2` as root, outside rIOt's step. That exposure is upstream's. See [Residual risks](#residual-risks) and [Host hardening for DietPi hosts](#host-hardening-for-dietpi-hosts-recommended).
+- **The Blocked badge stays until the next OS patch run ends after the fix is installed.** The badge reads the latest finished OS patch run. Re-running `install.sh` does not change that run's stored result, so a host that was refused before the fix keeps its Blocked badge until a run finishes with the new worker. Run one manual Patch after the re-run.
+- **Doctor has no isolation probe yet.** For `tmp_not_private`, `rundir_not_private` and `mount_propagation_unverified`, the badge action says to run `riot-agent doctor`. Doctor checks that DietPi is present, the root-side opt-in, the helper, and the service backstop and sandbox settings. It does not check that `/tmp` or `/run` is its own mount, or the mount propagation. Doctor can therefore be green on a host that the launcher refuses. Look at the mounts yourself with `findmnt /tmp`, `findmnt /run` and `ls -ld /run/dietpi`. A doctor check for the isolation preconditions is a recorded follow-up (DIETPI-PATH-001 QA note 1).
 - **Real Raspberry Pi hardware has not been tested.** The first DietPi 9 to 10 update on PiVPN or PiCUPS is the first time the launcher meets `rpi_firmware_migration` on a real kernel. Run `riot-agent doctor` and one manual Patch before you rely on the schedule.
 
 ### Check with doctor
@@ -304,6 +424,31 @@ EXTRA-UPD-001 also changed when the badge says **Needs you**. A host shows **Nee
 - nothing will apply them, for example auto-patch is off, or DietPi is pending but not enabled.
 
 A setting by itself, such as "auto-patch off" on a host with nothing pending, is shown as neutral information, under **Information** in the badge text. The badge reads **Manual** when nothing needs you and nothing patches the host automatically. **Manual** is grey and does not count toward "N hosts need you". The full rules are in the [README](../../README.md#patch-badge).
+
+#### Refused updaters: Blocked and Needs you
+
+DIETPI-PATH-001 adds a fourth badge, **Blocked** (amber). The badge looks at the latest finished OS patch run. It reports a refusal when that run was `success` and refused an updater, that updater is still pending and enabled, and the first line of the result names the refusal. A neutral skip raises nothing. If the updater is no longer pending, the refusal becomes one line under **Information**: `The last patch run skipped DietPi: <reason in words>.`
+
+The reason decides the class:
+
+| Refusal | Badge | Text and action |
+|---|---|---|
+| `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private` | Blocked | `DietPi update blocked: <reason in words>; this host's mount layout prevented rIOt from isolating the step`. Action: `Run riot-agent doctor on this host.` The text never says that a retry fixes it, because the cause is the host's mount layout |
+| `dietpi_busy`, `min_interval`, `dpkg_locked` | Blocked | `DietPi update blocked: <reason in words>`. Action: `Nothing to do; rIOt retries on the next patch run.` These conditions are temporary |
+| `unsafe_dietpi_path` with a note that starts with `/run/dietpi ` | Blocked | The false positive of a worker older than this fix: `DietPi update blocked: /run/dietpi permissions (fixed by this rIOt release; re-run install.sh as root on this host to apply the fix)`. Action: `Re-run install.sh as root on this host to apply the fix.` |
+| `unsafe_dietpi_path`, any other path | Needs you | `DietPi update blocked: <path> permissions`. Action: `Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only.` This is a possible tampering signal and never clears by retrying |
+| `non_default_update_source` | Needs you | Action: `Set DEV_GITOWNER back to MichaIng in /boot/dietpi.txt.` |
+| `insufficient_time` | Needs you | Action: `Lengthen this host's patch window to at least 90 minutes.` |
+
+Each text also carries the bounded detail from the run, up to 160 bytes, with control characters removed.
+
+**Precedence.** Any action item makes the badge **Needs you**. If there is no action item and at least one Blocked item, the badge is **Blocked**. Otherwise the badge is **Auto**, **Manual** or its other values, as before. When a host has both, **Needs you** wins and the Blocked reasons are still listed.
+
+**Counting.** The **N hosts need you** button counts **Needs you** hosts only. A **Blocked** host has its own **N blocked** button and filter beside it. The two filters exclude each other. The badge tooltip lists blocked items under **Blocked**, with the line `rIOt did not start these updates. This is not a failure of the patch run.`
+
+**Old worker results.** A run from a worker older than this change is `failed`, but the server reads it the same way when the refusal is the only cause (see [Results and truthful outcomes](#results-and-truthful-outcomes)). The server update alone therefore turns such a host's red badge into **Blocked** or **Needs you**, and removes its "last patch run failed" item, without a new patch run.
+
+**API.** `GET /api/v1/fleet/patch-status` returns `patch_badge.kind: "blocked"` and `patch_badge.explanation.blocked`, a list of items in the same shape as `needs_you`. The list is always present and can be empty. A client that matches `kind` exactly must accept `blocked`.
 
 ## Repair through the existing API
 
