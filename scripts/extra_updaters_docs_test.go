@@ -139,3 +139,31 @@ func TestDocs_EU_DocsFilesExist(t *testing.T) {
 		}
 	}
 }
+
+// Added by QA Engineer. Covers AC-043 and ADD section 4's documentation row. The
+// ADD requires the docs to carry the SEC-001 residual and upstream note, the
+// cron advice, the /var/tmp/dietpi trust rule and "DietPi's own mounts take effect
+// normally". QA adds the two limits the security review accepted as INFO: the
+// single-process event dedupe and the backward clock jump on the 60 minute
+// minimum interval. Like the other positive checks, this skips until the docs land.
+func TestDocs_EU_AC043_QA_ResidualsAndAcceptedLimits(t *testing.T) {
+	readme, ops, _ := extraDocs(t)
+	if !docsLanded(readme, ops) {
+		t.Skip("AC-043: the EXTRA-UPD-001 documentation has not been written yet (technical writer).")
+	}
+	lower := strings.ToLower(ops)
+	for _, want := range []struct{ topic, phrase string }{
+		{"the /var/tmp/dietpi trust rule", "/var/tmp/dietpi"},
+		{"the cron.daily advice (avoid 06:25)", "06:25"},
+		{"the upstream note on DietPi's own shared /tmp", "upstream"},
+		{"the 60 minute minimum between DietPi starts", "60 minutes"},
+		{"the clock-jump limit of that minimum", "clock"},
+		{"the single-server-process limit of the event dedupe", "single"},
+		{"the patch window of at least 90 minutes", "90 minutes"},
+		{"DietPi's own mounts take effect normally", "/boot/firmware"},
+	} {
+		if !strings.Contains(lower, strings.ToLower(want.phrase)) {
+			t.Errorf("[AC-043] docs/ops/os-maintenance.md does not cover %s (expected the words %q)", want.topic, want.phrase)
+		}
+	}
+}
