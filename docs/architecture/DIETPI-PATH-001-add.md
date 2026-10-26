@@ -14,7 +14,7 @@
 | Root writes into a world-writable, non-sticky `/run/dietpi` follow symlinks (F-3) | The launcher mounts a private tmpfs on `/run/dietpi` for the step (AD-2) |
 | Host flags go stale because the step's writes are now private (F-5) | After a successful step, the worker removes the two flags DietPi would have removed, without following symlinks (AD-3) |
 | A local user can forge flags in `/run/dietpi` | Detection believes a flag only when the trusted owner wrote it (AD-4) |
-| A refused step fails a good apt run (F-8) | A skip before start is `success`, plus a warning event and a badge action item (AD-5) |
+| A refused step fails a good apt run (F-8), and the badge says "Needs you" for something Ryan cannot act on | A skip before start is `success`, plus a warning event. The badge gets a new `blocked` kind for safety and temporary refusals, and "Needs you" only for refusals Ryan can fix (AD-5) |
 
 No migration. No sudoers change. No change to the request or record protocol fields. One new skip reason, `rundir_not_private`.
 
@@ -123,12 +123,53 @@ The new `maintenance.reconcileDietPiFlags(dir string) (note string)` uses an inj
 - The message is `DietPi update skipped on <host>: <reason words> (command <id>, origin <o>)`.
 - Dedupe is unchanged.
 
-**Badge**, new rule NY-9b, placed next to NY-9 in `patch_badge.go`:
-- **Condition:** `LastRun` status is success, and its first result line matches `^apt: [a-z ]+;( [a-z0-9_-]+: [^;]+;)* ?<id>: skipped \((<reason>)\)`. The parsing is strict and bounded to the first 512 bytes.
-- **For each `<id>` that is non-neutral and still `Pending()` and `Enabled()`:** raise the action item `reasonExtraRefused`. Text: `<label> <ver> is waiting; the last patch run did not apply it: <words>.` The action comes from a per-reason table. For example, `unsafe_dietpi_path` → "Run riot-agent doctor on this host and fix the path it names.".
-- **Otherwise** it is info (group K).
+**Badge** (amended per FRD FR-015 to FR-017: "Needs you" only when Ryan can act):
 
-**Web:** add `rundir_not_private` words and the new badge reason code to the existing maps. No new component.
+Parse the last run once. `parseRefusals(LastRun)` reads at most the first 2048 bytes of `ResultMsg`, split into lines, plus at most 8 updater entries.
+- Line 1 must match `^apt: succeeded(; [a-z][a-z0-9_-]{0,31}: [a-z_ ()0-9]+)+$`.
+- Every `<id>: skipped (<reason>)` with `<reason>` in the known non-neutral set is a refusal.
+- The detail for that id is the first later line starting `<id>: skipped (<reason>); `. The remainder is control-character-stripped and bounded to 160 bytes.
+- Anything that does not match is ignored: no refusal, and the old behaviour applies.
+
+The parse applies when `LastRun.Status` is success. It also applies when the status is failed and line 1 says `apt: succeeded` and every non-success part of line 1 is a refusal (FR-016, an old worker). In that case NY-9 (`last_run_failed`) is not raised for that run.
+
+For each refusal whose updater is still `Pending()` and `Enabled()`:
+- **Blocked class** (`unsafe_dietpi_path`, `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked`):
+  - add a reason with the new code `extra_blocked` to a new `Blocked` list in the explanation;
+  - text: `<Label> update blocked: <plain words>`, plus `. <detail>` when present;
+  - action text: `Nothing to do; rIOt retries on the next patch run.`;
+  - the pending-extra info item (`extraPendingText`, "will be applied ...") is suppressed for that updater.
+- **Action class** (`non_default_update_source`, `insufficient_time`): an action item `extra_refused`, with a per-reason action:
+  - "Set DEV_GITOWNER back to MichaIng in /boot/dietpi.txt.";
+  - "Lengthen this host's patch window to at least 90 minutes.".
+
+When the updater is no longer pending, the refusal becomes one info line, "The last patch run skipped <Label>: <words>.".
+
+**Plain words** (server table):
+
+| Reason | Words |
+|---|---|
+| `unsafe_dietpi_path` | `<path> permissions`, taking the path from the detail's first token when it starts with `/`, else "a DietPi path failed rIOt's safety check" |
+| `tmp_not_private` | "rIOt could not isolate /tmp" |
+| `mount_propagation_unverified` | "mount propagation could not be verified" |
+| `rundir_not_private` | "rIOt could not isolate /run/dietpi" |
+| `dietpi_busy` | "another DietPi process was running" |
+| `min_interval` | "DietPi ran less than an hour earlier" |
+| `dpkg_locked` | "the package lock was held" |
+
+**Kind precedence:**
+- any action item → `needs_you`;
+- else any Blocked item → the new kind `blocked`;
+- else as today.
+
+`blocked` is not counted by `needs_you` filters. `GET /api/v1/fleet/patch-status` returns `patch_badge.kind: "blocked"` and `explanation.blocked: []`; the list is always present and may be empty. A client that matches kinds exactly must accept the new kind (CHANGELOG).
+
+**Web:**
+- `PatchBadge.tsx`: amber "Blocked" style, label and tooltip list.
+- `FleetOverview.tsx`: the `needsYouIds` filter excludes `blocked`, and a small "N blocked" chip or filter is added beside it, following the existing pattern.
+- Types: `blocked` kind and `explanation.blocked`.
+- Words for `rundir_not_private` and the reason code.
+- Demo data: one Blocked host.
 
 ### AD-6 — Compatibility and rollout
 
@@ -173,7 +214,8 @@ The new `maintenance.reconcileDietPiFlags(dir string) (note string)` uses an inj
 | AC-009 | `TestDetect_DP_AC009_UntrustedFlagIsAbsent`; guard test: no production use of `DirFSOwnedBy` |
 | AC-010 | `TestExtras_DP_AC010_RefusalKeepsSuccess` (table over every non-neutral reason) plus the existing failed, timed-out and interrupted tests |
 | AC-011 | `TestExtraEvents_DP_AC011_OneRefusalEvent`, server `TestAgentEventExtra_DP_AC011_UnknownReasonDropped` |
-| AC-012 | `TestPatchBadge_DP_AC012_LastRunRefused` |
+| AC-012, AC-014 to AC-016 | `TestPatchBadge_DP_AC012_RefusalIsBlocked`, `_AC014_ReasonClasses`, `_AC015_OldWorkerFailedRefusalIsBlocked`, `_AC016_ActionWinsOverBlocked`, `TestParseRefusals_DP_Bounds` (garbage, oversize, control characters) |
+| AC-017 | `PatchBadge.blocked.test.tsx`, `FleetOverview` filter test |
 | AC-013 | `TestExtras_DP_AC013_PiCUPSLayoutRuns` (worker rig with the PiCUPS layout) |
 
 EXTRA-UPD-001 tests that assert the old FR-038 behaviour (refusal leads to `error`) are updated to FR-012. Each change is listed in the implementation report.

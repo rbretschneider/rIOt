@@ -83,13 +83,17 @@ Doctor was green beforehand.
   - at most once per command and updater, across restarts, like the existing events.
 
   The server must accept the reason only from the known skip-reason set, and otherwise drop it.
-- **FR-015:** The patch badge must raise an action item when the latest finished `os_update` succeeded but skipped an updater for a reason that is not neutral, and that updater is still pending and enabled. Its text:
-  - says the update is waiting;
-  - says the last patch run did not apply it;
-  - gives the reason in words;
-  - gives a per-reason action.
+- **FR-015 (amended 2026-10-26 by Ryan: "Needs you" is only for something Ryan can act on):** When the latest finished `os_update` refused an updater, and that updater is still pending and enabled, the badge reports the refusal. A refusal means a skip that is not neutral. The run counts whether its status is success, or failed only because of that refusal (a result from an older worker: first line `apt: succeeded; <id>: skipped (<reason>)`).
 
-  It is an action item ("Needs you") under the group K rule, because work is waiting and nothing will apply it.
+  The reasons split into two classes.
+  - **Blocked** (rIOt's own safety check, or a temporary condition; rIOt retries on the next run and Ryan has nothing to do): `unsafe_dietpi_path`, `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked`.
+    - The badge shows a new warning state, **Blocked**, not "Needs you".
+    - It is not counted in "N hosts need you".
+    - The explanation gives the plain reason, e.g. `DietPi update blocked: /run/dietpi permissions`, plus the bounded detail from the run.
+    - It never claims the update "will be applied automatically".
+  - **Action** (a setting only Ryan can change): `non_default_update_source` (the host's update source) and `insufficient_time` (the patch window is too short). These stay action items ("Needs you"), with the per-reason action.
+- **FR-016:** A failed last run (NY-9) whose only failure is such a refusal (the old worker's FR-038 behaviour) must be classified by FR-015, not as "the last patch run failed". The server fix alone must therefore clear PiCUPS's red badge, with no new patch run and no new agent or worker.
+- **FR-017:** Badge precedence: any true action item makes the badge "Needs you". With no action item, a Blocked refusal makes it **Blocked**. Otherwise the badge is Auto, Manual or Unknown, as today. Blocked hosts have their own filter count and are not part of "N hosts need you".
 
 ## 4. Acceptance criteria
 
@@ -149,11 +153,21 @@ Doctor was green beforehand.
   - **Then** exactly one warning `extra_updater_finished` event with outcome `skipped` and the reason is sent, across an agent restart.
   - **And** a neutral skip sends none.
   - **And** the server drops an unknown reason.
-- **AC-012** [FR-015]
-  - **Given** a last run with status success and first line `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, and DietPi still pending and enabled
-  - **Then** the badge is `needs_you` with that action item.
-  - **And** with DietPi no longer pending it is info, not an action.
-  - **And** a neutral skip raises nothing.
+- **AC-012** [FR-015, FR-017]
+  - **Given** a last run with status success and first line `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, a detail line `dietpi: skipped (unsafe_dietpi_path); /run/dietpi is writable by group or others (mode 0777)`, DietPi still pending and enabled, auto-patch on, and nothing else waiting
+  - **Then** the badge kind is `blocked`, not `needs_you`.
+  - **And** the explanation holds one item: `DietPi update blocked: /run/dietpi permissions` with the bounded detail.
+  - **And** it is not counted by the "hosts need you" filter.
+  - **And** no text says it "will be applied automatically".
+- **AC-014** [FR-015] Each Blocked reason gives `blocked`. `non_default_update_source` and `insufficient_time` give `needs_you` with their action. With DietPi no longer pending, the refusal is information only, and the badge is Auto, Manual or Unknown. A neutral skip raises nothing.
+- **AC-015** [FR-016] PiCUPS today:
+  - **Given** a last run with status `failed`, first line `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, DietPi pending and enabled
+  - **Then** the badge is `blocked`, with no "last patch run failed" item.
+  - **And** a failed run whose apt part failed still raises NY-9 as before.
+- **AC-016** [FR-017]
+  - **Given** a Blocked refusal plus a true action item (e.g. a reboot required now that nothing will do)
+  - **Then** the badge is `needs_you`, and the blocked reason still appears.
+- **AC-017** [web] The dashboard renders the `blocked` kind as an amber "Blocked" badge with its explanation. The "N hosts need you" count and filter exclude Blocked hosts. The patch-status filters accept the kind.
 - **AC-013** [regression] The PiCUPS layout (F-1, F-6) end to end in the worker rig gives a DietPi step that runs.
 
 ## 5. Decisions for Ryan (each with Clod's recommendation)
