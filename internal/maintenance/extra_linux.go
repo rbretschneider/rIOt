@@ -177,7 +177,7 @@ func (osTrustFS) Lstat(name string) (trustStat, error) {
 	if !ok {
 		return trustStat{}, errors.New("no ownership information")
 	}
-	return trustStat{Mode: info.Mode(), UID: sys.Uid}, nil
+	return trustStat{Mode: info.Mode(), UID: sys.Uid, Nlink: uint64(sys.Nlink)}, nil
 }
 
 func (osTrustFS) ReadDir(name string) ([]string, error) {
@@ -245,7 +245,7 @@ func (ExtraLaunchRunner) RunStep(ctx context.Context, id string, spec extraupd.A
 	_ = pr.Close()
 	if res.GateErr != nil {
 		var le *LauncherError
-		if errors.As(res.GateErr, &le) && (le.Reason == ReasonTmpNotPrivate || le.Reason == ReasonMountPropagation) {
+		if errors.As(res.GateErr, &le) && (le.Reason == ReasonTmpNotPrivate || le.Reason == ReasonMountPropagation || le.Reason == ReasonRunDirNotPrivate) {
 			return StepOutcome{Skip: le.Reason, SkipDetail: le.Detail, ExitCode: res.ExitCode}
 		}
 		return StepOutcome{SetupErr: boundedText(res.GateErr.Error(), 200), ExitCode: res.ExitCode}

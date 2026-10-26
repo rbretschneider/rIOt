@@ -184,11 +184,25 @@ func containing(entries []MountEntry, path string) (MountEntry, bool) {
 	return best, found
 }
 
-// FileID identifies a file for the isolation proof.
+// st_mode file type bits, spelled out so the launcher logic builds everywhere.
+const (
+	modeTypeMask = 0o170000
+	modeTypeDir  = 0o040000
+)
+
+// FileID identifies a file for the isolation proof. Mode is the raw st_mode:
+// the file type in the high bits and the permission bits below.
 type FileID struct {
 	Dev, Ino uint64
 	UID      uint32
+	Mode     uint32
 }
+
+// IsDir reports whether the file is a directory.
+func (f FileID) IsDir() bool { return f.Mode&modeTypeMask == modeTypeDir }
+
+// Perm returns the permission bits, with setuid, setgid and sticky included.
+func (f FileID) Perm() uint32 { return f.Mode & 0o7777 }
 
 // nsOps is every system effect the launcher has. Tests script it; the Linux
 // implementation (nsops_linux.go) is the only one that touches the kernel.
@@ -204,6 +218,8 @@ type nsOps interface {
 	ReadFile(path string, max int) ([]byte, error)
 	StatfsType(path string) (int64, error)
 	StatID(path string) (FileID, error)
+	// StatNoFollow is StatID without following a final symlink (lstat).
+	StatNoFollow(path string) (FileID, error)
 	EntryCount(path string) (int, error)
 	Chdir(path string) error
 	// WriteStatus writes one line to descriptor 3.

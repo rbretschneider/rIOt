@@ -1,7 +1,9 @@
 package maintenance
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/DesyncTheThird/rIOt/internal/extraupd"
@@ -18,6 +20,12 @@ import (
 //   - hides the host /tmp behind a fresh tmpfs, so DietPi's fixed working
 //     directory /tmp/DietPi-Update cannot be reached by a non-root user (SEC-001);
 //   - proves both properties, then execs the registry's fixed spec.
+//
+// When /run/dietpi exists the launcher also mounts a private, empty tmpfs on it
+// (DIETPI-PATH-001 AD-2). Stock DietPi makes the host's /run/dietpi 0777 and not
+// sticky, and root's writes there follow symlinks, so the step must not see it.
+// Propagation of /run changes in the step's namespace only: events under /run
+// on the host no longer reach the step, the same class as the private /tmp.
 //
 // Any failure writes one line to descriptor 3 and ends without exec: DietPi has
 // not started and nothing on the host has changed.
@@ -36,6 +44,12 @@ const (
 	initMountinfo = "/proc/1/mountinfo"
 	initTmpPath   = "/proc/1/root/tmp"
 
+	runPath         = "/run"
+	runDietPiPath   = "/run/dietpi"
+	initRunDietPi   = "/proc/1/root/run/dietpi"
+	runDirTmpfsData = "mode=0755,size=1m,nr_inodes=64"
+	runDirMode      = 0o755
+
 	maxLauncherDetail = 200
 )
 
@@ -44,6 +58,7 @@ const (
 	ReasonLauncherRefused    = "launcher_refused"
 	ReasonTmpNotPrivate      = SkipTmpNotPrivate
 	ReasonMountPropagation   = SkipMountPropagationUnver
+	ReasonRunDirNotPrivate   = SkipRunDirNotPrivate
 	ReasonLauncherSetupError = "setup_failed"
 )
 
@@ -181,7 +196,12 @@ func runExtra(ops nsOps, args []string, policy launchPolicy) *LauncherError {
 		return fail(ReasonTmpNotPrivate, "%v", err)
 	}
 
-	// 9. Execute the registry's fixed spec.
+	// 9. A private /run/dietpi, when the host has one (AD-2, DP-SEC-003).
+	if lerr := isolateRunDir(ops, fail); lerr != nil {
+		return lerr
+	}
+
+	// 10. Execute the registry's fixed spec.
 	if err = ops.Chdir("/"); err != nil {
 		return fail(ReasonLauncherSetupError, "chdir /: %v", err)
 	}
@@ -194,6 +214,110 @@ func runExtra(ops nsOps, args []string, policy launchPolicy) *LauncherError {
 	argv := append([]string{spec.Path}, spec.Args...)
 	if err = ops.Exec(spec.Path, argv, spec.Env); err != nil {
 		return fail(ReasonLauncherSetupError, "exec: %v", err)
+	}
+	return nil
+}
+
+// isolateRunDir gives the step an empty root-owned tmpfs on /run/dietpi. A host
+// without /run/dietpi needs nothing: DietPi creates it itself as root. Every
+// failure after the probe is rundir_not_private and nothing has been executed.
+func isolateRunDir(ops nsOps, fail func(reason, format string, a ...any) *LauncherError) *LauncherError {
+	// Only "does not exist" skips. Any other probe error fails closed.
+	host, err := ops.StatNoFollow(runDietPiPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fail(ReasonRunDirNotPrivate, "cannot inspect %s: %v", runDietPiPath, err)
+	}
+	// Prove, without following a symlink, that it is a real root-owned directory.
+	if !host.IsDir() || host.UID != 0 {
+		return fail(ReasonRunDirNotPrivate, "%s is not a root-owned directory (uid %d, mode %#o)", runDietPiPath, host.UID, host.Mode)
+	}
+	data, err := ops.ReadFile(selfMountinfo, maxMountinfoBytes)
+	if err != nil {
+		return fail(ReasonRunDirNotPrivate, "read %s: %v", selfMountinfo, err)
+	}
+	table, err := ParseMountinfo(data)
+	if err != nil {
+		return fail(ReasonRunDirNotPrivate, "own mount table: %v", err)
+	}
+	// /run must be its own mount: making it private must not reach /.
+	if _, ok := topEntry(table, runPath); !ok {
+		return fail(ReasonRunDirNotPrivate, "%s is not a mount point of its own", runPath)
+	}
+	// Only this namespace's copy of /run and what is mounted below it.
+	if err = ops.Mount("", runPath, "", msRec|msPrivate, ""); err != nil {
+		return fail(ReasonRunDirNotPrivate, "make %s private: %v", runPath, err)
+	}
+	if err = ops.Mount("tmpfs", runDietPiPath, "tmpfs", msNosuid|msNodev|msNoexec, runDirTmpfsData); err != nil {
+		return fail(ReasonRunDirNotPrivate, "mount tmpfs on %s: %v", runDietPiPath, err)
+	}
+	if err = proveRunDirIsolation(ops); err != nil {
+		return fail(ReasonRunDirNotPrivate, "%v", err)
+	}
+	// The /run change must not have disturbed what OPS-001 proved: / and /boot
+	// still propagate to the host.
+	if err = reverifyPropagation(ops); err != nil {
+		return fail(ReasonMountPropagation, "after the %s setup: %v", runDietPiPath, err)
+	}
+	return nil
+}
+
+// reverifyPropagation re-reads both mount tables and runs verifyPropagation.
+func reverifyPropagation(ops nsOps) error {
+	selfData, err := ops.ReadFile(selfMountinfo, maxMountinfoBytes)
+	if err != nil {
+		return fmt.Errorf("read %s: %v", selfMountinfo, err)
+	}
+	initData, err := ops.ReadFile(initMountinfo, maxMountinfoBytes)
+	if err != nil {
+		return fmt.Errorf("read %s: %v", initMountinfo, err)
+	}
+	self, err := ParseMountinfo(selfData)
+	if err != nil {
+		return fmt.Errorf("own mount table: %v", err)
+	}
+	initTable, err := ParseMountinfo(initData)
+	if err != nil {
+		return fmt.Errorf("pid 1 mount table: %v", err)
+	}
+	return verifyPropagation(self, initTable)
+}
+
+// proveRunDirIsolation checks that /run/dietpi is now an empty root-owned 0755
+// tmpfs that is not the host's directory and is not shared.
+func proveRunDirIsolation(ops nsOps) error {
+	kind, err := ops.StatfsType(runDietPiPath)
+	if err != nil || kind != tmpfsMagic {
+		return fmt.Errorf("%s is not a tmpfs after setup (type %#x, %v)", runDietPiPath, kind, err)
+	}
+	id, err := ops.StatID(runDietPiPath)
+	if err != nil || id.UID != 0 || !id.IsDir() || id.Perm() != runDirMode {
+		return fmt.Errorf("%s is not a root-owned 0755 directory after setup (uid %d, mode %#o, %v)", runDietPiPath, id.UID, id.Mode, err)
+	}
+	n, err := ops.EntryCount(runDietPiPath)
+	if err != nil || n != 0 {
+		return fmt.Errorf("%s is not empty after setup (%d entries, %v)", runDietPiPath, n, err)
+	}
+	host, err := ops.StatID(initRunDietPi)
+	if err != nil {
+		return fmt.Errorf("cannot identify the host %s: %v", runDietPiPath, err)
+	}
+	if host.Dev == id.Dev && host.Ino == id.Ino {
+		return fmt.Errorf("%s is still the host directory", runDietPiPath)
+	}
+	data, err := ops.ReadFile(selfMountinfo, maxMountinfoBytes)
+	if err != nil {
+		return fmt.Errorf("read %s: %v", selfMountinfo, err)
+	}
+	table, err := ParseMountinfo(data)
+	if err != nil {
+		return fmt.Errorf("own mount table: %v", err)
+	}
+	top, ok := topEntry(table, runDietPiPath)
+	if !ok || top.Shared != 0 {
+		return fmt.Errorf("%s is still shared with the host", runDietPiPath)
 	}
 	return nil
 }
