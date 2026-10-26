@@ -13,22 +13,24 @@ import (
 
 	"github.com/DesyncTheThird/rIOt/internal/models"
 	"github.com/DesyncTheThird/rIOt/internal/server/commands"
+	"github.com/DesyncTheThird/rIOt/internal/server/events"
 	"github.com/DesyncTheThird/rIOt/internal/server/expect"
+	"github.com/DesyncTheThird/rIOt/internal/server/websocket"
 	"github.com/DesyncTheThird/rIOt/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The EXPECT-001 test harness (ADD section 8, "H"): a real Tracker and a real
-// commands.Service (so the observer hook is exercised) over the testutil
-// mocks, a fake clock, a fake escalator and broadcaster, and `harness.restart()`.
+// The EXPECT-001 test harness (ADD section 8, "H"): a real Tracker, a real
+// commands.Service (so the observer hook is exercised) and a real
+// events.Generator over the testutil mocks, a fake clock, a recording
+// dispatcher and broadcaster, and `harness.restart()`.
 //
-// fakeGen stands in for the event generator's side of the Cover* contract
-// (WP-2). It does what ADD AD-005 says the generator does with the tracker's
-// answers: a covered death or offline transition is stored as an info event
-// linked to the command and never notified; an uncovered or undecidable one
-// alerts. The tests that only pin that contract (marked "generator contract" in
-// their comments) must be re-run against *events.Generator once WP-2 lands.
+// The generator is the real one (WP-2). containerDied, containerOOM,
+// deviceOffline and register are thin drivers: they call the generator the way
+// the handlers and the offline detector do, then read what it stored and
+// dispatched. oracleSpy sits between the generator and the tracker only to
+// remember the tracker's error and answer, which the generator swallows.
 
 // ---------------------------------------------------------------------------
 // Clock
@@ -70,42 +72,24 @@ type pushRec struct {
 	Hostname string
 }
 
-// fakeEscalator is an expect.Escalator that resolves alert rules from the mock
-// rule repository like the generator does, and records every push.
+// fakeEscalator is the tracker's expect.Escalator: the real generator does the
+// work (rule lookup, event, notification); this wrapper only records each push
+// and lets a test hold PublishEscalation open (block must honour ctx).
 type fakeEscalator struct {
 	h *harness
 
 	mu       sync.Mutex
 	pushes   []pushRec
 	prepared int
-	// block, when set, replaces PublishEscalation (it must honour ctx).
-	block func(ctx context.Context) error
+	block    func(ctx context.Context) error
 }
 
 func (f *fakeEscalator) PrepareEscalation(ctx context.Context, req models.EscalationRequest) (models.PreparedEscalation, error) {
 	f.mu.Lock()
 	f.prepared++
 	f.mu.Unlock()
-	metric := string(req.EventType())
-	rules, _ := f.h.rules.ListEnabled(ctx)
-	var match *models.AlertRule
-	for i := range rules {
-		if rules[i].Metric == metric {
-			r := rules[i]
-			match = &r
-			break
-		}
-	}
-	if match != nil && !req.Kind.IsDevice() && req.Kind != models.EscContainerSummary && containerExcluded(match, req.ContainerName) {
-		return models.PreparedEscalation{Skip: true}, nil
-	}
-	evt := models.Event{DeviceID: req.DeviceID, Type: req.EventType(), Severity: models.SeverityWarning,
-		Message: req.Message, CommandID: req.Command.ID, CommandAttr: models.CommandAttrEscalation,
-		ContainerName: req.ContainerName, CreatedAt: req.At}
-	if match != nil {
-		evt.Severity = models.EventSeverity(match.Severity)
-	}
-	return models.PreparedEscalation{Event: evt, Rule: match}, nil
+	f.h.gen.InvalidateRulesCache() // tests edit the rule repository directly
+	return f.h.gen.PrepareEscalation(ctx, req)
 }
 
 func (f *fakeEscalator) PublishEscalation(ctx context.Context, evt models.Event, rule *models.AlertRule, host string) error {
@@ -115,9 +99,9 @@ func (f *fakeEscalator) PublishEscalation(ctx context.Context, evt models.Event,
 		}
 	}
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.pushes = append(f.pushes, pushRec{Event: evt, Rule: rule, Hostname: host})
-	return nil
+	f.mu.Unlock()
+	return f.h.gen.PublishEscalation(ctx, evt, rule, host)
 }
 
 func (f *fakeEscalator) Pushes() []pushRec {
@@ -126,13 +110,62 @@ func (f *fakeEscalator) Pushes() []pushRec {
 	return append([]pushRec(nil), f.pushes...)
 }
 
-func containerExcluded(rule *models.AlertRule, name string) bool {
-	for _, e := range strings.Split(rule.ExcludeContainers, ",") {
-		if strings.TrimSpace(e) != "" && strings.TrimSpace(e) == name {
-			return true
-		}
+// oracleSpy is the generator's events.ExpectedActivity: it forwards to the
+// current tracker and remembers the last error and answer of each call, which
+// the generator itself swallows (it alerts when the tracker cannot decide).
+type oracleSpy struct {
+	mu       sync.Mutex
+	tr       *expect.Tracker
+	coverErr error
+	offErr   error
+	offKind  models.OfflineKind
+	offOK    bool
+	note     *models.OnlineNote
+}
+
+func (s *oracleSpy) set(tr *expect.Tracker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tr = tr
+}
+
+func (s *oracleSpy) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.coverErr, s.offErr, s.offKind, s.offOK, s.note = nil, nil, "", false, nil
+}
+
+func (s *oracleSpy) current() *expect.Tracker {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tr
+}
+
+func (s *oracleSpy) CoverContainer(deviceID string, keys []string, at time.Time) (models.Coverage, bool, error) {
+	cov, ok, err := s.current().CoverContainer(deviceID, keys, at)
+	s.mu.Lock()
+	s.coverErr = err
+	s.mu.Unlock()
+	return cov, ok, err
+}
+
+func (s *oracleSpy) CoverOffline(ctx context.Context, deviceID string, at time.Time) (models.OfflineCoverage, bool, error) {
+	cov, ok, err := s.current().CoverOffline(ctx, deviceID, at)
+	s.mu.Lock()
+	s.offErr, s.offOK = err, ok
+	if ok {
+		s.offKind = cov.Kind
 	}
-	return false
+	s.mu.Unlock()
+	return cov, ok, err
+}
+
+func (s *oracleSpy) NoteOnline(ctx context.Context, deviceID string, at time.Time) *models.OnlineNote {
+	n := s.current().NoteOnline(ctx, deviceID, at)
+	s.mu.Lock()
+	s.note = n
+	s.mu.Unlock()
+	return n
 }
 
 type fakeBroadcaster struct {
@@ -199,6 +232,9 @@ type harness struct {
 	rules   *testutil.MockAlertRuleRepo
 	agents  *testutil.FakeAgents
 	esc     *fakeEscalator
+	gen     *events.Generator
+	disp    *testutil.MockDispatcher
+	spy     *oracleSpy
 	bc      *fakeBroadcaster
 	logs    *lockedBuffer
 
@@ -208,8 +244,8 @@ type harness struct {
 
 	lastReconcile time.Time
 
-	// alerts are the occurrences that went the "today" path: stored as warning
-	// events and, when the rule notifies, pushed.
+	// alerts are the occurrences that went the "today" path: stored as a non-expected
+	// event and, when the rule notifies, dispatched by the generator.
 	alerts []alertRec
 }
 
@@ -259,6 +295,13 @@ func newHarness(t *testing.T, opts ...hOpt) *harness {
 	}
 	h.repo = testutil.NewMockExpectedActivityRepo(h.cmds, h.events, h.devices)
 	h.esc = &fakeEscalator{h: h}
+	h.disp = testutil.NewMockDispatcher()
+	h.spy = &oracleSpy{}
+	hub := websocket.NewHub()
+	go hub.Run() // drains the generator's broadcasts; no client is connected
+	h.gen = events.NewGenerator(h.events, hub, h.rules, h.disp, h.cmds)
+	h.gen.SetClock(h.clock.Now)
+	h.gen.SetExpectedActivity(h.spy)
 	var ids []string
 	for _, d := range allDevices {
 		hb := baseTime
@@ -271,12 +314,15 @@ func newHarness(t *testing.T, opts ...hOpt) *harness {
 		h.agents = testutil.NewFakeAgents()
 	}
 	if !cfg.noRules {
+		// Like the rules the UI creates: the operator and threshold make an event of
+		// value 1 match. Cooldowns are 0: the cooldown path is not what these tests
+		// pin (generator_expect_test.go covers it with an injected clock).
 		_ = h.rules.Create(context.Background(), &models.AlertRule{Name: "container died", Enabled: true, Metric: "container_died",
-			Severity: "critical", Notify: true})
+			Operator: ">", Threshold: 0, Severity: "critical", Notify: true})
 		_ = h.rules.Create(context.Background(), &models.AlertRule{Name: "container oom", Enabled: true, Metric: "container_oom",
-			Severity: "critical", Notify: true})
+			Operator: ">", Threshold: 0, Severity: "critical", Notify: true})
 		_ = h.rules.Create(context.Background(), &models.AlertRule{Name: "device offline", Enabled: true, Metric: "device_offline",
-			Severity: "critical", Notify: true, CooldownSeconds: 300})
+			Operator: ">", Threshold: 0, Severity: "critical", Notify: true})
 	}
 	if cfg.deviceSetup != nil {
 		cfg.deviceSetup(h)
@@ -297,6 +343,7 @@ func (h *harness) build(cfg hConfig) {
 		Logger:             slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		QueueSize:          cfg.queueSize, Workers: cfg.workers, InlinePublish: cfg.inline,
 	})
+	h.spy.set(h.tr)
 	h.svc = commands.New(commands.Options{
 		Commands: h.cmds, Policies: h.pol, Telemetry: h.tele, Agents: h.agents, Observer: h.tr, Now: h.clock.Now,
 		Logger: slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -454,7 +501,7 @@ func (h *harness) seed(c models.Command) models.Command {
 func tp(t time.Time) *time.Time { return &t }
 
 // ---------------------------------------------------------------------------
-// The generator stand-in
+// The generator drivers
 // ---------------------------------------------------------------------------
 
 func shortID(name string) string {
@@ -470,31 +517,41 @@ func shortID(name string) string {
 	return b.String()
 }
 
-func (h *harness) rule(metric string) *models.AlertRule {
-	rules, _ := h.rules.ListEnabled(h.ctx())
-	for i := range rules {
-		if rules[i].Metric == metric {
-			r := rules[i]
-			return &r
+func (h *harness) hostname(device string) string { return h.devices.Devices[device].Hostname }
+
+// recordAlerts runs a generator call and files every container_died,
+// container_oom or device_offline event it stored that is not an expected-
+// activity info event as an alert, notified when the dispatcher got it. These
+// are the occurrences that went "the today path".
+func (h *harness) recordAlerts(call func()) {
+	h.t.Helper()
+	var lastID int64
+	for _, e := range h.allEvents() {
+		if e.ID > lastID {
+			lastID = e.ID
 		}
 	}
-	return nil
-}
-
-// alert is the "today" path: a warning event and, when the rule notifies, a push.
-func (h *harness) alert(typ models.EventType, device, container, msg string) {
-	metric := string(typ)
-	if typ == models.EventContainerOOM {
-		metric = "container_oom"
+	dispatched := len(h.disp.Alerts)
+	call()
+	fresh := h.allEvents()
+	sort.Slice(fresh, func(i, j int) bool { return fresh[i].ID < fresh[j].ID })
+	for _, e := range fresh {
+		if e.ID <= lastID || e.CommandAttr != "" {
+			continue
+		}
+		switch e.Type {
+		case models.EventContainerDied, models.EventContainerOOM, models.EventDeviceOffline:
+		default:
+			continue
+		}
+		notified := false
+		for _, a := range h.disp.Alerts[dispatched:] {
+			if a.Event != nil && a.Event.ID == e.ID {
+				notified = true
+			}
+		}
+		h.alerts = append(h.alerts, alertRec{Type: e.Type, Device: e.DeviceID, Container: e.ContainerName, Message: e.Message, Notified: notified})
 	}
-	rule := h.rule(metric)
-	sev := models.SeverityWarning
-	if rule != nil {
-		sev = models.EventSeverity(rule.Severity)
-	}
-	e := models.Event{DeviceID: device, Type: typ, Severity: sev, Message: msg, ContainerName: container, CreatedAt: h.clock.Now()}
-	require.NoError(h.t, h.events.Create(h.ctx(), &e))
-	h.alerts = append(h.alerts, alertRec{Type: typ, Device: device, Container: container, Message: msg, Notified: rule != nil && rule.Notify})
 }
 
 type deathResult struct {
@@ -502,41 +559,37 @@ type deathResult struct {
 	Err        error
 }
 
-// containerDied is CheckDockerEvent "die": exclusion first (FR-015, X-9), then
-// the tracker's answer.
-func (h *harness) containerDied(device, name string, keys ...string) deathResult {
+// dockerEvent drives the generator with a container event the way
+// ReceiveDockerEvent does: the target keys are filled in by the handler.
+func (h *harness) dockerEvent(action, device, name string, keys []string) deathResult {
 	h.t.Helper()
 	if keys == nil {
 		keys = []string{models.TargetKeyContainer(name)}
 	}
-	if r := h.rule("container_died"); r != nil && containerExcluded(r, name) {
-		return deathResult{}
-	}
-	key := models.ContainerNameKey(name)
-	cov, ok, err := h.tr.CoverContainer(device, keys, h.clock.Now())
-	if err == nil && ok {
-		e := models.Event{DeviceID: device, Type: models.EventContainerDied, Severity: models.SeverityInfo,
-			Message: cov.DeathMessage(key), ContainerName: key, ContainerID: shortID(name),
-			CommandID: cov.CommandID, CommandAttr: models.CommandAttrExpected, CreatedAt: h.clock.Now()}
-		require.NoError(h.t, h.events.Create(h.ctx(), &e))
-		return deathResult{Suppressed: true}
-	}
-	h.alert(models.EventContainerDied, device, key, fmt.Sprintf("Container %s died", key))
-	return deathResult{Err: err}
+	h.spy.reset()
+	h.gen.InvalidateRulesCache()
+	before := len(h.eventsOf(models.EventContainerDied, models.CommandAttrExpected))
+	h.recordAlerts(func() {
+		h.gen.CheckDockerEvent(h.ctx(), device, h.hostname(device), &models.DockerEvent{
+			ContainerName: name, ContainerID: shortID(name), Action: action, TargetKeys: keys,
+		})
+	})
+	h.spy.mu.Lock()
+	defer h.spy.mu.Unlock()
+	return deathResult{Suppressed: len(h.eventsOf(models.EventContainerDied, models.CommandAttrExpected)) > before, Err: h.spy.coverErr}
+}
+
+// containerDied is CheckDockerEvent "die": exclusion first (FR-015, X-9), then
+// the tracker's answer.
+func (h *harness) containerDied(device, name string, keys ...string) deathResult {
+	h.t.Helper()
+	return h.dockerEvent("die", device, name, keys)
 }
 
 // containerOOM is CheckDockerEvent "oom": never suppressed (FR-011).
 func (h *harness) containerOOM(device, name string, keys ...string) {
 	h.t.Helper()
-	if keys == nil {
-		keys = []string{models.TargetKeyContainer(name)}
-	}
-	key := models.ContainerNameKey(name)
-	msg := fmt.Sprintf("Container %s OOM killed", key)
-	if cov, ok, err := h.tr.CoverContainer(device, keys, h.clock.Now()); err == nil && ok {
-		msg = cov.OOMMessage(key)
-	}
-	h.alert(models.EventContainerOOM, device, key, msg)
+	h.dockerEvent("oom", device, name, keys)
 }
 
 // containerStarted stores a container_started event (the agent saw it start).
@@ -565,8 +618,9 @@ type offlineResult struct {
 }
 
 // deviceOffline is the offline detector's pass for one device at offlineAt
-// (default: now): the DB status flips to offline, the generator asks the
-// tracker, then the worker reports the new statuses (ObserveDevices).
+// (default: now): the DB status flips to offline, the generator's
+// DeviceOfflineAt asks the tracker, then the worker reports the new statuses
+// (ObserveDevices).
 func (h *harness) deviceOffline(device string, at ...time.Time) offlineResult {
 	h.t.Helper()
 	offlineAt := h.clock.Now()
@@ -577,24 +631,20 @@ func (h *harness) deviceOffline(device string, at ...time.Time) offlineResult {
 	hb := offlineAt.Add(-models.OfflineHeartbeatThreshold)
 	d.LastHeartbeat = &hb
 	require.NoError(h.t, h.devices.SetStatus(h.ctx(), device, models.DeviceStatusOffline))
-	res := offlineResult{}
-	cov, ok, err := h.tr.CoverOffline(h.ctx(), device, offlineAt)
-	res.Err = err
-	if err == nil && ok {
-		res.Covered, res.Kind = true, cov.Kind
-		e := models.Event{DeviceID: device, Type: models.EventDeviceOffline, Severity: models.SeverityInfo,
-			Message: cov.Message(d.Hostname), CommandID: cov.CommandID, CommandAttr: models.CommandAttrExpected, CreatedAt: h.clock.Now()}
-		require.NoError(h.t, h.events.Create(h.ctx(), &e))
-	} else {
-		h.alert(models.EventDeviceOffline, device, "", fmt.Sprintf("Device %s went offline", d.Hostname))
-	}
+	h.spy.reset()
+	h.gen.InvalidateRulesCache()
+	h.recordAlerts(func() { h.gen.DeviceOfflineAt(h.ctx(), device, d.Hostname, &hb) })
+	h.spy.mu.Lock()
+	res := offlineResult{Covered: h.spy.offOK && h.spy.offErr == nil, Kind: h.spy.offKind, Err: h.spy.offErr}
+	h.spy.mu.Unlock()
 	h.observe()
 	return res
 }
 
 // register is a device (re)registering: the DB status turns online, the
-// handler tells the tracker, and DeviceOnline stores the online event when the
-// device was not live before.
+// handler tells the tracker (NoteRegistration, before DeviceOnline), and the
+// generator's DeviceOnline stores the online event when the device was not live
+// before. It returns the note the tracker gave the generator.
 func (h *harness) register(device string) *models.OnlineNote {
 	h.t.Helper()
 	d := h.devices.Devices[device]
@@ -606,14 +656,11 @@ func (h *harness) register(device string) *models.OnlineNote {
 	if wasLive {
 		return nil
 	}
-	note := h.tr.NoteOnline(h.ctx(), device, now)
-	msg := fmt.Sprintf("Device %s came online", d.Hostname)
-	e := models.Event{DeviceID: device, Type: models.EventDeviceOnline, Severity: models.SeverityInfo, Message: msg, CreatedAt: now}
-	if note != nil {
-		e.Message, e.CommandID, e.CommandAttr = note.Message(d.Hostname), note.CommandID, models.CommandAttrExpected
-	}
-	require.NoError(h.t, h.events.Create(h.ctx(), &e))
-	return note
+	h.spy.reset()
+	h.gen.DeviceOnline(h.ctx(), device, d.Hostname)
+	h.spy.mu.Lock()
+	defer h.spy.mu.Unlock()
+	return h.spy.note
 }
 
 // heartbeat is a silent return: the DB status turns online and nothing tells
