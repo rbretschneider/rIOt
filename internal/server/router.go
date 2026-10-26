@@ -417,6 +417,8 @@ func registerCommandRoutes(r chi.Router, h *handlers.Handlers, deviceAuth []func
 	r.With(adminAuth).Get("/commands/{commandId}", h.GetCommand)
 	r.With(adminAuth).Post("/commands/{commandId}/cancel", h.CancelCommand)
 	r.With(adminAuth).Get("/commands/{commandId}/output", h.GetCommandOutput)
+	// EXPECT-002: the events linked to a command or an agent self-update record.
+	r.With(adminAuth).Get("/commands/{commandId}/events", h.GetCommandEvents)
 	r.With(deviceAuth...).Post("/commands/{commandId}/report", h.AgentCommandReport)
 	r.With(adminAuth).Post("/docker/bulk-update", h.BulkDockerUpdate)
 }
