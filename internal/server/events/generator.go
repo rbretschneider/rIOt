@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -28,10 +29,14 @@ type Generator struct {
 	dispatcher    Dispatcher
 	commandRepo   db.CommandRepository
 
-	mu            sync.Mutex
-	lastSent      map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
-	activeUpdates map[string]int       // key: deviceID → count of in-progress container updates
-	updateStarted map[string]time.Time // key: deviceID → when the first update_started was received
+	mu       sync.Mutex
+	lastSent map[string]time.Time // key: "deviceID:ruleID" or "deviceID:eventType"
+
+	// expected answers whether a death or offline transition is expected
+	// (EXPECT-001). now is the clock of every EXPECT-001 and cooldown path. Both
+	// are set once at start-up, before any worker runs, and read-only after.
+	expected ExpectedActivity
+	now      func() time.Time
 
 	// Short-lived cache for ListEnabled. Each telemetry snapshot fans out into
 	// many alert check paths (service, nic, process, container, UPS, GPU, …),
@@ -61,13 +66,53 @@ func NewGenerator(repo db.EventRepository, hub *websocket.Hub, alertRuleRepo db.
 		dispatcher:    dispatcher,
 		commandRepo:   commandRepo,
 		lastSent:      make(map[string]time.Time),
-		activeUpdates: make(map[string]int),
-		updateStarted: make(map[string]time.Time),
+		now:           time.Now,
 	}
 }
 
+// ExpectedActivity answers, from the command windows (EXPECT-001), whether a
+// container death or an offline transition was caused by a command the operator
+// or a schedule sent. *expect.Tracker implements it. Every method must be cheap
+// and free of database reads on the hot path; an error means "undecidable" and
+// the generator then alerts as it did before the feature.
+type ExpectedActivity interface {
+	// CoverContainer reports the command whose window covers a container event
+	// of this device. keys are the event's target keys.
+	CoverContainer(deviceID string, keys []string, at time.Time) (models.Coverage, bool, error)
+	// CoverOffline reports the window that covers an offline transition at
+	// offlineAt, and records the transition.
+	CoverOffline(ctx context.Context, deviceID string, offlineAt time.Time) (models.OfflineCoverage, bool, error)
+	// NoteOnline records that the device is live again and returns the note for
+	// the online event (nil when no window or power-off precedes it).
+	NoteOnline(ctx context.Context, deviceID string, at time.Time) *models.OnlineNote
+}
+
+// SetExpectedActivity wires the expected-activity tracker. It must be called
+// before the generator is used concurrently. A nil value, including a nil
+// pointer inside the interface, leaves the generator on the pre-feature path.
+func (g *Generator) SetExpectedActivity(e ExpectedActivity) {
+	if e == nil {
+		g.expected = nil
+		return
+	}
+	if v := reflect.ValueOf(e); v.Kind() == reflect.Ptr && v.IsNil() {
+		g.expected = nil
+		return
+	}
+	g.expected = e
+}
+
+// SetClock injects the clock used by cooldowns and by the expected-activity
+// paths (AD-013). A nil function restores time.Now.
+func (g *Generator) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+	g.now = now
+}
+
 // StartCleanup runs a background goroutine that periodically prunes stale
-// entries from the lastSent and activeUpdates maps to prevent unbounded growth.
+// entries from the lastSent map to prevent unbounded growth.
 func (g *Generator) StartCleanup(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(10 * time.Minute)
@@ -88,20 +133,10 @@ func (g *Generator) pruneStaleEntries() {
 	defer g.mu.Unlock()
 
 	// Prune lastSent entries older than 1 hour — well beyond any cooldown period
-	cutoff := time.Now().Add(-1 * time.Hour)
+	cutoff := g.now().Add(-1 * time.Hour)
 	for key, t := range g.lastSent {
 		if t.Before(cutoff) {
 			delete(g.lastSent, key)
-		}
-	}
-
-	// Prune activeUpdates entries stuck for over 30 minutes — the agent
-	// likely crashed mid-update if it hasn't sent a completion event by now.
-	updateCutoff := time.Now().Add(-30 * time.Minute)
-	for deviceID, started := range g.updateStarted {
-		if started.Before(updateCutoff) {
-			delete(g.activeUpdates, deviceID)
-			delete(g.updateStarted, deviceID)
 		}
 	}
 }
@@ -153,10 +188,11 @@ func (g *Generator) onCooldown(key string, cooldown time.Duration) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	if last, exists := g.lastSent[key]; exists && time.Since(last) < cooldown {
+	now := g.now()
+	if last, exists := g.lastSent[key]; exists && now.Sub(last) < cooldown {
 		return true
 	}
-	g.lastSent[key] = time.Now()
+	g.lastSent[key] = now
 	return false
 }
 
@@ -182,14 +218,6 @@ func (g *Generator) createEventAndNotify(ctx context.Context, e *models.Event, r
 	}
 }
 
-// disruptiveActions are command actions that are expected to take a device offline.
-// agent_update is intentionally excluded — it's just a trigger; the actual update
-// lifecycle is tracked by agent_update_* events reported by the agent itself.
-var disruptiveActions = map[string]string{
-	"reboot":    "reboot",
-	"os_update": "OS update",
-}
-
 // commandLabels maps all command actions to human-readable labels for event messages.
 var commandLabels = map[string]string{
 	"docker_stop":          "Docker stop",
@@ -204,26 +232,16 @@ var commandLabels = map[string]string{
 	"fetch_logs":           "Log fetch",
 	"enable_auto_updates":  "Enable auto-updates",
 	"run_device_probe":     "Device probe",
-}
 
-// recentDisruptiveCommand returns the most recent disruptive command sent to a device
-// within the last 2 minutes, or nil if none found.
-func (g *Generator) recentDisruptiveCommand(ctx context.Context, deviceID string) *models.Command {
-	if g.commandRepo == nil {
-		return nil
-	}
-	cmds, err := g.commandRepo.ListByDevice(ctx, deviceID, 5)
-	if err != nil {
-		return nil
-	}
-	cutoff := time.Now().UTC().Add(-2 * time.Minute)
-	for i := range cmds {
-		c := &cmds[i]
-		if _, ok := disruptiveActions[c.Action]; ok && c.CreatedAt.After(cutoff) {
-			return c
-		}
-	}
-	return nil
+	"shutdown":                 "Shutdown",
+	"docker_stack_redeploy":    "Docker stack redeploy",
+	"docker_stack_restart":     "Docker stack restart",
+	"docker_stack_up":          "Docker stack up",
+	"docker_stack_down":        "Docker stack down",
+	"docker_stack_pull":        "Docker stack pull",
+	"docker_remove_items":      "Docker remove items",
+	"docker_inventory_refresh": "Docker inventory refresh",
+	"agent_uninstall":          "Agent uninstall",
 }
 
 // rebootAuthorizedEventSuffix is appended to the command-sent message of an os_update
@@ -286,39 +304,80 @@ func (g *Generator) CommandCompleted(ctx context.Context, deviceID, hostname, ac
 }
 
 func (g *Generator) DeviceOnline(ctx context.Context, deviceID, hostname string) {
+	now := g.now().UTC()
+	// The tracker is told before the cooldown check: its state (the powered-off
+	// row, the open escalation, the deferred container checks) must change on
+	// every return, whether or not the event is stored (EXPECT-001 AD-005).
+	var note *models.OnlineNote
+	if g.expected != nil {
+		note = g.expected.NoteOnline(ctx, deviceID, now)
+	}
 	key := deviceID + ":" + string(models.EventDeviceOnline)
 	if g.onCooldown(key, 5*time.Minute) {
 		return
 	}
-	msg := fmt.Sprintf("Device %s came online", hostname)
-	if cmd := g.recentDisruptiveCommand(ctx, deviceID); cmd != nil {
-		msg += fmt.Sprintf(" (after %s)", disruptiveActions[cmd.Action])
-	}
-	g.createEvent(ctx, &models.Event{
+	e := &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventDeviceOnline,
 		Severity:  models.SeverityInfo,
-		Message:   msg,
-		CreatedAt: time.Now().UTC(),
-	})
+		Message:   fmt.Sprintf("Device %s came online", hostname),
+		CreatedAt: now,
+	}
+	if note != nil {
+		e.Message = note.Message(hostname)
+		e.CommandID = note.CommandID
+		e.CommandAttr = models.CommandAttrExpected
+	}
+	g.createEvent(ctx, e)
 }
 
+// DeviceOffline records an offline transition whose last heartbeat is unknown.
 func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string) {
-	msg := fmt.Sprintf("Device %s went offline", hostname)
-	severity := models.SeverityWarning
-	if cmd := g.recentDisruptiveCommand(ctx, deviceID); cmd != nil {
-		label := disruptiveActions[cmd.Action]
-		ago := time.Since(cmd.CreatedAt).Truncate(time.Second)
-		msg += fmt.Sprintf(" (%s sent %s ago)", label, ago)
-		severity = models.SeverityInfo // expected downtime, not a warning
+	g.DeviceOfflineAt(ctx, deviceID, hostname, nil)
+}
+
+// DeviceOfflineAt records an offline transition. lastHeartbeat, when known,
+// dates the transition: the device is taken to have gone offline when its
+// heartbeat threshold passed, not when the detector noticed. An offline
+// transition inside a host or agent window, or the first one after a
+// successful shutdown, is stored as an info event linked to the command and is
+// never notified (EXPECT-001 AD-005). Every other case, and every tracker
+// error, alerts through the alert rules as before.
+func (g *Generator) DeviceOfflineAt(ctx context.Context, deviceID, hostname string, lastHeartbeat *time.Time) {
+	now := g.now().UTC()
+	// offlineAt compares a PostgreSQL NOW() heartbeat with the app clock; both
+	// are the same host's kernel clock (EXPECT-001 INFO-5).
+	offlineAt := now
+	if lastHeartbeat != nil {
+		if at := lastHeartbeat.UTC().Add(models.OfflineHeartbeatThreshold); at.Before(now) {
+			offlineAt = at
+		}
+	}
+	if g.expected != nil {
+		cov, ok, err := g.expected.CoverOffline(ctx, deviceID, offlineAt)
+		switch {
+		case err != nil:
+			slog.Debug("expected-activity offline check undecidable, alerting", "device_id", deviceID, "error", err.Error())
+		case ok:
+			g.createEvent(ctx, &models.Event{
+				DeviceID:    deviceID,
+				Type:        models.EventDeviceOffline,
+				Severity:    models.SeverityInfo,
+				Message:     cov.Message(hostname),
+				CommandID:   cov.CommandID,
+				CommandAttr: models.CommandAttrExpected,
+				CreatedAt:   now,
+			})
+			return
+		}
 	}
 
 	e := &models.Event{
 		DeviceID:  deviceID,
 		Type:      models.EventDeviceOffline,
-		Severity:  severity,
-		Message:   msg,
-		CreatedAt: time.Now().UTC(),
+		Severity:  models.SeverityWarning,
+		Message:   fmt.Sprintf("Device %s went offline", hostname),
+		CreatedAt: now,
 	}
 
 	// Check for device_offline alert rules
@@ -329,9 +388,7 @@ func (g *Generator) DeviceOffline(ctx context.Context, deviceID, hostname string
 		if g.onCooldown(key, cd) {
 			return
 		}
-		if severity != models.SeverityInfo {
-			e.Severity = models.EventSeverity(rule.Severity)
-		}
+		e.Severity = models.EventSeverity(rule.Severity)
 		g.createEventAndNotify(ctx, e, rule, hostname, 1)
 	} else {
 		// Fallback: create event without notification
@@ -630,7 +687,7 @@ func (g *Generator) CheckUPSAlerts(ctx context.Context, deviceID, hostname strin
 
 		// Track that we were on battery
 		g.mu.Lock()
-		g.lastSent[wasOnBatteryKey] = time.Now()
+		g.lastSent[wasOnBatteryKey] = g.now()
 		g.mu.Unlock()
 	} else {
 		// On line power — check if we were previously on battery
@@ -684,7 +741,7 @@ func (g *Generator) CheckRebootRequired(ctx context.Context, deviceID, hostname 
 
 	g.mu.Lock()
 	_, alreadyActive := g.lastSent[activeKey]
-	g.lastSent[activeKey] = time.Now() // refresh every true cycle (SEC-PATCH-GATE-008)
+	g.lastSent[activeKey] = g.now() // refresh every true cycle (SEC-PATCH-GATE-008)
 	g.mu.Unlock()
 	if alreadyActive {
 		return
@@ -806,7 +863,7 @@ func (g *Generator) CheckContainerThresholds(ctx context.Context, deviceID, host
 
 // CheckDockerEvent creates an event from a Docker container state change.
 func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname string, evt *models.DockerEvent) {
-	now := time.Now().UTC()
+	now := g.now().UTC()
 	// Short ID matches ContainerInfo.ShortID used by the dashboard's container detail
 	// route. Docker IDs are typically 64 hex chars; short form is first 12.
 	shortID := evt.ContainerID
@@ -827,46 +884,63 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "die":
-		g.mu.Lock()
-		updating := g.activeUpdates[deviceID] > 0
-		g.mu.Unlock()
-
-		if updating {
-			// Container died as part of a running update — expected, downgrade to info
-			g.createEvent(ctx, &models.Event{
-				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityInfo,
-				Message:     fmt.Sprintf("Container %s died (update in progress)", evt.ContainerName),
-				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
-			})
-		} else {
-			// User explicitly opted this container out of container_died alerts —
-			// suppress both the stored event and any notification.
-			if g.isContainerExcluded(ctx, "container_died", deviceID, hostname, evt.ContainerName) {
+		// User explicitly opted this container out of container_died alerts —
+		// suppress both the stored event and any notification. This comes before
+		// the window lookup, so an excluded container behaves the same inside and
+		// outside a window (EXPECT-001 X-9).
+		if g.isContainerExcluded(ctx, "container_died", deviceID, hostname, evt.ContainerName) {
+			return
+		}
+		// A death inside a command window that targets this container (or the
+		// whole device) is recorded as an info event linked to the command and is
+		// not notified. An undecidable answer (the tracker is not ready) falls
+		// through to the alert (EXPECT-001 AD-005, NFR-009).
+		if g.expected != nil {
+			cov, ok, err := g.expected.CoverContainer(deviceID, evt.TargetKeys, now)
+			switch {
+			case err != nil:
+				slog.Debug("expected-activity container check undecidable, alerting", "device_id", deviceID, "error", err.Error())
+			case ok:
+				key := models.ContainerNameKey(evt.ContainerName)
+				g.createEvent(ctx, &models.Event{
+					DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityInfo,
+					Message:     cov.DeathMessage(key),
+					ContainerID: hexShortID(evt.ContainerID), ContainerName: key, CreatedAt: now,
+					CommandID: cov.CommandID, CommandAttr: models.CommandAttrExpected,
+				})
 				return
 			}
-			e := &models.Event{
-				DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
-				Message:     fmt.Sprintf("Container %s died", evt.ContainerName),
-				ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
+		}
+		e := &models.Event{
+			DeviceID: deviceID, Type: models.EventContainerDied, Severity: models.SeverityWarning,
+			Message:     fmt.Sprintf("Container %s died", evt.ContainerName),
+			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
+		}
+		rule := g.findMatchingRuleForContainer(ctx, "container_died", deviceID, hostname, evt.ContainerName, 1)
+		if rule != nil {
+			key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
+			if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
+				e.Severity = models.EventSeverity(rule.Severity)
+				g.createEventAndNotify(ctx, e, rule, "", 1)
 			}
-			rule := g.findMatchingRuleForContainer(ctx, "container_died", deviceID, hostname, evt.ContainerName, 1)
-			if rule != nil {
-				key := fmt.Sprintf("%s:rule:%d", deviceID, rule.ID)
-				if !g.onCooldown(key, time.Duration(rule.CooldownSeconds)*time.Second) {
-					e.Severity = models.EventSeverity(rule.Severity)
-					g.createEventAndNotify(ctx, e, rule, "", 1)
-				}
-			} else {
-				g.createEvent(ctx, e)
-			}
+		} else {
+			g.createEvent(ctx, e)
 		}
 	case "oom":
 		if g.isContainerExcluded(ctx, "container_oom", deviceID, hostname, evt.ContainerName) {
 			return
 		}
+		// An OOM kill is never suppressed (FR-011); inside a window the alert
+		// names the action in progress.
+		oomMsg := fmt.Sprintf("Container %s OOM killed", evt.ContainerName)
+		if g.expected != nil {
+			if cov, ok, err := g.expected.CoverContainer(deviceID, evt.TargetKeys, now); err == nil && ok {
+				oomMsg = cov.OOMMessage(models.ContainerNameKey(evt.ContainerName))
+			}
+		}
 		e := &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerOOM, Severity: models.SeverityCrit,
-			Message:     fmt.Sprintf("Container %s OOM killed", evt.ContainerName),
+			Message:     oomMsg,
 			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		}
 		rule := g.findMatchingRuleForContainer(ctx, "container_oom", deviceID, hostname, evt.ContainerName, 1)
@@ -904,42 +978,18 @@ func (g *Generator) CheckDockerEvent(ctx context.Context, deviceID, hostname str
 			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_started":
-		g.mu.Lock()
-		if g.activeUpdates[deviceID] == 0 {
-			g.updateStarted[deviceID] = time.Now()
-		}
-		g.activeUpdates[deviceID]++
-		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateStarted, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s update started", evt.ContainerName),
 			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_completed":
-		g.mu.Lock()
-		if g.activeUpdates[deviceID] > 0 {
-			g.activeUpdates[deviceID]--
-		}
-		if g.activeUpdates[deviceID] == 0 {
-			delete(g.activeUpdates, deviceID)
-			delete(g.updateStarted, deviceID)
-		}
-		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateDone, Severity: models.SeverityInfo,
 			Message:     fmt.Sprintf("Container %s updated successfully", evt.ContainerName),
 			ContainerID: shortID, ContainerName: evt.ContainerName, CreatedAt: now, CommandID: evt.CommandID, CommandAttr: evt.CommandAttr,
 		})
 	case "update_failed":
-		g.mu.Lock()
-		if g.activeUpdates[deviceID] > 0 {
-			g.activeUpdates[deviceID]--
-		}
-		if g.activeUpdates[deviceID] == 0 {
-			delete(g.activeUpdates, deviceID)
-			delete(g.updateStarted, deviceID)
-		}
-		g.mu.Unlock()
 		g.createEvent(ctx, &models.Event{
 			DeviceID: deviceID, Type: models.EventContainerUpdateFailed, Severity: models.SeverityWarning,
 			Message:     fmt.Sprintf("Container %s update failed", evt.ContainerName),
@@ -1428,4 +1478,76 @@ func compareValue(value float64, operator string, threshold float64) bool {
 	default:
 		return false
 	}
+}
+
+// hexShortID is the 12-character short form of a Docker container ID,
+// restricted to lower-case hexadecimal. The ID is agent-supplied and ends up in
+// events the operator reads, so anything else is dropped (EXPECT-001 C-6).
+func hexShortID(id string) string {
+	if len(id) > 12 {
+		id = id[:12]
+	}
+	var b strings.Builder
+	for i := 0; i < len(id); i++ {
+		if c := id[i]; (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
+}
+
+// PrepareEscalation resolves the alert rule of an escalation and builds the
+// event the tracker then stores together with its exactly-once marker
+// (EXPECT-001 AD-010). It reads rules only: it stores, broadcasts and sends
+// nothing, and it neither checks nor starts a rule cooldown (X-8). Skip is true
+// when the container is excluded from container_died alerts. An error means the
+// rules could not be read; the tracker retries on its next tick rather than
+// raise an escalation that would silently lose its rule.
+func (g *Generator) PrepareEscalation(ctx context.Context, req models.EscalationRequest) (models.PreparedEscalation, error) {
+	if _, err := g.listEnabledRules(ctx); err != nil {
+		return models.PreparedEscalation{}, fmt.Errorf("list alert rules: %w", err)
+	}
+	metric := string(req.EventType())
+	container := ""
+	if req.Kind == models.EscContainer {
+		container = req.ContainerName
+	}
+	if container != "" && g.isContainerExcluded(ctx, metric, req.DeviceID, req.Hostname, container) {
+		return models.PreparedEscalation{Skip: true}, nil
+	}
+	evt := models.Event{
+		DeviceID:      req.DeviceID,
+		Type:          req.EventType(),
+		Severity:      models.SeverityWarning,
+		Message:       req.Message,
+		ContainerName: req.ContainerName,
+		CommandID:     req.Command.ID,
+		CommandAttr:   models.CommandAttrEscalation,
+		CreatedAt:     req.At,
+	}
+	prep := models.PreparedEscalation{Event: evt}
+	if rule := g.findMatchingRuleForContainer(ctx, metric, req.DeviceID, req.Hostname, container, 1); rule != nil {
+		r := *rule
+		prep.Rule = &r
+		prep.Event.Severity = models.EventSeverity(r.Severity)
+	}
+	return prep, nil
+}
+
+// PublishEscalation sends the notification of an escalation event that the
+// tracker has already stored and broadcast to the dashboards; it must not
+// broadcast again. The rule's cooldown is neither read nor written (X-8): the
+// per-device ceiling of the publisher bounds the pushes instead.
+func (g *Generator) PublishEscalation(ctx context.Context, evt models.Event, rule *models.AlertRule, hostname string) error {
+	if rule == nil || !rule.Notify || g.dispatcher == nil {
+		return nil
+	}
+	g.dispatcher.Dispatch(ctx, models.Alert{
+		Rule:     rule,
+		Event:    &evt,
+		DeviceID: evt.DeviceID,
+		Hostname: hostname,
+		Value:    1,
+	})
+	return ctx.Err()
 }
