@@ -131,6 +131,12 @@ func (p *pprofServer) Shutdown(ctx context.Context) error {
 	if err != nil {
 		_ = p.srv.Close()
 	}
+	// Shutdown only closes listeners Serve has already registered. If the Serve
+	// goroutine has not started yet, close the listener here so the port is
+	// released now rather than whenever that goroutine runs.
+	if cerr := p.ln.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) && err == nil {
+		err = cerr
+	}
 	return err
 }
 

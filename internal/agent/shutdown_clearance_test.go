@@ -898,8 +898,16 @@ func TestShutdown_SD_AC030_LateNonZeroExitLogsOneWarn(t *testing.T) {
 			close(r.poweroffBlock)
 			require.Eventually(t, func() bool { return !r.a.poweroffRunning.Load() }, 5*time.Second, time.Millisecond, "[AC-030] reaped")
 
-			assert.Equal(t, tc.wantWarn, linesWith(logs.String(), "level=WARN", "poweroff command failed after the start check"),
-				"[AC-030] warn lines for %s", tc.name)
+			// The flag is cleared before the late exit is logged, so the WARN can land
+			// just after the reap is observed: wait for it rather than read once.
+			warns := func() int {
+				return linesWith(logs.String(), "level=WARN", "poweroff command failed after the start check")
+			}
+			if tc.wantWarn > 0 {
+				require.Eventually(t, func() bool { return warns() >= tc.wantWarn }, 5*time.Second, time.Millisecond,
+					"[AC-030] warn line for %s", tc.name)
+			}
+			assert.Equal(t, tc.wantWarn, warns(), "[AC-030] warn lines for %s", tc.name)
 		})
 	}
 }
