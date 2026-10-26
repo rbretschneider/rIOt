@@ -30,6 +30,7 @@ type offlineRig struct {
 	gen     *events.Generator
 	obs     *recordingObserver
 	det     *offlineDetector
+	mu      sync.Mutex // guards now: the run tests read it from the detector goroutine
 	now     time.Time
 }
 
@@ -61,9 +62,9 @@ func newOfflineRig(t *testing.T, graceEnd time.Time) *offlineRig {
 	hub := websocket.NewHub()
 	go hub.Run()
 	r.gen = events.NewGenerator(r.events, hub, rules, testutil.NewMockDispatcher(), nil)
-	r.gen.SetClock(func() time.Time { return r.now })
+	r.gen.SetClock(r.clock)
 	r.det = &offlineDetector{
-		devices: r.devices, events: r.gen, observer: r.obs, graceEnd: graceEnd, now: func() time.Time { return r.now },
+		devices: r.devices, events: r.gen, observer: r.obs, graceEnd: graceEnd, now: r.clock,
 	}
 	return r
 }
@@ -194,7 +195,7 @@ func TestEX_AC035_OneShotRunsTheCheckOnceTheGraceIsOver(t *testing.T) {
 	go func() { defer close(done); r.det.run(ctx) }()
 
 	tick <- r.now // inside the grace: nothing
-	r.now = graceEnd
+	r.setNow(graceEnd)
 	oneShot <- r.now // the one-shot fires at the end of the grace
 	tick <- r.now    // a later tick is a no-op transition-wise; receiving it also proves the one-shot's check finished
 	cancel()
@@ -382,4 +383,16 @@ func TestEX_SEC007_ClockGoingBackDoesNotStretchTheCap(t *testing.T) {
 	s.start(offlineBase.Add(time.Hour)) // a start stamped in the future
 	got := s.start(offlineBase)
 	assert.False(t, got.After(offlineBase.Add(2*time.Minute)), "a series start in the future is not trusted: the grace is at most 2 minutes, got %s", got.Sub(offlineBase))
+}
+
+func (r *offlineRig) clock() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.now
+}
+
+func (r *offlineRig) setNow(t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = t
 }
