@@ -65,6 +65,9 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		// ListsFreshness is the normalized apt package-list freshness (fresh,
 		// stale or unknown), always present. Display-only (PATCH-FLOW-001 AD-011).
 		ListsFreshness string `json:"lists_freshness"`
+		// ExtraUpdaters are the entries with an update waiting, at most eight
+		// (EXTRA-UPD-001 FR-053). Absent when none is pending. Display-only.
+		ExtraUpdaters []models.ExtraUpdater `json:"extra_updaters,omitempty"`
 	}
 
 	// Computed once per request, not per device. time.Now() lives here at the
@@ -106,6 +109,7 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 			info.RebootRequired = updates.RebootRequired
 			info.AllowReboot = updates.AllowReboot
 			info.UpdatesAt = s.UpdatesAt
+			info.ExtraUpdaters = pendingExtraUpdaters(updates)
 			if detail {
 				info.PackageManager = updates.PackageManager
 				info.Updates = updates.Updates
@@ -159,11 +163,28 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 		// PendingUpdates == 0 but RebootRequired == true; without this it was
 		// dropped entirely, so the fleet reboot indicator and its ETA tooltip
 		// never rendered (REBOOT-ETA-001 follow-up).
-		if s.Updates != nil && (s.Updates.PendingUpdates > 0 || s.Updates.RebootRequired) {
+		// A host whose only waiting update is an extra updater (DietPi) is listed
+		// too (EXTRA-UPD-001 FR-053).
+		if s.Updates != nil && (s.Updates.PendingUpdates > 0 || s.Updates.RebootRequired || len(pendingExtraUpdaters(s.Updates)) > 0) {
 			result = append(result, build(s.DeviceID, s))
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// pendingExtraUpdaters returns the extra-updater entries that have an update
+// waiting. The decoder already bounded the list to eight entries.
+func pendingExtraUpdaters(u *models.UpdateInfo) []models.ExtraUpdater {
+	if u == nil {
+		return nil
+	}
+	var out []models.ExtraUpdater
+	for _, e := range u.ExtraUpdaters {
+		if e.Pending() && len(out) < models.MaxExtraUpdaters {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // AgentVersionSummary handles GET /api/v1/fleet/agent-versions.
@@ -267,7 +288,10 @@ func (h *Handlers) BulkPatchDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	needsPatch := make(map[string]bool, len(summaries))
 	for _, s := range summaries {
-		if s.Updates != nil && s.Updates.PendingUpdates > 0 {
+		// Apt updates, or an extra updater that would really be applied (status
+		// update_available and readiness enabled; EXTRA-UPD-001 D-7). The command
+		// service stamps the extended budget itself.
+		if s.Updates != nil && (s.Updates.PendingUpdates > 0 || hasEnabledPendingExtra(s.Updates)) {
 			needsPatch[s.DeviceID] = true
 		}
 	}

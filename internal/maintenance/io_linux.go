@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -109,6 +110,13 @@ func validateFile(f *os.File, uid int, maxMode uint32) error {
 	return nil
 }
 func readSafe(path string, max int64, uid, agentUID int) ([]byte, error) {
+	return readSafeMode(path, max, uid, agentUID, 0640)
+}
+
+// readSafeMode is readSafe with an explicit mode ceiling. The extra-updater
+// policy is world-readable (0644) so the unprivileged agent can compute
+// readiness from it.
+func readSafeMode(path string, max int64, uid, agentUID int, maxMode uint32) ([]byte, error) {
 	dir, base, err := openParent(path, agentUID)
 	if err != nil {
 		return nil, err
@@ -120,7 +128,7 @@ func readSafe(path string, max int64, uid, agentUID int) ([]byte, error) {
 	}
 	f := os.NewFile(uintptr(fd), path)
 	defer f.Close()
-	if err = validateFile(f, uid, 0640); err != nil {
+	if err = validateFile(f, uid, maxMode); err != nil {
 		return nil, err
 	}
 	st, err := f.Stat()
@@ -406,6 +414,46 @@ func (s *Store) capacity() error {
 	}
 	return nil
 }
+
+// LatestExtraStart returns the newest recorded start of an updater across the
+// retained terminal records (SEC-006). It reads root-owned history only: the
+// agent cannot edit it, and the 32-record cap means it cannot evict it. Any
+// unreadable record is an error, so the caller fails closed.
+func (s *Store) LatestExtraStart(id string) (time.Time, bool, error) {
+	entries, err := s.dir.ReadDir(-1)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if _, err = s.dir.Seek(0, 0); err != nil {
+		return time.Time{}, false, err
+	}
+	var newest time.Time
+	found := false
+	for _, e := range entries {
+		if e.Name() == "current.json" || e.Name() == "update.json" {
+			continue
+		}
+		recID := strings.TrimSuffix(e.Name(), ".json")
+		if !ValidCommandID(recID) || e.Name() != recID+".json" {
+			return time.Time{}, false, errors.New("unrecognized root state entry requires operator review")
+		}
+		data, err := readSafe(filepath.Join(s.path, e.Name()), MaxRecordBytes, 0, -1)
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		rec, err := parseRecord(data)
+		if err != nil {
+			return time.Time{}, false, err
+		}
+		for _, u := range rec.ExtraUpdaters {
+			if u.ID == id && u.StartedAt != nil && (!found || u.StartedAt.After(newest)) {
+				newest, found = *u.StartedAt, true
+			}
+		}
+	}
+	return newest, found, nil
+}
+
 func (s *Store) Save(rec Record) error {
 	if err := rec.Validate(); err != nil {
 		return err

@@ -9,7 +9,7 @@ import type {
   Command, UPSInfo, WebServerInfo, USBInfo, SecurityScoreResult,
   AutomationConfig, ContainerLogEntry, DeviceProbeResult, DeviceProbeWithResultEnriched,
   FleetContainerRow, FleetHeartbeat, FleetHeartbeatsResponse, HeartbeatData,
-  AutoUpdatePolicy, ActivityResponse,
+  AutoUpdatePolicy, ActivityResponse, ExtraUpdater,
 } from '../types/models'
 import type { DevicePatchInfo, PatchBadge } from './client'
 import { ApiError } from './errors'
@@ -384,10 +384,29 @@ function makeTelemetry(d: typeof deviceDefs[number]): FullTelemetryData {
       pending_kernel_update: d.hostname === 'pi-cameras',
       pending_kernel_version: d.hostname === 'pi-cameras' ? '6.6.51-v8+' : undefined,
       unattended_upgrades: false,
+      // EXTRA-UPD-001: a DietPi host with an update waiting, and one whose DietPi status is unknown.
+      extra_updaters: demoExtraUpdaters(d.hostname),
       // Fields from the merged server UpdateInfo interface (unused by telemetry views)
       current_version: '', latest_version: '', update_available: false,
     },
   }
+}
+
+// EXTRA-UPD-001 FR-060: demo hosts with a pending DietPi update and with an unknown one.
+function demoExtraUpdaters(hostname: string): ExtraUpdater[] | undefined {
+  if (hostname === 'pi-dns') {
+    return [{
+      id: 'dietpi', status: 'update_available', installed_version: '9.20.1', available_version: '10.8.2',
+      pending_count: 1, readiness: 'enabled', notices: [{ code: 'major_upgrade' }],
+    }]
+  }
+  if (hostname === 'pi-cameras') {
+    return [{
+      id: 'dietpi', status: 'unknown', unknown_reason: 'check_disabled', installed_version: '9.20.1',
+      pending_count: 0, readiness: 'enabled',
+    }]
+  }
+  return undefined
 }
 
 export function getDeviceDetail(id: string): DeviceDetailResponse | null {
@@ -710,7 +729,7 @@ export function getSecurityDevices() {
 
 // ── Patch Status ─────────────────────────────────────────────────────────────
 
-function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, needsYou: PatchBadge['explanation']['needs_you'] = []): PatchBadge {
+function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, needsYou: PatchBadge['explanation']['needs_you'] = [], info: PatchBadge['explanation']['needs_you'] = []): PatchBadge {
   return {
     kind,
     label,
@@ -718,6 +737,7 @@ function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, need
       automatic: 'Yes. Any time (within the 360-minute cooldown).',
       reboot,
       needs_you: needsYou,
+      info,
       needs_you_summary: needsYou.length === 0 ? 'Nothing.' : `${needsYou.length} item${needsYou.length === 1 ? '' : 's'} need${needsYou.length === 1 ? 's' : ''} you.`,
       as_of: '2026-10-19 02:00 UTC (just now)',
       notes: [],
@@ -732,7 +752,28 @@ export function getPatchStatus(): DevicePatchInfo[] {
       device_id: devices.find(d => d.hostname === 'pi-cameras')!.id,
       hostname: 'pi-cameras', pending_updates: 12, security_count: 3,
       reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
-      patch_badge: demoBadge('auto', 'Auto', 'Not needed.'),
+      patch_badge: demoBadge('auto', 'Auto', 'Not needed.', [], [{
+        code: 'extra_update_unknown', updater: 'dietpi', action: 'No action needed unless you expect an update.',
+        text: 'DietPi update status is unknown: its own update check is turned off. rIOt will not apply it until an update is known to be waiting.',
+      }]),
+    },
+    {
+      device_id: devices.find(d => d.hostname === 'pi-dns')!.id,
+      hostname: 'pi-dns', pending_updates: 0, security_count: 0,
+      reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
+      extra_updaters: demoExtraUpdaters('pi-dns'),
+      patch_badge: demoBadge('auto', 'Auto', 'Not needed.', [], [{
+        code: 'extra_update_pending', updater: 'dietpi', action: 'Nothing to do.',
+        text: 'DietPi 9.20.1 to 10.8.2 is waiting; it will be applied automatically at any time (within the cooldown).',
+      }]),
+    },
+    {
+      device_id: devices.find(d => d.hostname === 'nas-synology')!.id,
+      hostname: 'nas-synology', pending_updates: 0, security_count: 0,
+      reboot_class_count: 0, reboot_required: false, package_manager: 'apt',
+      patch_badge: demoBadge('manual', 'Manual', 'Not needed.', [], [{
+        code: 'auto_patch_off', text: 'Automatic patching is off for this host.', action: 'Turn on Auto-patch for this host.',
+      }]),
     },
     {
       device_id: devices.find(d => d.hostname === 'backup-server')!.id,

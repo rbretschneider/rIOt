@@ -129,7 +129,7 @@ func TestPatchStatusBadge_AllTrue_OneRowPerRegisteredDeviceEachWithABadge(t *tes
 		assert.NotEmpty(t, r.PatchBadge.Label, r.DeviceID)
 	}
 	assert.Equal(t, "Auto", rowByID(t, rows, "dev-patched").PatchBadge.Label, "a fully patched host still gets a badge")
-	assert.Equal(t, "Needs you", rowByID(t, rows, "dev-nodata").PatchBadge.Label, "a host with no patch data cannot be patched by rIOt")
+	assert.Equal(t, "Manual", rowByID(t, rows, "dev-nodata").PatchBadge.Label, "a host with no patch data cannot be patched by rIOt, but nothing is known to be waiting: information, not Needs you")
 }
 
 func TestPatchStatusBadge_DefaultFilter_UnchangedAndBadgeOnEveryRow(t *testing.T) { // AC-001, AC-027
@@ -194,14 +194,16 @@ func TestPatchStatusBadge_BuildsNoCommandsAndOnlyReadsOutcomes(t *testing.T) { /
 	}
 }
 
-func TestPatchStatusBadge_LastRunFailed_RaisedClearedAndNotChangedByExpired(t *testing.T) { // AC-013
+func TestPatchStatusBadge_LastRunFailed_RaisedClearedAndNotChangedByExpired(t *testing.T) { // AC-013, AC-053
 	f := newBadgeFixture(t, true)
+	// dev-pending has four updates waiting, so a failed run is an action item.
+	const device = "dev-pending"
 	seed := func(id, status string, ago time.Duration) {
-		f.cmds.Seed(&models.Command{ID: id, DeviceID: "dev-patched", Action: models.ActionOSUpdate, Status: status,
+		f.cmds.Seed(&models.Command{ID: id, DeviceID: device, Action: models.ActionOSUpdate, Status: status,
 			ResultMsg: "dpkg failed", CreatedAt: badgeNow.Add(-ago)})
 	}
 	label := func() patchBadge {
-		return *rowByID(t, f.get(t, "?all=true"), "dev-patched").PatchBadge
+		return *rowByID(t, f.get(t, "?all=true"), device).PatchBadge
 	}
 
 	seed(badgeCmdID1, "failed", 3*time.Hour)
@@ -213,7 +215,7 @@ func TestPatchStatusBadge_LastRunFailed_RaisedClearedAndNotChangedByExpired(t *t
 	seed(badgeCmdID2, "expired", 2*time.Hour)
 	assert.Equal(t, "Needs you", label().Label, "a later expired run neither clears nor changes the failure")
 
-	f.cmds.Seed(&models.Command{ID: "2d9c75c8-3b4a-4d8c-9f3f-4f5b7e8c9dae", DeviceID: "dev-patched", Action: models.ActionOSUpdate,
+	f.cmds.Seed(&models.Command{ID: "2d9c75c8-3b4a-4d8c-9f3f-4f5b7e8c9dae", DeviceID: device, Action: models.ActionOSUpdate,
 		Status: "succeeded", CreatedAt: badgeNow.Add(-time.Hour)})
 	assert.Equal(t, "Auto", label().Label, "a later succeeded run clears it")
 }

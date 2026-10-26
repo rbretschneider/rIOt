@@ -57,6 +57,11 @@ const (
 	// the summary of escalation pushes held by the per-device ceiling.
 	EventExpectBackstopSkipped   EventType = "expect_backstop_skipped"
 	EventExpectNotificationsHeld EventType = "expect_notifications_held"
+
+	// Extra-updater step start and end, one pair per updater per os_update
+	// command (EXTRA-UPD-001 FR-045).
+	EventExtraUpdaterStarted  EventType = "extra_updater_started"
+	EventExtraUpdaterFinished EventType = "extra_updater_finished"
 )
 
 // Event.CommandAttr values written by EXPECT-001 (the agent and the server's
@@ -71,10 +76,15 @@ const (
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
+// CommandID, Updater and Outcome are set only on the two extra-updater event
+// types; they are omitted otherwise so older servers see the same JSON.
 type AgentEvent struct {
-	Type     EventType     `json:"type"`
-	Severity EventSeverity `json:"severity"`
-	Message  string        `json:"message"`
+	Type      EventType     `json:"type"`
+	Severity  EventSeverity `json:"severity"`
+	Message   string        `json:"message"`
+	CommandID string        `json:"command_id,omitempty"`
+	Updater   string        `json:"updater,omitempty"`
+	Outcome   string        `json:"outcome,omitempty"`
 }
 
 // DockerEvent is the payload agents push for Docker container state changes.

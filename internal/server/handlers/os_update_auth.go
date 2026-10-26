@@ -38,6 +38,9 @@ func (h *Handlers) applyManualOSUpdateAuth(ctx context.Context, deviceID string,
 	if reservedParamVariants(params) {
 		return &authRejection{http.StatusBadRequest, "invalid_request"}, nil
 	}
+	if !normalizeExclusion(params) {
+		return &authRejection{http.StatusBadRequest, "invalid_request"}, nil
+	}
 	value, present := params[models.ParamRebootIfRequired]
 	if !present {
 		return nil, nil
@@ -72,9 +75,33 @@ func reservedParamVariants(params map[string]interface{}) (rejectVariant bool) {
 			delete(params, key)
 		case key != models.ParamRebootIfRequired && strings.EqualFold(key, models.ParamRebootIfRequired):
 			rejectVariant = true
+		case key != models.ParamExcludeExtraUpdaters && strings.EqualFold(key, models.ParamExcludeExtraUpdaters):
+			rejectVariant = true
+		case strings.EqualFold(key, models.ParamExtraUpdaterBudget):
+			// Server-owned (EXTRA-UPD-001 AD-006): never accepted from an operator.
+			// Dispatch strips it for every action as well.
+			delete(params, key)
 		}
 	}
 	return rejectVariant
+}
+
+// normalizeExclusion validates the operator's optional exclusion of extra
+// updaters (EXTRA-UPD-001 FR-050): absent or false means included and leaves
+// nothing in the params, true is kept, and any other value is refused.
+func normalizeExclusion(params map[string]interface{}) bool {
+	value, present := params[models.ParamExcludeExtraUpdaters]
+	if !present {
+		return true
+	}
+	excluded, isBool := value.(bool)
+	if !isBool {
+		return false
+	}
+	if !excluded {
+		delete(params, models.ParamExcludeExtraUpdaters)
+	}
+	return true
 }
 
 // checkRebootCapability applies FR-018: the host's latest telemetry must report

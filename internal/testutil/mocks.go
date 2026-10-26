@@ -573,6 +573,20 @@ func (m *MockEventRepo) ListAll(_ context.Context, limit, offset int) ([]models.
 	return m.Events[offset:end], nil
 }
 
+func (m *MockEventRepo) HasCommandEvent(_ context.Context, deviceID, commandID string, eventType models.EventType) (bool, error) {
+	if m.Err != nil {
+		return false, m.Err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.Events {
+		if e.DeviceID == deviceID && e.CommandID == commandID && e.Type == eventType {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MockEventRepo) Purge(_ context.Context, _ time.Time) (int64, error) {
 	m.mu.Lock()
 	m.PurgeCalled = true

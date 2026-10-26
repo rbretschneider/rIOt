@@ -91,6 +91,17 @@ func (r *EventRepo) AcknowledgeAll(ctx context.Context) error {
 	return err
 }
 
+// HasCommandEvent reports whether the device already has an event of this type
+// for this command. The lookup reads one device's recent events through the
+// existing device index and is bounded by the 90-day event retention.
+func (r *EventRepo) HasCommandEvent(ctx context.Context, deviceID, commandID string, eventType models.EventType) (bool, error) {
+	var found bool
+	err := r.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM events WHERE device_id=$1 AND command_id=$2 AND type=$3)`,
+		deviceID, commandID, string(eventType)).Scan(&found)
+	return found, err
+}
+
 type scannable interface {
 	Next() bool
 	Scan(dest ...interface{}) error

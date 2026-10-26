@@ -200,8 +200,14 @@ restore_policy() {
 # reads it as untrusted input. The reader accepts exactly one spelling and
 # rejects the whole file on anything it cannot classify. It runs inside "if"
 # conditions, where set -e is off, so every step ends in "|| return 1".
+# EXTRA-UPD-001: the same single pass also reads commands.allow_extra_updaters.
+# It prints one fact per line: "shutdown" when allow_shutdown is a plain true,
+# and "extra ID" for each identifier of a list of unquoted names directly under
+# commands. A list in any other shape yields no identifiers and does not reject
+# the file; every structural problem still rejects the whole file, so both
+# facts fail closed together.
 # BEGIN shutdown-config-classifier
-config_enables_shutdown() {
+config_facts() {
     local p="$1" snap="$STAGE/shutdown-config.snapshot" size plain out
     [ -f "$p" ] && [ ! -L "$p" ] || return 1
     timeout 5 head -c 65537 -- "$p" > "$snap" 2>/dev/null || return 1
@@ -240,10 +246,34 @@ function chk(t,    c, u, q) {
         if (cnt(t, "{") != cnt(t, "}")) reject()
     }
 }
+function addid(id) {
+    if (length(id) <= 32 && !(id in idseen)) { idseen[id] = 1; nids++; ids[nids] = id }
+}
+# Each name is checked on its own: mawk 1.3.4-20200120 (Debian 12, DietPi on
+# bookworm) fails to match a repeated group such as "( *, *name)*", which
+# silently dropped every flow list.
+function listshape(val,    t, inner, n, parts, i, id) {
+    t = val
+    sub(/ +#.*$/, "", t)
+    sub(/ +$/, "", t)
+    if (substr(t, 1, 1) != "[" || substr(t, length(t)) != "]") return
+    inner = substr(t, 2, length(t) - 2)
+    if (inner ~ /^ *$/) return
+    n = split(inner, parts, ",")
+    for (i = 1; i <= n; i++) {
+        id = parts[i]
+        sub(/^ +/, "", id)
+        sub(/ +$/, "", id)
+        if (id !~ /^[a-z][a-z0-9_-]*$/) return
+        parts[i] = id
+    }
+    for (i = 1; i <= n; i++) addid(parts[i])
+}
 BEGIN {
     sq = sprintf("%c", 39); dq = sprintf("%c", 34); bt = sprintf("%c", 96)
     tab = sprintf("%c", 9); cr = sprintf("%c", 13)
     bad = 0; seen = 0; docstart = 0; incmd = 0; ncmd = 0; cmdindent = -1; nshut = 0; shutval = ""
+    inlist = 0; nids = 0
 }
 {
     line = $0
@@ -293,6 +323,28 @@ BEGIN {
         next
     }
     if (incmd) {
+        if (inlist && ind > cmdindent) {
+            if (line ~ /^ +- +[a-z][a-z0-9_-]* *$/ || line ~ /^ +- +[a-z][a-z0-9_-]* +#/) {
+                id = rest
+                sub(/^- +/, "", id)
+                sub(/ .*$/, "", id)
+                addid(id)
+                next
+            }
+            reject()
+        }
+        inlist = 0
+        if (rest ~ /^allow_extra_updaters:( |$)/) {
+            if (cmdindent < 0) cmdindent = ind
+            else if (ind != cmdindent) reject()
+            if ("allow_extra_updaters" in ck) reject()
+            ck["allow_extra_updaters"] = 1
+            val = rest
+            sub(/^allow_extra_updaters: */, "", val)
+            if (val == "" || val ~ /^#/) inlist = 1
+            else listshape(val)
+            next
+        }
         if (line !~ /^ +[a-z_]+: +[A-Za-z0-9_.-]+ *$/ && line !~ /^ +[a-z_]+: +[A-Za-z0-9_.-]+ +#/) reject()
         if (cmdindent < 0) cmdindent = ind
         else if (ind != cmdindent) reject()
@@ -307,12 +359,32 @@ BEGIN {
     }
 }
 END {
-    if (!bad && ncmd == 1 && nshut == 1 && shutval == "true") print "enabled"
+    if (!bad && ncmd == 1) {
+        if (nshut == 1 && shutval == "true") print "shutdown"
+        for (i = 1; i <= nids; i++) print "extra " ids[i]
+    }
 }
 ' "$snap") || return 1
-    [ "$out" = enabled ] || return 1
+    printf '%s\n' "$out" || return 1
     return 0
 }
+# True when the facts of the config at $1 include the exact line $2.
+config_has_fact() {
+    local facts
+    facts=$(config_facts "$1") || return 1
+    case "
+$facts
+" in
+        *"
+$2
+"*) return 0 ;;
+    esac
+    return 1
+}
+config_enables_shutdown() { config_has_fact "$1" shutdown || return 1; }
+# True when commands.allow_extra_updaters lists the identifier $2 (a plain
+# unquoted name in a flow list or a block list under commands).
+config_lists_extra_updater() { config_has_fact "$1" "extra $2" || return 1; }
 # END shutdown-config-classifier
 
 # The agent config must be a regular file with a single link: a symlink,
@@ -327,14 +399,20 @@ refuse_unsafe_config_path() {
 }
 
 # The drop-in was built from an earlier decision. Re-read the config and
-# require the decision to still hold; otherwise put the old policy back.
+# require the decision to still hold; otherwise put the old policy back. The
+# DietPi opt-in (EXTRA-UPD-001) is one more decision made from the same file,
+# so it is re-checked here too; nothing root-side for it is written before this
+# check passes.
 require_shutdown_agreement() {
-    local final=false
+    local final=false final_extra=false changed=""
     if config_enables_shutdown "${RIOT_CONFIG_DIR}/agent.yaml"; then final=true; fi
-    if [ "$final" != "$SHUTDOWN_GRANT" ]; then
+    if [ "$DIETPI_PRESENT" = true ] && config_lists_extra_updater "${RIOT_CONFIG_DIR}/agent.yaml" dietpi; then final_extra=true; fi
+    [ "$final" = "$SHUTDOWN_GRANT" ] || changed="commands.allow_shutdown"
+    [ "$final_extra" = "$EXTRA_GRANT" ] || changed="${changed:+$changed and }commands.allow_extra_updaters"
+    if [ -n "$changed" ]; then
         GRANT_PENDING=false
         restore_policy
-        fail "agent.yaml commands.allow_shutdown changed during installation; previous managed policy restored; the agent is left stopped; re-run the installer"
+        fail "agent.yaml ${changed} changed during installation; previous managed policy restored; the agent is left stopped; re-run the installer"
     fi
 }
 
@@ -447,6 +525,15 @@ ask_yn() {
     fi
 }
 
+# ── Detect DietPi (Linux) ────────────────────────────────────────────
+# Present means both files are regular files and not links, the rule the
+# agent detector uses too (EXTRA-UPD-001 FR-008). It only decides whether the
+# DietPi question is asked and whether a root-side opt-in may be recorded.
+DIETPI_PRESENT=false
+if [ "$OS" = "linux" ] && [ -f /boot/dietpi/.version ] && [ ! -L /boot/dietpi/.version ] && [ -f /boot/dietpi/dietpi-update ] && [ ! -L /boot/dietpi/dietpi-update ]; then
+    DIETPI_PRESENT=true
+fi
+
 # ── Detect Docker for config ─────────────────────────────────────────
 HAS_DOCKER="false"
 if command -v docker >/dev/null 2>&1; then
@@ -458,6 +545,7 @@ fi
 ALLOW_REBOOT="false"
 ALLOW_SHUTDOWN="false"
 ALLOW_PATCHING="false"
+ALLOW_EXTRA_DIETPI="false"
 ALLOW_TERMINAL="false"
 ALLOW_DOCKER_TERMINAL="false"
 
@@ -480,6 +568,12 @@ if [ "$CONFIG_EXISTED" = false ]; then
 
     if ask_yn "Allow remote OS patching from dashboard?" "n"; then
         ALLOW_PATCHING="true"
+    fi
+
+    if [ "$DIETPI_PRESENT" = true ]; then
+        if ask_yn "Allow rIOt to apply DietPi updates during OS patching?" "n"; then
+            ALLOW_EXTRA_DIETPI="true"
+        fi
     fi
 
     if ask_yn "Allow remote terminal access to this host?" "n"; then
@@ -512,6 +606,31 @@ if [ "$OS" = "linux" ]; then
     fi
 fi
 
+# ── Decide the DietPi opt-in (Linux, EXTRA-UPD-001) ──────────────────
+# One decision drives both the config line and the root-side files. The config
+# is the source of truth on a reinstall, and the answer only counts on a host
+# where DietPi is present. Nothing is granted through sudo: the opt-in is the
+# root-owned policy file and the unit drop-in written further down.
+EXTRA_GRANT=false
+if [ "$OS" = "linux" ]; then
+    if [ "$CONFIG_EXISTED" = false ]; then
+        if [ "$DIETPI_PRESENT" = true ]; then EXTRA_GRANT="$ALLOW_EXTRA_DIETPI"; fi
+    elif [ -n "$RIOT_BOOTSTRAP_KEY" ]; then
+        if [ "$DIETPI_PRESENT" = true ]; then
+            echo "==> DietPi updates: re-enrolment resets remote features; no root-side opt-in"
+        fi
+    elif config_lists_extra_updater "$RIOT_CONFIG_DIR/agent.yaml" dietpi; then
+        if [ "$DIETPI_PRESENT" = true ]; then
+            EXTRA_GRANT=true
+            echo "==> DietPi updates: commands.allow_extra_updaters lists dietpi in ${RIOT_CONFIG_DIR}/agent.yaml; recording root-side opt-in"
+        else
+            echo "==> DietPi updates: commands.allow_extra_updaters lists dietpi in ${RIOT_CONFIG_DIR}/agent.yaml but DietPi is not present; nothing recorded"
+        fi
+    elif [ "$DIETPI_PRESENT" = true ]; then
+        echo "==> DietPi updates: commands.allow_extra_updaters does not list dietpi in ${RIOT_CONFIG_DIR}/agent.yaml; no root-side opt-in"
+    fi
+fi
+
 # Validate privileged path parents before using them as root write destinations.
 secure_dir() {
     local path="$1" mode owner
@@ -524,6 +643,58 @@ secure_file() {
     [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %u "$path")" -eq 0 ] || fail "Unsafe privileged file: $path"
     mode=$(stat -c %a "$path")
     (( (8#$mode & 0022) == 0 )) || fail "Writable privileged file: $path"
+}
+
+# ── DietPi opt-in, root side (EXTRA-UPD-001 AD-003) ──────────────────
+# The opt-in is two small root-owned files written from fixed literals only,
+# never from config text: a policy the maintenance worker enforces, and a unit
+# drop-in that lengthens the service backstop on opted-in hosts. Order matters
+# (SEC-002): the backstop is lengthened, reloaded and verified before the
+# policy lists an updater, and on revocation the policy is emptied before the
+# backstop is lowered. The files are written only when an updater is recorded
+# or they already exist, and they are rewritten, never deleted.
+EXTRA_POLICY_DIR=/etc/riot-maintenance
+EXTRA_POLICY=${EXTRA_POLICY_DIR}/extra-updaters.json
+EXTRA_DROPIN_DIR=/etc/systemd/system/riot-maintenance.service.d
+EXTRA_DROPIN=${EXTRA_DROPIN_DIR}/50-riot-extra-updaters.conf
+extra_files_exist() {
+    [ -e "$EXTRA_POLICY" ] || [ -L "$EXTRA_POLICY" ] || [ -e "$EXTRA_DROPIN" ] || [ -L "$EXTRA_DROPIN" ]
+}
+prepare_extra_dir() {
+    local directory="$1"
+    [ ! -L "$directory" ] || fail "Refusing symlink directory: $directory"
+    mkdir -p "$directory"
+    chown root:root "$directory"
+    chmod 0755 "$directory"
+    secure_dir "$directory"
+}
+write_extra_policy() {
+    prepare_extra_dir "$EXTRA_POLICY_DIR"
+    if [ "$1" = optin ]; then
+        printf '{"version":1,"extra_updaters":["dietpi"]}\n' > "$STAGE/extra-updaters.json"
+    else
+        printf '{"version":1,"extra_updaters":[]}\n' > "$STAGE/extra-updaters.json"
+    fi
+    atomic_install "$STAGE/extra-updaters.json" "$EXTRA_POLICY" 0644
+}
+write_extra_dropin() {
+    prepare_extra_dir "$EXTRA_DROPIN_DIR"
+    printf '[Service]\nRuntimeMaxSec=%s\n' "$1" > "$STAGE/50-riot-extra-updaters.conf"
+    atomic_install "$STAGE/50-riot-extra-updaters.conf" "$EXTRA_DROPIN" 0644
+}
+# After daemon-reload: the unit that will really run must have the expected
+# backstop and no mount sandbox, or DietPi mounts would stay hidden from the host.
+verify_extra_unit() {
+    local value
+    value=$(systemctl show riot-maintenance.service -p RuntimeMaxUSec --value) || fail "Cannot inspect the effective maintenance backstop"
+    case "$1" in
+        85min) [ "$value" = "1h 25min" ] || [ "$value" = 5100000000 ] || fail "The effective maintenance backstop is '${value}', not 1h 25min; no DietPi opt-in was recorded" ;;
+        *) [ "$value" = 35min ] || [ "$value" = 2100000000 ] || fail "The effective maintenance backstop is '${value}', not 35min" ;;
+    esac
+    value=$(systemctl show riot-maintenance.service -p PrivateTmp --value) || fail "Cannot inspect the effective maintenance sandbox"
+    [ "$value" = no ] || fail "The maintenance service has PrivateTmp='${value}'; DietPi mounts would not reach the host"
+    value=$(systemctl show riot-maintenance.service -p MountFlags --value) || fail "Cannot inspect the effective maintenance mount flags"
+    [ -z "$value" ] || fail "The maintenance service has MountFlags='${value}'; DietPi mounts would not reach the host"
 }
 MAINT_SUPPORTED=false
 if [ "$OS" = linux ]; then
@@ -538,6 +709,12 @@ if [ "$OS" = linux ]; then
     if [ -e /etc/systemd/system/riot-agent.service.d ] || [ -L /etc/systemd/system/riot-agent.service.d ]; then
         secure_dir /etc/systemd/system/riot-agent.service.d
     fi
+    for directory in "$EXTRA_POLICY_DIR" "$EXTRA_DROPIN_DIR"; do
+        if [ -e "$directory" ] || [ -L "$directory" ]; then secure_dir "$directory"; fi
+    done
+    for file in "$EXTRA_POLICY" "$EXTRA_DROPIN"; do
+        if [ -e "$file" ] || [ -L "$file" ]; then secure_file "$file"; fi
+    done
     for directory in "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"; do
         [ ! -L "$directory" ] || fail "Refusing symlink directory: $directory"
         if [ -e "$directory" ]; then [ -d "$directory" ] || fail "Expected directory: $directory"; fi
@@ -557,6 +734,11 @@ if [ "$OS" = linux ]; then
         command -v python3 >/dev/null 2>&1 || fail "Preinstalled Python3 is required for native package-lock-safe migration"
         secure_file "$(readlink -f "$(command -v python3)")"
         MAINT_SUPPORTED=true
+    fi
+    # DietPi updates run inside the detached maintenance worker; without it
+    # there is nothing to opt in to, so refuse before any change.
+    if [ "$EXTRA_GRANT" = true ] && [ "$MAINT_SUPPORTED" != true ]; then
+        fail "DietPi updates need the detached apt maintenance path, which this host does not support; remove dietpi from commands.allow_extra_updaters; no files changed"
     fi
     # The agent runs as riot, and unprivileged systemctl reaches systemd only
     # over the D-Bus system bus (root uses a private socket, so root checks pass
@@ -599,7 +781,7 @@ if [ "$OS" = linux ]; then
             secure_file /var/lib/riot-maintenance/current.json
             command -v python3 >/dev/null 2>&1 || fail "Python3 is required to validate existing maintenance state"
             python3 - <<'PY'
-import datetime, json, os, sys, uuid
+import datetime, json, os, re, sys, uuid
 p = '/var/lib/riot-maintenance/current.json'
 if os.stat(p).st_size > 2*1024*1024: sys.exit('ERROR: oversized maintenance state')
 def unique(pairs):
@@ -610,7 +792,7 @@ def unique(pairs):
     return d
 try:
     d = json.load(open(p), object_pairs_hook=unique)
-    assert type(d['version']) is int and d['version'] == 1
+    assert type(d['version']) is int and d['version'] in (1, 2)
     assert str(uuid.UUID(d['command_id'])) == d['command_id'] and uuid.UUID(d['command_id']).int != 0
     assert d['mode'] in ('full','security','repair') and type(d['include_reboot_class']) is bool
     assert d['mode'] != 'repair' or d['include_reboot_class'] is False
@@ -623,6 +805,34 @@ try:
     assert isinstance(d.get('output',''), str) and len(d.get('output','').encode()) <= 256*1024
     assert isinstance(d.get('summary',''), str) and len(d.get('summary','').encode()) <= 4096
     if d['outcome'] == 'success': assert d['exit_code'] == 0 and d['interrupted'] is False
+    # EXTRA-UPD-001: a version 1 record carries no updater keys. A version 2
+    # record is closed: exact keys and enums, no running entry, bounded sizes.
+    extra_keys = ('requested_extra_updaters', 'apt_outcome', 'extra_updaters')
+    if d['version'] == 1:
+        assert not any(k in d for k in extra_keys)
+    else:
+        known = {'version','command_id','mode','include_reboot_class','started_at','updated_at','finished_at','phase','outcome','exit_code','interrupted','summary','output','output_truncated','holds','holds_released','hold_restore_error','hold_cleanup_failed','version_changes','requested_extra_updaters','apt_outcome','extra_updaters'}
+        assert set(d) <= known and d['mode'] != 'repair'
+        ident = re.compile(r'[a-z][a-z0-9_-]{0,31}')
+        req = d['requested_extra_updaters']
+        assert type(req) is list and 1 <= len(req) <= 8 and len(set(req)) == len(req) and all(type(x) is str and ident.fullmatch(x) for x in req)
+        assert d['apt_outcome'] in ('success','error','interrupted')
+        results = d.get('extra_updaters', [])
+        assert type(results) is list and len(results) <= 8
+        reasons = ('apt_not_successful','not_enabled','status_unknown','nothing_pending','insufficient_time','non_default_update_source','unsafe_dietpi_path','min_interval','tmp_not_private','mount_propagation_unverified','dietpi_busy','dpkg_locked')
+        result_keys = {'id','outcome','reason','exit_code','started_at','finished_at','version_before','version_after','source_owner','source_branch','reboot_required_after','note'}
+        seen_ids = set()
+        for r in results:
+            assert type(r) is dict and set(r) <= result_keys and type(r['id']) is str and ident.fullmatch(r['id']) and r['id'] not in seen_ids
+            seen_ids.add(r['id'])
+            assert r['outcome'] in ('success','failed','timed_out','interrupted','skipped')
+            if r['outcome'] == 'skipped': assert r.get('reason') in reasons
+            else: assert 'reason' not in r
+            assert len(r.get('note', '').encode()) <= 256 and len(r.get('version_before', '').encode()) <= 32 and len(r.get('version_after', '').encode()) <= 32
+            assert len(r.get('source_owner', '').encode()) <= 64 and len(r.get('source_branch', '').encode()) <= 64
+        if d['outcome'] == 'success':
+            assert d['apt_outcome'] == 'success'
+            assert all(r['outcome'] == 'success' or (r['outcome'] == 'skipped' and r['reason'] in ('not_enabled','status_unknown','nothing_pending')) for r in results)
 except Exception:
     sys.exit('ERROR: unfinished or invalid maintenance state; recover it before installing')
 PY
@@ -753,7 +963,7 @@ EOF
     # Preserve current config, binaries and reviewed policy before the first mutation.
     BACKUP=$(mktemp -d /var/backups/riot_install.XXXXXXXX)
     chmod 0700 "$BACKUP"
-    for path in "$RIOT_BIN" "$RIOT_APPLY_DIR" /etc/riot /etc/sudoers.d/riot-agent /etc/systemd/system/riot-agent.service /etc/systemd/system/riot-agent.service.d /etc/systemd/system/riot-maintenance.service; do
+    for path in "$RIOT_BIN" "$RIOT_APPLY_DIR" /etc/riot /etc/sudoers.d/riot-agent /etc/systemd/system/riot-agent.service /etc/systemd/system/riot-agent.service.d /etc/systemd/system/riot-maintenance.service "$EXTRA_POLICY_DIR" "$EXTRA_DROPIN_DIR"; do
         if [ -e "$path" ] || [ -L "$path" ]; then
             mkdir -p "$BACKUP$(dirname "$path")"
             cp -a -- "$path" "$BACKUP$path"
@@ -821,16 +1031,21 @@ fi
 
 # ── Build config sections from answers ───────────────────────────────
 COMMANDS_SECTION=""
-if [ "$ALLOW_REBOOT" = "true" ] || [ "$SHUTDOWN_GRANT" = "true" ] || [ "$ALLOW_PATCHING" = "true" ]; then
+if [ "$ALLOW_REBOOT" = "true" ] || [ "$SHUTDOWN_GRANT" = "true" ] || [ "$ALLOW_PATCHING" = "true" ] || [ "$EXTRA_GRANT" = "true" ]; then
     SHUTDOWN_LINE=""
     if [ "$SHUTDOWN_GRANT" = "true" ]; then
         SHUTDOWN_LINE="
   allow_shutdown: true"
     fi
+    EXTRA_LINE=""
+    if [ "$EXTRA_GRANT" = "true" ]; then
+        EXTRA_LINE="
+  allow_extra_updaters: [dietpi]"
+    fi
     COMMANDS_SECTION="
 commands:
   allow_reboot: ${ALLOW_REBOOT}${SHUTDOWN_LINE}
-  allow_patching: ${ALLOW_PATCHING}"
+  allow_patching: ${ALLOW_PATCHING}${EXTRA_LINE}"
 fi
 
 TERMINAL_SECTION=""
@@ -924,6 +1139,17 @@ if [ "$OS" = linux ]; then
     atomic_install "$STAGE/$BINARY_NAME" "$RIOT_BIN" 0755
     atomic_install "$STAGE/riot-agent-apply-${SUFFIX}" "$RIOT_APPLY_BIN" 0755
     atomic_install "$STAGE/riot-maintenance-${SUFFIX}" "$MAINT_BIN" 0755
+    # DietPi opt-in, root side. Revocation empties the policy before any unit
+    # change; an opt-in waits until the lengthened backstop is verified (below).
+    EXTRA_MODE=none
+    if [ "$MAINT_SUPPORTED" = true ]; then
+        if [ "$EXTRA_GRANT" = true ]; then
+            EXTRA_MODE=optin
+        elif extra_files_exist; then
+            EXTRA_MODE=revoke
+            write_extra_policy revoked
+        fi
+    fi
     atomic_install "$STAGE/riot-maintenance.service" /etc/systemd/system/riot-maintenance.service 0644
     atomic_install "$STAGE/riot-agent.service" /etc/systemd/system/riot-agent.service 0644
     mkdir -p /etc/systemd/system/riot-agent.service.d
@@ -934,6 +1160,10 @@ ExecStartPre=
 ExecStartPre=-+${RIOT_APPLY_BIN} --boot
 EOF
     atomic_install "$STAGE/zzzz-riot-signed-boot.conf" /etc/systemd/system/riot-agent.service.d/zzzz-riot-signed-boot.conf 0644
+    case "$EXTRA_MODE" in
+        optin) write_extra_dropin 85min ;;
+        revoke) write_extra_dropin 35min ;;
+    esac
     chown riot:riot "$RIOT_CONFIG_DIR"
     chmod 0700 "$RIOT_CONFIG_DIR"
     if ! visudo -cf /etc/sudoers >/dev/null; then
@@ -945,6 +1175,17 @@ EOF
     pre=$(systemctl show riot-agent.service -p ExecStartPre --value) || fail "Cannot inspect effective agent precommand"
     [[ "$pre" == *"path=${RIOT_APPLY_BIN} ;"* && "$pre" == *"argv[]=${RIOT_APPLY_BIN} --boot ;"* ]] || fail "Unexpected effective boot hook; review preserved drop-ins before starting"
     [ "$(printf '%s' "$pre" | grep -o 'path=' | wc -l)" -eq 1 ] || fail "Unexpected additional boot hooks; review preserved drop-ins before starting"
+    case "$EXTRA_MODE" in
+        optin)
+            verify_extra_unit 85min
+            write_extra_policy optin
+            echo "==> DietPi updates: root-side opt-in recorded (${EXTRA_POLICY}); maintenance backstop 85min"
+            ;;
+        revoke)
+            verify_extra_unit 35min
+            echo "==> DietPi updates: root-side opt-in revoked (${EXTRA_POLICY} lists no updater); maintenance backstop 35min"
+            ;;
+    esac
     systemctl enable riot-agent
     # The installer owns exclusion here, so boot verification safely defers staged updates.
     systemctl start riot-agent

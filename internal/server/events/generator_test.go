@@ -255,6 +255,9 @@ func (m *mockEventRepo) Purge(context.Context, time.Time) (int64, error) { retur
 func (m *mockEventRepo) CountUnacknowledged(context.Context) (int, error) { return 0, nil }
 func (m *mockEventRepo) Acknowledge(context.Context, int64) error         { return nil }
 func (m *mockEventRepo) AcknowledgeAll(context.Context) error             { return nil }
+func (m *mockEventRepo) HasCommandEvent(context.Context, string, string, models.EventType) (bool, error) {
+	return false, nil
+}
 
 type mockAlertRuleRepo struct {
 	rules []models.AlertRule

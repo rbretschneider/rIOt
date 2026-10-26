@@ -21,6 +21,8 @@ import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
 import PatchBadge from '../components/PatchBadge'
 import { PatchConfirmOptions } from '../components/PatchConfirmOptions'
+import ExtraUpdatersList from '../components/ExtraUpdatersList'
+import { osUpdateParams } from '../utils/extraUpdaters'
 import { STALE_PATCH_HINT, devicePatchState, rebootOption, staleSecurityNote } from '../utils/patchFlow'
 import SecurityScoreGauge from '../components/SecurityScoreGauge'
 import SecurityScoreModal from '../components/SecurityScoreModal'
@@ -78,6 +80,8 @@ export default function DeviceDetail() {
   // PATCH-FLOW-001: the Patch dialog's reboot opt-in. Reset by the open handler and by
   // onClose, never persisted, so every opening starts unchecked (FR-009).
   const [rebootIfRequired, setRebootIfRequired] = useState(false)
+  // EXTRA-UPD-001: the "Apply DietPi update in this run" box. Ticked on every opening (FR-056).
+  const [applyExtras, setApplyExtras] = useState(true)
   // SEC-002: the delete scope (agent uninstall or record-only) is fixed when the
   // dialog opens, so the message the operator reads is the request that is sent.
   const [deleteScope, setDeleteScope] = useState<{ uninstall: boolean } | null>(null)
@@ -210,10 +214,12 @@ export default function DeviceDetail() {
   const staleSecurity = staleSecurityNote(tel?.updates)
   const openPatchDialog = () => {
     setRebootIfRequired(false)
+    setApplyExtras(true)
     setConfirmAction('os_update')
   }
   const closeConfirmDialog = () => {
     setRebootIfRequired(false)
+    setApplyExtras(true)
     setConfirmAction(null)
   }
 
@@ -222,10 +228,11 @@ export default function DeviceDetail() {
     if (action !== 'os_update') {
       return {}
     }
-    if (rebootIfRequired && rebootOption(tel?.updates).enabled) {
-      return { mode: 'full', reboot_if_required: true }
-    }
-    return { mode: 'full' }
+    return osUpdateParams(tel?.updates, {
+      rebootTicked: rebootIfRequired,
+      rebootAllowed: rebootOption(tel?.updates).enabled,
+      extrasTicked: applyExtras,
+    })
   }
 
   // Download Summary: fetch Markdown, create a Blob URL, trigger download.
@@ -614,7 +621,13 @@ export default function DeviceDetail() {
         onClose={closeConfirmDialog}
       >
         {confirmAction === 'os_update' && (
-          <PatchConfirmOptions updates={tel?.updates} checked={rebootIfRequired} onChange={setRebootIfRequired} />
+          <PatchConfirmOptions
+            updates={tel?.updates}
+            checked={rebootIfRequired}
+            onChange={setRebootIfRequired}
+            extrasChecked={applyExtras}
+            onExtrasChange={setApplyExtras}
+          />
         )}
       </ConfirmDialog>
       <ConfirmDialog
@@ -932,7 +945,7 @@ export default function DeviceDetail() {
       )}
 
       {/* Updates */}
-      {isEnabled('updates') && tel?.updates && (tel.updates.pending_updates > 0 || (tel.updates.held_packages?.length ?? 0) > 0 || holdEnforcementBroken) && (
+      {isEnabled('updates') && tel?.updates && (tel.updates.pending_updates > 0 || (tel.updates.held_packages?.length ?? 0) > 0 || holdEnforcementBroken || (tel.updates.extra_updaters?.length ?? 0) > 0) && (
         <Section title={`Pending Updates (${tel.updates.pending_updates})`}>
           {holdEnforcementBroken && (
             <div className="mb-3 px-3 py-2 rounded-md bg-red-500/10 border border-red-600/40 text-sm text-red-400" role="alert">
@@ -944,6 +957,7 @@ export default function DeviceDetail() {
               {' '}Reboot-class packages are not protected.
             </div>
           )}
+          <ExtraUpdatersList extras={tel.updates.extra_updaters} />
           {tel.updates.pending_updates > 0 && (
             <div className="max-h-48 overflow-y-auto scrollbar-thin">
               <table className="w-full text-sm">

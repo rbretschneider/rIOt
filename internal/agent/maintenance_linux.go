@@ -105,7 +105,7 @@ func maintenanceReadiness(ctx context.Context, run collectors.CommandRunner) err
 	if err := maintenanceDeniedPrivileges(probe, run); err != nil {
 		return err
 	}
-	unit, err := run(probe, "/usr/bin/systemctl", "show", maintenance.UnitName, "-p", "FragmentPath", "-p", "User", "-p", "ExecStart", "-p", "PartOf", "-p", "BindsTo", "-p", "Requires", "-p", "StandardInput", "-p", "StandardOutput", "-p", "StandardError", "-p", "Restart", "-p", "KillMode", "-p", "RuntimeMaxUSec", "-p", "TimeoutStopUSec", "-p", "Type", "-p", "WorkingDirectory")
+	unit, err := run(probe, "/usr/bin/systemctl", "show", maintenance.UnitName, "-p", "FragmentPath", "-p", "User", "-p", "ExecStart", "-p", "PartOf", "-p", "BindsTo", "-p", "Requires", "-p", "StandardInput", "-p", "StandardOutput", "-p", "StandardError", "-p", "Restart", "-p", "KillMode", "-p", "RuntimeMaxUSec", "-p", "TimeoutStopUSec", "-p", "Type", "-p", "WorkingDirectory", "-p", "PrivateTmp", "-p", "MountFlags")
 	if err != nil {
 		return fmt.Errorf("cannot inspect fixed maintenance unit: %w", err)
 	}
@@ -142,10 +142,31 @@ func unitProperties(text string) map[string]string {
 
 func maintenanceUnitPolicy(text string) error {
 	values := unitProperties(text)
-	if values["FragmentPath"] != maintenance.UnitPath || (values["User"] != "root" && values["User"] != "") || values["PartOf"] != "" || values["BindsTo"] != "" || strings.Contains(values["Requires"], "riot-agent") || values["StandardInput"] != "null" || values["StandardOutput"] != "journal" || values["StandardError"] != "journal" || values["Restart"] != "no" || values["Type"] != "exec" || values["WorkingDirectory"] != "/" || values["KillMode"] != "control-group" || (values["RuntimeMaxUSec"] != "35min" && values["RuntimeMaxUSec"] != "2100000000") || (values["TimeoutStopUSec"] != "1min 30s" && values["TimeoutStopUSec"] != "90s" && values["TimeoutStopUSec"] != "90000000") || !strings.Contains(values["ExecStart"], "argv[]="+maintenance.HelperPath+" ;") || strings.Count(values["ExecStart"], "path=") != 1 || strings.Count(values["ExecStart"], "argv[]=") != 1 {
+	if values["FragmentPath"] != maintenance.UnitPath || (values["User"] != "root" && values["User"] != "") || values["PartOf"] != "" || values["BindsTo"] != "" || strings.Contains(values["Requires"], "riot-agent") || values["StandardInput"] != "null" || values["StandardOutput"] != "journal" || values["StandardError"] != "journal" || values["Restart"] != "no" || values["Type"] != "exec" || values["WorkingDirectory"] != "/" || values["KillMode"] != "control-group" || !maintenanceRuntimeBackstop(values["RuntimeMaxUSec"]) || !maintenanceNoSandbox(values) || (values["TimeoutStopUSec"] != "1min 30s" && values["TimeoutStopUSec"] != "90s" && values["TimeoutStopUSec"] != "90000000") || !strings.Contains(values["ExecStart"], "argv[]="+maintenance.HelperPath+" ;") || strings.Count(values["ExecStart"], "path=") != 1 || strings.Count(values["ExecStart"], "argv[]=") != 1 {
 		return fmt.Errorf("maintenance unit does not match the fixed independent worker policy")
 	}
 	return nil
+}
+
+// maintenanceRuntimeBackstop accepts the two backstops the installer can write:
+// the signed unit's 35 minutes, or the 85 minutes of a host opted in to an extra
+// updater (EXTRA-UPD-001 AD-003). systemd renders each either as words or as
+// microseconds. PrivateTmp and MountFlags are checked beside it: a mount
+// sandbox would hide the mounts DietPi makes from the host (OPS-001).
+func maintenanceRuntimeBackstop(value string) bool {
+	switch value {
+	case "35min", "2100000000", "1h 25min", "5100000000":
+		return true
+	}
+	return false
+}
+
+// maintenanceNoSandbox requires both mount properties to be reported, and to say
+// there is no private /tmp and no mount flags. A missing property fails closed.
+func maintenanceNoSandbox(values map[string]string) bool {
+	tmp, haveTmp := values["PrivateTmp"]
+	flags, haveFlags := values["MountFlags"]
+	return haveTmp && haveFlags && tmp == "no" && flags == ""
 }
 
 func maintenanceAgentPolicy(text string) error {

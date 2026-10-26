@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -62,7 +63,7 @@ func TestStrictRequest(t *testing.T) {
 		want := testRequest()
 		data, _ := json.Marshal(want)
 		got, err := ParseRequest(data)
-		if err != nil || got != want {
+		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("%+v %v", got, err)
 		}
 	})

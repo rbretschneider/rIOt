@@ -1,4 +1,4 @@
-import type { ActivityResponse, AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
+import type { ActivityResponse, AlertRule, AutoUpdatePolicy, Command, CommandOutput, ContainerInfo, ContainerMetric, Device, DeviceDetailResponse, DeviceProbeWithResultEnriched, Event, ExtraUpdater, FleetContainerRow, FleetHeartbeatsResponse, FleetSummary, PendingUpdate, Probe, ProbeResult, ProbeWithResult, SecurityScoreResult, TelemetrySnapshot, UpdateInfo } from '../types/models'
 import { ApiError } from './errors'
 
 export { ApiError }
@@ -32,13 +32,15 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json()
 }
 
-export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you'
+export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you' | 'manual'
 
 export interface PatchBadgeReason {
   code: string
   text: string
   action: string
   command_id?: string
+  // The extra updater an extra_update_* item is about (EXTRA-UPD-001).
+  updater?: string
 }
 
 export interface PatchBadgeExplanation {
@@ -46,6 +48,8 @@ export interface PatchBadgeExplanation {
   reboot: string
   needs_you: PatchBadgeReason[]
   needs_you_summary: string
+  // Neutral items that do not need action (EXTRA-UPD-001 group K). Absent from older servers.
+  info?: PatchBadgeReason[]
   as_of: string
   notes: string[]
 }
@@ -77,6 +81,8 @@ export interface DevicePatchInfo {
   patch_badge?: PatchBadge
   // PATCH-FLOW-001: normalized apt package-list freshness; absent from older servers.
   lists_freshness?: 'fresh' | 'stale' | 'unknown'
+  // EXTRA-UPD-001: extra updaters with an update waiting (at most 8); absent when none.
+  extra_updaters?: ExtraUpdater[]
 }
 
 // SSOAvailability is the response shape of GET /api/v1/auth/oidc

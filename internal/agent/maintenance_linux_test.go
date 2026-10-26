@@ -33,8 +33,14 @@ func TestMaintenance_AC012_NegativePrivilegesAreListedNeverExecuted(t *testing.T
 }
 
 func TestMaintenance_AC012_EffectiveUnitPolicyRejectsUnsafeOverrides(t *testing.T) {
-	policy := "FragmentPath=/etc/systemd/system/riot-maintenance.service\nUser=root\nExecStart={ path=/usr/local/lib/riot/riot-maintenance ; argv[]=/usr/local/lib/riot/riot-maintenance ; }\nPartOf=\nBindsTo=\nRequires=sysinit.target\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\nRestart=no\nKillMode=control-group\nRuntimeMaxUSec=35min\nTimeoutStopUSec=1min 30s\nType=exec\nWorkingDirectory=/\n"
+	policy := "FragmentPath=/etc/systemd/system/riot-maintenance.service\nUser=root\nExecStart={ path=/usr/local/lib/riot/riot-maintenance ; argv[]=/usr/local/lib/riot/riot-maintenance ; }\nPartOf=\nBindsTo=\nRequires=sysinit.target\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\nRestart=no\nKillMode=control-group\nRuntimeMaxUSec=35min\nTimeoutStopUSec=1min 30s\nType=exec\nWorkingDirectory=/\nPrivateTmp=no\nMountFlags=\n"
 	require.NoError(t, maintenanceUnitPolicy(policy))
+	for _, extended := range []string{"1h 25min", "5100000000"} {
+		require.NoError(t, maintenanceUnitPolicy(strings.Replace(policy, "RuntimeMaxUSec=35min", "RuntimeMaxUSec="+extended, 1)), "[EXTRA-UPD-001 AD-003] the 85 minute backstop of an opted-in host is accepted: "+extended)
+	}
+	for _, bad := range []struct{ from, to string }{{"RuntimeMaxUSec=35min", "RuntimeMaxUSec=2h"}, {"RuntimeMaxUSec=35min", "RuntimeMaxUSec=86min"}, {"PrivateTmp=no", "PrivateTmp=yes"}, {"PrivateTmp=no\n", ""}, {"MountFlags=\n", "MountFlags=slave\n"}, {"MountFlags=\n", ""}} {
+		require.Error(t, maintenanceUnitPolicy(strings.Replace(policy, bad.from, bad.to, 1)), "[OPS-001] a unit sandbox or an unknown backstop is refused: "+bad.from+" -> "+bad.to)
+	}
 	for _, bad := range []struct{ from, to string }{{"Requires=sysinit.target", "Requires=riot-agent.service"}, {"RuntimeMaxUSec=35min", "RuntimeMaxUSec=infinity"}, {"KillMode=control-group", "KillMode=process"}, {"StandardInput=null", "StandardInput=socket"}, {"StandardError=journal", "StandardError=socket"}, {"Restart=no", "Restart=always"}, {"argv[]=/usr/local/lib/riot/riot-maintenance ;", "argv[]=/usr/local/lib/riot/riot-maintenance --user-path=/tmp ;"}} {
 		require.Error(t, maintenanceUnitPolicy(strings.Replace(policy, bad.from, bad.to, 1)))
 	}

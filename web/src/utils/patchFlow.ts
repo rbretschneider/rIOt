@@ -1,4 +1,15 @@
 import type { UpdateInfo } from '../types/models'
+import type { PatchBadgeKind } from '../api/client'
+import { enabledPendingExtras, extraName } from './extraUpdaters'
+
+/**
+ * Whether a badge kind means "this host needs Ryan" (EXTRA-UPD-001 FR-082, FR-083).
+ * Only needs_you does: the neutral manual kind and the automatic kinds do not, and a kind
+ * this dashboard does not know (a newer server) is not treated as needing action.
+ */
+export function isNeedsYou(kind: PatchBadgeKind | string | undefined): boolean {
+  return kind === 'needs_you'
+}
 
 // PATCH-FLOW-001: pure decision helpers for the manual patch flow. They take only
 // data the device page already loads (NFR-011) and never fetch or render.
@@ -63,8 +74,12 @@ export function devicePatchState(updates: UpdateInfo | undefined): DevicePatchSt
   if (freshness === 'stale') {
     return { ...base, actionablePending: 0, primary: 'patch', patchLabel: STALE_PATCH_LABEL, showPatch: true }
   }
-  if (pending > 0) {
-    return { ...base, actionablePending: pending, primary: 'patch', patchLabel: `Patch (${pending})`, showPatch: true }
+  // EXTRA-UPD-001 FR-055: a pending, enabled extra updater is patchable work too,
+  // and the label names it.
+  const extras = enabledPendingExtras(updates).map(e => extraName(e.id))
+  if (pending > 0 || extras.length > 0) {
+    const parts = [...(pending > 0 ? [String(pending)] : []), ...extras]
+    return { ...base, actionablePending: pending, primary: 'patch', patchLabel: `Patch (${parts.join(' + ')})`, showPatch: true }
   }
   if (rebootRequired) {
     const forbidden = updates.allow_reboot === false

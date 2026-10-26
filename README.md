@@ -55,7 +55,8 @@
 - **Agent diagnostics** — `riot-agent doctor` command for troubleshooting connectivity, TLS, permissions, and collector health
 - **Automation scheduling** — configurable maintenance windows for OS patching and Docker updates with quick presets (Off-Hours, Midnight, Early Morning, Business Hours) or custom time windows; manage via Settings > Agents
 - **Reboot-class package gating** — optionally hold GPU driver and kernel packages at the OS level (`apt-mark hold` / dnf5 `excludepkgs`) so they can only be applied during a maintenance window, followed by an automatic reboot, preventing out-of-band driver/kernel upgrades from breaking GPU containers mid-day; two-sided opt-in, off by default, with reboot-required detection and GPU-container blast-radius visibility ([details](#reboot-class-package-gating))
-- **Patch badge** — each device shows one badge, **Auto** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
+- **Patch badge** — each device shows one badge, **Auto**, **Manual** or **Needs you**, with a four-line explanation (automatic patching, reboot, what needs you, data age). **Needs you** appears only when updates are pending or a reboot is required and nothing will apply them. A setting alone, such as "auto-patch off" on a host with nothing pending, is shown as neutral information under **Manual**. A reboot date is shown as an estimate in UTC, or as Unknown when it cannot be predicted ([details](#patch-badge))
+- **DietPi updates in the patch flow** — opt in per device with `commands.allow_extra_updaters: [dietpi]` and a root re-run of `install.sh`. The maintenance worker then runs DietPi's own `dietpi-update` after apt during a patch, and the dashboard shows DietPi updates next to apt updates. No sudoers line is added ([details](#dietpi-updates))
 - **Manual patch with an opt-in reboot** — the Patch confirmation offers **Reboot automatically if the patch requires it**. "Reboot needed" always means a reboot is required now, never that a pending kernel update will need one later. Package lists that are older than the apt configuration show "Package lists out of date" instead of a phantom update count ([details](#manual-patch-and-reboot))
 - **Reboots and shutdowns wait for the package manager** — every agent-initiated reboot and every shutdown on a dpkg host waits up to 10 minutes for a running `apt`/`dpkg` to finish. If the lock stays held, or its state cannot be determined, the reboot or shutdown is skipped and reported, never forced. The shutdown result is truthful: a shutdown that sudo refuses reports `failed`. On a Linux host set up by the installer, remote shutdown is opt-in (SHUTDOWN-SUDO-001). The installer adds the one `systemctl poweroff` sudo rule only when you answer yes to "Allow remote shutdown from dashboard?" or when `commands.allow_shutdown` is `true` and you re-run `install.sh` as root ([how to enable it](#shutdown-on-linux-and-the-sudo-rule)). Upgrade the server before the agents ([details](#reboots-and-the-dpkg-lock))
 - **Expected activity** — an update, restart, stack action, patch, reboot, shutdown or agent update that you or a schedule starts no longer raises a "container died" or "device offline" alert. rIOt records the disruption as an `info` event that names the action and who started it, shows what each device is doing on the Devices page, and raises one alert that names the action only when something is still down afterwards. Every window is bounded, the powered-off state after a shutdown is quiet, and no agent change is needed ([details](#expected-activity))
@@ -267,10 +268,11 @@ On a fresh install the installer asks which remote features to allow. Every ques
 | 1 | `Allow remote reboot from dashboard?` | Linux, macOS | `commands.allow_reboot` |
 | 2 | `Allow remote shutdown from dashboard?` | Linux only | `commands.allow_shutdown` |
 | 3 | `Allow remote OS patching from dashboard?` | Linux, macOS | `commands.allow_patching` |
-| 4 | `Allow remote terminal access to this host?` | Linux, macOS | `host_terminal.enabled` |
-| 5 | `Allow remote exec into Docker containers?` | Only when Docker is installed | `docker.terminal_enabled` |
+| 4 | `Allow rIOt to apply DietPi updates during OS patching?` | Linux, only when DietPi is present | `commands.allow_extra_updaters` (`[dietpi]`) |
+| 5 | `Allow remote terminal access to this host?` | Linux, macOS | `host_terminal.enabled` |
+| 6 | `Allow remote exec into Docker containers?` | Only when Docker is installed | `docker.terminal_enabled` |
 
-The shutdown question and the reboot question are independent. Each has its own config key and its own sudo rule.
+The shutdown question and the reboot question are independent. Each has its own config key and its own sudo rule. The DietPi question adds no sudo rule at all; see [DietPi updates](#dietpi-updates).
 
 How each mode answers:
 
@@ -601,6 +603,8 @@ The root installer creates `/etc/sudoers.d/riot-agent` with platform-specific fi
 | `/usr/bin/systemctl poweroff` | Opt-in remote shutdown privilege (SHUTDOWN-SUDO-001). The installer writes this one rule only when `commands.allow_shutdown` is `true` for the run (see [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule)). The rule is `riot ALL=(root) NOPASSWD: <systemctl path> poweroff`, with no extra arguments and no wildcard. It does not allow `halt`, `kexec`, `suspend`, `poweroff --force` or the `shutdown`, `poweroff` and `halt` programs. |
 | Exact nginx `-t` / `-T` and SMART read commands, when present | Collector reads; SMART rules name discovered disks rather than allowing arbitrary options |
 
+The DietPi extra-updater step (EXTRA-UPD-001) adds **no** sudoers rule. It runs inside the root worker that the `systemctl start` rule above already starts. See [DietPi updates](#dietpi-updates).
+
 Executable paths are resolved on the host. The installer validates candidate and complete sudo policy with `visudo`, and service units with `systemd-analyze verify`. Do not restore broad shell, bare `smartctl`, or wildcard hold rules to bypass a failed check. See the [fixed privilege contract and migration procedure](docs/ops/os-maintenance.md).
 
 **Existing installs**: If you add the `webservers` collector to an existing device, add the nginx sudoers rules manually:
@@ -652,6 +656,7 @@ New installs via `install.sh` include all rules automatically.
 | `commands.allow_reboot` | `false` | Allow remote reboot command from the dashboard, and the reboot that **Reboot automatically if the patch requires it** requests after a manual patch (see [Manual patch and reboot](#manual-patch-and-reboot)). Nothing the server sends overrides it. The agent also reports this value to the server (display-only) so the patch badge can say a reboot is manual — see [Patch badge](#patch-badge) |
 | `commands.allow_shutdown` | `false` | Allow remote shutdown command from the dashboard (device requires physical or out-of-band access to power back on). The shutdown waits for the dpkg lock; see [Reboots and the dpkg lock](#reboots-and-the-dpkg-lock). On a Linux host set up by the installer, shutdown also needs the one `systemctl poweroff` sudo rule. Setting this key to `true` does not add the rule: re-run `install.sh` as root, and `doctor` reports the rule's state. See [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule) |
 | `commands.allow_patching` | `false` | Allow remote OS patching and enable-auto-updates commands from the dashboard |
+| `commands.allow_extra_updaters` | `[]` (none) | List of platform updaters outside apt that rIOt may apply after apt during an OS patch. The only value today is `dietpi`. Write it as `allow_extra_updaters: [dietpi]`, with plain lowercase names. Setting it is only the agent-side half of the opt-in: it also needs `commands.allow_patching: true` and a root re-run of `install.sh`, which writes the root-side half. An unknown name is ignored with one warning in the agent log per config load. See [DietPi updates](#dietpi-updates) |
 | `commands.hold_reboot_class` | `false` | Hold GPU driver + kernel packages at the OS level so they can only be applied during a maintenance-window patch run (Linux apt/dnf5 only — see [Reboot-Class Package Gating](#reboot-class-package-gating)). The agent applies reboot-class packages only when the run asks for them, this setting is `true` and hold enforcement works; otherwise it never applies them or reboots automatically. Requires the server-side `reboot_class: gated` policy and the new sudoers rules from `install.sh`. |
 | `host_terminal.enabled` | `false` | Allow browser-based host shell access from the dashboard |
 | `host_terminal.shell` | auto-detect | Override default shell (e.g., `/bin/bash`) |
@@ -672,7 +677,7 @@ New installs via `install.sh` include all rules automatically.
 | `disk` | Block devices, mounted filesystems with usage, disk I/O metrics (reads/writes, bytes, queue depth); pool and union filesystems are automatically identified and displayed in a separate "Storage Pools" card section on the device detail page — detected by filesystem type (ZFS, Btrfs, bcachefs, mergerfs, unionfs, Unraid `shfs`/`fuse.shfs`) or by device path (mdraid arrays `/dev/md*`, LVM and device-mapper volumes `/dev/mapper/*` and `/dev/dm-*`; Docker device-mapper and live-boot overlays are excluded) |
 | `network` | Interfaces, IPs, MACs, state, bytes tx/rx, default gateway, DNS servers |
 | `os_info` | OS name/version, kernel, uptime, timezone, locale, init system |
-| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status; classifies each pending update as `gpu_driver` / `kernel` / standard and detects reboot-required state (on apt: `/var/run/reboot-required`, or an installed kernel newer than the running one; on dnf: `dnf needs-restarting -r`); on apt it also reports whether the package lists are `fresh`, `stale` or `unknown` (`lists_freshness`) — see [Reboot-Class Package Gating](#reboot-class-package-gating) and [Manual patch and reboot](#manual-patch-and-reboot) |
+| `updates` | Package manager, pending updates, security updates, kernel update status, unattended-upgrades status; classifies each pending update as `gpu_driver` / `kernel` / standard and detects reboot-required state (on apt: `/var/run/reboot-required`, or an installed kernel newer than the running one; on dnf: `dnf needs-restarting -r`); on apt it also reports whether the package lists are `fresh`, `stale` or `unknown` (`lists_freshness`); on a DietPi host it also reports DietPi as an extra updater (`extra_updaters`, read-only, no new collector name needed) — see [Reboot-Class Package Gating](#reboot-class-package-gating), [Manual patch and reboot](#manual-patch-and-reboot) and [DietPi updates](#dietpi-updates) |
 | `services` | systemd services — name, state, enabled, PID, memory usage |
 | `processes` | Top 15 by CPU, top 15 by memory — PID, name, CPU %, memory %, user |
 | `docker` | Docker containers — name, image, status, ports, CPU/mem stats, `riot.*` labels, real-time events, image update detection |
@@ -1679,7 +1684,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET/POST/DELETE` | `/api/v1/settings/bootstrap-keys[/:hash]` | Bootstrap key CRUD |
 | `POST` | `/api/v1/settings/tls/regenerate` | Regenerate server TLS certificate |
 | `GET` | `/api/v1/fleet/agent-versions` | Agent version summary |
-| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. By default lists only devices with at least one pending update or a reboot requirement; add `?all=true` for one row per registered device. Each row also carries the optional fields `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot`, `updates_at` and `patch_badge` — see [Patch badge](#patch-badge). Every row also carries `lists_freshness` (`fresh`, `stale` or `unknown`; always present). `reboot_required` is true only when a reboot is required now, never for a pending kernel update — see [Manual patch and reboot](#manual-patch-and-reboot) |
+| `GET` | `/api/v1/fleet/patch-status` | Fleet patch status overview — per device: `pending_updates`, `security_count`, `reboot_class_count`, `reboot_required`. Add `?detail=true` for the full `updates` list (each carries a `class`: `gpu_driver` / `kernel` / empty) plus `package_manager`. By default lists only devices with at least one pending update or a reboot requirement; add `?all=true` for one row per registered device. Each row also carries the optional fields `os_patch_mode`, `next_window_start`, `os_patch_cooldown_minutes`, `allow_reboot`, `updates_at` and `patch_badge` — see [Patch badge](#patch-badge). Every row also carries `lists_freshness` (`fresh`, `stale` or `unknown`; always present). A row also carries `extra_updaters` (at most 8 entries, only those with an update waiting) when a DietPi update is pending, and a host whose only waiting update is a DietPi update is listed. `reboot_required` is true only when a reboot is required now, never for a pending kernel update — see [Manual patch and reboot](#manual-patch-and-reboot) |
 | `POST` | `/api/v1/fleet/bulk-update` | Bulk update agents. The response adds `conflicts`, the number of devices skipped because a host command was already in flight |
 | `POST` | `/api/v1/fleet/bulk-patch` | Bulk patch devices. The response adds `conflicts`, as for bulk-update |
 | `GET` | `/api/v1/activity` | What each device is doing right now, computed by the server from commands and device state. See [Activity endpoint](#activity-endpoint) |
@@ -1839,6 +1844,8 @@ The dashboard uses `existing_command_id` to attach to the command that is alread
 | `mode` | string, optional | `full` (default), `security` or `repair`. See [OS maintenance](docs/ops/os-maintenance.md) |
 | `reboot_if_required` | boolean, optional | `true` releases rIOt's reboot-class holds for this one run and lets the agent reboot after the run, only if a reboot is required then. Absent means `false`. The server does not store `false`. Any other JSON type is rejected |
 | `include_reboot_class` | — | Never accepted from a client. The server removes the key in any capitalization. It sets `include_reboot_class: true` itself only for a valid `reboot_if_required: true` |
+| `exclude_extra_updaters` | boolean, optional | `true` leaves extra updaters (DietPi) out of this one run. Absent or `false` includes them. Any other JSON type, or a differently capitalized key, gets `400` with `invalid_request` and creates no command. The server does not store `false` |
+| `extra_updater_budget` | — | Never accepted from a client. The server removes the key in any capitalization, for every action. It stamps `extra_updater_budget: true` itself, which gives the run the longer [DietPi bounds](#dietpi-updates) |
 
 The server checks `reboot_if_required: true` against the device's latest telemetry before it creates the command. A rejected request creates no command and no event.
 
@@ -2712,28 +2719,42 @@ No setup is needed beyond the maintenance window you manage in **Settings > Agen
 | **Auto** | Nothing needs you. No reboot is required now. When a pending kernel/GPU update will need a reboot and nothing will do it automatically, the Reboot line says so, and the badge stays **Auto** because no reboot is required yet. |
 | **Auto (reboot on YYYY-MM-DD)** | A reboot is required now or will be needed after a pending kernel/GPU update installs, and it will happen at the next OS-patch window start (UTC). This is an estimate and can move. |
 | **Auto (reboot date Unknown)** | A reboot is required now or will be needed after a pending kernel/GPU update installs. It will be automatic, but the time cannot be predicted (for example OS-patch mode is `anytime`, or the agent does not report `allow_reboot`). |
+| **Manual** | Nothing needs you, and nothing patches this host automatically. For example: auto-patch is off, automatic patching is disabled server-wide, or the agent does not allow patching, and no update is waiting. The badge is grey, not red. It does not count toward "N hosts need you". |
 | **Needs you** | At least one item needs a person. Hover or focus the badge to read each item and what to do. |
 
-Hover the badge, or move to it with the keyboard, to open the explanation. Press Escape to close it. It has four lines: **Automatic patching**, **Reboot**, **Needs you** and **As of** (when the update data was reported, in UTC). A note about unattended-upgrades or about checks that need a newer agent can follow.
+Hover the badge, or move to it with the keyboard, to open the explanation. Press Escape to close it. It has four lines: **Automatic patching**, **Reboot**, **Needs you** and **As of** (when the update data was reported, in UTC). A note about unattended-upgrades or about checks that need a newer agent can follow. When the badge has information items, an **Information** block lists them below the four lines, with the text "Nothing here needs you."
 
-The **N hosts need you** button above the device table shows only the devices whose badge is **Needs you**. It is a toggle.
+The **N hosts need you** button above the device table shows only the devices whose badge is **Needs you**. It is a toggle. **Manual** and **Auto** hosts are never counted.
 
 ### What makes a device "Needs you"
 
-Each reason is listed with an action:
+**Needs you** appears only when work is waiting and nothing will do it. The badge uses these terms:
 
-- Auto-patch is off for the device.
-- Automatic patching is disabled server-wide, or the OS-patch window has no upcoming start.
-- The agent does not allow patching (`commands.allow_patching` is false).
-- rIOt cannot patch the host: no patch data, or a package manager other than apt or dnf (for example Windows and macOS).
-- Packages are held or excluded by someone other than rIOt (shown up to 10 names, then "and N more").
-- Kernel and GPU packages are held by rIOt but the `reboot_class` policy is not `gated`, so nothing releases them.
-- Hold enforcement is not working on the host.
-- A new Ubuntu release is available. rIOt never starts a release upgrade.
-- The latest finished patch run failed or timed out. Expired and cancelled commands are ignored.
-- A reboot is required now (`reboot_required` is true) and no automatic reboot is set up. The explanation lists the causes, and the action says to reboot the host now. When the agent has `commands.allow_reboot: false`, the action says to reboot it outside rIOt. A pending kernel/GPU update that is not installed yet never raises this item.
+- **Waiting work** is any of: apt updates pending (and the package lists are not stale), an extra-updater (DietPi) update pending, or a reboot required now.
+- **Automatic patching set up** means auto-patch is on for the device, patching is usable server-wide, the agent allows patching and the package manager is apt or dnf.
+- An **action item** is a reason listed under **Needs you**. An **information item** is a reason listed under **Information**. Information never changes the badge to **Needs you**.
 
-A deliberate hold or a host you patch by hand stays **Needs you** until the cause is removed.
+The badge says **Needs you** if, and only if, at least one action item exists. Each reason is an action item only under the condition shown, and information otherwise:
+
+| Reason (code) | Action item when | Otherwise |
+|---|---|---|
+| Auto-patch is off for the device (`auto_patch_off`) | Updates are waiting that nothing will apply | Information |
+| Automatic patching is disabled server-wide, or the OS-patch window has no upcoming start (`patching_disabled_server`) | Same as above | Information |
+| The agent does not allow patching, `commands.allow_patching` is false (`agent_patching_not_allowed`) | Same as above | Information |
+| rIOt cannot patch the host: no patch data, or a package manager other than apt or dnf (`cannot_patch_host`) | Apt updates are pending on a host that reports them | Information, including when no patch data was reported |
+| Packages are held or excluded by someone other than rIOt (`held_packages`, up to 10 names, then "and N more") | A held package has a newer version available | Information |
+| Kernel and GPU packages are held by rIOt but the `reboot_class` policy is not `gated` (`reboot_class_held_no_release`) | A kernel or GPU update is pending | Information |
+| Hold enforcement is not working on the host (`hold_enforcement_broken`) | Never | Always information |
+| A new Ubuntu release is available. rIOt never starts a release upgrade (`manual_approval_update`) | Always | Not applicable |
+| The latest finished patch run failed or timed out (`last_run_failed`). Expired and cancelled commands are ignored | Work is waiting | Information. The text adds "Nothing is pending now." and keeps the link to the failed command |
+| A reboot is required now (`reboot_required` is true) and no automatic reboot is set up (`manual_reboot_needed`). The explanation lists the causes. When the agent has `commands.allow_reboot: false`, the action says to reboot outside rIOt. A pending kernel/GPU update that is not installed yet never raises this item | Always, when it applies | Not applicable |
+| A DietPi update is pending and DietPi is not enabled (`extra_update_not_applied`). The text names the update and why it is not applied, and the action says what to do | Always, when it applies | Not applicable |
+| A DietPi update is pending and will be applied (`extra_update_pending`) | Never | Always information. The text says when it will be applied |
+| DietPi's update state is unknown (`extra_update_unknown`) | Never | Always information. The text names the reason. rIOt never says "up to date" for an unknown state |
+
+Each extra-updater code appears once per updater. The Automatic patching, Reboot and As of lines are unchanged.
+
+A host with nothing pending, no reboot required and auto-patch off therefore reads **Manual**. For example, vermont used to read **Needs you** for "auto-patch off". It now reads **Manual**, with `auto_patch_off` under **Information**, and it is not counted in "N hosts need you". A host with updates pending and auto-patch off still reads **Needs you**. A deliberate hold on a package that has an update stays **Needs you** until the cause is removed.
 
 ### When a reboot is automatic
 
@@ -2764,7 +2785,8 @@ Agents older than the release that added these facts do not send them. Until suc
 | `allow_reboot` | boolean | The device's agent reports it | The device's `commands.allow_reboot`. |
 | `updates_at` | string, RFC 3339 | Update data exists | When the update data was reported. |
 | `lists_freshness` | string: `fresh`, `stale`, `unknown` | Always | Whether the host's apt package lists are older than its apt configuration. Agents that do not report it, dnf hosts and unrecognized values read as `unknown`. Display only: no dispatch decision reads it. See [Stale package lists](#stale-package-lists). |
-| `patch_badge` | object | The device is registered | `kind` (`auto`, `auto_reboot_date`, `auto_reboot_unknown`, `needs_you`), `label`, `explanation` (`automatic`, `reboot`, `needs_you` items with `code`, `text`, `action` and optional `command_id`, `needs_you_summary`, `as_of`, `notes`) and `reboot_at` for `auto_reboot_date` only. |
+| `patch_badge` | object | The device is registered | `kind` (`auto`, `auto_reboot_date`, `auto_reboot_unknown`, `manual`, `needs_you`), `label`, `explanation` (`automatic`, `reboot`, `needs_you` action items with `code`, `text`, `action` and optional `command_id` and `updater`, `needs_you_summary` (counts action items only), `info` (information items in the same shape), `as_of`, `notes`) and `reboot_at` for `auto_reboot_date` only. `manual` and `info` are new; a client that does not know `manual` should treat it as a neutral badge. |
+| `extra_updaters` | array | A DietPi update is pending | The extra-updater entries that have an update waiting, at most 8: `id`, `status`, `installed_version`, `available_version`, `pending_count`, `readiness`, `notices`. Display only: no dispatch decision reads it. See [DietPi updates](#dietpi-updates). |
 
 The error response is unchanged: `500 {"error":"failed to get telemetry"}`.
 
@@ -2947,6 +2969,188 @@ The agent records every reboot it starts or refuses after a patch in `patch-rebo
 | Logging | One Info line per claim that removed entries. One Warn line per refused claim. |
 
 An agent downgraded after it wrote the version 2 file cannot read it, and refuses post-patch reboots until you delete the file. Downgrades are not supported.
+
+---
+
+## DietPi updates
+
+DietPi hosts update DietPi itself with DietPi's own tool, `dietpi-update`, which apt cannot replace. EXTRA-UPD-001 lets rIOt apply that update as one extra step of an OS patch, after apt, so a DietPi host needs one Patch instead of two separate procedures. DietPi is the only "extra updater" today. The step is generic, so a later updater can use the same contract.
+
+The feature is opt-in per device and is not part of any release until the release that contains EXTRA-UPD-001 is published. See the [CHANGELOG](CHANGELOG.md). The operator guide, with the refusal reasons and limits, is in [docs/ops/os-maintenance.md](docs/ops/os-maintenance.md#extra-updaters-dietpi).
+
+### What you get
+
+- **Device page.** An **Other updaters** list shows DietPi next to the apt updates: installed version, available version, status, the reason in words when the state is unknown, and each notice. The **Patch** button names a pending, enabled DietPi update, for example `Patch (3 + DietPi)` or `Patch (DietPi)`.
+- **Patch dialog.** When a DietPi update is pending and enabled, the dialog shows **Apply DietPi update in this run**. The box is ticked every time the dialog opens. Unticking it sends `exclude_extra_updaters: true` for that run. The dialog states the version change, that DietPi runs after apt and may take up to 40 minutes. It also says DietPi stops and restarts the services it manages (for example CUPS or VPN software) and runs `apt-get autopurge`, which removes packages apt considers no longer needed. A major upgrade adds a note that the kernel or firmware may change and a reboot is likely.
+- **Fleet.** A host whose only waiting update is a DietPi update appears in the Pending OS Patches panel, with a row such as "DietPi 10.8.2". Bulk patch includes it. Automatic patching fires for it when DietPi is enabled and pending, even with no apt updates.
+- **Result.** The command result starts with both parts, for example `apt: succeeded; dietpi: succeeded`. A DietPi failure makes the whole command `failed`.
+- **Badge.** DietPi items follow the [patch badge](#patch-badge) rules.
+
+rIOt reports **unknown**, never "up to date", when DietPi has nothing pending. DietPi leaves no proof that its own check ran and found nothing.
+
+### How it works
+
+1. The `updates` collector reads DietPi's files, read-only, and reports DietPi as an extra updater. No new collector name is needed in `collectors.enabled`.
+2. During an `os_update` in `full` or `security` mode, the root worker `riot-maintenance` runs `/boot/dietpi/dietpi-update 1` after apt and after rIOt's holds are restored. It never runs in `repair` mode, and never after an apt failure.
+3. The step has a 40-minute limit. Its output is kept in its own section of at most 128 KiB. It runs at most once per command and at most once per 60 minutes per host.
+4. The step never reboots the host. A reboot goes only through the existing [reboot gate](#manual-patch-and-reboot).
+5. DietPi is run only when its update source owner is `MichaIng`. A `DEV_GITOWNER` in `/boot/dietpi.txt` with any other value is refused.
+
+No sudoers line is added. The privilege is the root worker, a root-owned policy file `/etc/riot-maintenance/extra-updaters.json` and a unit drop-in `/etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf`. Only `install.sh`, run as root, writes them.
+
+### Bounds and the patch window
+
+These apply only to a run that includes DietPi. Every other run keeps its bounds (apt 30 minutes, backstop 35 minutes, agent 31 minutes 30 seconds, deadline 40 minutes).
+
+| Bound | Value |
+|---|---|
+| DietPi step | 40 minutes |
+| Worker (overall) | 80 minutes |
+| Service backstop (`RuntimeMaxSec`) | 85 minutes |
+| Agent hard maximum | 88 minutes |
+| Command deadline | 95 minutes |
+
+Set the OS-patch window (**Settings > Agents**) to at least 90 minutes. Keep it clear of 06:25, the default time of DietPi's own `cron.daily` check. The window is in UTC and `cron.daily` uses the host's local time. Details and the residual risk are in the [operator guide](docs/ops/os-maintenance.md#bounds).
+
+### Turn it on, one server at a time
+
+The servers below are the fleet. Run each command on the server named in the step.
+
+#### hawaii
+
+hawaii is Debian and has no DietPi. No action is needed for this feature.
+
+1. On hawaii, change nothing. Do not add `dietpi` to its `commands.allow_extra_updaters`. If it were listed, the installer would print that DietPi is not present and record nothing.
+
+#### vermont
+
+vermont is Debian (OpenMediaVault) and has no DietPi. No action is needed for DietPi.
+
+1. On vermont, change nothing for DietPi.
+2. After the server update, the dashboard shows vermont's patch badge as **Manual**, not **Needs you**, when vermont has auto-patch off and nothing pending. vermont is then not counted in "N hosts need you". Hover the badge: `auto_patch_off` is listed under **Information**. If vermont has updates pending or a reboot required, it still reads **Needs you**.
+
+#### PiVPN
+
+PiVPN runs DietPi. DietPi stops and restarts its VPN software while the DietPi step runs, for up to 40 minutes. Do not run the Patch in step 7 over the VPN that you use to reach this host.
+
+1. On PiVPN, open `/etc/riot/agent.yaml` as root. Under the single top-level `commands:` block, set both lines. Keep your existing `allow_reboot` and `allow_shutdown` values, or set them as you want them:
+
+   ```yaml
+   commands:
+     allow_patching: true
+     allow_extra_updaters: [dietpi]
+   ```
+
+   Write `[dietpi]` with plain lowercase letters and no quotes. The installer reads a quoted name as "no updaters".
+
+2. On PiVPN, confirm that DietPi's own update check is on:
+
+   ```bash
+   grep -n '^CONFIG_CHECK_DIETPI_UPDATES' /boot/dietpi.txt
+   ```
+
+   The output must be `CONFIG_CHECK_DIETPI_UPDATES=1`. If it shows another value, set `CONFIG_CHECK_DIETPI_UPDATES=1` in `/boot/dietpi.txt`. Without it, rIOt reports DietPi as unknown and never applies it.
+
+3. On PiVPN, confirm that the update source is the default:
+
+   ```bash
+   grep -n '^DEV_GIT' /boot/dietpi.txt
+   ```
+
+   There must be no `DEV_GITOWNER` line, or its value must be empty or `MichaIng`. Any other owner is refused.
+
+4. On PiVPN, re-run the installer once, as root, with your existing server URL. Replace `X.Y.Z` with the release that contains EXTRA-UPD-001. Do not pass `--bootstrap-key`: it resets the config and every remote feature in it.
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331 --version X.Y.Z
+   ```
+
+   A re-run asks no questions. It must print `==> DietPi updates: root-side opt-in recorded (/etc/riot-maintenance/extra-updaters.json); maintenance backstop 85min`. If it prints `no root-side opt-in`, the installer did not read your list. Fix the line from step 1 and re-run.
+
+5. On PiVPN, know what else this one re-run did. It also applies the installer changes still pending from AGENT-HARDEN-001, PATCH-FLOW-001 and SHUTDOWN-SUDO-001 (the opt-in `systemctl poweroff` sudo rule, added only when `allow_shutdown: true` is in the config). See [Upgrading existing agents](#upgrading-existing-agents) and [Shutdown on Linux and the sudo rule](#shutdown-on-linux-and-the-sudo-rule). You do not need a second run for them.
+
+6. On PiVPN, run doctor as the service account:
+
+   ```bash
+   sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
+   ```
+
+   The **Extra Updaters** section must show `✓` for `dietpi detected`, the root-side opt-in, the maintenance helper and the maintenance service. Fix every `✗` line as its hint says before you go on.
+
+7. In the dashboard, open PiVPN's device page and run one manual Patch before you rely on the schedule. This is the first time the launcher meets the real DietPi updater on this host, so watch it. Check **Apply DietPi update in this run** is ticked. Tick **Reboot automatically if the patch requires it** only if PiVPN has `allow_reboot: true` and you want the reboot now. When the run ends, read the first line of the command result in the Activity log. `apt: succeeded; dietpi: succeeded` is the goal. If DietPi shows `skipped` or `failed`, use the [refusal table](docs/ops/os-maintenance.md#refusal-reasons) and fix it before you trust the schedule.
+
+8. In **Settings > Agents**, check the OS-patch window is at least 90 minutes long and clear of 06:25 on PiVPN's clock.
+
+9. On PiVPN, plan for a reboot. The first DietPi 9 to 10 update on a Raspberry Pi moves the boot partition from `/boot` to `/boot/firmware` and needs a reboot afterwards. The DietPi step never reboots. The reboot goes through rIOt's reboot gate, and every route needs `commands.allow_reboot: true` on PiVPN. Either tick **Reboot automatically if the patch requires it** on the manual Patch, or use Reboot on the device page afterwards. A scheduled run reboots only under [reboot-class gating](#reboot-class-package-gating).
+
+#### PiCUPS
+
+PiCUPS runs DietPi. DietPi stops and restarts its CUPS print service while the DietPi step runs, for up to 40 minutes. Printing is unavailable during that time.
+
+1. On PiCUPS, open `/etc/riot/agent.yaml` as root. Under the single top-level `commands:` block, set both lines. Keep your existing `allow_reboot` and `allow_shutdown` values, or set them as you want them:
+
+   ```yaml
+   commands:
+     allow_patching: true
+     allow_extra_updaters: [dietpi]
+   ```
+
+   Write `[dietpi]` with plain lowercase letters and no quotes.
+
+2. On PiCUPS, confirm that DietPi's own update check is on:
+
+   ```bash
+   grep -n '^CONFIG_CHECK_DIETPI_UPDATES' /boot/dietpi.txt
+   ```
+
+   The output must be `CONFIG_CHECK_DIETPI_UPDATES=1`. If it shows another value, set `CONFIG_CHECK_DIETPI_UPDATES=1` in `/boot/dietpi.txt`.
+
+3. On PiCUPS, confirm that the update source is the default:
+
+   ```bash
+   grep -n '^DEV_GIT' /boot/dietpi.txt
+   ```
+
+   There must be no `DEV_GITOWNER` line, or its value must be empty or `MichaIng`.
+
+4. On PiCUPS, re-run the installer once, as root, with your existing server URL. Replace `X.Y.Z` with the release that contains EXTRA-UPD-001. Do not pass `--bootstrap-key`.
+
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/rbretschneider/rIOt/main/scripts/install.sh | sudo bash -s -- https://<server-ip>:7331 --version X.Y.Z
+   ```
+
+   It must print `==> DietPi updates: root-side opt-in recorded (/etc/riot-maintenance/extra-updaters.json); maintenance backstop 85min`.
+
+5. On PiCUPS, know what else this one re-run did. It also applies the installer changes still pending from AGENT-HARDEN-001, PATCH-FLOW-001 and SHUTDOWN-SUDO-001 (the opt-in `systemctl poweroff` sudo rule, added only when `allow_shutdown: true` is in the config). You do not need a second run for them.
+
+6. On PiCUPS, run doctor as the service account:
+
+   ```bash
+   sudo -u riot /usr/local/bin/riot-agent -config /etc/riot/agent.yaml doctor
+   ```
+
+   The **Extra Updaters** section must show `✓` for `dietpi detected`, the root-side opt-in, the maintenance helper and the maintenance service. Fix every `✗` line as its hint says.
+
+7. In the dashboard, open PiCUPS's device page and run one manual Patch before you rely on the schedule. Check **Apply DietPi update in this run** is ticked. When the run ends, read the first line of the command result: `apt: succeeded; dietpi: succeeded` is the goal. If DietPi shows `skipped` or `failed`, use the [refusal table](docs/ops/os-maintenance.md#refusal-reasons).
+
+8. In **Settings > Agents**, check the OS-patch window is at least 90 minutes long and clear of 06:25 on PiCUPS's clock.
+
+9. On PiCUPS, plan for a reboot. The first DietPi 9 to 10 update on a Raspberry Pi moves the boot partition from `/boot` to `/boot/firmware` and needs a reboot afterwards. The DietPi step never reboots. The reboot goes through rIOt's reboot gate, as described for PiVPN.
+
+### Turn it off
+
+1. On the server, remove `dietpi` from `commands.allow_extra_updaters` in `/etc/riot/agent.yaml`, or set the list to `[]`.
+2. On the server, re-run the installer as root, as in step 4 above. It prints `==> DietPi updates: root-side opt-in revoked`. It writes the empty policy first and then shortens the service backstop back to 35 minutes. It deletes no file.
+
+### What ships where
+
+| Change | Reaches a device by |
+|---|---|
+| Server: the badge rules (**Manual**, **Needs you** only when work is waiting), the DietPi budget stamp and events, the dashboard | The normal server update |
+| Agent: DietPi detection, readiness, the request, the result lines, doctor | The normal agent update |
+| Root: the maintenance worker, the launcher, the policy file and the unit drop-in | **Re-run `install.sh` as root on each DietPi host**, using the matching release |
+
+Deploy the server first, then update the agents. The badge change needs only the server and the dashboard. An agent that is updated and configured before the root re-run reports DietPi with readiness `unsupported_helper` (old helper) or `root_side_missing`. The badge then shows an action item that says to re-run `install.sh` as root.
 
 ---
 

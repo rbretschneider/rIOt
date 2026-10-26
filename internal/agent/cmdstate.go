@@ -316,10 +316,18 @@ type inflightMarker struct {
 	// after the run, so a result recovered after an agent restart still states
 	// the authorization (PATCH-FLOW-001 AD-005).
 	RebootIfRequired bool `json:"reboot_if_required,omitempty"`
+	// ExtraEvents records which extra-updater events were already sent for this
+	// command ("dietpi:start", "dietpi:end"), so a restart cannot send a third.
+	// At most maxExtraEvents entries (EXTRA-UPD-001 FR-045, NFR-002).
+	ExtraEvents []string `json:"extra_events,omitempty"`
 }
+
+// maxExtraEvents bounds ExtraEvents: two per updater, eight updaters.
+const maxExtraEvents = 16
 
 func (m inflightMarker) clone() inflightMarker {
 	out := m
+	out.ExtraEvents = append([]string(nil), m.ExtraEvents...)
 	out.Docker = make([]dockerRecord, len(m.Docker))
 	for i, r := range m.Docker {
 		r.StoppedDependentIDs = append([]string(nil), r.StoppedDependentIDs...)
@@ -443,6 +451,33 @@ func (s *inflightStore) UpdateDocker(id, key string, fn func(*dockerRecord)) err
 	}
 	fn(&m.Docker[idx])
 	return s.saveLocked()
+}
+
+// AddExtraEvent durably records that an extra-updater event is about to be sent.
+// It returns true only when the entry is new and was persisted; a repeat, a full
+// list, a missing marker or a failed write all return false, so an event is never
+// sent that was not recorded first.
+func (s *inflightStore) AddExtraEvent(id, value string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.m[id]
+	if !ok {
+		return false, nil
+	}
+	for _, have := range m.ExtraEvents {
+		if have == value {
+			return false, nil
+		}
+	}
+	if len(m.ExtraEvents) >= maxExtraEvents {
+		return false, nil
+	}
+	m.ExtraEvents = append(m.ExtraEvents, value)
+	if err := s.saveLocked(); err != nil {
+		m.ExtraEvents = m.ExtraEvents[:len(m.ExtraEvents)-1]
+		return false, err
+	}
+	return true, nil
 }
 
 // MarkReported records that a failure result has already been queued for this

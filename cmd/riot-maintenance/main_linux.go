@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/DesyncTheThird/rIOt/internal/agent/collectors"
+	"github.com/DesyncTheThird/rIOt/internal/extraupd"
 	"github.com/DesyncTheThird/rIOt/internal/maintenance"
 )
 
@@ -19,15 +23,61 @@ const (
 	aptListsDir      = "/var/lib/apt/lists"
 	aptSourcesBudget = 1000
 	rootUID          = 0
+
+	// launcherExitCode is the exit status of a launcher that refused or failed
+	// before exec (EXTRA-UPD-001 section 6.1).
+	launcherExitCode = 125
 )
+
+// init locks the main goroutine to the main thread. The step launcher unshares
+// a mount namespace, which belongs to one thread and must be the thread that
+// execs (SEC-009). Locking in init keeps every later "own table" read on it.
+func init() { runtime.LockOSThread() }
+
+// launcherExit carries the exit status of a failed launcher.
+type launcherExit struct{ err *maintenance.LauncherError }
+
+func (e launcherExit) Error() string { return e.err.Error() }
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "maintenance:", err)
+		var le launcherExit
+		if errors.As(err, &le) {
+			os.Exit(launcherExitCode)
+		}
 		os.Exit(1)
 	}
 }
-func run(args []string) error {
+
+// capabilitiesText is what `--capabilities` prints: the request versions this
+// helper accepts and the updaters it implements. The agent reads it to decide
+// whether it may send a version 2 request (AD-002).
+func capabilitiesText() string {
+	var ids []string
+	for _, u := range extraupd.Registry() {
+		ids = append(ids, u.ID())
+	}
+	return "request-versions=1,2\nextra-updaters=" + strings.Join(ids, ",") + "\n"
+}
+
+func run(args []string) error { return runWith(args, os.Stdout) }
+
+// runWith handles the argv modes in a fixed order. --capabilities comes first,
+// before any environment, file, lock or privilege check, so an unprivileged
+// agent can probe the installed binary (SEC-007). --run-extra is the step
+// launcher. No argument is the worker. Anything else is an error.
+func runWith(args []string, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "--capabilities" {
+		_, err := io.WriteString(stdout, capabilitiesText())
+		return err
+	}
+	if len(args) > 0 && args[0] == maintenance.LauncherArg {
+		if err := maintenance.RunExtraMain(args); err != nil {
+			return launcherExit{err}
+		}
+		return errors.New("launcher returned without exec")
+	}
 	if len(args) != 0 {
 		return errors.New("maintenance helper accepts no arguments")
 	}
@@ -56,6 +106,16 @@ func run(args []string) error {
 		Holds:      collectors.NewDetachedAptHolds(),
 		Sources:    aptSourcesFingerprint,
 		TouchLists: touchAptLists,
+		Extras: &maintenance.ExtraEnv{
+			FS:        extraupd.OSRoot(),
+			Policy:    maintenance.ReadExtraPolicy,
+			Lock:      maintenance.DpkgLockState,
+			Busy:      maintenance.DietPiBusy,
+			Unit:      maintenance.EffectiveUnit,
+			Trust:     maintenance.TrustWalk,
+			LastStart: store.LatestExtraStart,
+			Step:      maintenance.ExtraLaunchRunner{},
+		},
 	}
 	prior, err := store.Current()
 	if err == nil && (!prior.Terminal() || prior.HoldsReleased) {

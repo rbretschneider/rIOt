@@ -29,6 +29,9 @@ const (
 	badgeAutoRebootDate    = "auto_reboot_date"
 	badgeAutoRebootUnknown = "auto_reboot_unknown"
 	badgeNeedsYou          = "needs_you"
+	// badgeManual is the neutral badge of a host with nothing for the operator
+	// to do and no automatic patching (EXTRA-UPD-001 FR-081, DEC-018).
+	badgeManual = "manual"
 )
 
 // Needs-you reason codes, in the order they are evaluated and listed.
@@ -43,6 +46,10 @@ const (
 	reasonManualApproval       = "manual_approval_update"
 	reasonLastRunFailed        = "last_run_failed"
 	reasonManualReboot         = "manual_reboot_needed"
+	// Extra-updater reasons (EXTRA-UPD-001): one item per updater entry.
+	reasonExtraNotApplied = "extra_update_not_applied"
+	reasonExtraPending    = "extra_update_pending"
+	reasonExtraUnknown    = "extra_update_unknown"
 )
 
 // patchBadgeReasonCodes lists every code computePatchBadge can raise.
@@ -50,6 +57,7 @@ var patchBadgeReasonCodes = []string{
 	reasonAutoPatchOff, reasonPatchingDisabled, reasonAgentPatchingOff, reasonCannotPatchHost,
 	reasonHeldPackages, reasonRebootClassHeld, reasonHoldEnforcementBroke, reasonManualApproval,
 	reasonLastRunFailed, reasonManualReboot,
+	reasonExtraNotApplied, reasonExtraPending, reasonExtraUnknown,
 }
 
 const (
@@ -86,21 +94,27 @@ type patchBadgeInput struct {
 	AgentFactsMinVersion string
 }
 
-// patchBadgeReason is one needs-you item.
+// patchBadgeReason is one item: an action item under "Needs you", or an
+// information item under "Information". Updater names the extra updater of an
+// extra_update_* item.
 type patchBadgeReason struct {
 	Code      string `json:"code"`
 	Text      string `json:"text"`
 	Action    string `json:"action"`
 	CommandID string `json:"command_id,omitempty"`
+	Updater   string `json:"updater,omitempty"`
 }
 
 // patchBadgeExplanation is the four-line explanation: Automatic patching,
-// Reboot, Needs you (summary plus items) and As of, plus optional notes.
+// Reboot, Needs you (summary plus action items) and As of, plus information
+// items and optional notes. NeedsYou holds action items only; Info holds the
+// neutral ones (EXTRA-UPD-001 FR-079).
 type patchBadgeExplanation struct {
 	Automatic       string             `json:"automatic"`
 	Reboot          string             `json:"reboot"`
 	NeedsYou        []patchBadgeReason `json:"needs_you"`
 	NeedsYouSummary string             `json:"needs_you_summary"`
+	Info            []patchBadgeReason `json:"info"`
 	AsOf            string             `json:"as_of"`
 	Notes           []string           `json:"notes"`
 }
@@ -151,98 +165,152 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 		(allowReboot == nil || *allowReboot) && agentCanRelease
 	autoCovers := (requiredNow || pendingRC) && autoRebootSetUp
 
-	var reasons []patchBadgeReason
-	add := func(code, text, action string) {
-		reasons = append(reasons, patchBadgeReason{Code: code, Text: text, Action: action})
+	// EXTRA-UPD-001 group K (amends NY-1 to NY-9): a reason is an action item
+	// only when something is actually waiting and nothing will apply it. A
+	// setting by itself, a hold with nothing under it, or a failure with nothing
+	// pending is information. The conditions are pure facts of the telemetry.
+	aptPending := u != nil && !stale && u.PendingUpdates > 0
+	extras := badgeExtras(u)
+	extraPending := false
+	extraUnapplied := false
+	for _, e := range extras {
+		if e.Pending() {
+			extraPending = true
+			if !autoPatchSetUp || !e.Enabled() {
+				extraUnapplied = true
+			}
+		}
+	}
+	waiting := aptPending || extraPending || requiredNow
+	unapplied := (aptPending && !autoPatchSetUp) || extraUnapplied
+
+	var actions, infos []patchBadgeReason
+	legacy := 0 // NY-1 to NY-10 raised, whatever their class: the frozen lines read it
+	raise := func(act bool, code, text, action string) *patchBadgeReason {
+		legacy++
+		r := patchBadgeReason{Code: code, Text: text, Action: action}
+		if act {
+			actions = append(actions, r)
+			return &actions[len(actions)-1]
+		}
+		infos = append(infos, r)
+		return &infos[len(infos)-1]
 	}
 
 	// NY-1 .. NY-3: settings.
 	if !in.AutoPatch {
-		add(reasonAutoPatchOff, "Automatic patching is off for this host.", "Turn on Auto-patch for this host.")
+		raise(unapplied, reasonAutoPatchOff, "Automatic patching is off for this host.", "Turn on Auto-patch for this host.")
 	}
 	if !modeUsable {
 		text := "Automatic patching is disabled server-wide."
 		if mode == "window" {
 			text = "Automatic patching is disabled server-wide (the OS-patch window has no upcoming start)."
 		}
-		add(reasonPatchingDisabled, text, "Set an OS-patch window in Settings > Agents.")
+		raise(unapplied, reasonPatchingDisabled, text, "Set an OS-patch window in Settings > Agents.")
 	}
 	if agentRefuses {
-		add(reasonAgentPatchingOff, "This agent does not allow patching.", "Set commands.allow_patching: true in the agent configuration.")
+		raise(unapplied, reasonAgentPatchingOff, "This agent does not allow patching.", "Set commands.allow_patching: true in the agent configuration.")
 	}
 	// NY-4: rIOt cannot patch the host. When it applies, the package, hold and
-	// reboot reasons below are meaningless and are skipped.
+	// reboot reasons below are meaningless and are skipped. It needs action only
+	// when updates are waiting on a host that reports them.
 	if !canPatch {
 		text := "rIOt cannot patch this host: no patch data has been reported."
 		if u != nil {
 			text = fmt.Sprintf("rIOt cannot patch this host: package manager %q is not supported.", safeLabel(u.PackageManager, "none"))
 		}
-		add(reasonCannotPatchHost, text, "Patch this host outside rIOt.")
+		raise(aptPending, reasonCannotPatchHost, text, "Patch this host outside rIOt.")
 	}
 	if canPatch {
-		// NY-5: holds not placed by rIOt.
+		// NY-5: holds not placed by rIOt. Action only when a held package has a
+		// newer version available; anything the telemetry cannot show is information.
 		if names, total := otherHolds(u); total > 0 {
-			add(reasonHeldPackages,
+			raise(heldWithUpdate(u, names), reasonHeldPackages,
 				"Held or excluded packages not placed by rIOt: "+listNames(names, total)+".",
 				"Release or update these packages by hand.")
 		}
-		// NY-6: rIOt holds kernel/GPU packages and nothing releases them.
+		// NY-6: rIOt holds kernel/GPU packages and nothing releases them. Action
+		// only when such an update is actually pending.
 		if u.HoldEnforcement == "active" && len(u.HeldPackages) > 0 && !gated {
-			add(reasonRebootClassHeld,
+			raise(pendingRC, reasonRebootClassHeld,
 				"Kernel and GPU driver updates are held by rIOt and the reboot_class policy never releases them.",
 				"Set reboot_class to gated in Settings > Agents, or update the kernel and GPU driver by hand.")
 		}
-		// NY-7
+		// NY-7: a configuration fault with nothing waiting by itself.
 		if enforcementBroken {
-			add(reasonHoldEnforcementBroke, "Hold enforcement is not working on this host.", "Re-run the agent installer on this host.")
+			raise(false, reasonHoldEnforcementBroke, "Hold enforcement is not working on this host.", "Re-run the agent installer on this host.")
 		}
-		// NY-8: only an explicit "available" counts.
+		// NY-8: only an explicit "available" counts, and it is always waiting work.
 		if ru := u.ReleaseUpgrade; ru != nil && ru.Status == models.FactStatusAvailable {
 			text := "An OS release upgrade needs manual approval."
 			if name := cleanReleaseName(ru.Name); name != "" {
 				text = fmt.Sprintf("An OS release upgrade to %s needs manual approval.", name)
 			}
-			add(reasonManualApproval, text, "Start the release upgrade by hand; rIOt never starts it.")
+			raise(true, reasonManualApproval, text, "Start the release upgrade by hand; rIOt never starts it.")
 		}
 	}
-	// NY-9: latest finished run failed.
+	// NY-9: latest finished run failed. A failure with nothing waiting is a fact
+	// about the past: it stays visible as information and says so.
 	if r := in.LastRun; r != nil && (r.Status == string(models.CommandFailed) || r.Status == string(models.CommandTimedOut)) {
 		outcome := "failed"
 		if r.Status == string(models.CommandTimedOut) {
 			outcome = "timed out"
 		}
-		reason := patchBadgeReason{
-			Code:   reasonLastRunFailed,
-			Text:   fmt.Sprintf("The last patch run %s: %s", outcome, runMessage(r.ResultMsg)),
-			Action: "Review the failed command, fix the cause and run the patch again.",
+		text := fmt.Sprintf("The last patch run %s: %s", outcome, runMessage(r.ResultMsg))
+		if !waiting {
+			text = sentenceEnd(text) + " Nothing is pending now."
 		}
+		reason := raise(waiting, reasonLastRunFailed, text, "Review the failed command, fix the cause and run the patch again.")
 		if badgeUUIDRe.MatchString(r.ID) {
 			reason.CommandID = r.ID
 		}
-		reasons = append(reasons, reason)
 	}
-	// NY-10: a reboot is required now and nothing will do it.
+	// NY-10: a reboot is required now and nothing will do it. Unchanged.
 	if canPatch && requiredNow && !autoCovers {
 		causes := manualRebootCauses(u, pendingRC, gated, autoPatchSetUp)
-		add(reasonManualReboot,
-			"A reboot is required now and nothing will reboot this host automatically: "+strings.Join(causes, "; ")+".",
-			manualRebootAction(allowReboot))
+		legacy++
+		actions = append(actions, patchBadgeReason{
+			Code:   reasonManualReboot,
+			Text:   "A reboot is required now and nothing will reboot this host automatically: " + strings.Join(causes, "; ") + ".",
+			Action: manualRebootAction(allowReboot),
+		})
+	}
+	// Extra updaters (FR-051, FR-052, FR-071): one item per updater entry.
+	for _, e := range extras {
+		switch {
+		case e.Pending() && !e.Enabled():
+			text, action := extraNotAppliedText(e)
+			actions = append(actions, patchBadgeReason{Code: reasonExtraNotApplied, Text: text, Action: action, Updater: e.ID})
+		case e.Pending():
+			text, action := extraPendingText(e, autoPatchSetUp, mode)
+			infos = append(infos, patchBadgeReason{Code: reasonExtraPending, Text: text, Action: action, Updater: e.ID})
+		case e.Status == models.ExtraStatusUnknown:
+			text, action := extraUnknownText(e)
+			infos = append(infos, patchBadgeReason{Code: reasonExtraUnknown, Text: text, Action: action, Updater: e.ID})
+		}
 	}
 
-	b := patchBadge{Explanation: patchBadgeExplanation{NeedsYou: reasons, Notes: []string{}}}
+	b := patchBadge{Explanation: patchBadgeExplanation{NeedsYou: actions, Info: infos, Notes: []string{}}}
 	if b.Explanation.NeedsYou == nil {
 		b.Explanation.NeedsYou = []patchBadgeReason{}
 	}
+	if b.Explanation.Info == nil {
+		b.Explanation.Info = []patchBadgeReason{}
+	}
 
-	// Badge kind, reboot line and reboot time.
+	// Badge kind, reboot line and reboot time. Needs you only for an action item;
+	// otherwise Manual when nothing will patch the host automatically, else the
+	// automatic kinds, whose rules are unchanged.
 	dated := mode == "window" && allowReboot != nil && *allowReboot
 	b.Explanation.Reboot = rebootLine(rebootFacts{
 		requiredNow: requiredNow, pendingRC: pendingRC, autoCovers: autoCovers,
-		reasons: len(reasons), dated: dated, at: nextStart, why: unknownDateReasons(mode, allowReboot),
+		reasons: legacy, dated: dated, at: nextStart, why: unknownDateReasons(mode, allowReboot),
 	})
 	switch {
-	case len(reasons) > 0:
+	case len(actions) > 0:
 		b.Kind, b.Label = badgeNeedsYou, "Needs you"
+	case !autoPatchSetUp:
+		b.Kind, b.Label = badgeManual, "Manual"
 	case !autoCovers:
 		b.Kind, b.Label = badgeAuto, "Auto"
 	case dated:
@@ -262,14 +330,14 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 		b.Explanation.Automatic = fmt.Sprintf("Yes. Any time (within the %d-minute cooldown).", in.OSPatch.CooldownMinutes)
 	}
 
-	// Line 3 summary.
-	switch len(reasons) {
+	// Line 3 summary: action items only (FR-080).
+	switch len(actions) {
 	case 0:
 		b.Explanation.NeedsYouSummary = "Nothing."
 	case 1:
 		b.Explanation.NeedsYouSummary = "1 item needs you."
 	default:
-		b.Explanation.NeedsYouSummary = fmt.Sprintf("%d items need you.", len(reasons))
+		b.Explanation.NeedsYouSummary = fmt.Sprintf("%d items need you.", len(actions))
 	}
 
 	// Line 4: as of.
@@ -277,6 +345,134 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 
 	b.Explanation.Notes = patchBadgeNotes(in, u)
 	return b
+}
+
+// sentenceEnd makes sure a text ends a sentence before another is appended.
+func sentenceEnd(s string) string {
+	if s == "" || strings.ContainsRune(".!?", rune(s[len(s)-1])) {
+		return s
+	}
+	return s + "."
+}
+
+// heldWithUpdate reports whether any listed non-rIOt hold also appears in the
+// host's pending update list (PATCH-FLOW-001 OQ-A8 answer). `apt list
+// --upgradable` includes held packages, so a name in both lists is a held
+// package with a newer version. Stale lists, a manager other than apt, no
+// pending list and no overlap all read as "cannot tell", which is not action.
+func heldWithUpdate(u *models.UpdateInfo, held []string) bool {
+	if u == nil || len(held) == 0 || u.PackageManager != "apt" || u.Freshness() == string(models.ListsStale) {
+		return false
+	}
+	upgradable := make(map[string]bool, len(u.Updates))
+	for _, p := range u.Updates {
+		upgradable[p.Name] = true
+	}
+	for _, name := range held {
+		if upgradable[name] {
+			return true
+		}
+	}
+	return false
+}
+
+// badgeExtras returns the extra-updater entries the badge may show: at most eight,
+// each with display-safe versions. The decoder already normalised the entry; this
+// is the second look before text reaches the page.
+func badgeExtras(u *models.UpdateInfo) []models.ExtraUpdater {
+	if u == nil {
+		return nil
+	}
+	var out []models.ExtraUpdater
+	for _, e := range u.ExtraUpdaters {
+		if len(out) >= models.MaxExtraUpdaters || !models.ExtraUpdaterIDPattern.MatchString(e.ID) {
+			continue
+		}
+		e.InstalledVersion = models.TruncateHead(stripUnsafeText(e.InstalledVersion), models.MaxExtraUpdaterVersion)
+		e.AvailableVersion = models.TruncateHead(stripUnsafeText(e.AvailableVersion), models.MaxExtraUpdaterVersion)
+		out = append(out, e)
+	}
+	return out
+}
+
+// extraLabel is the name an updater goes by in text.
+func extraLabel(id string) string {
+	if id == models.ExtraUpdaterDietPi {
+		return "DietPi"
+	}
+	return id
+}
+
+// extraChange names the update: the updater and, when known, both versions.
+func extraChange(e models.ExtraUpdater) string {
+	label := extraLabel(e.ID)
+	switch {
+	case e.InstalledVersion != "" && e.AvailableVersion != "":
+		return label + " " + e.InstalledVersion + " to " + e.AvailableVersion
+	case e.AvailableVersion != "":
+		return label + " update to " + e.AvailableVersion
+	}
+	return label + " update"
+}
+
+// extraNotAppliedText is FR-071: the update, why it will not be applied, and
+// what the operator does about it.
+func extraNotAppliedText(e models.ExtraUpdater) (text, action string) {
+	var why string
+	switch e.Readiness {
+	case models.ExtraReadinessNotOptedIn:
+		why = "not opted in"
+		action = "Add " + e.ID + " to commands.allow_extra_updaters in /etc/riot/agent.yaml and re-run install.sh as root on this host."
+	case models.ExtraReadinessRootSideMissing:
+		why = "the root-side opt-in is missing"
+		action = "Re-run install.sh as root on this host."
+	case models.ExtraReadinessPatchingDisabled:
+		why = "patching is turned off on the agent"
+		action = "Set commands.allow_patching: true in /etc/riot/agent.yaml."
+	case models.ExtraReadinessUnsupportedHelper:
+		why = "the installed maintenance helper is too old"
+		action = "Re-run install.sh as root on this host to install the newer maintenance helper."
+	case models.ExtraReadinessNonDefaultUpdateSource:
+		why = "its update source is not the default repository"
+		action = "Remove DEV_GITOWNER from /boot/dietpi.txt: rIOt only runs DietPi from the MichaIng repository."
+	default:
+		why = "its apply readiness is unknown"
+		action = "Run riot-agent doctor on this host."
+	}
+	return extraChange(e) + " is waiting; not applied: " + why + ".", action
+}
+
+// extraPendingText is FR-051 for an updater that will be applied: how.
+func extraPendingText(e models.ExtraUpdater, autoPatchSetUp bool, mode string) (text, action string) {
+	switch {
+	case !autoPatchSetUp:
+		return extraChange(e) + " is waiting; it will be applied only by a manual Patch.", "Turn on Auto-patch for this host, or patch it by hand."
+	case mode == "window":
+		return extraChange(e) + " is waiting; it will be applied automatically in the patch window.", "Nothing to do."
+	}
+	return extraChange(e) + " is waiting; it will be applied automatically at any time (within the cooldown).", "Nothing to do."
+}
+
+// extraUnknownText is FR-052: an updater whose state is not known is never
+// shown as up to date and never asks for action.
+func extraUnknownText(e models.ExtraUpdater) (text, action string) {
+	label := extraLabel(e.ID)
+	var why string
+	switch e.UnknownReason {
+	case models.ExtraReasonCheckDisabled:
+		why = "its own update check is turned off"
+	case models.ExtraReasonConfigUnreadable:
+		why = "its settings file could not be read"
+	case models.ExtraReasonNotCheckedSinceBoot:
+		why = "it has not run its update check since the host booted"
+	case models.ExtraReasonVersionUnreadable:
+		why = "the installed version could not be read"
+	case models.ExtraReasonDetectionFailed:
+		why = "detection did not finish"
+	default:
+		why = "the reason was not reported"
+	}
+	return label + " update status is unknown: " + why + ". rIOt will not apply it until an update is known to be waiting.", "No action needed unless you expect an update."
 }
 
 // pendingKernelLine opens every Reboot line that describes a future reboot.

@@ -8,7 +8,8 @@ import { useFeatures } from '../hooks/useFeatures'
 import { useActivity } from '../hooks/useActivity'
 import { isExpectedOffline } from '../utils/activity'
 import { isVersionOlder } from '../utils/version'
-import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, normalizeFreshness } from '../utils/patchFlow'
+import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, isNeedsYou, normalizeFreshness } from '../utils/patchFlow'
+import { pendingExtraNames } from '../utils/extraUpdaters'
 
 import ActivityLabel from '../components/ActivityLabel'
 import PatchBadge from '../components/PatchBadge'
@@ -46,11 +47,11 @@ export default function FleetOverview() {
     return m
   }, [patchStatus])
   const pendingPatchCount = useMemo(
-    () => (patchStatus ?? []).filter(p => p.pending_updates > 0 || p.reboot_required).length,
+    () => (patchStatus ?? []).filter(p => p.pending_updates > 0 || p.reboot_required || pendingExtraNames(p.extra_updaters).length > 0).length,
     [patchStatus],
   )
   const needsYouIds = useMemo(
-    () => new Set((patchStatus ?? []).filter(p => p.patch_badge?.kind === 'needs_you').map(p => p.device_id)),
+    () => new Set((patchStatus ?? []).filter(p => isNeedsYou(p.patch_badge?.kind)).map(p => p.device_id)),
     [patchStatus],
   )
   const [needsYouOnly, setNeedsYouOnly] = useState(false)
@@ -545,9 +546,12 @@ function PatchReviewModal({ loading, patches, pending, onConfirm, onClose }: {
                           {d.reboot_class_count} reboot-class
                         </span>
                       )}
+                      {pendingExtraNames(d.extra_updaters).map(name => (
+                        <span key={name} className="text-cyan-400" title="Platform updater outside the package manager">{name}</span>
+                      ))}
                       {isStale(d) ? (
                         <span className="text-amber-400">{STALE_PATCH_LABEL}</span>
-                      ) : (
+                      ) : (d.pending_updates > 0 || pendingExtraNames(d.extra_updaters).length === 0) && (
                         <span className="text-cyan-400">{d.pending_updates} pkg{d.pending_updates !== 1 ? 's' : ''}</span>
                       )}
                       <span className="text-gray-500">{expanded.has(d.device_id) ? '▲' : '▼'}</span>

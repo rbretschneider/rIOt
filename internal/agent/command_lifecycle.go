@@ -352,7 +352,13 @@ func (a *Agent) newCmdRun(payload models.CommandPayload) *cmdRun {
 	if ids, ok := payload.Params["container_ids"].([]interface{}); ok && len(ids) > 0 {
 		targets = len(ids)
 	}
-	ctx, cancel := context.WithTimeout(a.commandContext(), models.AgentHardMax(payload.Action, targets))
+	hardMax := models.AgentHardMax(payload.Action, targets)
+	if models.ExtendedOSUpdate(payload.Action, payload.Params) {
+		// The server stamped this os_update for a host with an enabled extra
+		// updater; the worker re-checks every gate (EXTRA-UPD-001 AD-006).
+		hardMax = models.OSUpdateExtraAgentHardMax
+	}
+	ctx, cancel := context.WithTimeout(a.commandContext(), hardMax)
 	return &cmdRun{
 		a: a, ctx: ctx, cancel: cancel, payload: payload,
 		id: payload.CommandID, action: payload.Action, start: a.clock().Now(),
