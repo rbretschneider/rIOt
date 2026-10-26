@@ -87,6 +87,10 @@ type Options struct {
 type openEscalation struct {
 	commandID, action, actor, reason, bound string
 	at, startedAt                           time.Time
+	// fromVersion and toVersion are the versions of an agent self-update record
+	// ("" for a command), carried so the escalated label names the update
+	// (EXPECT-002 AD-009).
+	fromVersion, toVersion string
 }
 
 type devState struct {
@@ -151,6 +155,14 @@ type Tracker struct {
 	lastReconcile time.Time
 	lastTick      time.Time
 	warned        map[string]time.Time
+
+	// selfResolver ends agent self-update records at their bound (EXPECT-002). It
+	// is set once, before Load, and only read afterwards.
+	selfResolver SelfUpdateResolver
+	// observedAfterGrace is set by the first ObserveDevices call at or after
+	// graceEnd: the offline detector's pass that makes a device that died during
+	// downtime known to be offline (the detector gate of AD-006, INFO-4).
+	observedAfterGrace bool
 }
 
 // New builds a Tracker. It starts no goroutine (Run does). The returned value is
@@ -261,7 +273,7 @@ func trimCommand(c models.Command) models.Command {
 		ActorName: models.SafeName(c.ActorName), PolicyID: copyIntPtr(c.PolicyID),
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, ExpiresAt: c.ExpiresAt, ExecDeadlineS: c.ExecDeadlineS,
 		DeadlineAt: copyTimePtr(c.DeadlineAt), DispatchedAt: copyTimePtr(c.DispatchedAt),
-		StartedAt: copyTimePtr(c.StartedAt), FinishedAt: copyTimePtr(c.FinishedAt),
+		StartedAt: copyTimePtr(c.StartedAt), VerifyingAt: copyTimePtr(c.VerifyingAt), FinishedAt: copyTimePtr(c.FinishedAt),
 		Step: c.Step, Progress: copyIntPtr(c.Progress),
 	}
 	out.TargetKeys = append([]string(nil), c.TargetKeys...)
@@ -301,10 +313,13 @@ func (t *Tracker) CommandChanged(c models.Command) {
 	if c.WindowClosedAt != nil {
 		return
 	}
-	policy, ok := models.ExpectPolicy(c.Action)
+	policy, ok := models.ExpectPolicyFor(c)
 	if !ok {
 		return
 	}
+	// The versions of a self-update record are read from its params before the
+	// row is trimmed (EXPECT-002 implementation note 6).
+	selfFrom, selfTo := selfUpdateVersionsOf(c)
 	snap := trimCommand(c)
 	snap.Normalize()
 	now := t.now()
@@ -319,7 +334,7 @@ func (t *Tracker) CommandChanged(c models.Command) {
 	if w := dev.windows[c.ID]; w != nil {
 		w.cmd = snap
 	} else {
-		w = &window{cmd: snap, policy: policy, addedAt: now}
+		w = &window{cmd: snap, policy: policy, addedAt: now, selfFrom: selfFrom, selfTo: selfTo}
 		if policy.Class == models.WindowAgent {
 			w.fromVersion = dev.agentVersion
 		}
@@ -380,7 +395,7 @@ func (t *Tracker) admitLocked(dev *devState, w *window, now time.Time) {
 func (t *Tracker) coverageLocked(w *window) models.Coverage {
 	return models.Coverage{
 		CommandID: w.cmd.ID, ShortID: models.ShortCommandID(w.cmd.ID), Action: w.cmd.Action,
-		ActionLabel: models.ExpectActionLabel(w.cmd.Action), ActorPhrase: t.actorPhraseLocked(w),
+		ActionLabel: windowActionLabel(w), ActorPhrase: t.actorPhraseLocked(w),
 		Target: models.CommandTargetLabel(w.cmd), Class: w.policy.Class,
 	}
 }
@@ -481,7 +496,7 @@ func (t *Tracker) CoverOffline(ctx context.Context, deviceID string, offlineAt t
 	actor := t.actorPhraseLocked(best)
 	cov := models.OfflineCoverage{
 		Kind: models.OfflineKindWindow, CommandID: w.cmd.ID, ShortID: models.ShortCommandID(w.cmd.ID),
-		Action: w.cmd.Action, ActionLabel: models.ExpectActionLabel(w.cmd.Action), ActorPhrase: actor, BackBy: bestTL.backBy,
+		Action: w.cmd.Action, ActionLabel: windowActionLabel(&w), ActorPhrase: actor, BackBy: bestTL.backBy,
 	}
 	entry := w.policy.Class == models.WindowShutdown && w.cmd.State() == models.CommandSucceeded
 	if !entry {
@@ -580,6 +595,12 @@ func (t *Tracker) NoteOnline(ctx context.Context, deviceID string, at time.Time)
 		if !tl.opened || tl.phase == models.PhaseSettling && tl.offlineEnd.IsZero() {
 			continue
 		}
+		// A self-update record names itself only when the offline that just ended
+		// began inside its coverage (EXPECT-002 AD-008): the transition has already
+		// run, so offlineEnd is the registration (V) or the failure (F).
+		if w.policy.SelfUpdate && !tl.coversAt(tl.offlineEnd, offlineSince) {
+			continue
+		}
 		if best == nil || tl.d.After(bestD) {
 			best, bestD = w, tl.d
 		}
@@ -593,7 +614,7 @@ func (t *Tracker) NoteOnline(ctx context.Context, deviceID string, at time.Time)
 		}
 		note = &models.OnlineNote{
 			CommandID: wcopy.cmd.ID, ShortID: models.ShortCommandID(wcopy.cmd.ID),
-			ActionLabel: models.ExpectActionLabel(wcopy.cmd.Action), ActorPhrase: t.actorPhraseLocked(&wcopy), Offline: d,
+			ActionLabel: windowActionLabel(&wcopy), ActorPhrase: t.actorPhraseLocked(&wcopy), Offline: d,
 		}
 	}
 	t.mu.Unlock()
@@ -722,6 +743,9 @@ func (t *Tracker) runActions(ctx context.Context, acts []durableAction) {
 func (t *Tracker) ObserveDevices(devices []models.Device, at time.Time) {
 	t.mu.Lock()
 	acts := t.observeLocked(devices, at, false)
+	if !at.Before(t.graceEnd) {
+		t.observedAfterGrace = true
+	}
 	t.mu.Unlock()
 	t.runActions(context.Background(), acts)
 }
@@ -909,7 +933,7 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 			if _, closed := t.closedRecent[c.ID]; closed {
 				continue
 			}
-			if _, ok := models.ExpectPolicy(c.Action); !ok {
+			if _, ok := models.ExpectPolicyFor(c); !ok {
 				continue
 			}
 			added[c.ID] = true
@@ -923,7 +947,7 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 		dev := t.devLocked(devID)
 		prio := func(c models.Command) int {
 			w := &window{cmd: c}
-			w.policy, _ = models.ExpectPolicy(c.Action)
+			w.policy, _ = models.ExpectPolicyFor(c)
 			return t.priorityLocked(w, start)
 		}
 		sort.SliceStable(cmds, func(i, j int) bool {
@@ -943,6 +967,7 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 				continue
 			}
 			keep[c.ID] = true
+			selfFrom, selfTo := selfUpdateVersionsOf(c)
 			snap := trimCommand(c)
 			snap.Normalize()
 			if w := dev.windows[c.ID]; w != nil {
@@ -951,8 +976,8 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 				}
 				continue
 			}
-			pol, _ := models.ExpectPolicy(c.Action)
-			w := &window{cmd: snap, policy: pol}
+			pol, _ := models.ExpectPolicyFor(c)
+			w := &window{cmd: snap, policy: pol, selfFrom: selfFrom, selfTo: selfTo}
 			if pol.Class == models.WindowAgent {
 				w.fromVersion = dev.agentVersion
 			}
@@ -1022,11 +1047,19 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 		}
 		oe := &openEscalation{commandID: e.CommandID, at: e.CreatedAt, reason: models.EscalationReasonNotBack}
 		if ok {
-			pol, _ := models.ExpectPolicy(c.Action)
+			pol, _ := models.ExpectPolicyFor(c)
 			w := &window{cmd: trimCommand(c), policy: pol}
 			oe.action, oe.actor, oe.startedAt = c.Action, t.actorPhraseLocked(w), startOf(&c)
 			oe.bound = models.FormatDurationShort(pol.PostTerminal)
 			switch s := c.State(); {
+			case pol.SelfUpdate:
+				// A self-update record escalates as not back, or as failed; its
+				// not-confirmed outcome (timed_out) is also "not back" (AD-009).
+				oe.bound = models.FormatDurationShort(models.ExpectSelfUpdateBound)
+				oe.fromVersion, oe.toVersion = selfUpdateVersionsOf(c)
+				if s == models.CommandFailed {
+					oe.reason = models.EscalationReasonFailed
+				}
 			case s == models.CommandFailed:
 				oe.reason = models.EscalationReasonFailed
 			case s == models.CommandTimedOut:

@@ -66,7 +66,8 @@ func (t *Tracker) activityLocked(dev *devState, now time.Time) *models.DeviceAct
 		return &models.DeviceActivity{
 			DeviceID: dev.id, Kind: models.ActivityEscalated, Phase: models.PhaseEscalated, Action: e.action,
 			CommandID: e.commandID, ActorPhrase: e.actor, StartedAt: e.startedAt, DeviceOnline: dev.online, CoversOffline: false,
-			Escalation: &models.ActivityEscalation{Reason: e.reason, Bound: e.bound, At: e.at},
+			Escalation:       &models.ActivityEscalation{Reason: e.reason, Bound: e.bound, At: e.at},
+			AgentFromVersion: e.fromVersion, AgentToVersion: e.toVersion,
 		}
 	case dev.poweredOff != nil:
 		p := dev.poweredOff
@@ -104,6 +105,13 @@ func (t *Tracker) hostActivityLocked(dev *devState, w *window, tl timeline) *mod
 	}
 	if tl.phase == models.PhaseReturn {
 		a.BackBy = copyTimePtr(tl.backBy)
+	}
+	if w.policy.SelfUpdate {
+		// An agent self-update window: "Updating agent <from> -> <to>" by agent
+		// auto-update. The DTO carries no back_by (AD-005); both versions are
+		// re-validated ones, or both "" (AD-009).
+		a.AgentFromVersion, a.AgentToVersion = w.selfFrom, w.selfTo
+		a.BackBy = nil
 	}
 	return a
 }
