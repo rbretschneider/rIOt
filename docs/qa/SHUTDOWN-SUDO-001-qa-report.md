@@ -4,7 +4,44 @@
 **QA Engineer:** QA Agent
 **Date:** 2026-10-26
 **Branch / commit reviewed:** `feat/shutdown-sudo-001` at `e187a3c` (QA test commits `00f010a` and `02d9acf` sit on top)
-**Verdict:** FAIL
+**Verdict (revision 2, 2026-10-26, after the QA-1 fix):** PASS WITH NOTES
+**Verdict (revision 1, `e187a3c`):** FAIL, superseded. Revision 1 text below is kept as the record of what was found.
+
+## Revision 2: QA-1 re-review
+
+**Reviewed:** `feat/shutdown-sudo-001` at `91c0f8c`, which adds `39aba1a` (the fix) and `91c0f8c` (impl-report addendum) on top of the revision 1 commits.
+
+**The fix.** `39aba1a` changes `scripts/install.sh` by exactly one line, `if (seen == 0 && ind > 0) reject()`, directly after the tab check, as suggested. It adds 7 cases to `classifierCorpus` in `scripts/shutdown_grant_test.go`: six "not enabled" cases for an indented first line (plain, one space, after a blank line, after a comment, after a `---` marker, orphaned indented `url`) and one "enabled" control (a leading comment and blank line before a column-0 `commands:`, which must still be accepted). Nothing else in the installer or the agent changed.
+
+**QA tests untouched.** `git diff 02d9acf HEAD` for `scripts/shutdown_grant_qa_test.go` and `scripts/test_install_maintenance.py` is empty.
+
+**Re-run on a fresh LF export** (`git -c core.autocrlf=false -c core.eol=lf archive HEAD` into the new directory `D:\rIOt_qa_rev2_repo`; `install.sh`, the fixture file and the QA Go file compared byte-identical with `git show HEAD:...`, 0 carriage returns):
+
+| Run | Result |
+|---|---|
+| `go test ./... -count=1` (Windows, `GOCACHE=D:\rIOt_gocache`, `GOTMPDIR=D:\rIOt_fuzz_tmp`) | 29 packages `ok`, 0 failing, `exit 0`. Includes `internal/agent` 23.9 s and `scripts` 54.8 s, with both QA Go tests now green |
+| `go vet ./...` | no output, `exit 0` |
+| `GOOS=linux go vet ./...` | no output, `exit 0` |
+| QA mutation test, `golang:1.24` container, unprivileged, read-only mounts, `QA_FUZZ_N=1000`, default awk and mawk | `PASS`. Both awks: 1000 mutants, agent reads true 218, agent cannot load 649, classifier enables 178, none of them read false by the agent (64 are accepted residual R-1) |
+| Same, `QA_FUZZ_N=3000` | `PASS`. 3000 mutants, classifier enables 573 (169 residual R-1), zero cases of agent-reads-false |
+| QA minimal repro `TestInstallSh_QA_FR017_IndentedFirstLineHidesCommandsFromAgent` | `PASS` (was red) |
+| Story differential test `TestInstallSh_SS_FR017_ClassifierNeverExceedsAgentLoader`, default awk and mawk, now including the 7 new cases | `PASS` |
+| Installer fixture `debian:bookworm-slim`, as CI runs it, LF export mounted read-only | `Ran 49 tests ... OK` (44 story/legacy plus 5 QA) |
+| Installer fixture `debian:trixie-slim`, same | `Ran 49 tests ... OK` |
+
+I did not re-run `npm run test:run` or the `-race` run: the web sources and the agent Go sources are unchanged since revision 1 (the diff since `e187a3c` touches only `install.sh`, test files and docs).
+
+**Result.** QA-1 is fixed and the previously red tests are green. AC-011 moves from PARTIAL to COVERED. No new finding. Verdict is PASS WITH NOTES, not PASS, because:
+
+1. AC-027 and AC-028 are pending the technical writer (README and CHANGELOG, FR-036 to FR-039). Accepted, not failed.
+2. `busybox awk` and `gawk` were not available in the golang image, so my mutation runs used default awk and mawk only (the implementer's differential runs cover all four).
+3. The DNF/Fedora path has no fixture, fleet images were not tested (A-003 proven on stock bookworm and trixie only), and GitHub Actions itself was not run.
+
+The sections below are the revision 1 text. Where they say QA-1 is open or the Go tests are red, that is superseded by this section.
+
+---
+
+## Revision 1 (superseded)
 
 One defect blocks sign-off: the installer's config reader can report "shutdown enabled" for a file the agent reads as false. That breaks FR-017 ("must never treat a config as shutdown-enabled when the agent would read `commands.allow_shutdown` as false"). It does not give an attacker anything new (see Finding QA-1), and the fix is one awk line plus a corpus case. Everything else passes: all story tests are green on both Debian images, all four security conditions are met, the sudoers drop-in differs from main only by the one conditional line, and `commands.go` is identical to main.
 
@@ -50,7 +87,7 @@ With the two QA Go tests added, `go test ./scripts` is red on purpose until QA-1
 | AC-008 | COVERED | `test_SS_AC008_only_exact_poweroff_is_granted` (9 refused variants checked by real `sudo -l` as `riot`, with the paths proved to exist), `TestInstallSh_SS_AC008_NoOtherPowerGrant` | none |
 | AC-009 | COVERED | `test_SS_AC009_policy_validation_still_guards_yes_install` (candidate and effective failures, no second restore) | only the fresh `-y` path; the reinstall path runs the same code |
 | AC-010 | COVERED | `test_SS_AC010_reinstall_true_emits_grant_without_question` (pty, no URL and `-y`), QA `test_QA_second_run_after_a_yes_install_is_stable` | none |
-| AC-011 | PARTIAL | `test_SS_AC011_reinstall_fails_closed` (a to f, g1 to g4, `True`, `yes`, unparseable, h1 to h3), `TestInstallSh_SS_FR017_ClassifierNeverExceedsAgentLoader`, QA FIFO fixture | A config whose first content line is indented is read as enabled while the agent reads false. Not in the corpus. See QA-1. Test written, currently red |
+| AC-011 | PARTIAL (revision 1; COVERED in revision 2) | `test_SS_AC011_reinstall_fails_closed` (a to f, g1 to g4, `True`, `yes`, unparseable, h1 to h3), `TestInstallSh_SS_FR017_ClassifierNeverExceedsAgentLoader`, QA FIFO fixture | A config whose first content line is indented is read as enabled while the agent reads false. Not in the corpus. See QA-1. Test written, currently red |
 | AC-012 | COVERED | `test_SS_AC012_flags_do_not_override_config` | none |
 | AC-013 | COVERED | `test_SS_AC013_reinstall_revokes_stale_grant` (drop-in equals the pre-story bytes afterwards) | none |
 | AC-014 | COVERED | `test_SS_AC014_preserved_config_untouched` (bytes, owner, mode, odd formatting) | none |
