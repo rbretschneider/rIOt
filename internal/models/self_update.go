@@ -134,9 +134,6 @@ func SelfUpdateVersions(c Command) (from, to string, ok bool) {
 	return from, to, true
 }
 
-// IsSelfUpdate reports whether a command row is an agent self-update record.
-func (c Command) IsSelfUpdate() bool { return c.Origin == OriginAgentSelfUpdate }
-
 // SelfUpdateActionLabel is "Agent update <from> → <to>".
 func SelfUpdateActionLabel(from, to string) string {
 	return fmt.Sprintf("Agent update %s%s%s", from, selfUpdateArrow, to)
