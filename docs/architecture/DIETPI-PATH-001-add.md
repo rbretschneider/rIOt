@@ -5,6 +5,46 @@
 **Date:** 2026-10-26
 **Status:** Draft for security review
 
+## 0. Revision 2 (2026-10-26): security review conditions (binding; overrides the text below)
+
+`docs/security/DIETPI-PATH-001-security-review.md`: APPROVED WITH CONDITIONS.
+
+- **DP-SEC-001 (badge classes):**
+  - `unsafe_dietpi_path` is **Action**, with code `extra_refused` and the action "Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only.". The one exception is a detail starting with `/run/dietpi `, the stock false positive of a pre-fix worker. That stays **Blocked**, with the text `DietPi update blocked: /run/dietpi permissions (fixed by this rIOt release; re-run install.sh as root on this host to apply the fix)`.
+  - Blocked texts for `tmp_not_private`, `mount_propagation_unverified` and `rundir_not_private` say "this host's mount layout prevented rIOt from isolating the step". They must not say a retry fixes it. The action is "Run riot-agent doctor on this host.".
+  - `dietpi_busy`, `min_interval` and `dpkg_locked` keep "rIOt retries on the next patch run".
+- **DP-SEC-002 (flag trust on the read descriptor):** `trustedFlag` plus `ReadFile` become one operation, `readTrustedFlag(fsys, name, max)`, in `dirFS`:
+  - open with `O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC`;
+  - `fstat` that descriptor and require all of: a regular file, uid == `owner`, `mode & 0o022 == 0`, nlink == 1;
+  - then read with the existing bound.
+
+  Any failure means absent. This applies to `.update_available` (read) and to `.live_patches`, which is opened and fstat'd the same way; its contents are ignored. It mirrors `validateFile` and `readSafeMode` in `io_linux.go`. On non-linux the uid and nlink checks are skipped. The FS interface gets `ReadTrustedFlag(name string, max int64) ([]byte, error)` in place of `Owner()`. Tests cover a hard link (nlink 2), a swap between calls (use a fixture FS that replaces the file between the probe and the read, and show that the descriptor checks catch it), mode 0666, and a wrong uid.
+- **DP-SEC-003 (launcher, AD-2):**
+  - Probing `/run/dietpi`: only `ENOENT` skips. Any other error fails with `rundir_not_private`.
+  - Before mounting, prove without following symlinks that `/run/dietpi` is a directory owned by uid 0. `nsOps` gains `Lstat`-like `StatNoFollow(path) (FileID{Mode, UID, ...})`.
+  - After the AD-2 mounts, re-run `verifyPropagation` against pid 1's table, then exec.
+  - FR-006 wording: propagation of `/run` changes in the step's namespace only.
+- **DP-SEC-004 (outcome):**
+  - `Failing()` stays keyed on outcome: `failed`, `timed_out` and `interrupted` remain failing, so a launcher `setup_failed` or `launcher_refused`, recorded as `failed`, still fails the command. Only `skipped` changes.
+  - FR-016 may reinterpret an old worker's failed run only when line 1 is `apt: succeeded; ...`, every non-success updater part is a refusal, and the result has no other failure cause. Any of these keeps NY-9:
+    - a hold-restore error;
+    - a verify error;
+    - "interrupted";
+    - the status `timed_out`;
+    - a line 2 other than the success summary (`Package state verified; maintenance completed` with an optional note).
+
+  Both need tests.
+- **DP-SEC-005:** the AD-1 rationale covers root writes into `logs/` during a 9.20 run (`dietpi-update.log`, `dietpi-upgrade_apt.log`, `G_BACKUP_FP.db`) and Patch_10_4's glob over `logs/*`. These are safe because `logs` and `/var/tmp/dietpi` are proved root-only and exact, and the check rejects mode 0777 and 1777 even when root-owned. AC-003 adds `logs` and `/var/tmp/dietpi` at root 0777 and root 1777, both of which must fail.
+- **DP-SEC-006:**
+  - `DirFSOwnedBy` lives in a file named `testseam.go`. A guard test fails on any reference to `DirFSOwnedBy` in non-`_test.go` code under `cmd/` and `internal/`, other than its own definition file.
+  - The ops doc states that a containerised agent with a user-namespace uid mapping is unsupported for DietPi detection.
+- **DP-SEC-007:** the `parseRefusals` bound is 2048 bytes everywhere; §3 is corrected. A test sits at 2048 and 2049 bytes.
+- **DP-SEC-008:** host recommendations for Ryan go in the ops doc, not in code:
+  - a local tmpfiles override making `/run/dietpi` `1777`;
+  - `fs.protected_symlinks=1`, `fs.protected_hardlinks=1`, `fs.protected_regular=2`;
+  - an upstream report.
+- **Ops-doc note (Q8):** before downgrading rIOt below this release on a host, archive `/var/lib/riot-maintenance/current.json`.
+
 ## 1. Summary
 
 | Problem | Decision |
@@ -187,7 +227,7 @@ When the updater is no longer pending, the refusal becomes one info line, "The l
 - **Tmpfs:** 1 MiB and 64 inodes, gone with the namespace.
 - **Reconciliation:** 2 `unlinkat` calls; the note is at most 200 bytes.
 - **Event:** at most one per command and updater, with the existing durable marker.
-- **Badge:** the regex reads at most 512 bytes of the stored result.
+- **Badge:** `parseRefusals` reads at most 2048 bytes of the stored result and 8 updater entries.
 
 ## 4. Files
 

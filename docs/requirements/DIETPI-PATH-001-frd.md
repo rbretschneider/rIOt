@@ -85,8 +85,13 @@ Doctor was green beforehand.
   The server must accept the reason only from the known skip-reason set, and otherwise drop it.
 - **FR-015 (amended 2026-10-26 by Ryan: "Needs you" is only for something Ryan can act on):** When the latest finished `os_update` refused an updater, and that updater is still pending and enabled, the badge reports the refusal. A refusal means a skip that is not neutral. The run counts whether its status is success, or failed only because of that refusal (a result from an older worker: first line `apt: succeeded; <id>: skipped (<reason>)`).
 
-  The reasons split into two classes.
-  - **Blocked** (rIOt's own safety check, or a temporary condition; rIOt retries on the next run and Ryan has nothing to do): `unsafe_dietpi_path`, `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked`.
+  The reasons split into two classes (revision 2, security review DP-SEC-001).
+  - **Blocked** (rIOt's own isolation check, or a temporary condition; Ryan has nothing to do): `tmp_not_private`, `mount_propagation_unverified`, `rundir_not_private`, `dietpi_busy`, `min_interval`, `dpkg_locked`.
+    - Also Blocked: the known stock false positive from a worker older than this fix, `unsafe_dietpi_path` whose detail starts with `/run/dietpi `. Its text says the fix arrives with a root `install.sh` re-run on that host.
+    - The texts for `tmp_not_private`, `mount_propagation_unverified` and `rundir_not_private` say the host's mount layout prevented isolation. They must not claim the next run fixes it.
+  - Every other `unsafe_dietpi_path` is an **Action**. After this fix, a stock host passes, so this reason means DietPi's code, its settings or `/var/tmp/dietpi` is not root-only: a possible tampering signal that never clears by retrying.
+    - Its action is "Investigate the named path on this host (owner and permissions); rIOt will not run DietPi until it is root-only."
+    - It counts in "N hosts need you".
     - The badge shows a new warning state, **Blocked**, not "Needs you".
     - It is not counted in "N hosts need you".
     - The explanation gives the plain reason, e.g. `DietPi update blocked: /run/dietpi permissions`, plus the bounded detail from the run.
@@ -160,6 +165,9 @@ Doctor was green beforehand.
   - **And** it is not counted by the "hosts need you" filter.
   - **And** no text says it "will be applied automatically".
 - **AC-014** [FR-015] Each Blocked reason gives `blocked`. `non_default_update_source` and `insufficient_time` give `needs_you` with their action. With DietPi no longer pending, the refusal is information only, and the badge is Auto, Manual or Unknown. A neutral skip raises nothing.
+- **AC-014a** [FR-015, DP-SEC-001]
+  - `unsafe_dietpi_path` with detail `/boot/dietpi/func/dietpi-globals is writable by group or others` gives `needs_you` with the investigate action.
+  - The same reason with detail `/run/dietpi is writable by group or others (mode 0777)` gives `blocked`, with the "re-run install.sh as root" text.
 - **AC-015** [FR-016] PiCUPS today:
   - **Given** a last run with status `failed`, first line `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, DietPi pending and enabled
   - **Then** the badge is `blocked`, with no "last patch run failed" item.
