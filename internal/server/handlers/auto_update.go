@@ -543,7 +543,7 @@ func (h *Handlers) SetAutoPatch(w http.ResponseWriter, r *http.Request) {
 // checkAutoPatch checks if a device has auto-patch enabled and pending OS updates,
 // and dispatches an os_update command if so.
 func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *models.FullTelemetryData) {
-	if h.commandRepo == nil || data.Updates == nil || data.Updates.PendingUpdates == 0 {
+	if h.commandRepo == nil || data.Updates == nil || (data.Updates.PendingUpdates == 0 && !hasEnabledPendingExtra(data.Updates)) {
 		return
 	}
 	now := h.clock()
@@ -594,7 +594,24 @@ func (h *Handlers) checkAutoPatch(ctx context.Context, deviceID string, data *mo
 		return
 	}
 
-	slog.Info("auto-patch triggered", "device", deviceID, "pending_updates", data.Updates.PendingUpdates)
+	slog.Info("auto-patch triggered", "device", deviceID, "pending_updates", data.Updates.PendingUpdates,
+		"extra_updater_pending", hasEnabledPendingExtra(data.Updates))
+}
+
+// hasEnabledPendingExtra reports whether any extra-updater entry has an update
+// waiting and would be applied: status update_available and readiness enabled
+// (EXTRA-UPD-001 FR-048). An unknown status, or an updater that is not enabled,
+// never fires the trigger (FR-049, BR-004).
+func hasEnabledPendingExtra(u *models.UpdateInfo) bool {
+	if u == nil {
+		return false
+	}
+	for _, e := range u.ExtraUpdaters {
+		if e.Pending() && e.Enabled() {
+			return true
+		}
+	}
+	return false
 }
 
 // projectsWithSeveralWorkDirs reports the compose projects whose containers

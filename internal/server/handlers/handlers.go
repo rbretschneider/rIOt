@@ -122,7 +122,12 @@ type Handlers struct {
 	// OIDC-001
 	oidc                 *oidc.Service
 	externalIdentityRepo db.ExternalIdentityRepository
-	setupComplete        *atomic.Bool
+	// extraEventMu serialises the check-then-insert of extra-updater events so a
+	// duplicate cannot slip between the two (EXTRA-UPD-001 SEC-005). It holds for
+	// the single server process this deployment runs; replicas would need a
+	// database uniqueness constraint.
+	extraEventMu  sync.Mutex
+	setupComplete *atomic.Bool
 	// oidcClock is the time source for external-identity audit timestamps.
 	// nil (the production default) means time.Now; tests inject a fixed or
 	// stepped clock so AC-010/AC-011 can assert exact first/last-login
@@ -1170,6 +1175,9 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 	case models.EventAgentUpdateAvail, models.EventAgentUpdateStarted,
 		models.EventAgentUpdateCompleted, models.EventAgentUpdateFailed:
 		// allowed
+	case models.EventExtraUpdaterStarted, models.EventExtraUpdaterFinished:
+		h.receiveExtraUpdaterEvent(w, r, deviceID, agentEvt)
+		return
 	default:
 		http.Error(w, `{"error":"unsupported event type"}`, http.StatusBadRequest)
 		return

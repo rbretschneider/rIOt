@@ -177,10 +177,7 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (DispatchRe
 	if !models.IsValidOrigin(origin) {
 		return DispatchResult{}, fmt.Errorf("invalid command origin %q", origin)
 	}
-	params := req.Params
-	if params == nil {
-		params = map[string]interface{}{}
-	}
+	params, extended := s.prepareParams(ctx, req)
 	if req.Action == "docker_check_updates" {
 		if err := validateDockerCheckParams(params); err != nil {
 			return DispatchResult{}, err
@@ -234,7 +231,7 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (DispatchRe
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		ExpiresAt:     models.ExpiresAt(req.Action, now, req.WindowEnd),
-		ExecDeadlineS: models.ExecDeadlineSeconds(req.Action, len(containerIDParams(params))),
+		ExecDeadlineS: execDeadlineSeconds(req.Action, params, extended),
 		Origin:        origin,
 		PolicyID:      req.PolicyID,
 		TargetKeys:    models.NormalizeTargetKeys(keys...),
@@ -262,6 +259,69 @@ func (s *Service) Dispatch(ctx context.Context, req DispatchRequest) (DispatchRe
 	cmd.Normalize()
 	s.broadcast(cmd)
 	return DispatchResult{Command: s.deliver(ctx, cmd)}, nil
+}
+
+// prepareParams returns the params a command is created with (a copy, so the
+// caller's map is never edited) and whether the command runs under the extended
+// os_update bounds (EXTRA-UPD-001 AD-006).
+//
+// extra_updater_budget is server-owned: every case variant a client supplied is
+// removed first, for every action, so no request can lengthen its own deadline.
+// The server then stamps it, for an os_update only, when the mode is not repair,
+// the operator did not exclude extra updaters, and the device's own latest
+// telemetry reports an updater whose readiness is enabled. Telemetry can only
+// narrow the decision: the agent and the root worker re-check everything.
+func (s *Service) prepareParams(ctx context.Context, req DispatchRequest) (map[string]interface{}, bool) {
+	params := make(map[string]interface{}, len(req.Params)+1)
+	for key, value := range req.Params {
+		if strings.EqualFold(key, models.ParamExtraUpdaterBudget) {
+			continue
+		}
+		params[key] = value
+	}
+	if req.Action != models.ActionOSUpdate {
+		return params, false
+	}
+	if mode, _ := params["mode"].(string); mode == "repair" {
+		return params, false
+	}
+	if excluded, _ := params[models.ParamExcludeExtraUpdaters].(bool); excluded {
+		return params, false
+	}
+	if !s.hasEnabledExtraUpdater(ctx, req.DeviceID) {
+		return params, false
+	}
+	params[models.ParamExtraUpdaterBudget] = true
+	return params, true
+}
+
+// hasEnabledExtraUpdater reports whether the device's latest telemetry lists an
+// extra updater whose readiness is enabled. Status is not required: readiness is
+// stable configuration, and a status that changes while the command waits must
+// not shorten a deadline the worker is already counting on.
+func (s *Service) hasEnabledExtraUpdater(ctx context.Context, deviceID string) bool {
+	if s.telemetry == nil || deviceID == "" {
+		return false
+	}
+	snap, err := s.telemetry.GetLatestSnapshot(ctx, deviceID)
+	if err != nil || snap == nil || snap.Data.Updates == nil {
+		return false
+	}
+	for _, e := range snap.Data.Updates.ExtraUpdaters {
+		if e.Enabled() {
+			return true
+		}
+	}
+	return false
+}
+
+// execDeadlineSeconds is the stored execution deadline: the extended tier for a
+// stamped os_update, the static table otherwise.
+func execDeadlineSeconds(action string, params map[string]interface{}, extended bool) int {
+	if extended {
+		return int(models.OSUpdateExtraExecDeadline / time.Second)
+	}
+	return models.ExecDeadlineSeconds(action, len(containerIDParams(params)))
 }
 
 // deliver sends a freshly created command over the WebSocket when the agent is

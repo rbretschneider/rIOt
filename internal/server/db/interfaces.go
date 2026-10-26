@@ -115,6 +115,9 @@ type EventRepository interface {
 	CountUnacknowledged(ctx context.Context) (int, error)
 	Acknowledge(ctx context.Context, id int64) error
 	AcknowledgeAll(ctx context.Context) error
+	// HasCommandEvent reports whether an event of the given type already exists
+	// for the command on the device (EXTRA-UPD-001 SEC-005 dedupe).
+	HasCommandEvent(ctx context.Context, deviceID, commandID string, eventType models.EventType) (bool, error)
 }
 
 // AlertRuleRepository defines the interface for alert rule database operations.

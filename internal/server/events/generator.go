@@ -248,6 +248,10 @@ var commandLabels = map[string]string{
 // the operator authorized to reboot if required.
 const rebootAuthorizedEventSuffix = " (reboot authorized if required)"
 
+// extraUpdatersExcludedEventSuffix is appended to the command-sent message of an
+// os_update the operator excluded extra updaters from (EXTRA-UPD-001 NFR-008).
+const extraUpdatersExcludedEventSuffix = " (extra updaters excluded)"
+
 // CommandSent creates an informational event when any command is dispatched.
 func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action string, params map[string]interface{}) {
 	label, ok := commandLabels[action]
@@ -263,6 +267,9 @@ func (g *Generator) CommandSent(ctx context.Context, deviceID, hostname, action 
 	// (PATCH-FLOW-001 NFR-010).
 	if authorized, _ := params[models.ParamRebootIfRequired].(bool); authorized && action == "os_update" {
 		msg += rebootAuthorizedEventSuffix
+	}
+	if excluded, _ := params[models.ParamExcludeExtraUpdaters].(bool); excluded && action == "os_update" {
+		msg += extraUpdatersExcludedEventSuffix
 	}
 	g.createEvent(ctx, &models.Event{
 		DeviceID:  deviceID,
