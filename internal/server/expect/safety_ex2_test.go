@@ -94,6 +94,8 @@ var (
 		"internal/server/commands/sweeper.go",
 		"internal/server/expect/selfupdate.go",
 		"internal/server/expect/selfupdate_test.go",
+		"internal/server/expect/selfupdate_qa_test.go",
+		"internal/server/events/generator_test.go",
 		"internal/server/expect/safety_ex2_test.go",
 		"internal/server/expect/harness_test.go",
 		"internal/server/expect/window.go",
