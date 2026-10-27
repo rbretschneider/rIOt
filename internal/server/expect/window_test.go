@@ -141,6 +141,23 @@ func TestEX_Window_AgentReturn(t *testing.T) {
 	assert.Equal(t, t0.Add(2*time.Minute), back.closeAt, "closes 1 min after the agent is back")
 }
 
+// A signed agent update is completed by the restarted agent: it re-registers a
+// moment before F. That return must count, or every agent update sits in
+// "Agent restarted, settling" until the 10 min bound (seen on hawaii 2026-10-27).
+func TestEX_Window_AgentReturnBeforeCompletion(t *testing.T) {
+	w := mkWindow(t, winSpec{action: models.ActionAgentUpdate, status: models.CommandSucceeded, dispatch: at(-time.Minute), exec: 15 * time.Minute, finished: at(0)})
+	back := evaluate(w, deviceView{online: true, onlineSince: t0.Add(-time.Second), returnedAt: t0.Add(-time.Second)}, t0.Add(30*time.Second), time.Time{})
+	assert.Equal(t, t0.Add(time.Minute), back.closeAt, "closes 1 min after F when the agent re-registered between dispatch and F")
+	assert.Equal(t, models.EndSettled, back.reason)
+
+	stale := evaluate(w, deviceView{online: true, onlineSince: t0.Add(-time.Hour), returnedAt: t0.Add(-time.Hour)}, t0.Add(30*time.Second), time.Time{})
+	assert.Equal(t, t0.Add(10*time.Minute), stale.closeAt, "a return from before the dispatch is not a restart: wait for the bound")
+
+	reboot := mkWindow(t, winSpec{action: models.ActionReboot, status: models.CommandSucceeded, dispatch: at(-time.Minute), exec: 20 * time.Minute, finished: at(0)})
+	rb := evaluate(reboot, deviceView{online: true, onlineSince: t0.Add(-time.Second), returnedAt: t0.Add(-time.Second)}, t0.Add(30*time.Second), time.Time{})
+	assert.Equal(t, t0.Add(15*time.Minute), rb.closeAt, "[AD-003] a reboot still needs a return after F")
+}
+
 func TestEX_Window_NonSuccessEndsOfflineCoverageAtOnce(t *testing.T) {
 	for _, st := range []models.CommandState{models.CommandFailed, models.CommandTimedOut} {
 		reboot := mkWindow(t, winSpec{action: models.ActionReboot, status: st, dispatch: at(-10 * time.Minute), exec: 20 * time.Minute, finished: at(0)})
