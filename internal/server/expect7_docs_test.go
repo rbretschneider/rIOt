@@ -32,7 +32,7 @@ func TestEX7_AC040_ReadmeAndChangelog(t *testing.T) {
 			"`Waiting for " + lock + " lock`", "`Initiating`", "`Failed at wait_" + lock + "_lock`", "is not a standalone command and reports no step",
 		},
 		"the reporting agent release": {
-			"first agent release that reports the step", "the first release after v2.85.0",
+			"first agent release that reports the step", "the first release after v2.88.0",
 		},
 		"structured versions and references (FR-011 to FR-028)": {
 			"`from_version`", "`to_version`", "`command_id`", "`attempt_id`", "128-bit", "at most 64 bytes",

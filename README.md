@@ -860,7 +860,7 @@ Beside the label, the page shows who started the action and when. The **device p
 - The failure label stays until the device next reports online, or for 24 hours after the escalation, whichever comes first.
 - When a host window and a Docker window are open together, the host label shows.
 - Times in labels follow the time zone and clock choice in the utility bar (see [Time Display](#time-display)). Times in event messages, such as `back by 1:32 PM EDT`, are written by the server in its display zone (`RIOT_DISPLAY_TZ`), in 12-hour form with a zone label, whatever the browser choice is, so the two can differ.
-- The label `Rebooting (waiting for dpkg lock)` appears only when the agent reports that step. Current agents do not report it yet, so a reboot that waits for the lock shows `Rebooting`.
+- The label `Rebooting (waiting for dpkg lock)` (or `Shutting down (waiting for dpkg lock)`) appears only when the agent reports that step, and only while the device is online and the command is running. Agents older than the first release after v2.88.0 do not report it, so a reboot that waits for the lock shows `Rebooting`. See [Agent-side activity reporting](#agent-side-activity-reporting).
 - If `GET /api/v1/activity` fails, the page shows the plain status, as before.
 
 ### Agent self-updates
@@ -877,6 +877,7 @@ In the device's command history the record appears as `Agent update 2.78.0 → 2
 
 - A start while an `agent_update` command of the same device is in flight, or finished at most 10 minutes earlier, belongs to that command (an update started from the device page or by **Update agents**). It creates no record, and the label keeps the command's actor, for example `by ryan`.
 - A command that is still queued, or that was never sent to the agent, does not capture a start.
+- This timing rule is the fallback. An agent from the first release after v2.88.0 names its command or its own attempt in the event, and the server uses that instead (see [Agent-side activity reporting](#agent-side-activity-reporting)).
 - A command dispatched while a record is open does not conflict with it. The record holds no conflict keys. The most recently dispatched of the two sets the label.
 
 **Bounds.**
@@ -919,13 +920,13 @@ A device that registers on the new version shows `Returned, confirming` in the h
 **Accepted residuals.**
 
 - A real outage on a device that starts a self-update is hidden for up to 10 minutes, then escalates once.
-- If the start event is lost (the agent sends it once, with no retry), no record exists and the offline alerts as before, unless the server restart grace covers it.
+- If the start event is lost, no record exists and the offline alerts as before, unless the server restart grace covers it. An older agent sends the start once. An agent from the first release after v2.88.0 retries it (see [Agent-side activity reporting](#agent-side-activity-reporting)).
 - An agent that restarts in place without its connection dropping for 45 seconds raises no offline event at all.
 - If the agent's periodic re-registration (every 24 hours) lands more than about 30 seconds late inside a window, the record closes early as `failed` and the restart alerts. That fails toward alerting.
 - A self-update that fails while the device stays online produces a warning event and no push.
 - A self-update that starts after a shutdown (or another host action) was dispatched, and before the device goes offline, takes over that offline's attribution, and can raise one extra push for a host that was powered off on purpose.
 - **Back-to-back releases alert on the second restart.** A second start within 10 minutes of the first record is linked to that record. It does not open a new window and does not extend the first one, even when the device has already registered again. If the device restarts a second time, that offline is not suppressed and alerts as with no window. This fails toward alerting.
-- An `agent_update_completed` or `agent_update_failed` from a fleet command that arrives within 10 minutes of a record's start is attributed to the record, not to the command. This also fails toward alerting.
+- An `agent_update_completed` or `agent_update_failed` from an older agent's fleet command that arrives within 10 minutes of a record's start is attributed to the record, not to the command. This also fails toward alerting. A newer agent names its command in these events, and the server then links them to that command.
 - If the server cannot store a start, no record exists and the device alerts as before. If it cannot resolve a record, the coverage still ends at the bound and the escalation still fires. Only the outcome event is delayed, and the stuck-record warning above makes a long stall visible.
 
 **Server restarts.** The records are rebuilt from the database, so a restart inside a window does not turn a covered offline into an alert, loses no escalation and sends none twice. A record whose bound passed while the server was down waits for the first offline-detector pass after the restart grace, so a device that died meanwhile escalates instead of being labelled "not confirmed". A record that cannot be resolved for an hour after its bound stores one `agent_self_update_paused` warning (no push); the next start replaces it.
@@ -937,7 +938,7 @@ A device that registers on the new version shows `Returned, confirming` in the h
 - `GET /api/v1/activity` entries gain `agent_to_version`.
 - `GET /api/v1/devices/:id/commands/:commandId/events` returns the events linked to a command or record (see [Command events](#command-events)).
 - Three event types: `agent_self_update_failed`, `agent_self_update_unconfirmed` and `agent_self_update_paused`. The server does not route them through alert rules and never sends them to a notification channel.
-- `command_attr` on a stored event gains the value `outcome`, and `inferred` now also marks the agent's own update events that the server linked to a record.
+- `command_attr` on a stored event gains the value `outcome`, and `inferred` now also marks the agent's own update events that the server linked to a record by timing. The value `agent` marks the update events that the server linked by a validated reference the agent sent (see [Agent-side activity reporting](#agent-side-activity-reporting)).
 
 **Behaviour changes for every device.**
 
@@ -948,18 +949,20 @@ A device that registers on the new version shows `Returned, confirming` in the h
 
 A new agent tells the server more about what it is doing, so the server no longer has to guess. This applies to reboot, shutdown and agent updates. Every part falls back to the behaviour described above for an agent that does not report it.
 
-**The reliable "waiting for the package lock" label.** A standalone `reboot` or `shutdown` command waits for the dpkg lock for at most 10 minutes. The agent now reports that wait as the command step `wait_dpkg_lock`, once per command, and only when the lock was really held. The Devices page and the device page then show `Rebooting (waiting for dpkg lock)` or `Shutting down (waiting for dpkg lock)`, with `by ryan` and the start time. The suffix shows only **while the device is online and the command is still running**. It disappears within about 5 seconds of the next step, the command's result, a failure or the device going offline, whichever comes first. The command history shows `Waiting for dpkg lock`, then `Initiating` once the power action has started, or `Failed at wait_dpkg_lock` when the wait timed out. The report never delays the wait or the power action: it is sent without waiting for an answer, and the step that ends the wait is queued only after the power action started. A reboot that follows a patch run (`os_update`) is not a standalone command and reports no step. An older agent reports no step, so its label stays `Rebooting`. The first agent release that reports the step is the first release after v2.85.0, the release that ships this change.
+**The reliable "waiting for the package lock" label.** A standalone `reboot` or `shutdown` command waits for the dpkg lock for at most 10 minutes. The agent now reports that wait as the command step `wait_dpkg_lock`, once per command, and only when the lock was really held. The Devices page and the device page then show `Rebooting (waiting for dpkg lock)` or `Shutting down (waiting for dpkg lock)`, with `by ryan` and the start time. The suffix shows only **while the device is online and the command is still running**. It disappears within about 5 seconds of the next step, the command's result, a failure or the device going offline, whichever comes first. The command history shows `Waiting for dpkg lock`, then `Initiating` once the power action has started, or `Failed at wait_dpkg_lock` when the command ends without a power action after the wait began (for example when the wait timed out). The report never delays the wait or the power action: it is sent without waiting for an answer, and the step that ends the wait is queued only after the agent has run the power command, never before. A reboot that follows a patch run (`os_update`) is not a standalone command and reports no step. An older agent reports no step, so its label stays `Rebooting`. The first agent release that reports the step is the first release after v2.88.0, the release that ships this change. `GET /api/v1/activity` reports the wait as `waiting_dpkg_lock` (see [Activity endpoint](#activity-endpoint)).
 
 **Versions and a reference on update events.** `agent_update_started`, `agent_update_completed` and `agent_update_failed` now carry their `from_version` and `to_version` and one reference that names their attempt:
 
 - an update started from the dashboard, **Update agents** or a schedule carries `command_id`, the ID of that `agent_update` command;
 - the agent's own scheduled update carries `attempt_id`, a random 128-bit value the agent keeps in its hand-off file so the restarted agent finishes the same attempt. It stores at most 64 bytes per self-update record, in the record's parameters (no database migration).
 
-The message text of every update event is unchanged, so an older server still recognises a self-update from it. The server treats every reference and version as untrusted. It uses a command reference only for the device's own `agent_update` command, started by Ryan or a schedule, that was dispatched and is running or finished at most 10 minutes earlier; such an event is linked to that command and never creates or changes a self-update record. An attempt reference links the event to the record that owns it, whatever its age, and a repeat of a start never creates a record or opens a window again. Valid structured versions win over the message. Anything missing, invalid or unreadable is processed exactly as described above in [Agent self-updates](#agent-self-updates), by message and timing. The update **into** the first release that reports these fields is finished by the new agent from a hand-off the old agent wrote, so it carries no reference and is recognised by message and timing as before. The next update uses the new fields.
+The message text of every update event is unchanged, so an older server still recognises a self-update from it. The server treats every reference and version as untrusted. It uses a command reference only for the device's own `agent_update` command, started by Ryan or a schedule, that was dispatched and either has not finished or finished at most 10 minutes earlier; such an event is linked to that command and never creates or changes a self-update record. An attempt reference links the event to the record that owns it, whatever its age, and a repeat of a start never creates a record or opens a window again. An attempt reference that no record owns links a completion or failure only to a record that has no attempt ID, so one attempt can never close another attempt's record. Valid structured versions win over the message. The server reads the versions of a start only; those of a completion or failure are not used. Anything missing, invalid or unreadable is processed exactly as described above in [Agent self-updates](#agent-self-updates), by message and timing.
 
-**Retries.** The agent sends each update event at most 5 times, within 90 seconds of the first attempt, when the server answers with an error or a timeout (5xx, 429 or no answer); it never repeats after a success or after any other 4xx answer. A self-update waits for its start event to be accepted, or for these 5 attempts, before it applies the update, so a start lost while riot-server restarts is retried before the agent restarts: up to 90 seconds plus one 10-second request of extra delay, with the host lock held. An update started as a command never waits. The server stores a reference-linked event once per device, reference and type, and answers a repeat with `{"status":"duplicate"}`; other repeated events can be stored up to 5 times, only when an answer was lost. When the attempts are used up, the agent writes one warning (`agent update event not delivered`) and keeps nothing.
+**Installer reinstall records are never a reference.** The record of an [installer reinstall](#installer-reinstalls) has the origin `installer`. It is not a command that Ryan or a schedule started, and no agent ever receives it. A `command_id` that names it is invalid. An `attempt_id` never matches it, because attempt IDs are stored only on self-update records. The timing rule never attributes an update event to it either. An agent that restarts because of a reinstall therefore never links its update events to the reinstall record, and the reinstall window is neither created nor changed by update events. The update **into** the first release that reports these fields is finished by the new agent from a hand-off the old agent wrote, so it carries no reference and is recognised by message and timing as before. The next update uses the new fields.
 
-**Agent restarts that rIOt starts.** The only restarts rIOt starts today are the ones the root update helper `riot-agent-apply` performs inside an `agent_update` command (from the dashboard, **Update agents** or a schedule) and in the agent's own self-update. The command's restart is now tied to that exact command through the command reference, so the actor stays `by ryan`, and its offline and online events are linked to the command. The AGENT-PRIV one-click apply that earlier planning named has not been merged and does not restart the agent, so there is no separate path. The rule for any future restart that rIOt starts: it must be a command whose events carry that command's reference, and it must never rely on timing or create a self-update record.
+**Retries.** The agent sends each `agent_update_started`, `agent_update_completed` and `agent_update_failed` event at most 5 times, within 90 seconds of the first attempt, when the server answers with an error or a timeout (5xx, 429 or no answer); it never repeats after a success or after any other 4xx answer. Each attempt has its own 10-second limit. `agent_update_available` is still sent once. A self-update waits until its start event is accepted, refused with a final answer or has used these 5 attempts, before it applies the update, so a start lost while riot-server restarts is retried before the agent restarts: up to 90 seconds plus one 10-second request of extra delay, with the host lock held. An update started as a command never waits. The server stores a reference-linked event once per device, linked command or record, and type, and answers a repeat with `{"status":"duplicate"}` (see [Agent events](#agent-events)); other repeated events can be stored up to 5 times, only when an answer was lost. When the attempts are used up, the agent writes one warning (`agent update event not delivered`) and keeps nothing.
+
+**Agent restarts that rIOt starts.** The only agent restarts that rIOt starts today are the ones the root update helper `riot-agent-apply` performs inside an `agent_update` command (from the dashboard, **Update agents** or a schedule) and in the agent's own self-update. An `install.sh` re-run also restarts the agent, but Ryan starts it on the host, and it is covered by its own notice and record (see [Installer reinstalls](#installer-reinstalls)), not by update-event references. The command's restart is now tied to that exact command through the command reference, so the actor stays `by ryan`, and its offline and online events are linked to the command. The AGENT-PRIV one-click apply that earlier planning named has not been merged and does not restart the agent, so there is no separate path. The rule for any future restart that rIOt starts: it must be a command whose events carry that command's reference, and it must never rely on timing or create a self-update record.
 
 **Accepted residuals.**
 
@@ -1067,7 +1070,7 @@ The second row covers a run that failed after the agent stopped. The third cover
 
 The record appears in the device's command history as `Agent reinstall` `by installer`, with the outcome `In progress`, `Succeeded` or `Not confirmed`. It is read-only: it has no cancel and no retry, an agent can never claim it, and it is never sent to an agent. The device page label links to it.
 
-**Together with agent self-updates.** The two records are independent. When both apply to a device, each ends at its own bound and the one with the latest start sets the label. A self-update start that follows a reinstall is never attributed to the reinstall record.
+**Together with agent self-updates.** The two records are independent. When both apply to a device, each ends at its own bound and the one with the latest start sets the label. A self-update start that follows a reinstall is never attributed to the reinstall record, whether it carries a reference or not: a reinstall record is never a valid command reference, never matches an attempt ID and is never picked by the timing rule (see [Agent-side activity reporting](#agent-side-activity-reporting)).
 
 **The abuse budget.** A holder of a device's key can make offline alerts silent for less than 60 minutes per day through reinstall notices, and less than 120 minutes per day together with agent auto-update; each silent outage lasts under about 10 minutes, is stored as an info event, and pages if it lasts past the bound. The effect is limited to the key's own device. A notice for an offline device is refused, so records cannot be chained across one outage.
 
@@ -1942,6 +1945,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/devices/:id/heartbeat` | Lightweight heartbeat |
 | `POST` | `/api/v1/devices/:id/telemetry` | Full telemetry push. The optional `updates.lists_freshness` and `updates.supports_reboot_if_required` fields are accepted from any agent version. The server reads an unknown `lists_freshness` value as `unknown`, and anything other than JSON `true` in `supports_reboot_if_required` as not supported. Neither can cause a rejection |
 | `POST` | `/api/v1/devices/:id/docker-events` | Real-time Docker container events |
+| `POST` | `/api/v1/devices/:id/events` | Report an agent event, such as the start, completion or failure of an agent update. See [Agent events](#agent-events) |
 | `POST` | `/api/v1/devices/:id/commands/:cid/report` | Report command progress or the final result over HTTP when the WebSocket is down. See [Command endpoints](#command-endpoints) |
 | `GET` | `/api/v1/update/check` | Agent update check. Returns the release asset locations, including `checksum_url` and `signature_url` (a locator only; the agent trusts its compiled-in key, not this response) |
 
@@ -2048,7 +2052,7 @@ Each entry of `activities`:
 | `actor_phrase` | string | Who started it: `by ryan`, `by auto-update policy for plex` or `by the auto-patch schedule`. Printable text of at most 128 bytes per name |
 | `started_at` | RFC 3339 time | When the server dispatched the command, or created it while it is queued. For `powered_off`, when the shutdown succeeded |
 | `back_by` | RFC 3339 time or `null` | When the device is due back, in the return phase |
-| `waiting_dpkg_lock` | boolean | The command reports that it waits for the dpkg lock. Always `false` with current agents |
+| `waiting_dpkg_lock` | boolean | `true` while the device is online and its running `reboot` or `shutdown` command reports the step `wait_dpkg_lock`. Always `false` for an agent that does not report the step (agents older than the first release after v2.88.0). See [Agent-side activity reporting](#agent-side-activity-reporting) |
 | `progress` | integer or `null` | The command's reported progress, in percent |
 | `agent_from_version` | string | For `agent_update`, the agent version when the command was created. For an [agent self-update](#agent-self-updates), the version it started from |
 | `agent_to_version` | string | For an agent self-update (and its escalation), the version it updates to. Empty for every command |
@@ -2270,6 +2274,69 @@ A `result` that repeats the outcome of an already-final command returns `200` wi
 | `agent_events_omitted` | integer | Agent-sourced events that were not returned |
 
 Both arrays are `[]` when empty, never `null`. **`404`** with `{"error":"command not found","code":"command_not_found"}` for a malformed ID, a missing command and a command of another device; the three cases return the same body. **`500`** with `{"error":"failed to list events"}`.
+
+### Agent events
+
+`POST /api/v1/devices/:id/events` is how an agent, and the installer, report an event about themselves. It needs the device's `X-rIOt-Key` header, and a client certificate when mTLS is on. The key must belong to the device in the URL.
+
+**Request body** (JSON, at most 1 MiB):
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `type` | string | yes | One of `agent_update_available`, `agent_update_started`, `agent_update_completed`, `agent_update_failed`, `extra_updater_started`, `extra_updater_finished` (see [DietPi updates](#dietpi-updates)) or `agent_reinstall_started` (see [Installer reinstalls](#installer-reinstalls)). Any other value gets `400` |
+| `severity` | string | no | `info`, `warning` or `critical`. For the four `agent_update_*` types any other value is stored as `info` (`warning` for `agent_update_failed`) |
+| `message` | string | no | Stored as sent. The server never rewrites it for `agent_update_*` events |
+| `command_id` | string | no | On `agent_update_started`, `_completed` and `_failed`: the ID of the `agent_update` command that caused the update. It must be a canonical UUID. Sent by an update that Ryan or a schedule started. Never sent together with `attempt_id` |
+| `attempt_id` | string | no | On the same three types: the agent's own correlation ID for a self-update. 1 to 64 bytes of ASCII letters, digits and hyphens. The agent sends 32 hexadecimal characters. Never sent together with `command_id` |
+| `from_version`, `to_version` | string | no | On the same three types, always as a pair: the version the update leaves and the one it installs. At most 32 bytes each, in the form `2.88.0` with an optional leading `v` and an optional `-` or `+` suffix of up to 16 characters. The server uses them on `agent_update_started` only, and only when both are valid and different |
+| `updater`, `outcome`, `reason` | string | no | Used by the `extra_updater_*` types only |
+
+The server treats `command_id`, `attempt_id`, `from_version` and `to_version` as untrusted. It reads them only when the key that signed the request belongs to the device in the URL. An invalid or unknown value never changes the status code. The server ignores the field and processes the event by its message and timing, as in [Agent self-updates](#agent-self-updates). A request that carries both `command_id` and `attempt_id` counts as carrying neither. Agents from before these fields existed omit all four, and the server accepts that unchanged. An older server ignores the fields.
+
+**Responses**
+
+| Status | Body | When |
+|---|---|---|
+| `200` | `{"status":"ok"}` | The event was stored |
+| `200` | `{"status":"duplicate"}` | The event repeats one the server already stored for the same device, the same linked command or record, and the same type, where the server linked it by a valid reference. Nothing is stored or broadcast again. The agent treats it as success. The `extra_updater_*` types answer `duplicate` by their own rule |
+| `200` | `{"status":"ok","reinstall":"<result>"}` | Only for `agent_reinstall_started`. See [Installer reinstalls](#installer-reinstalls) |
+| `400` | `{"error":"invalid request body"}` | The body is not valid JSON |
+| `400` | `{"error":"unsupported event type"}` | The `type` is not in the list above, including the server-written `agent_reinstall_unconfirmed` and `agent_reinstall_paused` |
+| `401` | `{"error":"missing X-rIOt-Key header"}` or `{"error":"invalid api key"}` | No key, or a wrong or revoked key |
+| `403` | `{"error":"api key does not match device"}` | The key belongs to another device |
+| `413` | `{"code":"payload_too_large"}` | The body is larger than 1 MiB |
+| `429` | `{"code":"rate_limited"}` | The device sent more than the allowance of 2 requests per second (burst 120), shared with `POST /api/v1/devices/:id/docker-events`. The reply carries `Retry-After: 15` |
+| `500` | `{"error":"failed to create event"}` | The event could not be stored |
+
+The agent repeats an `agent_update_started`, `_completed` or `_failed` event after a `5xx` or `429` answer or a timeout, and after no other answer. See [Agent-side activity reporting](#agent-side-activity-reporting) for the bound.
+
+**Example.** A self-update of the agent reports its start. The request:
+
+```
+POST /api/v1/devices/3f2c9a7e-0d4b-4f0e-9a51-7a1c2b6d8e90/events
+X-rIOt-Key: <device key>
+Content-Type: application/json
+
+{
+  "type": "agent_update_started",
+  "severity": "info",
+  "message": "Agent update started: 2.88.0 → 2.89.0",
+  "attempt_id": "9c1f0e2a7b3d4c58a6e1f2b3c4d5e6f7",
+  "from_version": "2.88.0",
+  "to_version": "2.89.0"
+}
+```
+
+The reply:
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"status":"ok"}
+```
+
+A repeat of that request, sent because the first reply was lost, gets `{"status":"duplicate"}` and stores nothing. An update that Ryan started from the dashboard sends `"command_id": "<the command's UUID>"` in place of `attempt_id`, and the server links the event to that command.
 
 ### WebSocket messages
 
@@ -3687,6 +3754,8 @@ The shipped units (`scripts/riot-agent.service` and the unit that `install.sh` w
 Every failed shutdown, including a skip, also raises the existing warning event `Command shutdown failed: <message>` on the device. Notification channels forward that text, so the holder's name, pid and uid reach them.
 
 **What "shutdown initiated" means.** The agent starts the poweroff command and watches its exit status for 3 seconds. It reports `shutdown initiated` when the command exits with status 0, when it is still running after 3 seconds, or when a signal ends it. The last case is what happens when the system starts powering off and stops the agent's child processes. It reports `shutdown: <error>` when the command cannot start or exits with a non-zero status. `shutdown initiated` means the operating system accepted the poweroff command. It does not mean the host has finished powering off. If the poweroff command fails after the 3 seconds, the result stays `shutdown initiated` and the agent writes one `WARN` line to its log.
+
+**Dashboard label.** While a standalone reboot or shutdown waits, a new agent reports the step `wait_dpkg_lock`, and the Devices page and the device page show `Rebooting (waiting for dpkg lock)` or `Shutting down (waiting for dpkg lock)`. See [Agent-side activity reporting](#agent-side-activity-reporting).
 
 **Post-patch reboots.** A skipped authorized or automatic post-patch reboot raises one warning event on the device and refreshes telemetry, so the host keeps showing that a reboot is required:
 

@@ -339,7 +339,7 @@ func (a *Agent) handleReboot(cr *cmdRun) commandExecResult {
 		return res
 	}
 	err := a.execReboot(c.Permit)
-	rep.leave() // after the power action started, never before (FR-004)
+	rep.leave() // after execReboot ran, never before (FR-004); runs on an exec error too, and the error result that follows ends the command
 	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: fmt.Sprintf("reboot: %s", err)}
 	}
@@ -423,7 +423,7 @@ func (a *Agent) handleShutdown(cr *cmdRun) commandExecResult {
 		return res
 	}
 	err := a.execShutdown(c.Permit)
-	rep.leave() // after the power action started, never before (FR-004)
+	rep.leave() // after execShutdown ran, never before (FR-004); runs on an exec error too, and the error result that follows ends the command
 	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown: " + sanitizePowerErr(err.Error())}
 	}

@@ -615,7 +615,10 @@ func goarmVersion() string {
 	return "7"
 }
 
-// reportUpdateEvent sends an agent update event to the server (best-effort).
+// reportUpdateEvent sends one agent update event to the server, once and
+// best-effort. Since EXPECT-007 only agent_update_available uses it: the
+// started, completed and failed events carry a reference and versions and go
+// through sendUpdateEvent, which retries within a fixed bound.
 func (a *Agent) reportUpdateEvent(ctx context.Context, evtType models.EventType, severity models.EventSeverity, message string) {
 	deviceID := a.config.Agent.DeviceID
 	if deviceID == "" || a.client == nil {

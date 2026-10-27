@@ -21,7 +21,9 @@ import (
 // agent's event is stored as today and the device keeps alerting.
 //
 // Bounds (AD-013): per agent_update_* event at most one short transaction (a
-// start) or one to two statements (completed, failed); per registration one
+// start) or one to two statements (completed, failed), plus, since EXPECT-007,
+// one device-scoped read to validate a command reference or to find the record
+// that owns an attempt reference; per registration one
 // select and at most one update; every Warn goes through the per-device log
 // throttle; the service keeps no per-event state.
 

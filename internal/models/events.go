@@ -103,8 +103,11 @@ const (
 )
 
 // AgentEvent is the payload agents push for self-reported events (e.g. auto-updates).
-// CommandID, Updater and Outcome are set only on the two extra-updater event
-// types; they are omitted otherwise so older servers see the same JSON.
+// CommandID is set on the two extra-updater event types and, since EXPECT-007,
+// on agent_update_started/completed/failed as the correlation reference.
+// Updater and Outcome are set only on the extra-updater types. FromVersion,
+// ToVersion and AttemptID are set only on the agent_update_* types. Every field
+// is omitted when empty, so an older server sees the same JSON it saw before.
 type AgentEvent struct {
 	Type     EventType     `json:"type"`
 	Severity EventSeverity `json:"severity"`

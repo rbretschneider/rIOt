@@ -1205,7 +1205,9 @@ func (h *Handlers) GetContainerLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update status).
+// ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update
+// status) and the installer's reinstall notice. The accepted types and replies
+// are documented in the README under "Agent events".
 func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 	var agentEvt models.AgentEvent
