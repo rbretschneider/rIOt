@@ -326,7 +326,7 @@ export default function FleetOverview() {
                     </Link>
                     {activityByDevice.get(d.id) && !isAgentUpdating(activityByDevice.get(d.id)) && (
                       <div className="mt-1">
-                        <ActivityLabel activity={activityByDevice.get(d.id)!} newestAgentVersion={newestAgentVersion} />
+                        <ActivityLabel activity={activityByDevice.get(d.id)!} newestAgentVersion={newestAgentVersion} compact />
                       </div>
                     )}
                   </td>
