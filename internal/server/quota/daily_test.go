@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// fixedNow is mid-minute and mid-day: stdout sampling resets when the minute
+// changes and quotas when the UTC day changes, so time.Now() made these tests
+// fail whenever they started in the last second of a minute.
+var fixedNow = time.Date(2026, 10, 19, 12, 0, 30, 0, time.UTC)
+
 func TestDUX_SEC047_PriorityLaneFairShare(t *testing.T) {
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	m := New(nil)
@@ -27,7 +32,7 @@ func TestDUX_SEC047_PriorityLaneFairShare(t *testing.T) {
 	}
 }
 func TestDUX_AC165_QuotaStdoutSample(t *testing.T) {
-	now := time.Now()
+	now := fixedNow
 	m := New(nil)
 	d := m.get("host", now)
 	d.Buckets["logs"].Level = 10000
@@ -57,7 +62,7 @@ func TestDUX_AC164_QuotaRefillsWithoutMidnightReset(t *testing.T) {
 	}
 }
 func TestDUX_AC166_DownsampleNeverStoresNothing(t *testing.T) {
-	now := time.Now()
+	now := fixedNow
 	m := New(nil)
 	d := m.get("host", now)
 	d.Buckets["telemetry"].Level = 0
@@ -72,7 +77,7 @@ func TestDUX_AC166_DownsampleNeverStoresNothing(t *testing.T) {
 	}
 }
 func TestDUX_AC168_CriticalStorageScope(t *testing.T) {
-	now := time.Now()
+	now := fixedNow
 	m := New(nil)
 	m.SetMode("critical")
 	entries := []models.ContainerLogEntry{{ContainerName: "web", Stream: "stdout", Line: "hello"}, {ContainerName: "web", Stream: "stderr", Line: "hello"}}
