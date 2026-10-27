@@ -69,6 +69,15 @@ const (
 	EventAgentSelfUpdateFailed      EventType = "agent_self_update_failed"
 	EventAgentSelfUpdateUnconfirmed EventType = "agent_self_update_unconfirmed"
 	EventAgentSelfUpdatePaused      EventType = "agent_self_update_paused"
+
+	// EXPECT-008: installer reinstall. agent_reinstall_started is the installer's
+	// notice on the agent route and is never stored as an event. The other two are
+	// server-written and are never accepted from an agent; like the EXPECT-002
+	// events none is routed through alert rules, dispatched to a channel, or counted
+	// against the per-device push ceiling.
+	EventAgentReinstallStarted     EventType = "agent_reinstall_started"
+	EventAgentReinstallUnconfirmed EventType = "agent_reinstall_unconfirmed"
+	EventAgentReinstallPaused      EventType = "agent_reinstall_paused"
 )
 
 // Event.CommandAttr values written by EXPECT-001 (the agent and the server's
