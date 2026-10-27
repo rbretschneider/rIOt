@@ -56,13 +56,18 @@ describe('[AC-038] label vocabulary', () => {
     expect(activityLabel(activity({ waiting_dpkg_lock: true }), ctx)).toBe('Rebooting (waiting for dpkg lock)')
   })
 
-  it('labels a reboot in its return phase with the back-by time', () => {
-    const a = activity({ phase: 'return', back_by: '2026-10-26T14:32:00Z' })
+  it('labels a reboot in its return phase while the device is offline with the back-by time', () => {
+    const a = activity({ phase: 'return', device_online: false, back_by: '2026-10-26T14:32:00Z' })
     expect(activityLabel(a, ctx)).toBe('Rebooting, back by 14:32')
   })
 
+  it('labels a reboot in its return phase once the device is back online "Rebooted, settling"', () => {
+    const a = activity({ phase: 'return', device_online: true, back_by: '2026-10-26T14:32:00Z' })
+    expect(activityLabel(a, ctx)).toBe('Rebooted, settling')
+  })
+
   it('labels a return phase without a back-by time without a dangling clause', () => {
-    expect(activityLabel(activity({ phase: 'return', back_by: null }), ctx)).toBe('Rebooting')
+    expect(activityLabel(activity({ phase: 'return', device_online: false, back_by: null }), ctx)).toBe('Rebooting')
   })
 
   it('labels a running shutdown "Shutting down", with the dpkg variant', () => {
@@ -117,9 +122,14 @@ describe('[AC-038] label vocabulary', () => {
     expect(activityLabel(noTo, { ...ctx, newestAgentVersion: '' })).toBe('Updating agent')
   })
 
-  it('labels an agent_update in its return phase "Restarting agent, back by <t>"', () => {
-    const a = activity({ kind: 'agent', action: 'agent_update', phase: 'return', back_by: '2026-10-26T10:10:00Z' })
+  it('labels an agent_update in its return phase while the device is offline "Restarting agent, back by <t>"', () => {
+    const a = activity({ kind: 'agent', action: 'agent_update', phase: 'return', device_online: false, back_by: '2026-10-26T10:10:00Z' })
     expect(activityLabel(a, ctx)).toBe('Restarting agent, back by 10:10')
+  })
+
+  it('labels an agent_update in its return phase once the device is back online "Agent restarted, settling"', () => {
+    const a = activity({ kind: 'agent', action: 'agent_update', phase: 'return', device_online: true, back_by: '2026-10-26T10:10:00Z' })
+    expect(activityLabel(a, ctx)).toBe('Agent restarted, settling')
   })
 
   it.each([

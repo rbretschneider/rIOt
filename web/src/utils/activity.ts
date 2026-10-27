@@ -65,7 +65,12 @@ function hostLabel(a: DeviceActivity, ctx: ActivityLabelContext): string {
   const returning = a.phase === 'return'
   switch (a.action) {
     case 'reboot':
-      return returning ? `Rebooting${backBy(a, ctx)}` : `Rebooting${waitingSuffix(a)}`
+      if (returning) {
+        // Back online: the window only waits out the settle period, so do not say "Rebooting".
+        if (a.device_online) return 'Rebooted, settling'
+        return `Rebooting${backBy(a, ctx)}`
+      }
+      return `Rebooting${waitingSuffix(a)}`
     case 'shutdown':
       // X-4: a succeeded shutdown whose device is still online stays "Shutting down".
       return `Shutting down${waitingSuffix(a)}`
@@ -76,7 +81,7 @@ function hostLabel(a: DeviceActivity, ctx: ActivityLabelContext): string {
       }
       return a.progress != null ? `Patching (${a.progress}%)` : 'Patching'
     case 'agent_update':
-      if (returning) return `Restarting agent${backBy(a, ctx)}`
+      if (returning) return a.device_online ? 'Agent restarted, settling' : `Restarting agent${backBy(a, ctx)}`
       {
         // EXPECT-002 (FR-024): a self-update names both versions from the record itself.
         const self = selfUpdateVersionsOf(a)
