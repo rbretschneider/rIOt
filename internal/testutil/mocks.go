@@ -1608,7 +1608,7 @@ func (m *MockCommandRepo) CreateSelfUpdate(ctx context.Context, s models.SelfUpd
 	at := s.At
 	deadline := s.At.Add(models.ExpectSelfUpdateBound)
 	row := &models.Command{
-		ID: id, DeviceID: s.DeviceID, Action: models.ActionAgentUpdate, Params: models.SelfUpdateParams(s.From, s.To),
+		ID: id, DeviceID: s.DeviceID, Action: models.ActionAgentUpdate, Params: models.SelfUpdateParams(s.From, s.To, s.AttemptID),
 		Status: string(models.CommandRunning), CreatedAt: at, UpdatedAt: at, ExpiresAt: at,
 		ExecDeadlineS: models.SelfUpdateExecDeadlineS, DeadlineAt: &deadline, DispatchedAt: &at, StartedAt: &at,
 		Step: models.SelfUpdateStepWaitingForRestart, Origin: models.OriginAgentSelfUpdate, TargetKeys: []string{},

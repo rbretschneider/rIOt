@@ -50,6 +50,9 @@ const (
 const (
 	SelfUpdateParamFrom = "from_version"
 	SelfUpdateParamTo   = "to_version"
+	// SelfUpdateParamAttempt is the agent-generated attempt ID of the start that
+	// created the record (EXPECT-007 AD-008). Absent when the start carried none.
+	SelfUpdateParamAttempt = "attempt_id"
 )
 
 // Step tokens of a self-update record (all match StepPattern).
@@ -117,9 +120,25 @@ func ParseSelfUpdateStart(raw string) (from, to string, ok bool) {
 	return from, to, true
 }
 
-// SelfUpdateParams is the params map of a new record.
-func SelfUpdateParams(from, to string) map[string]interface{} {
-	return map[string]interface{}{SelfUpdateParamFrom: from, SelfUpdateParamTo: to}
+// SelfUpdateParams is the params map of a new record. attemptID has already
+// passed ValidRefToken; the key is added only when it is non-empty (EXPECT-007
+// AD-008, at most 64 bytes per record).
+func SelfUpdateParams(from, to, attemptID string) map[string]interface{} {
+	p := map[string]interface{}{SelfUpdateParamFrom: from, SelfUpdateParamTo: to}
+	if attemptID != "" {
+		p[SelfUpdateParamAttempt] = attemptID
+	}
+	return p
+}
+
+// SelfUpdateAttemptID reads the attempt ID of a self-update row and re-validates
+// it on read (EXPECT-007 AD-008): "" when absent or not a valid token.
+func SelfUpdateAttemptID(c Command) string {
+	id, _ := c.Params[SelfUpdateParamAttempt].(string)
+	if !ValidRefToken(id) {
+		return ""
+	}
+	return id
 }
 
 // SelfUpdateVersions reads the versions of a self-update row and re-validates
@@ -175,7 +194,10 @@ func unsafeNameRune(r rune) bool {
 // SelfUpdateStart is a validated start the server received (server time At).
 type SelfUpdateStart struct {
 	DeviceID, Hostname, From, To string
-	At                           time.Time
+	// AttemptID is the validated attempt reference of the start ("" when the
+	// start carried none, EXPECT-007).
+	AttemptID string
+	At        time.Time
 }
 
 // SelfUpdateDisposition is what CreateSelfUpdate did with a start.
@@ -190,6 +212,10 @@ const (
 	SelfUpdateOpenRecord SelfUpdateDisposition = "open_record"
 	// SelfUpdateCapped: the rate cap refused the start (FR-007); no link.
 	SelfUpdateCapped SelfUpdateDisposition = "capped"
+	// SelfUpdateAttemptMatch: a record of the device already owns this attempt
+	// ID (EXPECT-007 FR-024). The result carries LinkID only: no row is created,
+	// no cap is counted and nothing is announced.
+	SelfUpdateAttemptMatch SelfUpdateDisposition = "attempt_match"
 )
 
 // SelfUpdateCreateResult is the outcome of CreateSelfUpdate.
@@ -200,7 +226,8 @@ type SelfUpdateCreateResult struct {
 	// Retired is a stale open row retired in the same transaction (C-4); the
 	// caller broadcasts it.
 	Retired *Command
-	// LinkID is the command the start event links to ("" for capped).
+	// LinkID is the command the start event links to ("" for capped). For
+	// SelfUpdateAttemptMatch it is the only field set besides Disposition.
 	LinkID string
 	// CapEvent is the one rate-cap warning event written by this call, if any.
 	CapEvent *Event

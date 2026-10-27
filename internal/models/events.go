@@ -84,6 +84,10 @@ const (
 	// by its own rule (the Docker attribution and, since EXPECT-002, the
 	// agent_update_* events).
 	CommandAttrInferred = "inferred"
+	// CommandAttrAgent marks an agent_update_* event the server linked by a
+	// validated reference the agent supplied (EXPECT-007 AD-009). The value is
+	// also used by the Docker attribution rule.
+	CommandAttrAgent = "agent"
 	// CommandAttrOutcome marks the single outcome event of an agent self-update
 	// record (EXPECT-002 AD-012).
 	CommandAttrOutcome = "outcome"
@@ -93,12 +97,22 @@ const (
 // CommandID, Updater and Outcome are set only on the two extra-updater event
 // types; they are omitted otherwise so older servers see the same JSON.
 type AgentEvent struct {
-	Type      EventType     `json:"type"`
-	Severity  EventSeverity `json:"severity"`
-	Message   string        `json:"message"`
-	CommandID string        `json:"command_id,omitempty"`
-	Updater   string        `json:"updater,omitempty"`
-	Outcome   string        `json:"outcome,omitempty"`
+	Type     EventType     `json:"type"`
+	Severity EventSeverity `json:"severity"`
+	Message  string        `json:"message"`
+	// CommandID is the command kind of correlation reference on an
+	// agent_update_* event (EXPECT-007 AD-004) and the command of an
+	// extra-updater event. Never set together with AttemptID.
+	CommandID string `json:"command_id,omitempty"`
+	// FromVersion and ToVersion are the structured versions of an
+	// agent_update_started/completed/failed event, always sent as a pair.
+	FromVersion string `json:"from_version,omitempty"`
+	ToVersion   string `json:"to_version,omitempty"`
+	// AttemptID is the attempt kind of correlation reference of a self-update
+	// attempt. Never set together with CommandID.
+	AttemptID string `json:"attempt_id,omitempty"`
+	Updater   string `json:"updater,omitempty"`
+	Outcome   string `json:"outcome,omitempty"`
 	// Reason is the skip reason of an extra_updater_finished event whose outcome
 	// is "skipped". The server accepts it only from the closed skip-reason set
 	// and composes the stored message itself (DIETPI-PATH-001 FR-014).

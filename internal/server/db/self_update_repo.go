@@ -162,7 +162,7 @@ func (r *CommandRepo) createSelfUpdate(ctx context.Context, s models.SelfUpdateS
 
 	// 5. The insert. Every column the shape CHECK constrains is set here; no
 	// docker_audit row is written (AD-001).
-	paramsJSON, err := json.Marshal(models.SelfUpdateParams(s.From, s.To))
+	paramsJSON, err := json.Marshal(models.SelfUpdateParams(s.From, s.To, s.AttemptID))
 	if err != nil {
 		return res, fmt.Errorf("encode params: %w", err)
 	}

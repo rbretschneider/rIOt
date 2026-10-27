@@ -199,7 +199,7 @@ func TestEX2_ActorPhraseSelfUpdate(t *testing.T) {
 }
 
 func TestEX2_SelfUpdateVersionsRevalidated(t *testing.T) {
-	c := Command{Params: SelfUpdateParams("2.78.0", "2.80.0")}
+	c := Command{Params: SelfUpdateParams("2.78.0", "2.80.0", "")}
 	from, to, ok := SelfUpdateVersions(c)
 	assert.True(t, ok)
 	assert.Equal(t, "2.78.0", from)
