@@ -326,11 +326,21 @@ func (a *Agent) handleReboot(cr *cmdRun) commandExecResult {
 		return commandExecResult{Status: models.ResultStatusError, Message: "reboot not allowed by agent config (set commands.allow_reboot: true)"}
 	}
 
-	c := a.awaitRebootClearance(cr.ctx, "reboot", cr.id, a.commonRebootGuards(""))
+	// EXPECT-007 AD-001/AD-002: the reporter tells the server about a dpkg-lock
+	// wait. Nothing between the gate's final check and execReboot is added.
+	rep := newPowerWaitReporter(cr)
+	c := a.awaitRebootClearance(withPowerWaitReporter(cr.ctx, rep), "reboot", cr.id, a.commonRebootGuards(""))
 	if !c.Cleared {
-		return rebootSkippedResult(c)
+		rep.settle()
+		res := rebootSkippedResult(c)
+		if rep.entered() {
+			res.Step = models.StepWaitDpkgLock // the skip failed in the wait (FR-005)
+		}
+		return res
 	}
-	if err := a.execReboot(c.Permit); err != nil {
+	err := a.execReboot(c.Permit)
+	rep.leave() // after the power action started, never before (FR-004)
+	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: fmt.Sprintf("reboot: %s", err)}
 	}
 	if c.Waited > 0 {
@@ -402,11 +412,19 @@ func (a *Agent) handleShutdown(cr *cmdRun) commandExecResult {
 		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown not allowed by agent config (set commands.allow_shutdown: true)"}
 	}
 
-	c := a.awaitShutdownClearance(cr.ctx, cr.id)
+	rep := newPowerWaitReporter(cr)
+	c := a.awaitShutdownClearance(withPowerWaitReporter(cr.ctx, rep), cr.id)
 	if !c.Cleared {
-		return shutdownSkippedResult(c)
+		rep.settle()
+		res := shutdownSkippedResult(c)
+		if rep.entered() {
+			res.Step = models.StepWaitDpkgLock // the skip failed in the wait (FR-005)
+		}
+		return res
 	}
-	if err := a.execShutdown(c.Permit); err != nil {
+	err := a.execShutdown(c.Permit)
+	rep.leave() // after the power action started, never before (FR-004)
+	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown: " + sanitizePowerErr(err.Error())}
 	}
 	if c.Waited > 0 {
