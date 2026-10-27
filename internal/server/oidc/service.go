@@ -122,8 +122,10 @@ func (s *Service) BeginLogin(ctx context.Context, redirectURI, returnPath string
 // idTokenClaims is the subset of ID-token claims decoded beyond what
 // go-oidc's IDToken already exposes as fields (Issuer, Subject).
 type idTokenClaims struct {
-	Email         *string `json:"email"`
-	EmailVerified *bool   `json:"email_verified"`
+	Email             *string `json:"email"`
+	EmailVerified     *bool   `json:"email_verified"`
+	PreferredUsername string  `json:"preferred_username"`
+	Name              string  `json:"name"`
 }
 
 // CompleteLogin implements the /callback flow: token exchange and ID-token
@@ -178,10 +180,12 @@ func (s *Service) CompleteLogin(ctx context.Context, redirectURI, code string, t
 	_ = idToken.Claims(&extra) // best-effort: absent/malformed extra claims are not fatal
 
 	claims := Claims{
-		Issuer:        idToken.Issuer,
-		Subject:       idToken.Subject,
-		Email:         extra.Email,
-		EmailVerified: extra.EmailVerified,
+		Issuer:            idToken.Issuer,
+		Subject:           idToken.Subject,
+		Email:             extra.Email,
+		EmailVerified:     extra.EmailVerified,
+		PreferredUsername: extra.PreferredUsername,
+		Name:              extra.Name,
 	}
 
 	if err := ValidateClaims(claims); err != nil {

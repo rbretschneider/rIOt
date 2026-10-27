@@ -317,6 +317,28 @@ func TestAC008_SuccessfulLogin_MintsStandardSessionCookie(t *testing.T) {
 	assert.Equal(t, false, checkResp["needs_setup"])
 }
 
+// The session names the operator by preferred_username, not by the subject, so
+// commands they start read "by ryan" rather than "by <subject hash>".
+func TestOIDCLogin_SessionDisplayNameUsesPreferredUsername(t *testing.T) {
+	idp := newStubIDP(t)
+	setup := newOIDCTestSetup(t, idp, oidcTestClientID, oidcTestClientSecret, true)
+
+	rec := beginAndCompleteLogin(t, setup, idp, stubIDTokenClaims{
+		Subject: "d3f8fcad0b7ebd8277a5c1ef621a61de", PreferredUsername: "ryan", Name: "Ryan B",
+	}, "")
+	require.Equal(t, http.StatusFound, rec.Code)
+
+	sessionCookie := cookieByName(t, rec, "riot_session")
+	require.NotNil(t, sessionCookie)
+	token, err := jwt.Parse(sessionCookie.Value, func(tok *jwt.Token) (interface{}, error) {
+		return []byte(oidcTestJWTSecret), nil
+	})
+	require.NoError(t, err)
+	claims := token.Claims.(jwt.MapClaims)
+	assert.Equal(t, "ryan", claims["display_name"])
+	assert.Equal(t, idp.issuer()+"|d3f8fcad0b7ebd8277a5c1ef621a61de", claims["actor_sub"], "the stable identity is still issuer|subject")
+}
+
 // ---------------------------------------------------------------------
 // AC-010 / AC-011 — identity audit
 // ---------------------------------------------------------------------

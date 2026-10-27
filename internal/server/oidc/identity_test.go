@@ -89,3 +89,27 @@ func assertAsLoginError(t *testing.T, err error, target **LoginError) bool {
 	*target = le
 	return true
 }
+
+// The session display name prefers the human-readable profile claims over the
+// subject, which Authentik issues as an opaque hash ("by d3f8fcad..." on the fleet page).
+func TestClaimsDisplayName(t *testing.T) {
+	email := "ryan@example.com"
+	blank := "  "
+	cases := []struct {
+		name   string
+		claims Claims
+		want   string
+	}{
+		{"preferred_username first", Claims{Subject: "d3f8fcad", PreferredUsername: "ryan", Name: "Ryan B", Email: &email}, "ryan"},
+		{"name when no username", Claims{Subject: "d3f8fcad", Name: "Ryan B", Email: &email}, "Ryan B"},
+		{"email when no profile claims", Claims{Subject: "d3f8fcad", Email: &email}, "ryan@example.com"},
+		{"subject as the last resort", Claims{Subject: "d3f8fcad"}, "d3f8fcad"},
+		{"blank claims are skipped", Claims{Subject: "d3f8fcad", PreferredUsername: " ", Name: "\t", Email: &blank}, "d3f8fcad"},
+		{"surrounding space is trimmed", Claims{Subject: "d3f8fcad", PreferredUsername: " ryan "}, "ryan"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.claims.DisplayName())
+		})
+	}
+}

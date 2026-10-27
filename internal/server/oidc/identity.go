@@ -8,10 +8,28 @@ import "strings"
 // "absent" and "present and false/empty" stay distinguishable in the audit
 // row (FRD §7.1, A-5).
 type Claims struct {
-	Issuer        string
-	Subject       string
-	Email         *string
-	EmailVerified *bool
+	Issuer            string
+	Subject           string
+	Email             *string
+	EmailVerified     *bool
+	PreferredUsername string
+	Name              string
+}
+
+// DisplayName is the name the dashboard shows for this login ("by ryan").
+// Many IdPs (Authentik among them) issue an opaque hash as the subject, so the
+// human-readable profile claims come first and the subject is the last resort.
+func (c Claims) DisplayName() string {
+	candidates := []string{c.PreferredUsername, c.Name}
+	if c.Email != nil {
+		candidates = append(candidates, *c.Email)
+	}
+	for _, s := range append(candidates, c.Subject) {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // ValidateClaims implements V-001: a validated token missing Issuer or
