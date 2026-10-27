@@ -16,6 +16,10 @@ import (
 // restored. Every gate is checked here, as root, from root-owned facts: the
 // request can only ask, and nothing in it supplies an argument, environment or
 // path.
+//
+// The version 2 run's one post-run package list refresh also lives here: it
+// follows the last updater's step, so an apt configuration change that an
+// updater made is refreshed too (DIETPI-REFRESH-001).
 
 // LockKind is the answer of the dpkg lock probe.
 type LockKind int
@@ -114,6 +118,11 @@ type extraRun struct {
 	limit  time.Duration
 	log    string
 	label  string
+	// backstopVerified is true only when this run's check 6 passed completely:
+	// the unit was read as root, has no mount sandbox, and reports a backstop of
+	// at least ExtraMinBackstop. It alone entitles the post-run refresh to the
+	// extended time basis (DIETPI-REFRESH-001 DR-SEC-001).
+	backstopVerified bool
 }
 
 func (w *Worker) aptOutcome(aptCtx context.Context, rec *Record, aptErr error) string {
@@ -127,9 +136,15 @@ func (w *Worker) aptOutcome(aptCtx context.Context, rec *Record, aptErr error) s
 	}
 }
 
-// executeExtras runs the step for every present updater and finalises the
-// version 2 record. started is the worker's own start time, from which the
-// extended budget is measured on the injected clock.
+// executeExtras runs the step for every present updater, makes the run's single
+// post-run package list check, and finalises the version 2 record. started is
+// the worker's own start time, from which the budgets are measured on the
+// injected clock.
+//
+// The post-run check follows the updater loop, so a change that an updater made
+// to the apt configuration is covered (DIETPI-REFRESH-001 FR-003). Its time
+// basis is the extended budget only when a present updater passed check 6 in
+// this run; otherwise it is the apt context and WorkerBudget (DR-SEC-001).
 func (w *Worker) executeExtras(svc, runCtx, aptCtx context.Context, req Request, rec *Record, st *aptState, aptErr error, started time.Time) error {
 	rec.AptOutcome = w.aptOutcome(aptCtx, rec, aptErr)
 	env := w.Extras
@@ -154,6 +169,14 @@ func (w *Worker) executeExtras(svc, runCtx, aptCtx context.Context, req Request,
 		rec.ExtraUpdaters = upsertResult(rec.ExtraUpdaters, run.res)
 		runs = append(runs, run)
 	}
+	basisCtx, basisBudget := aptCtx, WorkerBudget
+	for _, run := range runs {
+		if run.backstopVerified {
+			basisCtx, basisBudget = runCtx, ExtendedWorkerBudget
+			break
+		}
+	}
+	st.postRefreshNote = w.postRunRefreshV2(svc, basisCtx, basisBudget, rec, st, started)
 	return w.finalizeV2(svc, runCtx, rec, st, aptErr, runs)
 }
 
@@ -248,6 +271,7 @@ func (w *Worker) runExtra(runCtx context.Context, deadline time.Time, req Reques
 	if unit.RuntimeMax < ExtraMinBackstop {
 		return skip(SkipInsufficientTime, fmt.Sprintf("service backstop is %s, need at least %s", unit.RuntimeMax, ExtraMinBackstop))
 	}
+	run.backstopVerified = true
 	// 7. Enough of the extended budget must remain.
 	if remaining := deadline.Sub(w.now()); remaining < ExtraStartThreshold {
 		return skip(SkipInsufficientTime, fmt.Sprintf("%s of the run budget remain, need %s", remaining.Round(time.Second), ExtraStartThreshold))
@@ -573,7 +597,11 @@ func (w *Worker) summaryV2(rec *Record, st *aptState, aptErr error, runs extraRu
 	case rec.AptOutcome == aptOutcomeInterrupt:
 		lines = append(lines, "Maintenance interrupted; package state requires manual review: "+boundedText(aptErr.Error(), 1500))
 	default:
-		lines = append(lines, boundedText(aptErr.Error(), 1500))
+		apt := boundedText(aptErr.Error(), 1500)
+		if st.postRefreshNote != "" {
+			apt += "; " + st.postRefreshNote
+		}
+		lines = append(lines, apt)
 	}
 	for _, r := range runs {
 		lines = append(lines, r.detail())

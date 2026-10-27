@@ -83,21 +83,21 @@ func TestExtras_EU_AC020_AfterVerifyPostRefreshAndHoldRestore(t *testing.T) {
 	verify := last("apt:/usr/bin/apt-get check")
 	postRefresh := last("apt:" + refreshKey)
 	restore := idx("holds:restore")
-	for name, at := range map[string]int{"upgrade": upgrade, "verification": verify, "post-run refresh": postRefresh, "hold restoration": restore} {
+	for name, at := range map[string]int{"upgrade": upgrade, "verification": verify, "hold restoration": restore} {
 		t.Run("[AC-020] the DietPi call comes after "+name, func(t *testing.T) {
 			if at < 0 || at > step {
 				t.Errorf("%s at %d, DietPi at %d, log %v", name, at, step, g.log)
 			}
 		})
 	}
-	t.Run("[AC-020] DietPi is the last thing that ran", func(t *testing.T) {
-		if step != len(g.log)-1 {
-			t.Errorf("events after the DietPi call: %v", g.log[step+1:])
+	t.Run("[AC-020] after the DietPi call only the post-run refresh runs (DIETPI-REFRESH-001)", func(t *testing.T) {
+		if want := []string{"apt:" + refreshKey}; !reflect.DeepEqual(g.log[step+1:], want) {
+			t.Errorf("events after the DietPi call: %v, want %v", g.log[step+1:], want)
 		}
 	})
 	t.Run("[AC-020] the post-run refresh really ran in this scenario", func(t *testing.T) {
-		if postRefresh <= upgrade {
-			t.Errorf("post-run refresh at %d not after upgrade at %d: the scenario does not prove the order", postRefresh, upgrade)
+		if postRefresh <= step {
+			t.Errorf("post-run refresh at %d not after the DietPi call at %d: the scenario does not prove the order", postRefresh, step)
 		}
 	})
 }
