@@ -1126,25 +1126,39 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 		return "error", fmt.Sprintf("no binary available for platform %s", suffix)
 	}
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
-		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
+	// EXPECT-007 AD-005: every update event of this command carries the command
+	// ID (the server validates it, AD-011) and the attempt's versions, and is
+	// sent without delaying the update (FR-034): the command's window already
+	// covers the restart. No attempt ID is ever sent on this path (FR-012).
+	commandID, _ := ctx.Value(updateCommandIDKey{}).(string)
+	att := updateAttempt{From: a.version, To: resp.LatestVersion}
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateStarted, models.SeverityInfo,
+		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion), commandID, att), deliverAsync)
 
-	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
+	apply := a.updateApply
+	if apply == nil {
+		apply = a.performUpdate
+	}
+	if err := apply(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
 		if errors.Is(err, errUpdateScheduled) {
 			return "pending", "signed update accepted; privileged installation and restart are pending"
 		}
-		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
-			fmt.Sprintf("Agent update failed: %v", err))
+		a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateFailed, models.SeverityWarning,
+			fmt.Sprintf("Agent update failed: %v", err), commandID, att), deliverAsync)
 		return "error", fmt.Sprintf("update failed: %v", err)
 	}
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
-		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateCompleted, models.SeverityInfo,
+		fmt.Sprintf("Agent updated to %s", resp.LatestVersion), commandID, att), deliverAsync)
 
 	// Restart after a short delay so the command result is sent first.
+	restart := a.restartHook
+	if restart == nil {
+		restart = a.restartSelf
+	}
 	go func() {
-		time.Sleep(1 * time.Second)
-		a.restartSelf()
+		a.sleep(context.Background(), 1*time.Second)
+		restart()
 	}()
 
 	return "success", fmt.Sprintf("updated %s → %s, restarting", a.version, resp.LatestVersion)

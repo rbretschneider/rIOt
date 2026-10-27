@@ -196,8 +196,15 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 		}
 	}()
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
-		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
+	// EXPECT-007: this attempt gets an ID of its own, carried by every update
+	// event of the attempt and persisted with the signed hand-off before the
+	// root helper is launched (FR-013). The start waits, within a fixed bound,
+	// until the server has accepted it, so a start lost to a server restart is
+	// retried before the agent restarts itself (FR-033, host lock held).
+	att := newUpdateAttempt(a.version, resp.LatestVersion)
+	ctx = withUpdateAttempt(ctx, att)
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateStarted, models.SeverityInfo,
+		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion), "", att), deliverAwait)
 
 	if err := apply(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
 		if errors.Is(err, errUpdateScheduled) {
@@ -206,13 +213,13 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 			return
 		}
 		slog.Error("update failed", "error", err)
-		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
-			fmt.Sprintf("Agent update failed: %v", err))
+		a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateFailed, models.SeverityWarning,
+			fmt.Sprintf("Agent update failed: %v", err), "", att), deliverFirstSync)
 		return
 	}
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
-		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateCompleted, models.SeverityInfo,
+		fmt.Sprintf("Agent updated to %s", resp.LatestVersion), "", att), deliverFirstSync)
 	slog.Info("update applied, restarting")
 	restart()
 }
@@ -222,14 +229,31 @@ func (a *Agent) runUpdateCheck(ctx context.Context, apply updateFunc, restart fu
 // and the live binary is never touched by the agent.
 func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, signatureURL, suffix string) error {
 	p := a.newUpdatePipeline()
+	a.bindHandoff(ctx, p)
+	return p.run(ctx, downloadURL, checksumURL, signatureURL, suffix)
+}
+
+// bindHandoff makes p persist the signed hand-off before the apply launch and
+// start watching it once the helper accepted. EXPECT-007 AD-005: a self-update
+// attempt (no command ID) persists its ID and versions with the hand-off, so the
+// restarted process can finish it with the same reference. A command-path
+// attempt keeps the hand-off as before: its reference is the command ID.
+func (a *Agent) bindHandoff(ctx context.Context, p *updatePipeline) {
 	id, _ := ctx.Value(updateCommandIDKey{}).(string)
+	newHandoff := func(digest string, at time.Time) updateHandoff {
+		h := updateHandoff{SHA256: digest, RequestedAt: at, CommandID: id}
+		if id == "" {
+			att := updateAttemptFrom(ctx)
+			h.AttemptID, h.FromVersion, h.ToVersion = att.ID, att.From, att.To
+		}
+		return h
+	}
 	p.beforeApply = func(digest string, at time.Time) error {
-		return a.persistSignedHandoff(updateHandoff{SHA256: digest, RequestedAt: at, CommandID: id})
+		return a.persistSignedHandoff(newHandoff(digest, at))
 	}
 	p.onAccepted = func(digest string, at time.Time) {
-		a.watchSignedHandoff(updateHandoff{SHA256: digest, RequestedAt: at, CommandID: id})
+		a.watchSignedHandoff(newHandoff(digest, at))
 	}
-	return p.run(ctx, downloadURL, checksumURL, signatureURL, suffix)
 }
 
 func (a *Agent) newUpdatePipeline() *updatePipeline {
