@@ -74,6 +74,9 @@ type Options struct {
 	// makes no online-state decision. The zero value means no grace.
 	GraceEnd time.Time
 	Logger   *slog.Logger
+	// DisplayZone is the zone the event messages write times in; nil means UTC
+	// (TIME-12H-001 AD-004). The process zone is never used.
+	DisplayZone *time.Location
 
 	// Publisher tuning (defaults: queue 64, 2 workers, 30 s per push).
 	QueueSize   int
@@ -497,6 +500,7 @@ func (t *Tracker) CoverOffline(ctx context.Context, deviceID string, offlineAt t
 	cov := models.OfflineCoverage{
 		Kind: models.OfflineKindWindow, CommandID: w.cmd.ID, ShortID: models.ShortCommandID(w.cmd.ID),
 		Action: w.cmd.Action, ActionLabel: windowActionLabel(&w), ActorPhrase: actor, BackBy: bestTL.backBy,
+		Zone: t.opt.DisplayZone,
 	}
 	entry := w.policy.Class == models.WindowShutdown && w.cmd.State() == models.CommandSucceeded
 	if !entry {

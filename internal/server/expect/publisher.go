@@ -72,6 +72,8 @@ type publisher struct {
 	started bool
 	mu      sync.Mutex
 	push    map[string]*pushState
+	// zone is the display zone of the held-summary time; nil means UTC.
+	zone *time.Location
 }
 
 // summaryStore writes the held-summary event.
@@ -95,7 +97,7 @@ func newPublisher(o Options, now func() time.Time, log *slog.Logger, warn func(k
 	return &publisher{
 		log: log, now: now, esc: o.Escalator, bc: o.Broadcaster, events: o.Repo,
 		timeout: timeout, queue: make(chan job, size), workers: workers, inline: o.InlinePublish,
-		warnFn: warn, push: map[string]*pushState{},
+		warnFn: warn, push: map[string]*pushState{}, zone: o.DisplayZone,
 	}
 }
 
@@ -252,7 +254,7 @@ func (p *publisher) sendSummary(ctx context.Context, deviceID string) {
 
 	evt := models.Event{
 		DeviceID: deviceID, Type: models.EventExpectNotificationsHeld, Severity: models.SeverityWarning,
-		Message: heldSummaryMessage(held, models.SafeName(host), since), CreatedAt: now,
+		Message: heldSummaryMessage(held, models.SafeName(host), since, p.zone), CreatedAt: now,
 	}
 	if p.events != nil {
 		if err := p.events.CreateWarningEvent(ctx, &evt); err != nil {

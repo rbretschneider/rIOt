@@ -403,17 +403,20 @@ type OfflineCoverage struct {
 	BackBy *time.Time
 	// ShutdownAt is when a shutdown finished (Kind powered_off).
 	ShutdownAt time.Time
+	// Zone is the server display zone the times are written in; nil means UTC
+	// (TIME-12H-001 AD-004). It is set by the tracker and never serialised.
+	Zone *time.Location
 }
 
 // Message is the message of the suppressed or powered-off event (AD-015).
 func (c OfflineCoverage) Message(host string) string {
 	host = SafeName(host)
 	if c.Kind == OfflineKindPoweredOff {
-		return fmt.Sprintf("Device %s powered off %s at %s", host, c.ActorPhrase, c.ShutdownAt.Local().Format("15:04"))
+		return fmt.Sprintf("Device %s powered off %s at %s", host, c.ActorPhrase, FormatDisplayClock(c.ShutdownAt, c.Zone))
 	}
 	back := ""
 	if c.BackBy != nil {
-		back = ", back by " + c.BackBy.Local().Format("15:04")
+		back = ", back by " + FormatDisplayClock(*c.BackBy, c.Zone)
 	}
 	return fmt.Sprintf("Device %s went offline during %s %s (expected%s)", host, c.ActionLabel, c.ActorPhrase, back)
 }
