@@ -4,14 +4,24 @@ Example: RIOT_INSTALLER_FIXTURE=1 python3 /src/scripts/test_install_maintenance.
 The repository is read-only; all installed paths belong to the test container.
 """
 import base64
+import glob
 import hashlib
+import inspect
+import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
+import tempfile
+import threading
+import time
 import unittest
+import uuid
 
 
 ROOT = Path('/fixture')
@@ -122,6 +132,157 @@ def write(path, value, mode=0o755):
     path.chmod(mode)
 
 
+# EXPECT-008. The installer's reinstall notice. Nothing here runs a power, package
+# or agent action: the agent paths are tripwires, systemctl and apt-get are stubs,
+# and the only network is a listener on 127.0.0.1 inside this container.
+NOTICE_OK = '==> Server notified: agent reinstall (offline alerts paused up to 10m)'
+CURL_REAL = Path('/usr/bin/curl.fixture-real')
+AGENT_TRIPWIRE = '#!/bin/sh\necho "AGENT TRIPWIRE $0 $*" >> /fixture/trace\nexit 0\n'
+EX8_DIRTY_TRACE_RE = re.compile(r'^(AGENT TRIPWIRE|POWER TRIPWIRE|UNEXPECTED PACKAGE|PACKAGE )', re.M)
+SYSTEM_CA_FILE = Path('/usr/local/share/ca-certificates/riot-ex8-test.crt')
+
+
+def prod_key():
+    """A device key in the server's exact format: riot_ plus 64 lowercase hex digits."""
+    return 'riot_' + secrets.token_hex(32)
+
+
+def not_notified(reason):
+    return '==> Server not notified (%s); a device-offline alert may follow' % reason
+
+
+def sha256_hex(data):
+    return hashlib.sha256(data if isinstance(data, bytes) else data.encode()).hexdigest()
+
+
+def make_ca(directory, name, common_name):
+    key, crt = Path(directory) / (name + '.key'), Path(directory) / (name + '.crt')
+    run('openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+        '-keyout', key, '-out', crt, '-days', '2', '-subj', '/CN=' + common_name,
+        '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign',
+        '-addext', 'subjectKeyIdentifier=hash')
+    return crt, key
+
+
+def make_leaf(directory, name, ca, common_name, client=False):
+    """A certificate for 127.0.0.1 (or a client certificate) issued by ca = (crt, key)."""
+    directory = Path(directory)
+    key, csr, crt, ext = (directory / (name + suffix) for suffix in ('.key', '.csr', '.crt', '.ext'))
+    run('openssl', 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+        '-keyout', key, '-out', csr, '-subj', '/CN=' + common_name)
+    ext.write_text('basicConstraints=CA:FALSE\nsubjectAltName=IP:127.0.0.1,DNS:localhost\n'
+                   + ('extendedKeyUsage=clientAuth\n' if client else 'extendedKeyUsage=serverAuth\n'))
+    run('openssl', 'x509', '-req', '-in', csr, '-CA', ca[0], '-CAkey', ca[1], '-CAcreateserial', '-out', crt,
+        '-days', '2', '-extfile', ext)
+    return crt, key
+
+
+def make_self_signed(directory, name, common_name):
+    key, crt = Path(directory) / (name + '.key'), Path(directory) / (name + '.crt')
+    run('openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes',
+        '-keyout', key, '-out', crt, '-days', '2', '-subj', '/CN=' + common_name,
+        '-addext', 'subjectAltName=IP:127.0.0.1,DNS:localhost')
+    return crt, key
+
+
+class NoticeServer:
+    """A stand-in for the rIOt server on 127.0.0.1. It records the path and the
+    sha256 of the X-rIOt-Key header of each request (never the key itself), and
+    answers per mode: a disposition, an HTTP status, a hang, or an endless
+    chunked body of undeclared length."""
+
+    def __init__(self, tls=None, client_ca=None, mode='created', status=200, body=None):
+        self.requests, self.errors = [], []
+        self.mode, self.status, self.body = mode, status, body
+        self.stopped = threading.Event()
+        self.context = None
+        if tls:
+            self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            self.context.minimum_version = ssl.TLSVersion.TLSv1_2
+            self.context.load_cert_chain(str(tls[0]), str(tls[1]))
+            if client_ca:
+                self.context.verify_mode = ssl.CERT_REQUIRED
+                self.context.load_verify_locations(str(client_ca))
+        self.sock = socket.socket()
+        self.sock.bind(('127.0.0.1', 0))
+        self.sock.listen(16)
+        self.sock.settimeout(0.2)
+        self.port = self.sock.getsockname()[1]
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self):
+        return '%s://127.0.0.1:%d' % ('https' if self.context else 'http', self.port)
+
+    def serve(self):
+        while not self.stopped.is_set():
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
+
+    def handle(self, conn):
+        try:
+            conn.settimeout(15)
+            peer = None
+            if self.context:
+                conn = self.context.wrap_socket(conn, server_side=True)
+                cert = conn.getpeercert()
+                if cert:
+                    peer = dict(item[0] for item in cert['subject']).get('commonName')
+            data = b''
+            while b'\r\n\r\n' not in data:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    return
+                data += chunk
+            head, _, rest = data.partition(b'\r\n\r\n')
+            headers = {}
+            for line in head.decode(errors='replace').split('\r\n')[1:]:
+                name, _, value = line.partition(':')
+                headers[name.strip().lower()] = value.strip()
+            length = int(headers.get('content-length', '0') or 0)
+            while len(rest) < length:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                rest += chunk
+            self.requests.append({
+                'path': head.decode(errors='replace').split(' ')[1] if b' ' in head else '',
+                'key_sha256': sha256_hex(headers.get('x-riot-key', '')),
+                'body': rest.decode(errors='replace'),
+                'client': peer,
+            })
+            if self.mode == 'hang':
+                self.stopped.wait(30)
+            elif self.mode == 'stream':
+                conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n')
+                piece = b'2000\r\n' + b'a' * 0x2000 + b'\r\n'
+                for _ in range(4096):
+                    if self.stopped.is_set():
+                        break
+                    conn.sendall(piece)
+            else:
+                body = (self.body if self.body is not None else '{"status":"ok","reinstall":"%s"}' % self.mode).encode()
+                conn.sendall(('HTTP/1.1 %d X\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n'
+                              % (self.status, len(body))).encode() + body)
+        except (OSError, ssl.SSLError, ValueError) as error:
+            self.errors.append(repr(error))
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def close(self):
+        self.stopped.set()
+        self.sock.close()
+
+
 class InstallerFixtures(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -133,8 +294,49 @@ class InstallerFixtures(unittest.TestCase):
         cls.public_key = base64.b64encode(public).decode()
         # Replace executables only inside this disposable container. Their paths
         # stay root-owned/nonwritable, so production ownership checks still run.
-        write('/usr/bin/curl', '''#!/bin/bash
+        # EXPECT-008: the installer's reinstall notice runs the real curl in some
+        # tests. Keep it under another name before the stub takes its place.
+        if not Path('/usr/bin/curl.fixture-real').exists() and Path('/usr/bin/curl').exists():
+            shutil.copy2('/usr/bin/curl', '/usr/bin/curl.fixture-real')
+        write('/usr/bin/curl', r'''#!/bin/bash
 set -eu
+notice=0; cacert=""; capath=""; prev=""
+for a in "$@"; do
+  case "$prev" in --cacert) cacert=$a;; --capath) capath=$a;; esac
+  [ "$a" != --config ] || notice=1
+  prev=$a
+done
+if [ "$notice" = 1 ]; then
+  # The reinstall notice. The device key arrives on stdin as one config line; it
+  # is never written anywhere, only its sha256 is.
+  hdr=$(cat)
+  {
+    echo "NOTICE argv=$*"
+    echo "NOTICE parent=$(tr '\0' ' ' < /proc/$PPID/cmdline)"
+    echo "NOTICE env=$(tr '\0' ' ' < /proc/$$/environ)"
+    echo "NOTICE header-sha256=$(printf '%s' "$hdr" | sha256sum | cut -d' ' -f1)"
+    [ -z "$cacert" ] || echo "NOTICE cacert-sha256=$(sha256sum < "$cacert" | cut -d' ' -f1)"
+    [ -z "$capath" ] || echo "NOTICE capath-entries=$(ls -A "$capath" | wc -l)"
+  } >> /fixture/trace
+  date +%s.%N >> /fixture/notice-times
+  if [ -e /fixture/notice-real ]; then
+    printf '%s\n' "$hdr" | /usr/bin/curl.fixture-real "$@" &
+    child=$!
+    trap 'kill $child 2>/dev/null || true' TERM
+    rc=0; wait "$child" || rc=$?
+    if [ "$rc" -gt 128 ]; then rc=0; wait "$child" || rc=$?; fi
+    echo "NOTICE rc=$rc" >> /fixture/trace
+    exit "$rc"
+  fi
+  mode=$(cat /fixture/notice-mode 2>/dev/null || echo ok:created)
+  case "$mode" in
+    ok:*) printf '200' >&2; printf '{"status":"ok","reinstall":"%s"}' "${mode#ok:}"; exit 0;;
+    http:*) printf '%s' "${mode#http:}" >&2; printf '{"error":"emulated"}'; exit 0;;
+    rc:*) exit "${mode#rc:}";;
+    empty) exit 0;;
+  esac
+  exit 99
+fi
 dest=""; url=""
 while [ $# -gt 0 ]; do
   if [ "$1" = -o ]; then dest="$2"; shift 2; else url="$1"; shift; fi
@@ -175,6 +377,7 @@ case "$1" in
       *) exit 2;;
     esac;;
   stop)
+    date +%s.%N > /fixture/stop-time
     python3 - <<'LOCK'
 import fcntl
 with open('/var/lib/dpkg/lock-frontend','a') as f:
@@ -198,6 +401,7 @@ LOCK
     echo "POLICY-AT-RELOAD: $(cat /etc/riot-maintenance/extra-updaters.json 2>/dev/null || echo absent)" >> /fixture/trace
     cp /etc/systemd/system/riot-maintenance.service.d/50-riot-extra-updaters.conf /fixture/loaded-dropin 2>/dev/null || rm -f /fixture/loaded-dropin;;
   start) ;;
+  is-active) [ -f /fixture/agent-active ] && exit 0 || exit 3;;
   *) exit 3;;
 esac
 ''')
@@ -237,7 +441,7 @@ exec /usr/sbin/visudo.fixture-real "$@"
             p = Path(path)
             if p.is_symlink(): p.unlink()
             elif p.exists(): shutil.rmtree(p)
-        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed', '/fixture/fail-stop', '/fixture/on-stop', '/fixture/late-link', '/fixture/linked.yaml', '/fixture/real-config.yaml', '/fixture/force-backstop', '/fixture/private-tmp', '/fixture/mount-flags', '/fixture/loaded-dropin', '/boot/dietpi.txt']:
+        for path in ['/usr/local/bin/riot-agent', '/etc/systemd/system/riot-agent.service', '/etc/systemd/system/riot-maintenance.service', '/etc/sudoers.d/riot-agent', '/fixture/fail-policy', '/fixture/fail-merged-policy', '/fixture/native-lock-proof', '/fixture/old-sudo', '/fixture/fail-dbus', '/fixture/dbus-installed', '/fixture/fail-stop', '/fixture/on-stop', '/fixture/late-link', '/fixture/linked.yaml', '/fixture/real-config.yaml', '/fixture/force-backstop', '/fixture/private-tmp', '/fixture/mount-flags', '/fixture/loaded-dropin', '/boot/dietpi.txt', '/fixture/agent-active', '/fixture/notice-real', '/fixture/notice-mode', '/fixture/notice-times', '/fixture/stop-time']:
             Path(path).unlink(missing_ok=True)
         self.provide_system_bus()
         write(ROOT / 'trace', '', 0o600)
@@ -1751,6 +1955,888 @@ exec /usr/sbin/visudo.fixture-real "$@"
         self.assertNotIn('dietpi-update', trace)
         for tripwire in Path('/boot/dietpi').rglob('dietpi-*'):
             self.assertEqual(tripwire.read_text(), DIETPI_TRIPWIRE, 'a fixture program was modified')
+
+
+    # ---- EXPECT-008: the installer's reinstall notice --------------------------
+    # Every EX8 run starts from ex8_arm(): the old and the candidate agent binary
+    # are tripwires, the unit is "active", and ex8_run() fails the test if any
+    # tripwire, power verb or package action reached the trace.
+
+    CALL_SITE = 'reinstall_notice </dev/null 2>/dev/null 9>&- || true'
+    OBSERVED = ('/usr/local/bin/riot-agent', '/etc/sudoers.d/riot-agent', '/etc/systemd/system/riot-agent.service',
+                '/etc/riot/agent.yaml')
+
+    def trace(self):
+        return (ROOT / 'trace').read_text()
+
+    @staticmethod
+    def notice_lines(text):
+        return [line for line in text.splitlines() if line.startswith('==> Server ')]
+
+    def trace_field(self, name):
+        return [line.split('=', 1)[1] for line in self.trace().splitlines() if line.startswith('NOTICE %s=' % name)]
+
+    def ex8_arm(self, active=True):
+        """Agent binaries become tripwires; the unit is active unless told otherwise."""
+        write('/usr/local/bin/riot-agent', AGENT_TRIPWIRE)
+        shutil.chown('/usr/local/bin/riot-agent', user='riot', group='riot')
+        write(ROOT / 'assets/riot-agent-linux-amd64', AGENT_TRIPWIRE)
+        self.resign()
+        self.old_binary = Path('/usr/local/bin/riot-agent').read_bytes()
+        self.old_inode = Path('/usr/local/bin/riot-agent').stat().st_ino
+        if active:
+            write(ROOT / 'agent-active', '', 0o600)
+
+    def ex8_config(self, url, key='auto', did='auto', verify='true', server=(), agent=(), indent=2, quote='"'):
+        """A registered device's agent.yaml. Returns (key, device id)."""
+        key = prod_key() if key == 'auto' else key
+        did = str(uuid.uuid4()) if did == 'auto' else did
+        pad = ' ' * indent
+        lines = ['server:', pad + 'url: ' + quote + url + quote]
+        if key:
+            lines.append(pad + 'api_key: ' + quote + key + quote)
+        if verify is not None:
+            lines.append(pad + 'tls_verify: ' + verify)
+        lines += [pad + item for item in server]
+        lines += ['', 'agent:']
+        if did:
+            lines.append(pad + 'device_id: ' + quote + did + quote)
+        lines += [pad + 'poll_interval: 60'] + [pad + item for item in agent]
+        self.set_config('\n'.join(lines) + '\n\ncollectors:\n  enabled:\n    - system\n', 0o640, ('riot', 'riot'))
+        return key, did
+
+    def ex8_serve(self, **kwargs):
+        server = NoticeServer(**kwargs)
+        self.addCleanup(server.close)
+        return server
+
+    def ex8_mode(self, mode):
+        write(ROOT / 'notice-mode', mode, 0o600)
+
+    def ex8_real(self):
+        self.assertTrue(CURL_REAL.exists(), 'the real curl must be installed in the fixture image')
+        write(ROOT / 'notice-real', '', 0o600)
+
+    def ex8_certdir(self):
+        directory = Path(tempfile.mkdtemp(dir='/fixture', prefix='certs-'))
+        self.addCleanup(shutil.rmtree, directory, True)
+        return directory
+
+    def ex8_system_ca(self, ca_crt):
+        """Trust ca_crt in this container's system store; removed again on cleanup."""
+        self.addCleanup(self.ex8_remove_system_ca)
+        SYSTEM_CA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ca_crt, SYSTEM_CA_FILE)
+        run('update-ca-certificates')
+
+    @staticmethod
+    def ex8_remove_system_ca():
+        SYSTEM_CA_FILE.unlink(missing_ok=True)
+        run('update-ca-certificates', '--fresh')
+
+    def ex8_assert_clean(self):
+        match = EX8_DIRTY_TRACE_RE.search(self.trace())
+        self.assertIsNone(match, 'EX8: a tripwire, power verb or package action reached the fixture:\n' + self.trace())
+
+    def ex8_run(self, *args, piped=False, env=None, script=None, xtrace=False):
+        args = args or ('--non-interactive',)
+        script = script or ROOT / 'install.sh'
+        if piped:
+            result = subprocess.run(['bash', '-s', '--', *args], input=Path(script).read_text(), capture_output=True,
+                                    text=True, start_new_session=True, env=env)
+        else:
+            result = subprocess.run(['bash'] + (['-x'] if xtrace else []) + [str(script), *args], capture_output=True,
+                                    text=True, stdin=subprocess.DEVNULL, start_new_session=True, env=env)
+        self.ex8_assert_clean()
+        return result
+
+    def ex8_observe(self, args, strip=False):
+        script = ROOT / 'install.sh'
+        if strip:
+            text = script.read_text()
+            self.assertIn(self.CALL_SITE, text, 'the call site must be present in the installer')
+            script = ROOT / 'install-nonotice.sh'
+            write(script, text.replace(self.CALL_SITE, ':'), 0o644)
+        result = self.ex8_run(*args, script=script)
+        out = re.sub(r'/var/backups/riot_install\.\w+', 'BACKUP', result.stdout)
+        files = {p: (Path(p).read_bytes() if Path(p).exists() else None) for p in self.OBSERVED}
+        return result.returncode, out, result.stderr, files
+
+    def ex8_same_as_without_notice(self, scenario, args=('--non-interactive',)):
+        """Run scenario twice from the setUp state: once with the installer as it is,
+        once with the notice call removed. Exit status, stdout (minus the notice line),
+        stderr and the installed files must match. Returns the notice lines of the first."""
+        self.reinit()
+        scenario()
+        rc, out, err, files = self.ex8_observe(args)
+        notice = self.notice_lines(out)
+        out = '\n'.join(line for line in out.splitlines() if not line.startswith('==> Server '))
+        self.reinit()
+        scenario()
+        rc2, out2, err2, files2 = self.ex8_observe(args, strip=True)
+        out2 = '\n'.join(out2.splitlines())
+        self.assertEqual(rc, rc2, 'exit status must be unchanged by the notice:\n' + out)
+        self.assertEqual(out, out2, 'stdout apart from the notice line must be unchanged')
+        self.assertEqual(err, err2, 'stderr must be unchanged by the notice')
+        for path in self.OBSERVED:
+            if path != '/etc/riot/agent.yaml':
+                self.assertEqual(files[path], files2[path], path + ' must be installed identically')
+        return rc, notice
+
+    def ex8_block(self, script, path_prefix=None, env=None):
+        """Source the reinstall-notice block on its own, as install.sh would have it."""
+        text = SOURCE.read_text().replace('\r', '')
+        write(ROOT / 'notice-lib.sh', text[text.index('# BEGIN reinstall-notice'):text.index('# END reinstall-notice')], 0o644)
+        program = ('set -euo pipefail\nSTAGE=$(mktemp -d /tmp/riot_install.XXXXXXXX)\nRIOT_CONFIG_DIR=/etc/riot\n'
+                   'trap \'rm -rf "$STAGE"\' EXIT\n. /fixture/notice-lib.sh\n' + script + '\n')
+        environment = dict(os.environ, **(env or {}))
+        if path_prefix:
+            environment['PATH'] = '%s:%s' % (path_prefix, environment['PATH'])
+        return subprocess.run(['bash', '-c', program], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              start_new_session=True, env=environment)
+
+    # ---- AC-001 ----------------------------------------------------------------
+
+    def test_EX8_AC001_one_notice_after_validation_before_stop(self):
+        cert = make_self_signed(self.ex8_certdir(), 'srv', 'ex8')
+        server = self.ex8_serve(tls=cert)
+        self.ex8_arm()
+        key, did = self.ex8_config(server.url)
+        shutil.copyfile(cert[0], '/etc/riot/server.crt')
+        self.ex8_real()
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(server.requests), 1, 'exactly one request, got %r' % server.requests)
+        request = server.requests[0]
+        self.assertEqual(request['path'], '/api/v1/devices/%s/events' % did)
+        self.assertEqual(request['key_sha256'], sha256_hex(key), 'the device key must reach the server')
+        self.assertEqual(json.loads(request['body']), {'type': 'agent_reinstall_started', 'severity': 'info',
+                                                       'message': 'Agent reinstall started by installer'})
+        self.assertEqual(self.trace_field('header-sha256'), [sha256_hex('header = "X-rIOt-Key: %s"' % key)])
+        trace = self.trace()
+        self.assertLess(trace.index('INSTALLED /etc/sudoers.d/riot-agent'), trace.index('NOTICE argv='),
+                        'the notice follows the last pre-stop validation')
+        self.assertLess(trace.index('NOTICE argv='), trace.index('systemctl stop riot-agent'),
+                        'the notice precedes the stop')
+        self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+
+    def test_EX8_AC001_success_line_once_and_exit_status_unchanged(self):
+        def scenario():
+            self.ex8_arm()
+            self.ex8_config('http://127.0.0.1:1')
+            self.ex8_mode('ok:created')
+        rc, notice = self.ex8_same_as_without_notice(scenario)
+        self.assertEqual(rc, 0)
+        self.assertEqual(notice, [NOTICE_OK], 'exactly one success line')
+
+    def test_EX8_AC001_piped_script_runs_to_completion(self):
+        self.ex8_arm()
+        self.ex8_config('http://127.0.0.1:1')
+        self.ex8_mode('ok:created')
+        result = self.ex8_run(piped=True)
+        trace = self.trace()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for expected in ('systemctl stop riot-agent', 'INSTALLED /usr/local/bin/riot-agent', 'systemctl start riot-agent'):
+            self.assertIn(expected, trace, 'a notice must not consume the rest of a piped installer')
+        self.assertIn('==> rIOt installed', result.stdout)
+        self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+
+    # ---- AC-002 ----------------------------------------------------------------
+
+    def test_EX8_AC002_no_notice_without_identity_or_running_agent(self):
+        def registered(active=True, **config):
+            def scenario():
+                self.ex8_arm(active=active)
+                self.ex8_config('http://127.0.0.1:1', **config)
+                self.ex8_mode('ok:created')
+            return scenario
+
+        def fresh():
+            self.ex8_arm()
+            self.fresh()
+            self.ex8_mode('ok:created')
+        cases = {
+            'fresh install': (fresh, ('-y', SERVER_URL)),
+            '--bootstrap-key': (registered(), ('--non-interactive', SERVER_URL, '--bootstrap-key', 'K')),
+            'no device_id': (registered(did=None), ('--non-interactive',)),
+            'no api_key': (registered(key=None), ('--non-interactive',)),
+            'inactive unit': (registered(active=False), ('--non-interactive',)),
+        }
+        for name, (scenario, args) in cases.items():
+            with self.subTest(case=name):
+                rc, notice = self.ex8_same_as_without_notice(scenario, args)
+                self.assertEqual(rc, 0)
+                self.assertEqual(notice, [], 'no output line for ' + name)
+                self.assertNotIn('NOTICE', self.trace(), 'no curl call for ' + name)
+
+    # ---- AC-003 ----------------------------------------------------------------
+
+    def test_EX8_AC003_abort_before_stop_sends_no_notice(self):
+        def bad_signature():
+            write(ROOT / 'assets/checksums.txt.sig', base64.b64encode(bytes(64)).decode(), 0o600)
+
+        def bad_unit():
+            write(ROOT / 'assets/riot-maintenance.service', '[Service]\nType=exec\nExecStart=/bin/true\nExecStart=/bin/false\n')
+            self.resign()
+
+        def candidate_policy():
+            write(ROOT / 'fail-policy', '', 0o600)
+
+        def effective_policy():
+            write(ROOT / 'fail-merged-policy', '', 0o600)
+        for name, break_it in (('invalid signature', bad_signature), ('unit validation failure', bad_unit),
+                               ('candidate policy failure', candidate_policy), ('effective policy failure', effective_policy)):
+            with self.subTest(case=name):
+                self.reinit()
+                self.ex8_arm()
+                self.ex8_config('http://127.0.0.1:1')
+                self.ex8_mode('ok:created')
+                break_it()
+                result = self.ex8_run()
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn('NOTICE', self.trace(), 'an aborted run sends no notice')
+                self.assertNotIn('systemctl stop', self.trace())
+                self.assertEqual(self.notice_lines(result.stdout), [])
+
+    # ---- AC-004 ----------------------------------------------------------------
+
+    def test_EX8_AC004_server_failures_never_block_install(self):
+        self.ex8_arm(active=False)
+        self.ex8_config('http://127.0.0.1:1')
+        baseline = self.ex8_run().stderr
+        cases = (('rc:7', 'server unreachable'), ('rc:28', 'timed out'), ('http:500', 'server error'),
+                 ('http:404', 'server does not support reinstall notices'), ('rc:6', 'server name not resolved'))
+        for mode, reason in cases:
+            with self.subTest(mode=mode):
+                self.reinit()
+                self.ex8_arm()
+                self.ex8_config('http://127.0.0.1:1')
+                self.ex8_mode(mode)
+                result = self.ex8_run()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.notice_lines(result.stdout), [not_notified(reason)])
+                self.assertEqual(result.stderr, baseline, 'the notice writes nothing to stderr')
+                self.assertIn('INSTALLED /usr/local/bin/riot-agent', self.trace())
+                self.assertIn('systemctl start riot-agent', self.trace())
+
+    def test_EX8_AC004_curl_runs_under_the_time_bound(self):
+        self.ex8_arm()
+        self.ex8_config('https://127.0.0.1:1', server=['ca_cert_file: "/etc/riot/ca.crt"'])
+        shutil.copyfile(make_self_signed(self.ex8_certdir(), 'ca', 'ca')[0], '/etc/riot/ca.crt')
+        self.ex8_mode('ok:created')
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        argv = self.trace_field('argv')[0]
+        self.assertRegex(argv, r'^-q --config - --silent --noproxy \* --proto =https --max-redirs 0 --connect-timeout 5 --max-time [67] ',
+                         'curl runs with -q first and the fixed safety options')
+        self.assertIn('--write-out %{stderr}%{http_code}', argv)
+        self.assertNotRegex(argv, r'(^| )(--output|-o)( |$)', 'the body is never written by curl to a file')
+        self.assertRegex(self.trace_field('parent')[0], r'^timeout -k 1 [78] curl -q --config - ')
+        self.assertEqual(sorted(self.trace_field('env')[0].split()), ['LC_ALL=C', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin'],
+                         'curl runs under env -i with only PATH and LC_ALL')
+        source = SOURCE.read_text()
+        self.assertIn('env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C', source)
+
+    def test_EX8_AC004_real_hang_ends_within_10s(self):
+        server = self.ex8_serve(mode='hang')
+        self.ex8_arm()
+        self.ex8_config(server.url)
+        self.ex8_real()
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('timed out')])
+        started = float((ROOT / 'notice-times').read_text().split()[0])
+        stopped = float((ROOT / 'stop-time').read_text().split()[0])
+        self.assertLessEqual(stopped - started, 10.5, 'the notice phase must end within 10 seconds')
+        self.assertEqual(len(server.requests), 1)
+
+    def test_EX8_AC004_oversize_undeclared_body_is_bounded(self):
+        server = self.ex8_serve(mode='stream')
+        self.ex8_arm()
+        self.ex8_config(server.url)
+        self.ex8_real()
+        peak, done = {'size': 0, 'looks': 0}, threading.Event()
+
+        def watch():
+            while not done.is_set():
+                for path in glob.glob('/tmp/riot_install.*/notice/response'):
+                    try:
+                        size = os.stat(path).st_size
+                    except OSError:
+                        continue
+                    peak['looks'] += 1
+                    peak['size'] = max(peak['size'], size)
+                time.sleep(0.01)
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        try:
+            result = self.ex8_run()
+        finally:
+            done.set()
+            watcher.join(5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertGreater(peak['looks'], 0, 'the watcher must have seen the response file')
+        self.assertLessEqual(peak['size'], 4096, 'at most 4096 response bytes may ever be stored')
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('unexpected server response')])
+
+    def test_EX8_AC004_internal_error_prints_one_line(self):
+        self.ex8_config('http://127.0.0.1:1')
+        self.ex8_mode('ok:created')
+        internal = not_notified('internal error') + '\n'
+        worker_cases = {
+            'worker aborts on an unset variable': 'notice_attempt() { : "${EX8_UNSET:?boom}"; }',
+            'worker prints two tokens': 'notice_attempt() { echo ok; echo ok; }',
+            'worker exits 7 without a token': 'notice_attempt() { exit 7; }',
+            'worker prints an unknown id': 'notice_attempt() { echo fail:nonsense; }',
+            'a step kills the worker': 'notice_snapshot() { kill -9 "$BASHPID"; }',
+        }
+        for name, override in worker_cases.items():
+            with self.subTest(case=name):
+                result = self.ex8_block(override + '\nreinstall_notice')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, internal)
+                self.assertEqual(result.stderr, '', 'nothing may reach stderr')
+        facts_cases = {
+            'facts abort on an unset variable': 'notice_facts() { : "${EX8_UNSET:?boom}"; }',
+            'facts print garbage': "notice_facts() { printf 'id=x\\nkey=y\\n'; }",
+            'facts exit 7': 'notice_facts() { return 7; }',
+        }
+        for name, override in facts_cases.items():
+            with self.subTest(case=name):
+                result = self.ex8_block(override + '\nreinstall_notice')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, not_notified('agent.yaml not readable') + '\n')
+                self.assertEqual(result.stderr, '')
+
+    def test_EX8_AC004_every_reason_is_one_line_and_empty_stderr(self):
+        emulated = [
+            ('ok:created', NOTICE_OK), ('ok:open_record', NOTICE_OK),
+            ('ok:capped', not_notified('reinstall tracking paused on server')),
+            ('ok:device_offline', not_notified('device already offline on server')),
+            ('ok:unavailable', not_notified('server could not record it')),
+            ('ok:weird', not_notified('unexpected server response')),
+            ('http:200', not_notified('unexpected server response')),
+            ('http:302', not_notified('unexpected server response')),
+            ('http:400', not_notified('server does not support reinstall notices')),
+            ('http:404', not_notified('server does not support reinstall notices')),
+            ('http:405', not_notified('server does not support reinstall notices')),
+            ('http:401', not_notified('device key rejected')), ('http:403', not_notified('device key rejected')),
+            ('http:429', not_notified('server busy')),
+            ('http:500', not_notified('server error')), ('http:503', not_notified('server error')),
+            ('rc:6', not_notified('server name not resolved')), ('rc:7', not_notified('server unreachable')),
+            ('rc:28', not_notified('timed out')), ('rc:124', not_notified('timed out')), ('rc:137', not_notified('timed out')),
+            ('rc:126', not_notified('internal error')), ('rc:127', not_notified('internal error')),
+            ('rc:1', not_notified('connection failed')), ('rc:22', not_notified('connection failed')),
+            ('rc:63', not_notified('unexpected server response')), ('rc:23', not_notified('unexpected server response')),
+            ('empty', not_notified('unexpected server response')),
+        ] + [('rc:%d' % code, not_notified('TLS verification failed'))
+             for code in (35, 51, 53, 54, 58, 59, 60, 64, 66, 77, 80, 82, 83, 90, 91)]
+        self.ex8_config('http://127.0.0.1:1')
+        for mode, line in emulated:
+            with self.subTest(mode=mode):
+                self.ex8_mode(mode)
+                result = self.ex8_block('reinstall_notice')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, line + '\n', 'exactly one fixed line')
+                self.assertEqual(result.stderr, '')
+        skips = [
+            ('curl missing', lambda: self.ex8_config('http://127.0.0.1:1'), 'command() { if [ "${2:-}" = curl ]; then return 1; fi; builtin command "$@"; }\n',
+             not_notified('curl not available')),
+            ('config unreadable', lambda: self.set_config('server: {\n'), '', not_notified('agent.yaml not readable')),
+            ('tls verification off', lambda: self.ex8_config('https://127.0.0.1:1', verify='false'), '',
+             not_notified('TLS verification is off in agent.yaml')),
+            ('non-literal tls_verify', lambda: self.ex8_config('https://127.0.0.1:1', verify='yes'), '',
+             not_notified('trust settings not supported')),
+            ('pin without a pinned certificate', lambda: self.ex8_config('https://127.0.0.1:1', server=['server_cert_pin: "SHA256:' + 'a' * 64 + '"']), '',
+             not_notified('trust settings not supported')),
+        ]
+        for name, configure, prelude, line in skips:
+            with self.subTest(skip=name):
+                configure()
+                self.ex8_mode('ok:created')
+                result = self.ex8_block(prelude + 'reinstall_notice')
+                self.assertEqual(result.stdout, line + '\n')
+                self.assertEqual(result.stderr, '')
+
+    # ---- AC-005 ----------------------------------------------------------------
+
+    def ex8_target(self, server, server_crt=None, ca_file=None, verify='true', extra=()):
+        """Point a registered device at a listener; real curl; returns (key, id)."""
+        self.ex8_arm()
+        lines = list(extra)
+        if ca_file is not None:
+            lines.append('ca_cert_file: "/etc/riot/ca.crt"')
+        key, did = self.ex8_config(server.url, verify=verify, server=lines)
+        if server_crt is not None:
+            shutil.copyfile(server_crt, '/etc/riot/server.crt')
+        if ca_file is not None:
+            shutil.copyfile(ca_file, '/etc/riot/ca.crt')
+        self.ex8_real()
+        return key, did
+
+    def test_EX8_AC005_untrusted_certificate_no_key_sent(self):
+        server = self.ex8_serve(tls=make_self_signed(self.ex8_certdir(), 'srv', 'unknown'))
+        self.ex8_target(server)
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(server.requests, [], 'no HTTP request may reach a server nobody trusts')
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification failed')])
+
+    def test_EX8_AC005_system_store_ca_not_trusted_with_trust_file(self):
+        directory = self.ex8_certdir()
+        ca = make_ca(directory, 'sysca', 'EX8 system test CA')
+        leaf = make_leaf(directory, 'leaf', ca, 'localhost')
+        other = make_self_signed(directory, 'other', 'other')
+        self.ex8_system_ca(ca[0])
+        server = self.ex8_serve(tls=leaf)
+        with self.subTest(case='server.crt names a different certificate'):
+            self.reinit()
+            self.ex8_target(server, server_crt=other[0])
+            result = self.ex8_run()
+            self.assertEqual(server.requests, [], 'the system store must not be trusted when server.crt is present')
+            self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification failed')])
+        with self.subTest(case='ca_cert_file names a different certificate'):
+            self.reinit()
+            self.ex8_target(server, ca_file=other[0])
+            result = self.ex8_run()
+            self.assertEqual(server.requests, [], 'the system store must not be trusted when ca_cert_file is set')
+            self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification failed')])
+
+    def test_EX8_AC005_system_store_positive_control(self):
+        directory = self.ex8_certdir()
+        ca = make_ca(directory, 'sysca', 'EX8 system test CA')
+        leaf = make_leaf(directory, 'leaf', ca, 'localhost')
+        self.ex8_system_ca(ca[0])
+        server = self.ex8_serve(tls=leaf)
+        self.ex8_target(server)
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(server.requests), 1, 'with no trust file the system store applies, so the listener is reachable')
+        self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+
+    def test_EX8_AC005_trust_file_rows_pass_empty_capath(self):
+        directory = self.ex8_certdir()
+        cert = make_self_signed(directory, 'pinned', 'pinned')
+        expected = sha256_hex(Path(cert[0]).read_bytes())
+        for name, target in (('server.crt', '/etc/riot/server.crt'), ('ca_cert_file', '/etc/riot/ca.crt')):
+            with self.subTest(row=name):
+                self.reinit()
+                self.ex8_arm()
+                self.ex8_config('https://127.0.0.1:1', server=['ca_cert_file: "/etc/riot/ca.crt"'] if name == 'ca_cert_file' else [])
+                shutil.copyfile(cert[0], target)
+                self.ex8_mode('ok:created')
+                result = self.ex8_run()
+                self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+                argv = self.trace_field('argv')[0]
+                self.assertRegex(argv, r'--cacert (/tmp/riot_install\.\w+/notice)/ca\.pem --capath \1/no-ca ',
+                                 'the anchors are the snapshot plus an empty directory')
+                self.assertEqual(self.trace_field('capath-entries'), ['0'], 'the CA directory is empty')
+                self.assertEqual(self.trace_field('cacert-sha256'), [expected], 'the anchor is exactly the trust file')
+        with self.subTest(row='no trust file'):
+            self.reinit()
+            self.ex8_arm()
+            self.ex8_config('https://127.0.0.1:1')
+            self.ex8_mode('ok:created')
+            self.ex8_run()
+            argv = self.trace_field('argv')[0]
+            self.assertNotIn('--cacert', argv)
+            self.assertNotIn('--capath', argv)
+
+    def test_EX8_AC005_pinned_certificate_mismatch_no_key_sent(self):
+        directory = self.ex8_certdir()
+        server = self.ex8_serve(tls=make_self_signed(directory, 'presented', 'presented'))
+        pinned = make_self_signed(directory, 'pinned', 'pinned')
+        self.ex8_target(server, server_crt=pinned[0])
+        result = self.ex8_run()
+        self.assertEqual(server.requests, [], 'a server presenting another certificate gets nothing')
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification failed')])
+
+    def test_EX8_AC005_mtls_presents_client_certificate(self):
+        directory = self.ex8_certdir()
+        server_cert = make_self_signed(directory, 'srv', 'srv')
+        client_ca = make_ca(directory, 'clientca', 'client CA')
+        client = make_leaf(directory, 'client', client_ca, 'ex8-client', client=True)
+        server = self.ex8_serve(tls=server_cert, client_ca=client_ca[0])
+        pair = ['client_cert: "/etc/riot/client.crt"', 'client_key: "/etc/riot/client.key"']
+
+        def install_pair():
+            shutil.copyfile(client[0], '/etc/riot/client.crt')
+            shutil.copyfile(client[1], '/etc/riot/client.key')
+            Path('/etc/riot/client.key').chmod(0o600)
+        with self.subTest(case='the pair is presented'):
+            self.reinit()
+            self.ex8_target(server, server_crt=server_cert[0], extra=pair)
+            install_pair()
+            result = self.ex8_run()
+            self.assertEqual([r['client'] for r in server.requests], ['ex8-client'], 'server saw: %r; trace %r' % (server.errors, [l for l in self.trace().splitlines() if l.startswith('NOTICE')]))
+            self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+        with self.subTest(case='client.key is a symlink'):
+            self.reinit()
+            before = len(server.requests)
+            self.ex8_target(server, server_crt=server_cert[0], extra=pair)
+            install_pair()
+            Path('/etc/riot/client.key').unlink()
+            Path('/etc/riot/client.key').symlink_to(client[1])
+            result = self.ex8_run()
+            self.assertEqual(len(server.requests), before, 'a symlinked key is never read')
+            self.assertEqual(self.notice_lines(result.stdout), [not_notified('trust settings not supported')])
+
+    def test_EX8_AC005_tls_verify_off_skipped(self):
+        server = self.ex8_serve(tls=make_self_signed(self.ex8_certdir(), 'srv', 'srv'))
+        self.ex8_target(server, verify='false')
+        result = self.ex8_run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(server.requests, [])
+        self.assertNotIn('NOTICE', self.trace(), 'curl is not even started')
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification is off in agent.yaml')])
+
+    def test_EX8_AC005_pin_without_pinned_certificate_skipped(self):
+        server = self.ex8_serve(tls=make_self_signed(self.ex8_certdir(), 'srv', 'srv'))
+        self.ex8_target(server, extra=['server_cert_pin: "SHA256:' + 'ab' * 32 + '"'])
+        result = self.ex8_run()
+        self.assertEqual(server.requests, [])
+        self.assertNotIn('NOTICE', self.trace())
+        self.assertEqual(self.notice_lines(result.stdout), [not_notified('trust settings not supported')])
+
+    def test_EX8_AC005_paths_outside_etc_riot_skipped(self):
+        directory = self.ex8_certdir()
+        cert = make_self_signed(directory, 'elsewhere', 'elsewhere')
+        cases = {
+            'ca_cert_file outside /etc/riot': ['ca_cert_file: "%s"' % cert[0]],
+            'client pair outside /etc/riot': ['client_cert: "%s"' % cert[0], 'client_key: "%s"' % cert[1]],
+            'client_cert only inside /etc/riot': ['client_cert: "/etc/riot/client.crt"', 'client_key: "%s"' % cert[1]],
+        }
+        for name, extra in cases.items():
+            with self.subTest(case=name):
+                self.reinit()
+                server = self.ex8_serve(tls=cert)
+                self.ex8_target(server, extra=extra)
+                shutil.copyfile(cert[0], '/etc/riot/client.crt')
+                result = self.ex8_run()
+                self.assertEqual(server.requests, [], 'no request for ' + name)
+                self.assertNotIn('NOTICE', self.trace())
+                self.assertEqual(self.notice_lines(result.stdout), [not_notified('trust settings not supported')])
+
+    # ---- AC-006 ----------------------------------------------------------------
+
+    def ex8_argv_wrappers(self):
+        """For this test only: record the argv of the tools the notice uses."""
+        for name in ('env', 'awk', 'head', 'stat', 'wc', 'tr', 'timeout', 'mkdir', 'rm', 'cat'):
+            path, real = Path('/usr/bin') / name, Path('/usr/bin') / (name + '.argvreal')
+            os.rename(path, real)
+            write(path, '#!/bin/sh\nprintf "ARGV %s %%s\\n" "$*" >> /fixture/argv-trace\nexec /usr/bin/%s.argvreal "$@"\n' % (name, name))
+            self.addCleanup(self.ex8_unwrap, name)
+
+    @staticmethod
+    def ex8_unwrap(name):
+        path, real = Path('/usr/bin') / name, Path('/usr/bin') / (name + '.argvreal')
+        path.unlink()
+        os.rename(real, path)
+
+    def ex8_leaks(self, key):
+        """Paths under the places a leftover could be, holding the key or its hex tail."""
+        tail = key[len('riot_'):]
+        found = []
+        for roots, extra in ((['/tmp', '/run', '/root', '/fixture', '/usr/local', '/etc'], ['--exclude-dir=riot']),
+                             (['/var'], ['--exclude-dir=riot', '--exclude-dir=riot_install.*'])):
+            out = subprocess.run(['grep', '-rlaF', '-D', 'skip', '-e', key, '-e', tail, *extra, *roots],
+                                 capture_output=True, text=True).stdout
+            found += out.splitlines()
+        return found
+
+    def test_EX8_AC006_key_never_in_argv_output_or_files(self):
+        self.ex8_argv_wrappers()
+        directory = self.ex8_certdir()
+        cert = make_self_signed(directory, 'srv', 'srv')
+        accepting = self.ex8_serve(tls=cert)
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        closed_port = probe.getsockname()[1]
+        probe.close()
+        for label, url, pinned in (('accepting', accepting.url, True), ('closed port', 'http://127.0.0.1:%d' % closed_port, False)):
+            for xtrace in (False, True):
+                with self.subTest(listener=label, xtrace=xtrace):
+                    self.reinit()
+                    write('/fixture/argv-trace', '', 0o600)
+                    self.ex8_arm()
+                    key, did = self.ex8_config(url)
+                    if pinned:
+                        shutil.copyfile(cert[0], '/etc/riot/server.crt')
+                    self.ex8_real()
+                    result = self.ex8_run(xtrace=xtrace)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK] if pinned else [not_notified('server unreachable')])
+                    tail = key[len('riot_'):]
+                    for where, text in (('stdout', result.stdout), ('stderr', result.stderr), ('trace', self.trace()),
+                                        ('argv of the tools', (ROOT / 'argv-trace').read_text())):
+                        self.assertNotIn(key, text, 'the key must not appear in ' + where)
+                        self.assertNotIn(tail, text, 'the key hex must not appear in ' + where)
+                    self.assertIn('ARGV timeout', (ROOT / 'argv-trace').read_text(), 'the argv recorders must have been in the path')
+                    self.assertEqual(glob.glob('/tmp/riot_install.*'), [], 'the stage directory is gone')
+                    self.assertEqual(self.ex8_leaks(key), [], 'no file may hold the key outside /etc/riot and the backup')
+
+    def test_EX8_AC006_key_reaches_only_the_printf_builtin(self):
+        text = SOURCE.read_text().replace('\r', '')
+        block = text[text.index('# BEGIN reinstall-notice'):text.index('# END reinstall-notice')]
+        allowed = (r'^\s*nkey=\$\(notice_fact "\$facts" key\)$', r'^\s*\[\[ \$nkey =~ \$re_key \]\] \|\| \{ echo fail:config; return 0; \}$',
+                   r'^\s*if \[ -z "\$nid" \] \|\| \[ -z "\$nkey" \]; then echo skip; return 0; fi$',
+                   r"^\s*printf 'header = \"X-rIOt-Key: %s\"\\n' \"\$nkey\" \|$",
+                   r'local .* nkey ')
+        for number, line in enumerate(block.splitlines(), 1):
+            if 'nkey' in line:
+                self.assertTrue(any(re.search(pattern, line) for pattern in allowed), 'unexpected use of the key variable: %r' % line)
+            if 'facts' in line and 'notice_facts()' not in line and not line.lstrip().startswith('#'):
+                self.assertRegex(line, r'notice_fact "\$facts" \w+\)|facts=\$\(notice_facts |local .*facts', 'facts hold the key: ' + line)
+        lines = block.splitlines()
+        at = next(i for i, line in enumerate(lines) if 'printf \'header = ' in line)
+        following = '\n'.join(lines[at:at + 3])
+        self.assertIn('env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C', following)
+        self.assertIn('curl -q --config -', following)
+        self.assertNotRegex(block, r'\bread\b', 'nothing in the block reads stdin')
+        self.assertNotRegex(block, r'(^|[^-])\bset -x\b', 'the block never turns tracing on')
+
+    def test_EX8_AC006_environment_cannot_widen_trust_or_log_keys(self):
+        directory = self.ex8_certdir()
+        ca = make_ca(directory, 'sysca', 'EX8 system test CA')
+        leaf = make_leaf(directory, 'leaf', ca, 'localhost')
+        other = make_self_signed(directory, 'other', 'other')
+        self.ex8_system_ca(ca[0])
+        server = self.ex8_serve(tls=leaf)
+        keylog = Path('/tmp/ex8-keylog')
+        self.addCleanup(keylog.unlink, True)
+        keylog.unlink(missing_ok=True)
+        hostile = dict(os.environ, SSLKEYLOGFILE=str(keylog), CURL_CA_BUNDLE=str(SYSTEM_CA_FILE), SSL_CERT_FILE=str(SYSTEM_CA_FILE),
+                       SSL_CERT_DIR='/etc/ssl/certs', https_proxy='http://127.0.0.1:9', HTTPS_PROXY='http://127.0.0.1:9',
+                       all_proxy='http://127.0.0.1:9')
+        with self.subTest(case='trust file row ignores the CA variables'):
+            self.reinit()
+            self.ex8_target(server, server_crt=other[0])
+            result = self.ex8_run(env=hostile)
+            self.assertEqual(server.requests, [], 'CA variables must not widen the anchor set')
+            self.assertEqual(self.notice_lines(result.stdout), [not_notified('TLS verification failed')])
+            self.assertFalse(keylog.exists(), 'no key-log file may be created')
+        with self.subTest(case='system roots row ignores the proxy and key-log variables'):
+            self.reinit()
+            self.ex8_target(server)
+            result = self.ex8_run(env=hostile)
+            self.assertEqual(len(server.requests), 1, 'the request goes direct, not through the proxy variable')
+            self.assertEqual(self.notice_lines(result.stdout), [NOTICE_OK])
+            self.assertFalse(keylog.exists(), 'no key-log file may be created')
+        with self.subTest(case='control: the same curl run directly does write the key log'):
+            self.assertTrue(CURL_REAL.exists())
+            subprocess.run([str(CURL_REAL), '-q', '--silent', '--cacert', str(ca[0]), server.url + '/'],
+                           env={'PATH': os.environ['PATH'], 'SSLKEYLOGFILE': str(keylog)}, capture_output=True, timeout=20)
+            self.assertTrue(keylog.exists(), 'the control must be able to detect a key-log file')
+
+    # ---- AC-007 ----------------------------------------------------------------
+
+    def test_EX8_AC007_reader_agrees_on_every_awk(self):
+        key, did = prod_key(), str(uuid.UUID(int=0x1234))
+        url = 'https://s.test:7331'
+
+        def facts(**kv):
+            return ['%s=%s' % (name, kv[name]) for name in ('url', 'key', 'verify', 'ca', 'cert', 'ckey', 'pin', 'id') if name in kv]
+        full = facts(url=url, key=key, verify='true', id=did)
+        cases = {
+            '2-space double quoted': ('server:\n  url: "%s"\n  api_key: "%s"\n  tls_verify: true\n\nagent:\n  device_id: "%s"\n  poll_interval: 60\n' % (url, key, did), full),
+            '4-space yaml.v3 plain scalars': ('server:\n    url: %s\n    api_key: %s\n    tls_verify: true\n    ca_cert_file: ""\nagent:\n    device_id: %s\n    poll_interval: 60\n' % (url, key, did),
+                                              facts(url=url, key=key, verify='true', ca='', id=did)),
+            'single quoted key': ("server:\n  url: '%s'\n  api_key: '%s'\n  tls_verify: true\nagent:\n  device_id: '%s'\n" % (url, key, did), full),
+            'comments': ('# top\nserver:  # s\n  url: "%s" # u\n  # skip\n  api_key: %s # k\n  tls_verify: true\nagent:\n  device_id: %s\n' % (url, key, did), full),
+            'leading document marker': ('---\nserver:\n  url: "%s"\n  api_key: "%s"\n  tls_verify: true\nagent:\n  device_id: "%s"\n' % (url, key, did), full),
+            'empty file': ('', []),
+            'nested keys are ignored': ('server:\n  url: "u"\n  proxy:\n    url: "evil"\n    api_key: "evil"\n', facts(url='u')),
+            'a field under the wrong section is ignored': ('agent:\n  api_key: "x"\n  device_id: "%s"\nserver:\n  device_id: "y"\n' % did, facts(id=did)),
+            'tls_verify spelling is passed through': ('server:\n  tls_verify: yes\n', facts(verify='yes')),
+            'duplicate field': ('server:\n  url: "a"\n  url: "b"\n', None),
+            'duplicate top-level section': ('server:\n  url: "a"\nserver:\n  url: "b"\n', None),
+            'anchor': ('server:\n  url: &a https://s.test\n', None),
+            'alias': ('server:\n  url: *a\n', None),
+            'tag': ('server:\n  url: !!str x\n', None),
+            'block scalar': ('server:\n  api_key: |\n    x\n', None),
+            'carriage return': (b'server:\r\n  url: "a"\r\n', None),
+            'tab indentation': ('server:\n\turl: "a"\n', None),
+            'flow mapping': ('server: {url: "a"}\n', None),
+            'second document': ('server:\n  url: "a"\n---\nagent:\n  device_id: "b"\n', None),
+            'continuation line after a read field': ('server:\n  url: "a"\n    more\n', None),
+            'escape in a double quoted value': ('server:\n  api_key: "a\\nb"\n', None),
+            'unterminated quote': ('server:\n  api_key: "riot_x\n', None),
+            'junk after a closing quote': ('server:\n  url: "a" b\n', None),
+        }
+        config = Path('/fixture/ex8-reader.yaml')
+        awks = {name: cmd for name, cmd in (('mawk', 'mawk'), ('gawk', 'gawk'), ('busybox', 'busybox awk')) if shutil.which(cmd.split()[0])}
+        self.assertIn('mawk', awks, 'Debian ships mawk as its default awk; the fixture image must have it')
+        self.assertIn('gawk', awks, 'the agreement test needs a second awk (CI installs gawk)')
+        for awk, cmd in awks.items():
+            bindir = Path('/fixture/awk-' + awk)
+            bindir.mkdir(exist_ok=True)
+            write(bindir / 'awk', '#!/bin/sh\nexec %s "$@"\n' % cmd)
+            for name, (text, expected) in cases.items():
+                with self.subTest(awk=awk, case=name):
+                    config.write_bytes(text if isinstance(text, bytes) else text.encode())
+                    result = self.ex8_block('if out=$(notice_facts /fixture/ex8-reader.yaml); then printf "OK\\n%s\\n" "$out"; else echo REJECT; fi',
+                                            path_prefix=str(bindir))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    lines = [line for line in result.stdout.splitlines() if line]
+                    if expected is None:
+                        self.assertEqual(lines, ['REJECT'], 'the whole file must be rejected')
+                    else:
+                        self.assertEqual(lines, ['OK'] + expected)
+
+    def test_EX8_AC007_full_runs_use_mawk(self):
+        awk = os.path.realpath(shutil.which('awk'))
+        self.assertTrue(awk.endswith('mawk'), 'full installer runs must use mawk, the awk of Debian slim images; got ' + awk)
+
+    # ---- AC-021 ----------------------------------------------------------------
+
+    @staticmethod
+    def ex8_listing():
+        found = set()
+        for top in ('/tmp', '/var', '/etc', '/usr/local', '/root', '/run', '/opt', '/srv', '/home'):
+            for base, directories, files in os.walk(top):
+                for name in directories + files:
+                    found.add(os.path.join(base, name))
+        return found
+
+    @staticmethod
+    def ex8_generic(paths):
+        return {re.sub(r'(riot_install\.)\w{8}', r'\1X', path) for path in paths}
+
+    def test_EX8_AC021_no_file_left_behind(self):
+        def scenario(active):
+            def run_it():
+                self.ex8_arm(active=active)
+                self.ex8_config('http://127.0.0.1:1')
+                self.ex8_mode('ok:created')
+            return run_it
+        self.reinit()
+        scenario(True)()
+        before = self.ex8_listing()
+        self.assertEqual(self.ex8_run().returncode, 0)
+        with_notice = self.ex8_generic(self.ex8_listing() - before)
+        self.reinit()
+        scenario(False)()
+        before = self.ex8_listing()
+        self.assertEqual(self.ex8_run().returncode, 0)
+        without_notice = self.ex8_generic(self.ex8_listing() - before)
+        self.assertEqual(with_notice, without_notice, 'the notice leaves nothing beyond what the same run leaves without it')
+        self.assertEqual([p for p in with_notice if '/notice' in p], [])
+        with self.subTest(case='the attempt removes every snapshot it made'):
+            directory = self.ex8_certdir()
+            pair = make_self_signed(directory, 'pair', 'pair')
+            self.reinit()
+            self.ex8_config('https://127.0.0.1:1', server=['client_cert: "/etc/riot/client.crt"', 'client_key: "/etc/riot/client.key"'])
+            for target in ('server.crt', 'client.crt', 'client.key'):
+                shutil.copyfile(pair[0] if target != 'client.key' else pair[1], '/etc/riot/' + target)
+            self.ex8_mode('ok:created')
+            result = self.ex8_block('reinstall_notice\nleft=$(ls -A "$STAGE")\nprintf "left=[%s]\\n" "$left"')
+            self.assertEqual(result.stdout, NOTICE_OK + '\nleft=[]\n', result.stderr)
+
+    # ---- AC-024 ----------------------------------------------------------------
+
+    def test_EX8_AC024_new_installer_against_old_server(self):
+        for status, body in ((400, '{"error":"unsupported event type"}'), (404, '{"error":"not found"}')):
+            with self.subTest(status=status):
+                server = self.ex8_serve(status=status, body=body)
+
+                def scenario():
+                    self.ex8_arm()
+                    self.ex8_config(server.url)
+                    self.ex8_real()
+                rc, notice = self.ex8_same_as_without_notice(scenario)
+                self.assertEqual(rc, 0)
+                self.assertEqual(notice, [not_notified('server does not support reinstall notices')])
+                self.assertTrue(server.requests, 'the old server did receive the request')
+
+    # ---- AC-026 ----------------------------------------------------------------
+
+    def test_EX8_AC026_no_power_package_or_agent_execution(self):
+        forbidden = [r'\bpower' + 'off\b', r'\bre' + r'boot\b', r'\bshut' + r'down\b', r'\bha' + r'lt\b', 'apt' + '-get', r'\bap' + r't\b', r'\bd' + r'pkg\b',
+                     r'subprocess\.\w+\(\s*\[?\s*[\'"]/usr/local/bin/riot-agent', r'os\.exec\w*\(\s*[\'"]/usr/local/bin/riot-agent']
+        me = inspect.currentframe().f_code.co_name
+        methods = {name: member for name, member in inspect.getmembers(type(self), inspect.isfunction)
+                   if name.startswith('test_EX8_') and name != me}
+        self.assertGreaterEqual(len(methods), 25, 'the scan must cover the EX8 tests')
+        for name, member in methods.items():
+            source = inspect.getsource(member)
+            for pattern in forbidden:
+                self.assertIsNone(re.search(pattern, source), '%s names a forbidden action: %s' % (name, pattern))
+        self.ex8_assert_clean()
+
+    # ---- reader and snapshot hardening --------------------------------------------
+
+    def test_EX8_reader_rejects_values_that_could_inject_curl_config(self):
+        did = str(uuid.uuid4())
+        good = prod_key()
+        base = 'server:\n  url: "http://127.0.0.1:1"\n  api_key: %s\nagent:\n  device_id: "%s"\n'
+        quoted = lambda value: "'" + value + "'"
+        cases = {
+            'a double quote': base % (quoted('riot_' + 'a' * 63 + '"'), did),
+            'a backslash': base % (quoted('riot_' + 'a' * 63 + '\\'), did),
+            'a space': base % (quoted('riot_' + 'a' * 62 + ' b'), did),
+            'a newline inside a quoted scalar': 'server:\n  url: "http://127.0.0.1:1"\n  api_key: "riot_' + 'a' * 64 + '\n  output = /etc/shadow"\nagent:\n  device_id: "%s"\n' % did,
+            'upper-case hex': base % (quoted('riot_' + 'A' * 64), did),
+            '63 hex digits': base % (quoted('riot_' + 'a' * 63), did),
+            '65 hex digits': base % (quoted('riot_' + 'a' * 65), did),
+            'no riot_ prefix': base % (quoted('a' * 69), did),
+            'a hyphen prefix': base % (quoted('riot-' + 'a' * 64), did),
+            'a registration-style key': base % (quoted('registration-key-1'), did),
+        }
+        for name, text in cases.items():
+            with self.subTest(key=name):
+                self.set_config(text, 0o640, ('riot', 'riot'))
+                self.ex8_mode('ok:created')
+                write(ROOT / 'trace', '', 0o600)
+                result = self.ex8_block('reinstall_notice')
+                self.assertEqual(result.stdout, not_notified('agent.yaml not readable') + '\n')
+                self.assertNotIn('NOTICE', self.trace(), 'curl must not run for ' + name)
+        with self.subTest(key='control: the production format'):
+            self.set_config(base % (quoted(good), did), 0o640, ('riot', 'riot'))
+            self.ex8_mode('ok:created')
+            result = self.ex8_block('reinstall_notice')
+            self.assertEqual(result.stdout, NOTICE_OK + '\n')
+
+    def test_EX8_snapshot_rejects_swapped_inode(self):
+        secret = ROOT / 'secret.txt'
+        secret.write_text('ROOT-SECRET\n')
+        target, dest = ROOT / 'ex8-race', ROOT / 'ex8-dst'
+
+        def attempt(prepare, path_prefix=None):
+            for leftover in (target, ROOT / 'ex8-second', ROOT / 'swapped', dest):
+                leftover.unlink(missing_ok=True)
+            prepare()
+            started = time.monotonic()
+            result = self.ex8_block('notice_snapshot /fixture/ex8-race /fixture/ex8-dst', path_prefix=path_prefix)
+            return result, time.monotonic() - started
+
+        def leaked():
+            return dest.exists() and b'ROOT-SECRET' in dest.read_bytes()
+        with self.subTest(case='a regular file is copied'):
+            result, _ = attempt(lambda: target.write_text('ORIGINAL\n'))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(dest.read_text(), 'ORIGINAL\n')
+        with self.subTest(case='a symlink to a root file'):
+            result, _ = attempt(lambda: target.symlink_to(secret))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(leaked(), 'no byte of the root file may reach the snapshot')
+        with self.subTest(case='a FIFO'):
+            result, took = attempt(lambda: os.mkfifo(target))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertLess(took, 1.5, 'a FIFO must not block the notice')
+        with self.subTest(case='two links'):
+            result, _ = attempt(lambda: (target.write_text('ORIGINAL\n'), os.link(target, ROOT / 'ex8-second')))
+            self.assertNotEqual(result.returncode, 0)
+        shim = ROOT / 'stat-shim'
+        with self.subTest(case='swapped to a symlink between the open and the lstat'):
+            write(shim / 'stat', '#!/bin/sh\nif [ ! -e /fixture/swapped ]; then : > /fixture/swapped; /bin/rm -f /fixture/ex8-race; /bin/ln -s /fixture/secret.txt /fixture/ex8-race; fi\nexec /usr/bin/stat "$@"\n')
+            result, _ = attempt(lambda: target.write_text('ORIGINAL\n'), path_prefix=str(shim))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(leaked(), 'no byte of the root file may reach the snapshot')
+        with self.subTest(case='swapped to another regular file between the open and the lstat'):
+            write(shim / 'stat', '#!/bin/sh\nif [ ! -e /fixture/swapped ]; then : > /fixture/swapped; /bin/cp /fixture/secret.txt /fixture/ex8-second; /bin/mv -f /fixture/ex8-second /fixture/ex8-race; fi\nexec /usr/bin/stat "$@"\n')
+            result, _ = attempt(lambda: target.write_text('ORIGINAL\n'), path_prefix=str(shim))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(leaked(), 'no byte of the other file may reach the snapshot')
 
 
 if __name__ == '__main__':
