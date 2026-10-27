@@ -236,7 +236,7 @@ This will:
 5. On first connect, automatically pin the server's TLS certificate (TOFU)
 6. Install and start a systemd service (Linux) or print manual run instructions (macOS)
 
-An explicit root installer re-run migrates an existing host, preserving configuration and device identity while backing up managed files. It refuses active or unresolved maintenance before stopping the agent. Use an installer and release that both publish the new privileged assets; see [Upgrading existing agents](#upgrading-existing-agents) and the [maintenance migration guide](docs/ops/os-maintenance.md). The first release containing MAINT-RECOVERY-001 is required; v2.72.0 does not contain these assets.
+An explicit root installer re-run migrates an existing host, preserving configuration and device identity while backing up managed files. It refuses active or unresolved maintenance before stopping the agent. On a registered Linux host with a running agent, it also tells the server just before the stop, so the restart does not page you; see [Installer reinstalls](#installer-reinstalls). Use an installer and release that both publish the new privileged assets; see [Upgrading existing agents](#upgrading-existing-agents) and the [maintenance migration guide](docs/ops/os-maintenance.md). The first release containing MAINT-RECOVERY-001 is required; v2.72.0 does not contain these assets.
 
 Apt hosts require apt 2+, systemd 241+, sudo 1.9.10+, Python 3, and either OpenSSL 3 or Python 3 with `cryptography` already installed. The installer does not bootstrap prerequisites through apt or pip, with one exception: on any systemd Linux host without a D-Bus system bus (for example DietPi minimal images) it installs and starts `dbus` (apt or dnf) before taking package locks. The agent runs as the unprivileged `riot` user, and non-root `systemctl` needs the system bus; without it every host action (reboot, OS update, agent update) is refused. Unsupported versions fail before replacing the install; arrange prerequisite upgrades separately.
 
@@ -727,7 +727,7 @@ Monitor service, network, process, USB, and UPS state changes:
 
 ### Expected Activity
 
-Container deaths and device offline transitions that an action started from rIOt causes are recorded as `info` events and do not alert. The same holds for the restart of an agent that updates itself ([agent self-updates](#agent-self-updates)). See [Expected Activity](#expected-activity).
+Container deaths and device offline transitions that an action started from rIOt causes are recorded as `info` events and do not alert. The same holds for the restart of an agent that updates itself ([agent self-updates](#agent-self-updates)) and for the restart that an `install.sh` re-run causes ([installer reinstalls](#installer-reinstalls)). See [Expected Activity](#expected-activity).
 
 ### Alert Templates
 
@@ -757,7 +757,7 @@ The server does all of this. No agent upgrade, no agent configuration change and
 
 Every rIOt command is a record (see [Command Lifecycle](#command-lifecycle)). Twelve actions open an **expected-activity window** for their command. The window opens when the server dispatches the command to the agent. A command that is still queued opens no window and suppresses nothing. A window applies to user commands and to scheduled commands alike: the auto-update policies and the automated patch run.
 
-One window does not come from a command: the restart of an agent that updates itself on its own schedule. It has its own rules and its own 10-minute bound. See [Agent self-updates](#agent-self-updates).
+Two windows do not come from a command: the restart of an agent that updates itself on its own schedule, and the restart that an `install.sh` re-run causes. Each has its own rules and its own 10-minute bound. See [Agent self-updates](#agent-self-updates) and [Installer reinstalls](#installer-reinstalls).
 
 While a window covers an event, rIOt:
 
@@ -944,6 +944,137 @@ A device that registers on the new version shows `Returned, confirming` in the h
 - A re-registration now also sets the device's `last_heartbeat` to the registration time. The server already treated a registration as proof of life. Without this, an agent that restarts and registers before its last heartbeat is 45 seconds old would be marked offline by the next check, and the `device_offline` alert would arrive right after the device came back. The change suppresses nothing: a window still ends at the registration.
 - The severity that an agent sends with `agent_update_available`, `agent_update_started`, `agent_update_completed` and `agent_update_failed` is limited to `info`, `warning` and `critical`. Anything else is stored as `info` (`warning` for `agent_update_failed`). Agents send `info` and `warning`, so nothing changes for them.
 
+### Installer reinstalls
+
+Re-running `install.sh` on a device that is already registered stops the agent and starts a new one. For a short time the device looks offline. When the installer can, it tells the server first, so the server expects that restart and does not page you. This is the **reinstall notice**. It is best effort: when it does not go through, the device pages exactly as it did before.
+
+**When the notice is sent.** The installer sends exactly one notice when all of these hold:
+
+- It runs on Linux, as a re-run on a host that already has `/etc/riot/agent.yaml` with a device ID and a device key. A fresh install, a run with `--bootstrap-key` and macOS never send one.
+- The `riot-agent` service is loaded and running.
+- Every check that can end the run without touching the agent has passed (the maintenance lock, the signed assets, the sudoers check, the backup). The installer sends the notice directly before it stops the agent. A run that ends earlier sends nothing.
+
+The notice goes to the `server.url` in the host's `agent.yaml`. The server URL on the installer command line is ignored on a re-run, because the existing config is kept. When the host has no device ID or no key in `agent.yaml`, or the agent is not running, the installer sends nothing and prints nothing.
+
+**The one status line.** Whenever the installer attempts a notice, it prints exactly one line and nothing else. The line never contains a server response, a URL or any part of the device key.
+
+Accepted:
+
+```
+==> Server notified: agent reinstall (offline alerts paused up to 10m)
+```
+
+Not accepted:
+
+```
+==> Server not notified (<reason>); a device-offline alert may follow
+```
+
+In every case the install continues and its exit status is unchanged. The reason is one of these fixed phrases:
+
+| Reason | What it means |
+|---|---|
+| `curl not available` | The host has no `curl`. The installer uses no other client. |
+| `agent.yaml not readable` | The installer could not safely read `agent.yaml`: it is not a plain file, it is larger than 64 KiB, it has an unusual layout, or the device ID, key or URL does not have the expected form. |
+| `TLS verification is off in agent.yaml` | `tls_verify: false` with no `/etc/riot/server.crt`. See "Trust settings the installer skips" below. |
+| `trust settings not supported` | A trust setting that the installer cannot apply exactly as the agent does. See "Trust settings the installer skips" below. |
+| `reinstall tracking paused on server` | The device already had 6 reinstall records in the last 24 hours. |
+| `device already offline on server` | The server already shows the device offline, so there is nothing to expect. |
+| `server could not record it` | The server accepted the request but could not store the record. |
+| `unexpected server response` | The reply was a redirect, not the expected answer, or longer than 4096 bytes. |
+| `server does not support reinstall notices` | The server is older than this feature (it answers 400, 404 or 405). Deploy the server first. |
+| `device key rejected` | The server answered 401 or 403. |
+| `server busy` | The server answered 429. |
+| `server error` | The server answered 5xx. |
+| `server name not resolved` | DNS failed. |
+| `server unreachable` | The connection was refused. |
+| `timed out` | The notice used up its time. |
+| `TLS verification failed` | The server's certificate did not match what the agent trusts. The installer sent no key. |
+| `connection failed` | Any other connection error. |
+| `internal error` | The notice code failed in a way it does not recognise. |
+
+**It never blocks the install.** The notice has a hard limit of 10 seconds, whatever the network does. It asks no question, reads nothing from the installer's input, never changes the exit status and never changes a later step. The device key goes to the server only in the `X-rIOt-Key` header of this one request. It never appears on a command line, in the installer's output or in a file that remains after the run. The installer reads at most 4096 bytes of the reply and removes its working files before it exits.
+
+**Trust settings the installer skips.** The notice trusts exactly what the running agent trusts and nothing more. The installer reads the agent's settings and applies them to its own connection. A setting that it cannot apply exactly as the agent does makes it skip the notice, and it prints the reason. The stock installer and agent never write these settings:
+
+- `tls_verify: false` without a pinned `/etc/riot/server.crt`.
+- `server_cert_pin` without a pinned `/etc/riot/server.crt`.
+- A `ca_cert_file` other than `/etc/riot/ca.crt` or `/etc/riot/server.crt`, when there is no `/etc/riot/server.crt`.
+- A `client_cert` and `client_key` pair other than `/etc/riot/client.crt` and `/etc/riot/client.key`.
+- A trust file that is not a regular file with one link, or that changes while the installer reads it.
+- A `tls_verify` value other than `true` or `false`.
+
+When `/etc/riot/server.crt` exists, the installer accepts only that certificate, as the agent does. The host's system certificate store is not consulted. With only `http://`, there is no TLS setting to apply, and the notice carries the key in clear, as every heartbeat already does.
+
+**What the server does with a notice.** The server accepts a notice only when it carries the current key of the device that the URL names. A missing, wrong or revoked key, or a key for another device, creates nothing and changes no alerting. For an accepted notice the server opens a **reinstall record** when all of these hold:
+
+- the server shows the device online;
+- the device has no open reinstall record (a second notice while one is open creates nothing and does not extend the window);
+- the device is under the rate cap of 6 records in any rolling 24 hours.
+
+Otherwise it creates no record, and the device alerts as before. The notice itself is never stored as an event. Only its request type, `agent_reinstall_started`, travels on the existing `POST /api/v1/devices/:id/events` route, and nothing else in the body is used. The server answers `200` with `{"status":"ok","reinstall":"created"}`, or `open_record`, `capped`, `device_offline` or `unavailable`. A client cannot post the server's own event types `agent_reinstall_unconfirmed` and `agent_reinstall_paused`: they get `400`.
+
+**The window.** The window opens when the record is created and covers `device_offline` for that device only, for **at most 10 minutes** from the notice. A container that dies still alerts. A suppressed offline is stored as an `info` event, linked to the record, and sends no notification: `Device hawaii went offline during Agent reinstall by installer (expected, back by 2:32 PM EDT)`. The online event reads `Device hawaii came online after Agent reinstall by installer (offline 52s)`.
+
+**How the window ends.** At the earliest of:
+
+1. the device registers again after the notice (the restarted agent registers first). The record ends `succeeded`, whatever version the agent reports;
+2. the 10-minute bound.
+
+There is no settle period. After the window ends, a later offline alerts exactly as with no window.
+
+**Outcomes.** A record ends once.
+
+| Situation at the 10-minute bound | What rIOt stores | Notification |
+|---|---|---|
+| The device registered again | `succeeded`, no extra event | none |
+| No registration, the device is offline | `timed_out` ("Not confirmed") and **one escalation** through the existing `device_offline` rule: `hawaii still offline 10m after Agent reinstall by installer (record 1a2b3c4d)` | one push, within a minute, under the usual limit of 5 escalation pushes per device per hour |
+| No registration, the device is online | `timed_out` and one `agent_reinstall_unconfirmed` warning: `Agent reinstall by installer on hawaii was not confirmed within 10m (agent did not restart)` | none |
+
+The second row covers a run that failed after the agent stopped. The third covers a run that ended after the notice and before the stop, so the agent never restarted. A server restart inside a window loses nothing and sends nothing twice: the record is rebuilt from the database.
+
+**The rate cap.** At most **6 reinstall records per device in any rolling 24 hours**, counted separately from the cap of agent self-updates. The first notice beyond it stores one `agent_reinstall_paused` warning for the device, at most once per 24 hours, with no notification: `Agent reinstall tracking paused on hawaii: more than 6 reinstalls in 24h; offline alerts during reinstalls are not suppressed`. A record that is still unresolved 1 hour after its bound stores one `agent_reinstall_paused` warning as well, and the next accepted notice replaces it. The server never sends either event to a notification channel.
+
+**On the dashboard.** From the notice until the window ends, the Devices page and the device page show `Reinstalling agent`, `by installer` and the start time, whether the device is online or offline. The Devices page keeps rows to one line, so `by installer` and the start time are in the label's hover text. A device that is offline inside the window counts under **Expected offline** and still shows as offline. The label comes from the server, shows in any browser and clears within 5 seconds of the window ending. An escalated device shows `Not back 10m after Agent reinstall` until it next comes online or for 24 hours.
+
+The record appears in the device's command history as `Agent reinstall` `by installer`, with the outcome `In progress`, `Succeeded` or `Not confirmed`. It is read-only: it has no cancel and no retry, an agent can never claim it, and it is never sent to an agent. The device page label links to it.
+
+**Together with agent self-updates.** The two records are independent. When both apply to a device, each ends at its own bound and the one with the latest start sets the label. A self-update start that follows a reinstall is never attributed to the reinstall record.
+
+**The abuse budget.** A holder of a device's key can make offline alerts silent for less than 60 minutes per day through reinstall notices, and less than 120 minutes per day together with agent auto-update; each silent outage lasts under about 10 minutes, is stored as an info event, and pages if it lasts past the bound. The effect is limited to the key's own device. A notice for an offline device is refused, so records cannot be chained across one outage.
+
+**Accepted residuals.**
+
+- A real outage that coincides with a reinstall is hidden for up to 10 minutes, then escalates once.
+- A run whose notice fails (server down, network, trust mismatch) pages as before.
+- A run that aborts after the notice and before the stop leaves the device online. The window stays open until the bound (at most 10 minutes) and ends `Not confirmed` with one warning event and no push.
+- A run that aborts after the stop leaves the agent down. No prompt runs between the stop and the start, so only a failure can cause this. The device escalates once at the bound.
+- The first registration after the notice ends the window as `succeeded`, including the agent's own re-registration every 24 hours if it falls inside a run that aborted before the stop. That ends the window early and fails toward alerting.
+- Overlapping windows can cause one extra escalation push for one outage, or one extra "not back" push after a deliberate shutdown. Both fail toward alerting.
+- A compromised `riot` user can choose which regular file sits at the four `/etc/riot` trust paths, make the installer print a misleading notice line, or make it abort after the stop. Each errs toward alerting, at worst a page at the bound. That user already controls the agent's own trust and holds the device key.
+- On a server with an `http://` address, the key travels in clear, as in every heartbeat.
+- If the installer is killed with `SIGKILL`, its working directory under `/tmp` (root-only, mode 0700) can remain. It can hold a copy of `agent.yaml` with the device key and copies of the trust files.
+- raw.githubusercontent.com can serve the previous `install.sh` for about 5 minutes after a change is merged.
+
+**Rollout.** This is a server deploy. Deploy the server release that contains migration `000035_installer_reinstall`. No device needs an agent upgrade, a configuration change or an extra `install.sh` re-run: every registered device with a running agent qualifies, whatever agent version it runs. The installer reaches devices from the `main` branch as soon as it is merged. The combinations:
+
+| Installer | Server | Result |
+|---|---|---|
+| old | old | The device pages as before. |
+| new | old | One `Server not notified (server does not support reinstall notices)` line. The install is unchanged and the device pages as before. |
+| old | new | No notice and no record. The device pages as before. |
+| new | new | Silent. The device shows `Reinstalling agent`, and escalates once if it is not back in 10 minutes. |
+
+The first `install.sh` re-run on a registered device after the server deploy is the check. It prints `==> Server notified: agent reinstall (offline alerts paused up to 10m)` and sends no push.
+
+**Migration and rollback.** Migration `000035_installer_reinstall` runs automatically at server start. It widens the command origin check with `installer`, adds a shape check (running, succeeded or timed out; never queued; bound of 10 minutes; no parameters; no target keys), a unique index (one open record per device) and an index for the 24-hour count. It adds no column and no table. To roll the server back, **migrate down to schema 34 first, then deploy the previous image.** An older binary would otherwise read the `installer` records as ordinary `agent_update` commands. The down migration deletes every reinstall record, so rolling it back erases the reinstall history. The `agent_reinstall_*` events stay as plain warnings. The installer needs no rollback: against an older server it prints the `not notified` line.
+
+**New fields and event types.**
+
+- `GET /api/v1/activity` entries gain `origin` (`installer` for a reinstall).
+- Commands from `GET /api/v1/devices/:id/commands` carry `origin: "installer"` for a reinstall record.
+- Two event types: `agent_reinstall_unconfirmed` and `agent_reinstall_paused`. The server does not route them through alert rules.
+
 ### Server restarts and the restart grace
 
 The windows are rebuilt from the command records, so a server restart does not turn a suppressed event into an alert, lose an escalation that became due while the server was down, or send one twice. Escalations that fell due during the downtime fire on the first check after the grace period.
@@ -983,6 +1114,7 @@ A restart loop does not get an endless grace. Starts less than 2 minutes apart f
 - Offline detection waits 2 minutes after a server start, not 30 seconds.
 - The `came online` event after a window names the action, the actor and the time the device was offline.
 - An agent's own self-update restart is now expected activity for up to 10 minutes. A device registration also refreshes the device's last heartbeat. See [Agent self-updates](#agent-self-updates).
+- The restart that an `install.sh` re-run causes on a registered Linux host is now expected activity for up to 10 minutes, when the installer's notice reaches the server. A re-run prints one new status line. See [Installer reinstalls](#installer-reinstalls).
 
 ### Upgrade notes
 
@@ -992,6 +1124,7 @@ A restart loop does not get an endless grace. Starts less than 2 minutes apart f
 - Nothing changes in your alert rules. The two existing rules, `device_offline` and `container_died`, carry the escalations.
 - Two new event types appear in the event list: `expect_backstop_skipped` (a check was skipped, with the reason) and `expect_notifications_held`.
 - **Agent self-updates** need the same: the server only, no agent upgrade and no `install.sh` re-run. Migration `000034_agent_self_update` runs at start, and its down migration deletes the self-update records. Details: [Agent self-updates](#agent-self-updates).
+- **Installer reinstalls** need a server deploy and nothing on the devices: no agent upgrade, no configuration change and no extra `install.sh` re-run. Migration `000035_installer_reinstall` runs at start. To roll back, migrate down to schema 34 first, then deploy the previous image. Details: [Installer reinstalls](#installer-reinstalls).
 
 ---
 
