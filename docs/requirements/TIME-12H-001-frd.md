@@ -458,6 +458,14 @@ values are told apart.
 | `*-*-* *:00/10:00` | Every 10 minutes | Every 10 minutes |
 | `*-*-* *:00:00` | Every hour | Every hour |
 
+> **Erratum (technical writer, 2026-10-27, QA note N4).** The `*-*-01 00:00:00`
+> row above reads "Monthly on day 1 at midnight". It should read
+> "Monthly on day 01 at midnight" in both columns. The code in
+> `web/src/utils/cron.ts` echoes the day text exactly as written, and the
+> existing test in `cron.test.ts` (kept unchanged by AC-038) expects `day 01`.
+> The implementation keeps that behaviour and its new test uses `*-*-1` for the
+> "day 1" form. The row is left as written so the FRD history stays visible.
+
 ### 7.6 Time-display inventory (goes into the PR body)
 
 The examples use the instant `2026-10-27T17:05:09Z`, display zone

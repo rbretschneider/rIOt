@@ -55,7 +55,7 @@ export function formatRunDate(
  *   *-*-* 00:07:00          → "Daily at 00:07"
  *   Sun *-*-* 03:10:00      → "Every Sunday at 03:10"
  *   Mon *-*-* 00:00:00      → "Every Monday at midnight"
- *   *-*-01 00:00:00         → "Monthly on day 1 at midnight"
+ *   *-*-01 00:00:00         → "Monthly on day 01 at midnight"   (the day text is echoed as written; *-*-1 gives "day 1")
  *   *-01-01 00:00:00        → "Yearly on Jan 1 at midnight"
  *
  * The text describes a schedule in the agent host's own zone, so only the hour
