@@ -96,6 +96,11 @@ func (s *Service) timeOutOverdue(ctx context.Context, res *SweepResult) {
 	}
 	for i := range due {
 		before := due[i]
+		if before.Origin == models.OriginAgentSelfUpdate {
+			// Defensive (EXPECT-002 AD-007 row 7): ListOverdue and the server edge
+			// already exclude these rows; the tracker resolves their bound.
+			continue
+		}
 		msg := fmt.Sprintf("no result from agent within %s", models.FormatDurationShort(time.Duration(before.ExecDeadlineS)*time.Second))
 		after, applied, err := s.repo.Transition(ctx, models.CommandTransition{
 			ID: before.ID, Actor: models.ActorServer, To: models.CommandTimedOut,

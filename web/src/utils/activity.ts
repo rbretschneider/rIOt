@@ -1,5 +1,6 @@
 import type { ActivityResponse, Device, DeviceActivity } from '../types/models'
 import { enumLabel } from '../components/ui/labels'
+import { selfUpdateActionLabel, validSelfUpdateVersions } from './selfUpdate'
 
 // EXPECT-001 (ADD 6.2): the server decides which activity a device shows and
 // sends structured fields; this module only turns them into text. Nothing here
@@ -42,8 +43,17 @@ function dockerLabel(a: DeviceActivity): string {
   return a.target ? `Docker: ${verb} ${a.target}` : `Docker: ${verb}`
 }
 
+/**
+ * EXPECT-002 (AD-009): the versions of a self-update activity, re-validated. Only an
+ * agent_update activity can carry them; a command window never has agent_to_version.
+ */
+function selfUpdateVersionsOf(a: DeviceActivity) {
+  return a.action === 'agent_update' ? validSelfUpdateVersions(a.agent_from_version, a.agent_to_version) : null
+}
+
 function escalatedLabel(a: DeviceActivity): string {
-  const action = actionLabel(a.action)
+  const versions = selfUpdateVersionsOf(a)
+  const action = versions ? selfUpdateActionLabel(versions) : actionLabel(a.action)
   if (a.escalation?.reason === 'not_back') {
     return a.escalation.bound ? `Not back ${a.escalation.bound} after ${action}` : `Not back after ${action}`
   }
@@ -67,6 +77,11 @@ function hostLabel(a: DeviceActivity, ctx: ActivityLabelContext): string {
       return a.progress != null ? `Patching (${a.progress}%)` : 'Patching'
     case 'agent_update':
       if (returning) return `Restarting agent${backBy(a, ctx)}`
+      {
+        // EXPECT-002 (FR-024): a self-update names both versions from the record itself.
+        const self = selfUpdateVersionsOf(a)
+        if (self) return `Updating agent ${self.from} → ${self.to}`
+      }
       if (a.agent_from_version && ctx.newestAgentVersion) {
         return `Updating agent ${a.agent_from_version} → ${ctx.newestAgentVersion}`
       }

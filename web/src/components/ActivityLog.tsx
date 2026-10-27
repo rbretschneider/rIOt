@@ -6,6 +6,15 @@ import type { Command, WSMessage } from '../types/models'
 import { formatDuration } from '../utils/format'
 import { isAllowedStatusFilter, normalizeStatus, STATUS_FILTER_OPTIONS } from '../utils/commandLifecycle'
 import { Badge, Modal, Timestamp, enumLabel } from './ui'
+import SelfUpdateDetails from './SelfUpdateDetails'
+import {
+  SELF_UPDATE_ACTOR_PHRASE,
+  isSelfUpdate,
+  selfUpdateActionLabel,
+  selfUpdateOutcomeLabel,
+  selfUpdateOutcomeTone,
+  selfUpdateVersions,
+} from '../utils/selfUpdate'
 
 const PAGE_SIZE = 20
 
@@ -101,9 +110,24 @@ export default function ActivityLog({ deviceId }: Props) {
                     <td className="py-1.5 pr-3 font-mono text-xs text-gray-400 whitespace-nowrap">
                       <Timestamp value={cmd.created_at} />
                     </td>
-                    <td className="py-1.5 pr-3 text-gray-200">{enumLabel('commandAction', cmd.action)}</td>
+                    <td className="py-1.5 pr-3 text-gray-200">
+                      {isSelfUpdate(cmd) ? (
+                        <>
+                          {selfUpdateActionLabel(selfUpdateVersions(cmd))}
+                          <span className="block text-[10px] text-text-muted">{SELF_UPDATE_ACTOR_PHRASE}</span>
+                        </>
+                      ) : (
+                        enumLabel('commandAction', cmd.action)
+                      )}
+                    </td>
                     <td className="py-1.5 pr-3">
-                      <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
+                      {isSelfUpdate(cmd) ? (
+                        <Badge tone={selfUpdateOutcomeTone(cmd.status)} className="text-[10px] px-1.5">
+                          {selfUpdateOutcomeLabel(cmd.status)}
+                        </Badge>
+                      ) : (
+                        <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
+                      )}
                     </td>
                     <td className="py-1.5 pr-3 text-gray-400 max-w-xs truncate hidden sm:table-cell">
                       {cmd.result_msg || '-'}
@@ -126,14 +150,34 @@ export default function ActivityLog({ deviceId }: Props) {
         </>
       )}
 
-      {selectedCmd && (
+      {selectedCmd && (isSelfUpdate(selectedCmd) ? (
+        <SelfUpdateModal
+          cmd={selectedCmd}
+          deviceId={deviceId}
+          onClose={() => setSelectedCmd(null)}
+        />
+      ) : (
         <CommandDetailModal
           cmd={selectedCmd}
           deviceId={deviceId}
           onClose={() => setSelectedCmd(null)}
         />
-      )}
+      ))}
     </div>
+  )
+}
+
+// EXPECT-002 (FR-027): an agent's own self-update opens read-only. It has no duration, exit
+// code, output or controls, so the generic command modal does not apply.
+function SelfUpdateModal({ cmd, deviceId, onClose }: {
+  cmd: Command
+  deviceId: string
+  onClose: () => void
+}) {
+  return (
+    <Modal open size="lg" title={selfUpdateActionLabel(selfUpdateVersions(cmd))} onClose={onClose} bodyClassName="space-y-4 py-4">
+      <SelfUpdateDetails deviceId={deviceId} command={cmd} />
+    </Modal>
   )
 }
 

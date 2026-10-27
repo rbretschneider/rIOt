@@ -53,6 +53,10 @@ const (
 	ActorAgent
 	// ActorOperator is the authenticated dashboard user (cancel).
 	ActorOperator
+	// ActorSelfUpdate is the server resolving an agent self-update record
+	// (EXPECT-002 AD-003): the only actor whose UPDATE can match such a row, and
+	// it can match nothing else. Its edges are the seven below.
+	ActorSelfUpdate
 )
 
 func (a CommandActor) String() string {
@@ -63,6 +67,8 @@ func (a CommandActor) String() string {
 		return "agent"
 	case ActorOperator:
 		return "operator"
+	case ActorSelfUpdate:
+		return "self_update"
 	default:
 		return fmt.Sprintf("actor(%d)", int(a))
 	}
@@ -74,6 +80,7 @@ const (
 	bitServer actorSet = 1 << iota
 	bitAgent
 	bitOperator
+	bitSelfUpdate
 )
 
 func (a CommandActor) bit() actorSet {
@@ -84,6 +91,8 @@ func (a CommandActor) bit() actorSet {
 		return bitAgent
 	case ActorOperator:
 		return bitOperator
+	case ActorSelfUpdate:
+		return bitSelfUpdate
 	default:
 		return 0
 	}
@@ -127,6 +136,14 @@ func buildTransitions() map[CommandState]map[CommandState]actorSet {
 
 	// Operator edge.
 	add(CommandQueued, CommandCancelled, bitOperator)
+
+	// Self-update edges (EXPECT-002 AD-003): a record starts in running, the
+	// registration moves it to verifying, and the outcome ends it.
+	add(CommandRunning, CommandVerifying, bitSelfUpdate)
+	for _, to := range []CommandState{CommandSucceeded, CommandFailed, CommandTimedOut} {
+		add(CommandRunning, to, bitSelfUpdate)
+		add(CommandVerifying, to, bitSelfUpdate)
+	}
 
 	// Agent edges. queued and dispatched accept every agent report: a report
 	// is proof of delivery (queued only after an FR-085 revert).

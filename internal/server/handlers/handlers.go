@@ -226,6 +226,11 @@ func (h *Handlers) cmdSvc() *commands.Service {
 		if h.eventGen != nil {
 			opts.Events = NewCompletionEvents(h.eventGen, h.devices)
 		}
+		// EXPECT-002: the repository records self-updates when it can (the real
+		// and the mock command repositories both can). A typed nil never gets in.
+		if su, ok := h.commandRepo.(db.SelfUpdateRepository); ok {
+			opts.SelfUpdates = su
+		}
 		h.commands = commands.New(opts)
 	})
 	return h.commands
@@ -374,6 +379,13 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			if reg.Tags != nil {
 				existing.Tags = reg.Tags
 			}
+			// EXPECT-002 AD-008 (INFO-5, X-20): a registration counts as a heartbeat.
+			// The proof above is at least as strong as a heartbeat's, and the offline
+			// detector then sees a fresh heartbeat as soon as the new process has
+			// registered, so a fast return is not marked offline by a stale one. It
+			// rides on the same UPDATE.
+			regAt := h.clock()
+			existing.LastHeartbeat = &regAt
 			if err := h.devices.Update(r.Context(), existing); err != nil {
 				slog.Error("update device", "error", err.Error())
 				http.Error(w, `{"error":"failed to update device"}`, http.StatusInternalServerError)
@@ -386,8 +398,12 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			// DeviceOnline below: that call reads what this one records
 			// (EXPECT-001 AD-006).
 			if h.activity != nil {
-				h.activity.NoteRegistration(device.ID, h.clock())
+				h.activity.NoteRegistration(device.ID, regAt)
 			}
+			// EXPECT-002: an open agent self-update record moves to verifying (the
+			// device reports <to>) or to failed (any other version). After the
+			// tracker's NoteRegistration, before the response and DeviceOnline.
+			h.cmdSvc().NoteSelfUpdateRegistration(r.Context(), device.ID, reg.Hostname, reg.AgentVersion, regAt)
 
 			// Issue a new key only when the proof was a certificate or the
 			// registration key (device created by mTLS enrollment has no key).
@@ -1183,12 +1199,21 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EXPECT-002: the server clock is injected, an unknown severity of an
+	// agent_update_* event is clamped (AD-015), and a start, completion or failure
+	// of this device's own authenticated agent is recognised and attributed before
+	// the event is stored (AD-002, AD-004). The agent's own command_id is never
+	// read for these types.
+	at := h.clock()
+	link := h.linkAgentUpdateEvent(r, deviceID, agentEvt, at)
 	e := &models.Event{
-		DeviceID:  deviceID,
-		Type:      agentEvt.Type,
-		Severity:  agentEvt.Severity,
-		Message:   agentEvt.Message,
-		CreatedAt: time.Now().UTC(),
+		DeviceID:    deviceID,
+		Type:        agentEvt.Type,
+		Severity:    models.ClampAgentUpdateSeverity(agentEvt.Type, agentEvt.Severity),
+		Message:     agentEvt.Message,
+		CreatedAt:   at,
+		CommandID:   link.CommandID,
+		CommandAttr: link.CommandAttr,
 	}
 	if err := h.events.Create(r.Context(), e); err != nil {
 		slog.Error("create agent event", "error", err.Error())
@@ -1196,6 +1221,9 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.hub.BroadcastEvent(e)
+	for i := range link.Events {
+		h.hub.BroadcastEvent(&link.Events[i])
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

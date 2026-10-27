@@ -146,6 +146,12 @@ func (t *Tracker) finishWindow(ctx context.Context, devID, winID string, reason 
 		return true
 	}
 
+	if w.policy.SelfUpdate {
+		// An agent self-update record has its own end-of-window routine (EXPECT-002
+		// AD-006): the same contract, with resolution at the bound.
+		return t.finishSelfUpdate(ctx, devID, winID, w, dv, reason)
+	}
+
 	outcome := models.WindowOutcomeClosed
 	switch reason {
 	case models.EndPoweredOff:

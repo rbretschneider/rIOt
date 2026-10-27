@@ -118,6 +118,11 @@ type EventRepository interface {
 	// HasCommandEvent reports whether an event of the given type already exists
 	// for the command on the device (EXTRA-UPD-001 SEC-005 dedupe).
 	HasCommandEvent(ctx context.Context, deviceID, commandID string, eventType models.EventType) (bool, error)
+	// ListByCommandSplit returns the events linked to one command of one device in
+	// two groups, oldest first: every server-authored event (at most serverLimit)
+	// and the agent-sourced ones (at most agentLimit), with the number of matching
+	// rows that were not returned (EXPECT-002 Section 6.3, C-3).
+	ListByCommandSplit(ctx context.Context, deviceID, commandID string, serverLimit, agentLimit int) (models.CommandEvents, error)
 }
 
 // AlertRuleRepository defines the interface for alert rule database operations.
@@ -183,6 +188,22 @@ type CommandRepository interface {
 	ListOverdue(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error)
 	SaveCommandOutput(ctx context.Context, output *models.CommandOutput) error
 	GetCommandOutput(ctx context.Context, commandID string) ([]models.CommandOutput, error)
+}
+
+// SelfUpdateRepository is the persistence of agent self-update records
+// (EXPECT-002): commands rows with origin agent_self_update. CommandRepo
+// implements it.
+type SelfUpdateRepository interface {
+	// CreateSelfUpdate recognises one validated start in one transaction under the
+	// per-device command lock: attribution to an agent_update command (FR-004),
+	// retirement of a stale open record (C-4), the one-open-record rule (FR-006),
+	// the rate cap with its once-per-24h event (FR-007) and the insert (AD-002).
+	CreateSelfUpdate(ctx context.Context, s models.SelfUpdateStart) (models.SelfUpdateCreateResult, error)
+	// OpenSelfUpdate returns the device's running or verifying record, or nil.
+	OpenSelfUpdate(ctx context.Context, deviceID string) (*models.Command, error)
+	// LatestSelfUpdateSince returns the device's newest record created at or after
+	// since, or nil.
+	LatestSelfUpdateSince(ctx context.Context, deviceID string, since time.Time) (*models.Command, error)
 }
 
 // ProbeRepository defines the interface for probe database operations.
@@ -358,4 +379,5 @@ var (
 	_ DeviceProbeRepository      = (*DeviceProbeRepo)(nil)
 	_ ExternalIdentityRepository = (*ExternalIdentityRepo)(nil)
 	_ ExpectedActivityRepository = (*ExpectRepo)(nil)
+	_ SelfUpdateRepository       = (*CommandRepo)(nil)
 )

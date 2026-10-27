@@ -369,6 +369,10 @@ func buildTransitionSQL(t models.CommandTransition) (query string, args []interf
 	if len(guard) == 0 || t.Now.IsZero() {
 		return "", nil, false
 	}
+	if t.Actor == models.ActorSelfUpdate && t.DeviceID == "" {
+		// The device scope is mandatory for the self-update actor (AD-003).
+		return "", nil, false
+	}
 	to := t.To.Canonical()
 	// $1 id, $2 status, $3 now.
 	args = []interface{}{t.ID, string(to), t.Now}
@@ -440,6 +444,14 @@ func buildTransitionSQL(t models.CommandTransition) (query string, args []interf
 		where += fmt.Sprintf(" AND device_id=$%d", len(args))
 	}
 	where += " AND status IN (" + models.SQLStatusList(guard...) + ")"
+	// EXPECT-002 C-2: ActorSelfUpdate is the only actor whose UPDATE can match an
+	// agent self-update row, and it can match nothing else. The literal is the
+	// typed constant, never request data.
+	if t.Actor == models.ActorSelfUpdate {
+		where += " AND origin = '" + models.OriginAgentSelfUpdate + "'"
+	} else {
+		where += " AND origin <> '" + models.OriginAgentSelfUpdate + "'"
+	}
 
 	query = "UPDATE commands SET " + strings.Join(sets, ", ") + " WHERE " + where + " RETURNING " + commandColumns
 	return query, args, true
@@ -481,9 +493,11 @@ func (r *CommandRepo) ListExpiredQueued(ctx context.Context, deviceID string, no
 
 // ListOverdue returns dispatched/acknowledged/running/verifying commands whose
 // deadline_at has passed, oldest deadline first. An empty deviceID means every
-// device.
+// device. Agent self-update records are excluded: the expected-activity tracker
+// resolves their bound, and the sweeper must not write a completion event for
+// them (EXPECT-002 AD-007 row 7).
 func (r *CommandRepo) ListOverdue(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error) {
-	return r.listDue(ctx, `status IN (`+inflightStatusList+`) AND deadline_at <= $1`, `deadline_at`, deviceID, now, limit)
+	return r.listDue(ctx, `status IN (`+inflightStatusList+`) AND deadline_at <= $1 AND origin <> '`+models.OriginAgentSelfUpdate+`'`, `deadline_at`, deviceID, now, limit)
 }
 
 // listDue runs a due-row query. predicate and orderCol are package constants,

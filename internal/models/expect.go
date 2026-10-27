@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 )
 
 // EXPECT-001: expected-activity windows. This file holds the policy table
@@ -34,6 +33,11 @@ const (
 	ExpectAgentReturnBound    = 10 * time.Minute
 	ExpectShutdownReturnBound = 15 * time.Minute
 	ExpectNonSuccessSettle    = 2 * time.Minute
+	// ExpectSelfUpdateBound is the longest an agent self-update window lasts,
+	// counted from the server's receive time of the start event (EXPECT-002
+	// AD-010, FRD DEC-4). It is also a database CHECK on the record (migration
+	// 000034).
+	ExpectSelfUpdateBound = 10 * time.Minute
 )
 
 // Readiness, grace and cap constants (AD-002, AD-008, AD-010, AD-011, AD-012).
@@ -123,6 +127,10 @@ type WindowPolicy struct {
 	// CheckContainers: FR-022, containers whose death was suppressed must be
 	// running again when the window closes.
 	CheckContainers bool
+	// SelfUpdate marks the EXPECT-002 policy of an agent self-update record: its
+	// coverage is computed by the self-update function, not by the command
+	// phases (AD-005).
+	SelfUpdate bool
 }
 
 var expectPolicies = []WindowPolicy{
@@ -164,6 +172,25 @@ func ExpectPolicy(action string) (WindowPolicy, bool) {
 		}
 	}
 	return WindowPolicy{}, false
+}
+
+// ExpectSelfUpdatePolicy is the policy of an agent self-update record
+// (EXPECT-002 AD-005): device_offline only, no settle period, no post-terminal
+// period, no observed-return requirement, one escalation at the end when the
+// suppressed offline is still ongoing.
+var ExpectSelfUpdatePolicy = WindowPolicy{
+	Action: ActionAgentUpdate, Class: WindowAgent, CoversOffline: true, Containers: CoverNoContainers,
+	EscalateNotBack: true, SelfUpdate: true,
+}
+
+// ExpectPolicyFor returns the window policy of one command row: the
+// self-update policy for an agent self-update record, ExpectPolicy(c.Action)
+// otherwise.
+func ExpectPolicyFor(c Command) (WindowPolicy, bool) {
+	if c.Origin == OriginAgentSelfUpdate && c.Action == ActionAgentUpdate {
+		return ExpectSelfUpdatePolicy, true
+	}
+	return ExpectPolicy(c.Action)
 }
 
 // ExpectActions lists the 12 actions that open a window, in the order of the
@@ -230,30 +257,7 @@ const (
 // characters) rune is removed, and so are the line and paragraph separators.
 // The result is cut to ExpectNameMaxBytes on a rune boundary.
 func SafeName(s string) string {
-	s = SanitizeText(s)
-	clean := true
-	for _, r := range s {
-		if unsafeNameRune(r) {
-			clean = false
-			break
-		}
-	}
-	if !clean {
-		var b strings.Builder
-		b.Grow(len(s))
-		for _, r := range s {
-			if !unsafeNameRune(r) {
-				b.WriteRune(r)
-			}
-		}
-		s = b.String()
-	}
-	return TruncateHead(s, ExpectNameMaxBytes)
-}
-
-func unsafeNameRune(r rune) bool {
-	return unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) ||
-		unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r)
+	return SafeText(s, ExpectNameMaxBytes)
 }
 
 // ContainerNameKey is the form of a container name stored in new events and
@@ -293,6 +297,8 @@ func ActorPhrase(c Command, policyTarget string) string {
 		return "by an auto-update policy"
 	case OriginAutoPatch:
 		return "by the auto-patch schedule"
+	case OriginAgentSelfUpdate:
+		return SelfUpdateActorPhrase
 	}
 	if n := SafeName(c.ActorName); n != "" {
 		return "by " + n
@@ -464,6 +470,11 @@ func (k EscalationKind) IsDevice() bool {
 const (
 	EscalationTargetDevice  = "device"
 	EscalationTargetSummary = "summary"
+	// EscalationTargetOutcome and EscalationTargetStuck are the exactly-once
+	// markers of the outcome event and the stuck-record event of an agent
+	// self-update record (EXPECT-002 AD-006).
+	EscalationTargetOutcome = "outcome"
+	EscalationTargetStuck   = "stuck"
 	// escalationTargetContainerPrefix is followed by 32 hex characters.
 	escalationTargetContainerPrefix = "container:"
 )
@@ -609,6 +620,7 @@ type DeviceActivity struct {
 	WaitingDpkgLock  bool                `json:"waiting_dpkg_lock"`
 	Progress         *int                `json:"progress"`
 	AgentFromVersion string              `json:"agent_from_version"`
+	AgentToVersion   string              `json:"agent_to_version"`
 	Target           string              `json:"target"`
 	DockerActions    int                 `json:"docker_actions"`
 	CoversOffline    bool                `json:"covers_offline"`

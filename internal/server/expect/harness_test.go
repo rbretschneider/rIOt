@@ -243,6 +243,8 @@ type harness struct {
 	svc    *commands.Service
 
 	lastReconcile time.Time
+	// noResolver leaves the tracker without a self-update resolver (C-4).
+	noResolver bool
 
 	// alerts are the occurrences that went the "today" path: stored as a non-expected
 	// event and, when the rule notifies, dispatched by the generator.
@@ -268,6 +270,7 @@ type hConfig struct {
 	inline      bool
 	notConnect  bool
 	deviceSetup func(h *harness)
+	noResolver  bool
 }
 
 func withoutLoad() hOpt             { return func(c *hConfig) { c.noLoad = true } }
@@ -278,6 +281,10 @@ func withAsyncPublisher(q, w int) hOpt {
 	return func(c *hConfig) { c.inline = false; c.queueSize = q; c.workers = w }
 }
 func withDevices(f func(h *harness)) hOpt { return func(c *hConfig) { c.deviceSetup = f } }
+
+// withoutSelfUpdateResolver leaves the tracker without a SelfUpdateResolver
+// (EXPECT-002 C-4: the stuck-record case).
+func withoutSelfUpdateResolver() hOpt { return func(c *hConfig) { c.noResolver = true } }
 
 var allDevices = []struct{ id, host string }{{"hawaii", "hawaii"}, {"vermont", "vermont"}, {"picups", "PiCUPS"}}
 
@@ -294,6 +301,8 @@ func newHarness(t *testing.T, opts ...hOpt) *harness {
 		bc: &fakeBroadcaster{}, logs: &lockedBuffer{}, newest: "2.78.0",
 	}
 	h.repo = testutil.NewMockExpectedActivityRepo(h.cmds, h.events, h.devices)
+	h.cmds.LinkEvents(h.events) // the rate-cap event of a self-update start lands here
+	h.noResolver = cfg.noResolver
 	h.esc = &fakeEscalator{h: h}
 	h.disp = testutil.NewMockDispatcher()
 	h.spy = &oracleSpy{}
@@ -346,8 +355,12 @@ func (h *harness) build(cfg hConfig) {
 	h.spy.set(h.tr)
 	h.svc = commands.New(commands.Options{
 		Commands: h.cmds, Policies: h.pol, Telemetry: h.tele, Agents: h.agents, Observer: h.tr, Now: h.clock.Now,
-		Logger: slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		SelfUpdates: h.cmds,
+		Logger:      slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
+	if !h.noResolver {
+		h.tr.SetSelfUpdateResolver(h.svc) // before Load, like server.Start
+	}
 }
 
 // restart simulates a server restart: a new Tracker (and Service) over the same
@@ -771,4 +784,149 @@ func requireNoAlerts(t *testing.T, h *harness, msg string) {
 	t.Helper()
 	assert.Empty(t, h.alerts, msg)
 	assert.Empty(t, h.notifications(), msg)
+}
+
+// ---------------------------------------------------------------------------
+// EXPECT-002 helpers. They mirror the order the handlers use: an agent update
+// event goes through commands.Service.NoteAgentUpdateEvent first and is then
+// stored with its link (ReceiveAgentEvent); a registration refreshes the
+// heartbeat, tells the tracker (NoteRegistration), then the service
+// (NoteSelfUpdateRegistration), then the generator (DeviceOnline); the offline
+// detector pass flips stale devices and reports the statuses to the tracker.
+// ---------------------------------------------------------------------------
+
+const (
+	suFrom = "2.78.0"
+	suTo   = "2.80.0"
+)
+
+func startMessage(from, to string) string {
+	return fmt.Sprintf("Agent update started: %s \u2192 %s", from, to)
+}
+
+// agentEvent is ReceiveAgentEvent for an agent_update_* event of the device:
+// recognition and attribution first, then the event is stored as the agent sent
+// it plus the link. It returns the link.
+func (h *harness) agentEvent(device string, typ models.EventType, sev models.EventSeverity, msg string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	now := h.clock.Now()
+	link := h.svc.NoteAgentUpdateEvent(h.ctx(), commands.AgentUpdateEventInput{
+		DeviceID: device, Hostname: h.hostname(device), Type: typ, Message: msg, At: now,
+	})
+	e := models.Event{DeviceID: device, Type: typ, Severity: sev, Message: msg, CreatedAt: now,
+		CommandID: link.CommandID, CommandAttr: link.CommandAttr}
+	require.NoError(h.t, h.events.Create(h.ctx(), &e))
+	return link
+}
+
+// selfStart is the agent's "Agent update started: 2.78.0 -> 2.80.0".
+func (h *harness) selfStart(device string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	return h.selfStartVersions(device, suFrom, suTo)
+}
+
+func (h *harness) selfStartVersions(device, from, to string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	return h.agentEvent(device, models.EventAgentUpdateStarted, models.SeverityInfo, startMessage(from, to))
+}
+
+func (h *harness) agentCompleted(device, msg string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	return h.agentEvent(device, models.EventAgentUpdateCompleted, models.SeverityInfo, msg)
+}
+
+func (h *harness) agentFailed(device, msg string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	return h.agentEvent(device, models.EventAgentUpdateFailed, models.SeverityWarning, msg)
+}
+
+// registerOn is RegisterDevice for an existing device reporting agent version:
+// the heartbeat is refreshed (X-20), then NoteRegistration, then
+// NoteSelfUpdateRegistration, then DeviceOnline when the device was not live.
+func (h *harness) registerOn(device, version string) *models.OnlineNote {
+	h.t.Helper()
+	d := h.devices.Devices[device]
+	wasLive := models.DeviceIsLive(d.Status)
+	now := h.clock.Now()
+	d.LastHeartbeat = tp(now)
+	d.AgentVersion = version
+	require.NoError(h.t, h.devices.SetStatus(h.ctx(), device, models.DeviceStatusOnline))
+	h.tr.NoteRegistration(device, now)
+	h.svc.NoteSelfUpdateRegistration(h.ctx(), device, d.Hostname, version, now)
+	if wasLive {
+		return nil
+	}
+	h.spy.reset()
+	h.gen.DeviceOnline(h.ctx(), device, d.Hostname)
+	h.spy.mu.Lock()
+	defer h.spy.mu.Unlock()
+	return h.spy.note
+}
+
+// heartbeatOn is a heartbeat that reports an agent version.
+func (h *harness) heartbeatOn(device, version string) {
+	h.t.Helper()
+	h.devices.Devices[device].AgentVersion = version
+	h.heartbeat(device)
+}
+
+// detectorPass is one pass of the offline detector at the current time: every
+// live device whose heartbeat is older than the threshold goes offline (and the
+// generator is asked about the transition), then the tracker is told the
+// statuses.
+func (h *harness) detectorPass() {
+	h.t.Helper()
+	now := h.clock.Now()
+	list, err := h.devices.List(h.ctx())
+	require.NoError(h.t, err)
+	threshold := now.Add(-models.OfflineHeartbeatThreshold)
+	for i := range list {
+		d := &list[i]
+		if !models.DeviceIsLive(d.Status) || d.LastHeartbeat == nil || !d.LastHeartbeat.Before(threshold) {
+			continue
+		}
+		require.NoError(h.t, h.devices.SetStatus(h.ctx(), d.ID, models.DeviceStatusOffline))
+		d.Status = models.DeviceStatusOffline
+		h.spy.reset()
+		h.gen.InvalidateRulesCache()
+		hb := *d.LastHeartbeat
+		h.recordAlerts(func() { h.gen.DeviceOfflineAt(h.ctx(), d.ID, d.Hostname, &hb) })
+	}
+	h.tr.ObserveDevices(list, now)
+}
+
+// selfRecords returns the device's self-update rows, oldest first.
+func (h *harness) selfRecords(device string) []models.Command {
+	var out []models.Command
+	for _, c := range h.cmds.All() {
+		if c.DeviceID == device && c.Origin == models.OriginAgentSelfUpdate {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// selfRecord is the device's only self-update row.
+func (h *harness) selfRecord(device string) models.Command {
+	h.t.Helper()
+	rows := h.selfRecords(device)
+	require.Len(h.t, rows, 1, "exactly one self-update record for %s", device)
+	return rows[0]
+}
+
+// eventsLinked returns the stored events of one type linked to a command.
+func (h *harness) eventsLinked(typ models.EventType, commandID string) []models.Event {
+	var out []models.Event
+	for _, e := range h.allEvents() {
+		if e.Type == typ && e.CommandID == commandID {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// logLevelLines counts the log lines at a level ("WARN", "INFO", "ERROR").
+func (h *harness) logLevelLines(level string) int {
+	return strings.Count(h.logs.String(), "level="+level)
 }

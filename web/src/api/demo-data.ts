@@ -825,6 +825,7 @@ export function getActivity(): ActivityResponse {
         waiting_dpkg_lock: false,
         progress: null,
         agent_from_version: '',
+        agent_to_version: '',
         target: 'nginx',
         docker_actions: 1,
         covers_offline: false,

@@ -54,7 +54,8 @@ func TestEX_Repo_PG_MigrationUpDownUp(t *testing.T) {
 	assert.Equal(t, len(models.ExpectActions()), strings.Count(def, "::text"), "the predicate has exactly the ExpectActions() entries")
 
 	env.Exec(`INSERT INTO admin_config (key, value) VALUES ('expect_restart_series', '{}')`)
-	require.NoError(t, env.Mig.Steps(-1), "down")
+	// Down to 32 (not Steps(-1): 000034 is the latest migration since EXPECT-002).
+	require.NoError(t, env.Mig.Migrate(32), "down")
 	assert.False(t, has("command_escalations") || has("device_powered_off") || hasCol(), "down removes the objects")
 	assert.Equal(t, 0, env.scalarInt(`SELECT count(*) FROM admin_config WHERE key='expect_restart_series'`), "down removes the series row")
 	require.NoError(t, env.Mig.Up(), "up again")

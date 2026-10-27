@@ -725,7 +725,7 @@ Monitor service, network, process, USB, and UPS state changes:
 
 ### Expected Activity
 
-Container deaths and device offline transitions that an action started from rIOt causes are recorded as `info` events and do not alert. See [Expected Activity](#expected-activity).
+Container deaths and device offline transitions that an action started from rIOt causes are recorded as `info` events and do not alert. The same holds for the restart of an agent that updates itself ([agent self-updates](#agent-self-updates)). See [Expected Activity](#expected-activity).
 
 ### Alert Templates
 
@@ -754,6 +754,8 @@ The server does all of this. No agent upgrade, no agent configuration change and
 ### How it works
 
 Every rIOt command is a record (see [Command Lifecycle](#command-lifecycle)). Twelve actions open an **expected-activity window** for their command. The window opens when the server dispatches the command to the agent. A command that is still queued opens no window and suppresses nothing. A window applies to user commands and to scheduled commands alike: the auto-update policies and the automated patch run.
+
+One window does not come from a command: the restart of an agent that updates itself on its own schedule. It has its own rules and its own 10-minute bound. See [Agent self-updates](#agent-self-updates).
 
 While a window covers an event, rIOt:
 
@@ -844,6 +846,7 @@ The **Devices** page (`/`) shows what each device is doing, taken from the serve
 | `os_update` succeeded, device online | `Patched, settling until <time>` |
 | `agent_update` running | `Updating agent 2.77.0 → 2.78.0`, or `Updating agent` when a version is unknown |
 | `agent_update` succeeded | `Restarting agent, back by <time>` |
+| An [agent self-update](#agent-self-updates) is in progress | `Updating agent 2.78.0 → 2.80.0`, `by agent auto-update`, with the start time. It clears when the window ends: at the registration on the new version, at a failure, or at the 10-minute bound |
 | One Docker action open | `Docker: updating plex`, `Docker: recreating stack media` |
 | Two or more Docker actions open | `Docker: <N> actions in progress` |
 | Escalated device | `<Action> failed: offline` or `Not back <bound> after <Action>`, in failure styling |
@@ -857,6 +860,87 @@ Beside the label, the page shows who started the action and when. The **device p
 - Times in labels follow the UTC or local choice in the utility bar (see [Time Display](#time-display)). Times in event messages, such as `back by 14:32`, use the server's local time zone, so the two can differ.
 - The label `Rebooting (waiting for dpkg lock)` appears only when the agent reports that step. Current agents do not report it yet, so a reboot that waits for the lock shows `Rebooting`.
 - If `GET /api/v1/activity` fails, the page shows the plain status, as before.
+
+### Agent self-updates
+
+An agent updates itself on its own schedule when a new release is published, and it restarts. That is not a command, so it has no command record, but the server recognises it from the message the agent already sends and treats the restart as expected activity.
+
+**How a self-update is recognised.** The agent sends `agent_update_started` with the message `Agent update started: 2.78.0 → 2.80.0`. The server accepts the message only in exactly that form: the arrow is `→`, both versions look like `2.80.0` (an optional leading `v`, three numbers, an optional suffix of up to 16 characters), they differ, and the whole text is at most 256 bytes of printable UTF-8. Anything else is treated as before: the event is stored as the agent sent it and nothing changes for the device's alerts. The agent's own `command_id` is never read. A start counts only when it comes from the device's own authenticated agent. Every agent since v2.10.0 sends the message in this form.
+
+**One record per self-update.** The server stores a **self-update record** for the device: its versions, the start time (the server's time, never the agent's), the originator `by agent auto-update` and the outcome. The start event, and the agent's later `agent_update_completed` and `agent_update_failed` events, are stored as sent and linked to the record.
+
+In the device's command history the record appears as `Agent update 2.78.0 → 2.80.0` `by agent auto-update`. It is read-only: it has no cancel and no retry, and it is never sent to an agent. Opening it shows the start time, the outcome (`In progress`, `Returned, confirming`, `Succeeded`, `Failed` or `Not confirmed`), the result text and the linked events. The server's own events are always listed in full. The agent's events are limited to 50, with a count such as `N more agent events not shown`.
+
+**Self-update or fleet command.** The server decides when it receives the start:
+
+- A start while an `agent_update` command of the same device is in flight, or finished at most 10 minutes earlier, belongs to that command (an update started from the device page or by **Update agents**). It creates no record, and the label keeps the command's actor, for example `by ryan`.
+- A command that is still queued, or that was never sent to the agent, does not capture a start.
+- A command dispatched while a record is open does not conflict with it. The record holds no conflict keys. The most recently dispatched of the two sets the label.
+
+**Bounds.**
+
+- A device has at most **one open record**. A repeated start while one is open is linked to it and does not extend the window.
+- At most **6 records per device in any 24 hours**. The first start beyond that stores one `agent_self_update_paused` warning event, at most once per device per 24 hours, with no notification: `Agent self-update tracking paused on hawaii: more than 6 agent updates started in 24h; offline alerts during agent updates are not suppressed`. The start creates no record, so offline alerts work as before.
+- A record that is still not resolved 1 hour after its bound is a **stuck record**. It stores one `agent_self_update_paused` warning event (no notification) and one server log warning: `Agent self-update tracking paused on hawaii: record 1a2b3c4d (Agent update 2.78.0 → 2.80.0) could not be completed 1h after its bound; the next agent update replaces it`. The next valid start on that device retires the stuck record as `timed_out` and creates a new one, so a stuck record never blocks tracking.
+- A record stores at most one outcome event and one escalation, each exactly once, including across server restarts. Records are purged with other commands; a record whose window is not yet processed is exempt from the purge, as for any command.
+
+**What the window suppresses.** `device_offline` for that device only, from the start for **at most 10 minutes**. A container that dies still alerts. A suppressed offline is stored as an `info` event: `Device hawaii went offline during Agent update 2.78.0 → 2.80.0 by agent auto-update (expected, back by 18:01)`. The online event reads `Device hawaii came online after Agent update 2.78.0 → 2.80.0 by agent auto-update (offline 42s)`. Nothing is dropped, and nothing is notified.
+
+**How the window ends.** At the earliest of:
+
+1. the device registers again reporting the new version (the normal case: the restarted agent registers first);
+2. the agent reports `agent_update_failed`, or the device registers on any other version;
+3. the 10-minute bound. There is no settle period. After the window ends, a later offline alerts exactly as with no window.
+
+An `agent_update_completed` that arrives after the registration does not extend the window. It only records the outcome as `succeeded`.
+
+An older agent, and the unsigned path, report `agent_update_completed` before the restart. The restart that follows is still covered, until the device registers again or the bound.
+
+**Outcomes.** Each record ends once: `succeeded`, `failed`, or `timed_out` (shown as "not confirmed").
+
+| Situation | What rIOt stores | Notification |
+|---|---|---|
+| The device registers on the new version, or the agent reports `agent_update_completed`; the device reports the new version at the bound | `succeeded`, no extra event | none |
+| The agent reports `agent_update_failed` | `failed` and one `agent_self_update_failed` warning: `Agent update 2.78.0 → 2.80.0 by agent auto-update failed on vermont: <reason>`. The reason is the agent's text, cleaned and cut to 200 bytes | none |
+| The device registers on another version | `failed` and one `agent_self_update_failed` warning: `PiVPN came back on agent 2.78.0 after Agent update 2.78.0 → 2.80.0 by agent auto-update (expected 2.80.0)` | none |
+| At 10 minutes the device is online and not confirmed | `timed_out` and one `agent_self_update_unconfirmed` warning: `Agent update 2.78.0 → 2.80.0 by agent auto-update on vermont was not confirmed within 10m (agent reports 2.78.0)` | none |
+| At 10 minutes the device is offline | `timed_out` and **one escalation** through the existing `device_offline` rule: `vermont still offline 10m after Agent update 2.78.0 → 2.80.0 by agent auto-update (record 1a2b3c4d)` | one push, within a minute, under the usual limit of 5 escalation pushes per device per hour |
+
+A device that registers on the new version shows `Returned, confirming` in the history. The record becomes `succeeded` when the agent reports `agent_update_completed`, or at the 10-minute bound at the latest.
+
+**Escalation.** Whatever the outcome, a device whose suppressed offline is still ongoing when its window ends escalates once, through the same rule and limit as in the table. Where the update failed, the text is `vermont is offline: Agent update 2.78.0 → 2.80.0 by agent auto-update failed (record 1a2b3c4d)`. The escalated device shows `Not back 10m after Agent update 2.78.0 → 2.80.0`, or `Agent update 2.78.0 → 2.80.0 failed: offline` after a failure, in failure styling until it next comes online or for 24 hours.
+
+**On the dashboard.** From the start until the window ends, the Devices page and the device page show `Updating agent 2.78.0 → 2.80.0`, `by agent auto-update` and the start time, whether the device is online or offline. A device that is offline inside the window counts under **Expected offline**. The label clears when the window ends. The device page links to the record.
+
+**The abuse budget.** A device's own agent decides when to send a start, so a compromised agent can make its own outages quiet: at most **about 57 minutes per rolling 24 hours** of real offline time, as at most 6 outages of under about 10 minutes each. Each is stored as an `info` event that names the update. An outage that is still going at the 10-minute bound escalates once. A self-update that comes back on another version leaves a `warning` event but no push. A second record cannot extend the first: a window that ends with its suppressed offline still ongoing always escalates. The effect is limited to the agent's own device. The cap of 6 stays, because the legitimate rate can reach about 5 a day (an update check every 6 hours, plus one 30 seconds after every agent start).
+
+**Accepted residuals.**
+
+- A real outage on a device that starts a self-update is hidden for up to 10 minutes, then escalates once.
+- If the start event is lost (the agent sends it once, with no retry), no record exists and the offline alerts as before, unless the server restart grace covers it.
+- An agent that restarts in place without its connection dropping for 45 seconds raises no offline event at all.
+- If the agent's periodic re-registration (every 24 hours) lands more than about 30 seconds late inside a window, the record closes early as `failed` and the restart alerts. That fails toward alerting.
+- A self-update that fails while the device stays online produces a warning event and no push.
+- A self-update that starts after a shutdown (or another host action) was dispatched, and before the device goes offline, takes over that offline's attribution, and can raise one extra push for a host that was powered off on purpose.
+- **Back-to-back releases alert on the second restart.** A second start within 10 minutes of the first record is linked to that record. It does not open a new window and does not extend the first one, even when the device has already registered again. If the device restarts a second time, that offline is not suppressed and alerts as with no window. This fails toward alerting.
+- An `agent_update_completed` or `agent_update_failed` from a fleet command that arrives within 10 minutes of a record's start is attributed to the record, not to the command. This also fails toward alerting.
+- If the server cannot store a start, no record exists and the device alerts as before. If it cannot resolve a record, the coverage still ends at the bound and the escalation still fires. Only the outcome event is delayed, and the stuck-record warning above makes a long stall visible.
+
+**Server restarts.** The records are rebuilt from the database, so a restart inside a window does not turn a covered offline into an alert, loses no escalation and sends none twice. A record whose bound passed while the server was down waits for the first offline-detector pass after the restart grace, so a device that died meanwhile escalates instead of being labelled "not confirmed". A record that cannot be resolved for an hour after its bound stores one `agent_self_update_paused` warning (no push); the next start replaces it.
+
+**Server only, any agent.** No agent upgrade, no agent configuration change and no `install.sh` re-run is needed. It works with every agent that sends the start message in the form above (every release since v2.10.0, including the deployed v2.78.0 to v2.80.0). Migration `000034_agent_self_update` runs at server start. It adds the `agent_self_update` command origin, a shape check on those rows, a unique index (one open record per device) and an index for the 24-hour count. Its down migration deletes the self-update records, all of them, so rolling it back erases the self-update history. The `agent_self_update_*` events stay as plain warnings, and their `command_id` then points to a command that no longer exists.
+
+**New fields and endpoints.**
+
+- `GET /api/v1/activity` entries gain `agent_to_version`.
+- `GET /api/v1/devices/:id/commands/:commandId/events` returns the events linked to a command or record (see [Command events](#command-events)).
+- Three event types: `agent_self_update_failed`, `agent_self_update_unconfirmed` and `agent_self_update_paused`. The server does not route them through alert rules and never sends them to a notification channel.
+- `command_attr` on a stored event gains the value `outcome`, and `inferred` now also marks the agent's own update events that the server linked to a record.
+
+**Behaviour changes for every device.**
+
+- A re-registration now also sets the device's `last_heartbeat` to the registration time. The server already treated a registration as proof of life. Without this, an agent that restarts and registers before its last heartbeat is 45 seconds old would be marked offline by the next check, and the `device_offline` alert would arrive right after the device came back. The change suppresses nothing: a window still ends at the registration.
+- The severity that an agent sends with `agent_update_available`, `agent_update_started`, `agent_update_completed` and `agent_update_failed` is limited to `info`, `warning` and `critical`. Anything else is stored as `info` (`warning` for `agent_update_failed`). Agents send `info` and `warning`, so nothing changes for them.
 
 ### Server restarts and the restart grace
 
@@ -883,7 +967,7 @@ A restart loop does not get an endless grace. Starts less than 2 minutes apart f
 - **A reboot that reports "initiated" but never happens** keeps container-death suppression until the 15-minute bound.
 - **A push can be lost.** If the server's notification queue is full, a push takes more than 30 seconds, or the server crashes right after it stores an escalation, that one notification is lost. The event is stored.
 - **A stuck notification backend** can occupy one of the two delivery workers. Further pushes queue, then drop with a server log warning. Events and checks are unaffected.
-- **A device's own agent can open, shape and close windows on its own device only.** It cannot affect any other device. Every window has the bounds above.
+- **A device's own agent can open, shape and close windows on its own device only.** It cannot affect any other device. Every window has the bounds above. For a self-update window, the budget is stated under [Agent self-updates](#agent-self-updates).
 - **A command record that is deleted by hand while its window is open** cannot raise an escalation. rIOt stores one warning event, `expect_backstop_skipped`, that says the checks were skipped.
 - **Tracking limit.** More than 200 open windows on one device are not all tracked. The extra ones suppress nothing, their checks are delayed, and rIOt stores a warning event about it at most once an hour per device.
 
@@ -896,6 +980,7 @@ A restart loop does not get an endless grace. Starts less than 2 minutes apart f
 - A `warning` device that registers again raises no `came online` event, because it was not offline.
 - Offline detection waits 2 minutes after a server start, not 30 seconds.
 - The `came online` event after a window names the action, the actor and the time the device was offline.
+- An agent's own self-update restart is now expected activity for up to 10 minutes. A device registration also refreshes the device's last heartbeat. See [Agent self-updates](#agent-self-updates).
 
 ### Upgrade notes
 
@@ -904,6 +989,7 @@ A restart loop does not get an endless grace. Starts less than 2 minutes apart f
 - **Rollback.** The down migration removes the new columns, indexes and tables. After a down and an up migration, the markers of commands that finished in the last hour are gone, so those commands can escalate a second time.
 - Nothing changes in your alert rules. The two existing rules, `device_offline` and `container_died`, carry the escalations.
 - Two new event types appear in the event list: `expect_backstop_skipped` (a check was skipped, with the reason) and `expect_notifications_held`.
+- **Agent self-updates** need the same: the server only, no agent upgrade and no `install.sh` re-run. Migration `000034_agent_self_update` runs at start, and its down migration deletes the self-update records. Details: [Agent self-updates](#agent-self-updates).
 
 ---
 
@@ -1665,6 +1751,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `GET` | `/api/v1/devices/:id/commands/:cmdId` | Fetch one command with its state, step, progress, and per-state timestamps |
 | `POST` | `/api/v1/devices/:id/commands/:cmdId/cancel` | Cancel a `queued` command. Returns `409` once the command is dispatched |
 | `GET` | `/api/v1/devices/:id/commands/:cmdId/output` | Command output detail |
+| `GET` | `/api/v1/devices/:id/commands/:cmdId/events` | Events linked to a command or agent self-update record, server-authored and agent-sourced separately |
 | `POST` | `/api/v1/devices/:id/docker/bulk-update` | Update several containers with one `docker_bulk_update` command. Targets that already have a command in flight are skipped and reported |
 | `GET` | `/api/v1/summary` | Fleet summary stats |
 | `GET` | `/api/v1/events` | Event/alert list |
@@ -1742,7 +1829,8 @@ Each entry of `activities`:
 | `back_by` | RFC 3339 time or `null` | When the device is due back, in the return phase |
 | `waiting_dpkg_lock` | boolean | The command reports that it waits for the dpkg lock. Always `false` with current agents |
 | `progress` | integer or `null` | The command's reported progress, in percent |
-| `agent_from_version` | string | For `agent_update`, the agent version when the command was created |
+| `agent_from_version` | string | For `agent_update`, the agent version when the command was created. For an [agent self-update](#agent-self-updates), the version it started from |
+| `agent_to_version` | string | For an agent self-update (and its escalation), the version it updates to. Empty for every command |
 | `target` | string | For Docker actions, the container or stack name. Empty otherwise |
 | `docker_actions` | integer | The number of Docker actions open on the device |
 | `covers_offline` | boolean | `true` when the window now suppresses `device_offline` for this device |
@@ -1803,7 +1891,7 @@ A command ID is a lowercase UUID. The server answers `404` with `{"error":"comma
 | `result_msg` | string | Result or failure message from the agent, or the reason the server expired or cancelled the command |
 | `step`, `progress` | string, integer or `null` | Current step and an optional percent from 0 to 100 |
 | `failure_step`, `stderr_tail` | string, string | The step that failed, and the last 8 KiB of error text |
-| `origin` | string | `user`, `auto_update`, or `auto_patch` |
+| `origin` | string | `user`, `auto_update`, `auto_patch`, or `agent_self_update` (a record of an agent's own [self-update](#agent-self-updates): read-only, never sent to an agent, `params` hold `from_version` and `to_version`) |
 | `policy_id` | integer or `null` | The auto-update policy that created the command |
 | `target_key`, `target_keys` | string, string array | The conflict keys for the command. `target_key` is the first entry. Examples: `host`, `docker:container:web`, `docker:compose:/srv/stack` |
 | `expires_at`, `exec_deadline_s`, `deadline_at` | RFC 3339, integer, RFC 3339 | The queued expiry, the execution deadline in seconds, and the absolute deadline (set at dispatch) |
@@ -1947,6 +2035,21 @@ The server removes NUL bytes, replaces invalid UTF-8, and truncates oversized te
 
 A `result` that repeats the outcome of an already-final command returns `200` with `"result":"duplicate"` and changes nothing. A `result` with a different outcome returns `409` `already_terminal`. Identical or too-frequent `running` progress reports return `200` with `"result":"coalesced"` and write nothing. The rate limit is 120 reports per minute per device with a burst of 60, shared by HTTP and WebSocket reports.
 
+### Command events
+
+`GET /api/v1/devices/:id/commands/:commandId/events` (admin session) returns the events linked to one command or [agent self-update record](#agent-self-updates), in two groups, so an agent that floods its own record cannot push the server's own events out of the view.
+
+**`200`**
+
+| Field | Type | Meaning |
+|---|---|---|
+| `server_events` | array | Every event the server wrote for the record: the suppressed offline and the online note (`command_attr` `expected`), an escalation (`escalation`), the outcome event (`outcome`) and the three `agent_self_update_*` types. Oldest first, at most 500. At most 19 for a self-update record |
+| `server_events_omitted` | integer | Server-authored events that were not returned (`0` for a self-update record) |
+| `agent_events` | array | The agent's own events linked to the record (`command_attr` `inferred` or `agent`). Oldest first, at most 50 |
+| `agent_events_omitted` | integer | Agent-sourced events that were not returned |
+
+Both arrays are `[]` when empty, never `null`. **`404`** with `{"error":"command not found","code":"command_not_found"}` for a malformed ID, a missing command and a command of another device; the three cases return the same body. **`500`** with `{"error":"failed to list events"}`.
+
 ### WebSocket messages
 
 **Server to dashboard (`/ws`)**
@@ -2023,9 +2126,10 @@ Run one test or one group by name:
 ```bash
 go test ./internal/server/ -run TestEX_AC048 -v
 go test ./... -run TestEX_ -count=1
+go test ./... -run TestEX2_ -count=1
 ```
 
-A passing run ends each package with `ok`. The `TestEX_` tests cover [Expected Activity](#expected-activity).
+A passing run ends each package with `ok`. The `TestEX_` tests cover [Expected Activity](#expected-activity). The `TestEX2_` tests cover [agent self-updates](#agent-self-updates), including the safety scan that fails if a test or helper of that feature could run a power action, a package manager or an agent. The self-update web tests run with `cd web && npx vitest run -t "EXPECT-002"`.
 
 Some tests in `internal/server/db`, `storage`, `commands`, `handlers` and `server` need a real PostgreSQL. They skip, and do not fail, unless `RIOT_TEST_PG_URL` is set. The database name in the URL must contain `test`, for example `postgres://user:pass@localhost:5432/riot_test?sslmode=disable`, because these tests create schemas and run migrations up and down. Set `RIOT_TEST_PG_ALLOW=1` only if you accept that the tests run against a database whose name has no `test` in it. Use a throwaway database.
 

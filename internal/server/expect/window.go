@@ -19,6 +19,10 @@ type window struct {
 	// fromVersion is the device's agent version when an agent_update was first
 	// seen (the "from" of "Updating agent from -> to").
 	fromVersion string
+	// selfFrom and selfTo are the validated versions of an agent self-update
+	// record (EXPECT-002 AD-009), read from the row's params before it is trimmed;
+	// both are "" for a command window or when the params are not valid versions.
+	selfFrom, selfTo string
 
 	deferred      bool      // the container check waits for the device to return (AD-011)
 	deferredBase  time.Time // the close time at which the check was deferred
@@ -120,6 +124,10 @@ func evaluate(w *window, dv deviceView, now, graceEnd time.Time) timeline {
 		}
 		tl.phase = models.PhaseQueued
 		return tl
+	}
+
+	if p.SelfUpdate {
+		return evaluateSelf(w, dv, now)
 	}
 
 	tl.opened = true
