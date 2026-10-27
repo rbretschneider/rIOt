@@ -125,10 +125,10 @@ func TestPatchBadge_DecisionTable_RebootDateInWindowMode(t *testing.T) { // AC-0
 	b := computePatchBadge(in, badgeNow)
 	assert.Equal(t, badgeAutoRebootDate, b.Kind)
 	assert.Equal(t, "Auto (reboot on 2026-10-25)", b.Label)
-	assert.Equal(t, "The pending patch includes a kernel/GPU update; a reboot will be needed after it installs. It will happen automatically on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+	assert.Equal(t, "The pending patch includes a kernel/GPU update; a reboot will be needed after it installs. It will happen automatically on 2026-10-25 3:00 AM UTC (estimate).", b.Explanation.Reboot)
 	require.NotNil(t, b.RebootAt)
 	assert.Equal(t, time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC), *b.RebootAt)
-	assert.Equal(t, "Yes. Next window starts 2026-10-25 03:00 UTC.", b.Explanation.Automatic)
+	assert.Equal(t, "Yes. Next window starts 2026-10-25 3:00 AM UTC.", b.Explanation.Automatic)
 	assert.Empty(t, b.Explanation.NeedsYou)
 }
 
@@ -219,7 +219,7 @@ func TestPatchBadge_Explanation_AsOfShowsUTCTimeAndAge(t *testing.T) { // AC-025
 	in := healthyInput()
 	at := badgeNow.Add(-26 * time.Hour)
 	in.UpdatesAt = &at
-	assert.Equal(t, "2026-10-23 10:00 UTC (26 h ago)", computePatchBadge(in, badgeNow).Explanation.AsOf)
+	assert.Equal(t, "2026-10-23 10:00 AM UTC (26 h ago)", computePatchBadge(in, badgeNow).Explanation.AsOf)
 	in.UpdatesAt = nil
 	assert.Equal(t, "No patch data reported yet.", computePatchBadge(in, badgeNow).Explanation.AsOf)
 }
@@ -650,7 +650,7 @@ func TestPatchBadge_OfflineHost_KeepsLastBadgeWithItsAge(t *testing.T) { // AC-0
 	in.UpdatesAt = &at
 	b := computePatchBadge(in, badgeNow)
 	assert.Equal(t, badgeAuto, b.Kind)
-	assert.Equal(t, "2026-10-21 12:00 UTC (3 d ago)", b.Explanation.AsOf)
+	assert.Equal(t, "2026-10-21 12:00 PM UTC (3 d ago)", b.Explanation.AsOf)
 }
 
 func TestPatchBadge_ReasonDependencies_DoNotUseClockInternally(t *testing.T) { // AC-028 (purity)
@@ -826,7 +826,7 @@ func TestPatchBadge_PF_AC003_PendingKernelWithGatedAutoDescribedAsAutomatic(t *t
 		in := healthyInput()
 		in.Updates.PendingRebootClassCount = 1
 		b := computePatchBadge(in, badgeNow)
-		assert.Equal(t, pfKernelLine+" It will happen automatically on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+		assert.Equal(t, pfKernelLine+" It will happen automatically on 2026-10-25 3:00 AM UTC (estimate).", b.Explanation.Reboot)
 		assert.Equal(t, badgeAutoRebootDate, b.Kind)
 	})
 	t.Run("[AC-003] anytime mode says the date is unknown", func(t *testing.T) {
@@ -915,7 +915,7 @@ func TestPatchBadge_PF_AC004_RequiredNowCoveredByAutomaticPath(t *testing.T) {
 	b := computePatchBadge(in, badgeNow)
 
 	assert.NotContains(t, reasonCodes(b), reasonManualReboot)
-	assert.Equal(t, "Required now. Automatic on 2026-10-25 03:00 UTC (estimate).", b.Explanation.Reboot)
+	assert.Equal(t, "Required now. Automatic on 2026-10-25 3:00 AM UTC (estimate).", b.Explanation.Reboot)
 }
 
 func TestPatchBadge_PF_AC004_RequiredNowWithoutPatchSupportStillSaysRebootNow(t *testing.T) {

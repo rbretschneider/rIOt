@@ -472,11 +472,11 @@ func frozenPreStoryLines(in patchBadgeInput, now time.Time) (automatic, reboot, 
 	case !autoPatchSetUp:
 		automatic = "No."
 	case mode == "window":
-		automatic = "Yes. Next window starts " + nextStart.Format("2006-01-02 15:04") + " UTC."
+		automatic = "Yes. Next window starts " + models.FormatDisplayMinute(nextStart, nil) + "."
 	default:
 		automatic = "Yes. Any time (within the " + itoa(in.OSPatch.CooldownMinutes) + "-minute cooldown)."
 	}
-	return automatic, reboot, asOfText(in.UpdatesAt, now)
+	return automatic, reboot, asOfText(in.UpdatesAt, now, nil)
 }
 
 func itoa(n int) string {
