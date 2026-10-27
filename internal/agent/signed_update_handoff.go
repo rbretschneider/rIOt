@@ -84,11 +84,7 @@ func (a *Agent) watchSignedHandoff(h updateHandoff) {
 			// A terminated apply unit cannot produce a later acknowledgement. Unknown
 			// unit state remains conservative rather than releasing an active handoff.
 			{
-				run := a.runner
-				if run == nil {
-					run = execRunner
-				}
-				out, e := run(ctx, "/usr/bin/systemctl", "show", updateUnit, "--property=ActiveState", "--value")
+				out, e := a.processRunner()(ctx, "/usr/bin/systemctl", "show", updateUnit, "--property=ActiveState", "--value")
 				state := strings.TrimSpace(string(out))
 				if e == nil && (state == "inactive" || state == "failed") {
 					a.finishSignedHandoff(h, false, "signed update helper stopped without verified completion")

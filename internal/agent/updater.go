@@ -233,10 +233,7 @@ func (a *Agent) performUpdate(ctx context.Context, downloadURL, checksumURL, sig
 }
 
 func (a *Agent) newUpdatePipeline() *updatePipeline {
-	runner := a.runner
-	if runner == nil {
-		runner = execRunner
-	}
+	runner := a.processRunner()
 	return &updatePipeline{
 		paths: stagingPaths{
 			binary:    stagingPath,
