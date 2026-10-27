@@ -41,10 +41,13 @@ const selfUpdateGateCap = 30 * time.Second
 // never changed afterwards. Never pass a typed nil (a nil *commands.Service).
 func (t *Tracker) SetSelfUpdateResolver(r SelfUpdateResolver) { t.selfResolver = r }
 
-// windowActionLabel is the action label of a window in messages: "Agent update
-// <from> -> <to>" for a self-update record with valid versions, the plain action
-// label otherwise.
+// windowActionLabel is the action label of a window in messages: "Agent
+// reinstall" for an installer record (EXPECT-008), "Agent update <from> -> <to>"
+// for a self-update record with valid versions, the plain action label otherwise.
 func windowActionLabel(w *window) string {
+	if w.policy.Reinstall {
+		return models.ReinstallActionLabel
+	}
 	if w.policy.SelfUpdate && w.selfFrom != "" && w.selfTo != "" {
 		return models.SelfUpdateActionLabel(w.selfFrom, w.selfTo)
 	}

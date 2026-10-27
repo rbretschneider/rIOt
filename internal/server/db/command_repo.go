@@ -369,8 +369,9 @@ func buildTransitionSQL(t models.CommandTransition) (query string, args []interf
 	if len(guard) == 0 || t.Now.IsZero() {
 		return "", nil, false
 	}
-	if t.Actor == models.ActorSelfUpdate && t.DeviceID == "" {
-		// The device scope is mandatory for the self-update actor (AD-003).
+	if (t.Actor == models.ActorSelfUpdate || t.Actor == models.ActorReinstall) && t.DeviceID == "" {
+		// The device scope is mandatory for the self-update actor (AD-003) and the
+		// reinstall actor (EXPECT-008 AD-005).
 		return "", nil, false
 	}
 	to := t.To.Canonical()
@@ -447,10 +448,17 @@ func buildTransitionSQL(t models.CommandTransition) (query string, args []interf
 	// EXPECT-002 C-2: ActorSelfUpdate is the only actor whose UPDATE can match an
 	// agent self-update row, and it can match nothing else. The literal is the
 	// typed constant, never request data.
-	if t.Actor == models.ActorSelfUpdate {
+	// EXPECT-008 AD-005: the same holds for ActorReinstall and installer rows. The
+	// installer clause is appended and separate, so the self-update literals above
+	// stay byte-identical.
+	switch t.Actor {
+	case models.ActorSelfUpdate:
 		where += " AND origin = '" + models.OriginAgentSelfUpdate + "'"
-	} else {
+	case models.ActorReinstall:
+		where += " AND origin = '" + models.OriginInstaller + "'"
+	default:
 		where += " AND origin <> '" + models.OriginAgentSelfUpdate + "'"
+		where += " AND origin <> '" + models.OriginInstaller + "'"
 	}
 
 	query = "UPDATE commands SET " + strings.Join(sets, ", ") + " WHERE " + where + " RETURNING " + commandColumns
@@ -495,9 +503,10 @@ func (r *CommandRepo) ListExpiredQueued(ctx context.Context, deviceID string, no
 // deadline_at has passed, oldest deadline first. An empty deviceID means every
 // device. Agent self-update records are excluded: the expected-activity tracker
 // resolves their bound, and the sweeper must not write a completion event for
-// them (EXPECT-002 AD-007 row 7).
+// them (EXPECT-002 AD-007 row 7). Installer reinstall records are excluded for the
+// same reason (EXPECT-008 AD-009).
 func (r *CommandRepo) ListOverdue(ctx context.Context, deviceID string, now time.Time, limit int) ([]models.Command, error) {
-	return r.listDue(ctx, `status IN (`+inflightStatusList+`) AND deadline_at <= $1 AND origin <> '`+models.OriginAgentSelfUpdate+`'`, `deadline_at`, deviceID, now, limit)
+	return r.listDue(ctx, `status IN (`+inflightStatusList+`) AND deadline_at <= $1 AND origin <> '`+models.OriginAgentSelfUpdate+`' AND origin <> '`+models.OriginInstaller+`'`, `deadline_at`, deviceID, now, limit)
 }
 
 // listDue runs a due-row query. predicate and orderCol are package constants,

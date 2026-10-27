@@ -245,6 +245,9 @@ type harness struct {
 	lastReconcile time.Time
 	// noResolver leaves the tracker without a self-update resolver (C-4).
 	noResolver bool
+	// noReinstallResolver leaves the tracker without a ReinstallResolver (EXPECT-008
+	// stuck-record case).
+	noReinstallResolver bool
 	// displayZone is the zone the tracker was built with; nil means UTC.
 	displayZone *time.Location
 
@@ -264,16 +267,17 @@ type alertRec struct {
 type hOpt func(*hConfig)
 
 type hConfig struct {
-	noLoad      bool
-	graceEnd    time.Time
-	noRules     bool
-	queueSize   int
-	workers     int
-	inline      bool
-	notConnect  bool
-	deviceSetup func(h *harness)
-	noResolver  bool
-	displayZone *time.Location
+	noLoad              bool
+	graceEnd            time.Time
+	noRules             bool
+	queueSize           int
+	workers             int
+	inline              bool
+	notConnect          bool
+	deviceSetup         func(h *harness)
+	noResolver          bool
+	noReinstallResolver bool
+	displayZone         *time.Location
 }
 
 func withoutLoad() hOpt             { return func(c *hConfig) { c.noLoad = true } }
@@ -293,6 +297,10 @@ func withDisplayZone(loc *time.Location) hOpt { return func(c *hConfig) { c.disp
 // (EXPECT-002 C-4: the stuck-record case).
 func withoutSelfUpdateResolver() hOpt { return func(c *hConfig) { c.noResolver = true } }
 
+// withoutReinstallResolver leaves the tracker without a ReinstallResolver
+// (EXPECT-008: the stuck-record case).
+func withoutReinstallResolver() hOpt { return func(c *hConfig) { c.noReinstallResolver = true } }
+
 var allDevices = []struct{ id, host string }{{"hawaii", "hawaii"}, {"vermont", "vermont"}, {"picups", "PiCUPS"}}
 
 func newHarness(t *testing.T, opts ...hOpt) *harness {
@@ -308,7 +316,9 @@ func newHarness(t *testing.T, opts ...hOpt) *harness {
 		bc: &fakeBroadcaster{}, logs: &lockedBuffer{}, newest: "2.78.0",
 	}
 	h.repo = testutil.NewMockExpectedActivityRepo(h.cmds, h.events, h.devices)
-	h.cmds.LinkEvents(h.events) // the rate-cap event of a self-update start lands here
+	h.cmds.LinkEvents(h.events)   // the rate-cap event of a self-update start lands here
+	h.cmds.LinkDevices(h.devices) // a reinstall notice reads the device status
+	h.noReinstallResolver = cfg.noReinstallResolver
 	h.noResolver = cfg.noResolver
 	h.esc = &fakeEscalator{h: h}
 	h.disp = testutil.NewMockDispatcher()
@@ -364,10 +374,14 @@ func (h *harness) build(cfg hConfig) {
 	h.svc = commands.New(commands.Options{
 		Commands: h.cmds, Policies: h.pol, Telemetry: h.tele, Agents: h.agents, Observer: h.tr, Now: h.clock.Now,
 		SelfUpdates: h.cmds,
+		Reinstalls:  h.cmds,
 		Logger:      slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
 	if !h.noResolver {
 		h.tr.SetSelfUpdateResolver(h.svc) // before Load, like server.Start
+	}
+	if !h.noReinstallResolver {
+		h.tr.SetReinstallResolver(h.svc) // before Load, like server.Start
 	}
 }
 
@@ -862,6 +876,7 @@ func (h *harness) registerOn(device, version string) *models.OnlineNote {
 	require.NoError(h.t, h.devices.SetStatus(h.ctx(), device, models.DeviceStatusOnline))
 	h.tr.NoteRegistration(device, now)
 	h.svc.NoteSelfUpdateRegistration(h.ctx(), device, d.Hostname, version, now)
+	h.svc.NoteReinstallRegistration(h.ctx(), device, now)
 	if wasLive {
 		return nil
 	}
@@ -902,6 +917,37 @@ func (h *harness) detectorPass() {
 		h.recordAlerts(func() { h.gen.DeviceOfflineAt(h.ctx(), d.ID, d.Hostname, &hb) })
 	}
 	h.tr.ObserveDevices(list, now)
+}
+
+// reinstallNotice is the handler side of an authenticated agent_reinstall_started
+// notice for the device (EXPECT-008 AD-002): the service records it at the
+// current time and the cap event, if any, is already stored by the repository.
+func (h *harness) reinstallNotice(device string) models.ReinstallDisposition {
+	h.t.Helper()
+	res := h.svc.NoteReinstallNotice(h.ctx(), commands.ReinstallNoticeInput{
+		DeviceID: device, Hostname: h.hostname(device), At: h.clock.Now(),
+	})
+	return res.Disposition
+}
+
+// reinstallRecords returns the device's installer rows, oldest first.
+func (h *harness) reinstallRecords(device string) []models.Command {
+	var out []models.Command
+	for _, c := range h.cmds.All() {
+		if c.DeviceID == device && c.Origin == models.OriginInstaller {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
+}
+
+// reinstallRecord is the device's only installer row.
+func (h *harness) reinstallRecord(device string) models.Command {
+	h.t.Helper()
+	rows := h.reinstallRecords(device)
+	require.Len(h.t, rows, 1, "exactly one reinstall record for %s", device)
+	return rows[0]
 }
 
 // selfRecords returns the device's self-update rows, oldest first.

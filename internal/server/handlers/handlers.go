@@ -247,6 +247,10 @@ func (h *Handlers) cmdSvc() *commands.Service {
 		if su, ok := h.commandRepo.(db.SelfUpdateRepository); ok {
 			opts.SelfUpdates = su
 		}
+		// EXPECT-008: the same for installer reinstall records.
+		if ri, ok := h.commandRepo.(db.ReinstallRepository); ok {
+			opts.Reinstalls = ri
+		}
 		h.commands = commands.New(opts)
 	})
 	return h.commands
@@ -421,6 +425,10 @@ func (h *Handlers) RegisterDevice(w http.ResponseWriter, r *http.Request) {
 			// device reports <to>) or to failed (any other version). After the
 			// tracker's NoteRegistration, before the response and DeviceOnline.
 			h.cmdSvc().NoteSelfUpdateRegistration(r.Context(), device.ID, reg.Hostname, reg.AgentVersion, regAt)
+			// EXPECT-008: an open installer reinstall record ends succeeded at the first
+			// registration after its start. Same position: after the tracker, before the
+			// response and DeviceOnline.
+			h.cmdSvc().NoteReinstallRegistration(r.Context(), device.ID, regAt)
 
 			// Issue a new key only when the proof was a certificate or the
 			// registration key (device created by mTLS enrollment has no key).
@@ -1210,6 +1218,12 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 		// allowed
 	case models.EventExtraUpdaterStarted, models.EventExtraUpdaterFinished:
 		h.receiveExtraUpdaterEvent(w, r, deviceID, agentEvt)
+		return
+	case models.EventAgentReinstallStarted:
+		// EXPECT-008: the installer's notice. It opens a reinstall record and is never
+		// stored as an event. The two server-written reinstall types are not accepted
+		// here: they fall to the default and get 400.
+		h.receiveReinstallNotice(w, r, deviceID)
 		return
 	default:
 		http.Error(w, `{"error":"unsupported event type"}`, http.StatusBadRequest)

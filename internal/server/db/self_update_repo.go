@@ -82,6 +82,7 @@ func (r *CommandRepo) createSelfUpdate(ctx context.Context, s models.SelfUpdateS
 	err = tx.QueryRow(ctx,
 		`SELECT id FROM commands
 		 WHERE device_id=$1 AND action='agent_update' AND origin <> `+selfUpdateOriginLiteral+`
+		   AND origin <> `+reinstallOriginLiteral+`
 		   AND dispatched_at IS NOT NULL
 		   AND (status IN (`+inflightStatusList+`) OR finished_at >= $2)
 		 ORDER BY created_at DESC, id LIMIT 1`,

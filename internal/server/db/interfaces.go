@@ -206,6 +206,19 @@ type SelfUpdateRepository interface {
 	LatestSelfUpdateSince(ctx context.Context, deviceID string, since time.Time) (*models.Command, error)
 }
 
+// ReinstallRepository is the persistence of installer reinstall records
+// (EXPECT-008): commands rows with origin installer. CommandRepo implements it.
+type ReinstallRepository interface {
+	// CreateReinstall recognises one authenticated notice in one transaction under
+	// the per-device command lock: the device must be online (FR-008, DEC-4), a
+	// stale open record is retired (NFR-004), an open record absorbs the notice
+	// (FR-009), the rate cap writes its once-per-24h event (FR-010), and the insert
+	// (AD-003).
+	CreateReinstall(ctx context.Context, n models.ReinstallNotice) (models.ReinstallCreateResult, error)
+	// OpenReinstall returns the device's running record, or nil.
+	OpenReinstall(ctx context.Context, deviceID string) (*models.Command, error)
+}
+
 // ProbeRepository defines the interface for probe database operations.
 type ProbeRepository interface {
 	List(ctx context.Context) ([]models.Probe, error)
@@ -380,4 +393,5 @@ var (
 	_ ExternalIdentityRepository = (*ExternalIdentityRepo)(nil)
 	_ ExpectedActivityRepository = (*ExpectRepo)(nil)
 	_ SelfUpdateRepository       = (*CommandRepo)(nil)
+	_ ReinstallRepository        = (*CommandRepo)(nil)
 )

@@ -904,6 +904,13 @@ type MockCommandRepo struct {
 	// selfUpdateIDs, when non-empty, supplies the ids of the next created
 	// self-update records (tests that need known ids).
 	selfUpdateIDs []string
+	// Devices, when set, is read for the device status CreateReinstall checks
+	// (EXPECT-008 FR-008 a). Link it with LinkDevices. Unlinked, every device is
+	// treated as live.
+	Devices *MockDeviceRepo
+	// reinstallIDs, when non-empty, supplies the ids of the next created reinstall
+	// records.
+	reinstallIDs []string
 }
 
 func NewMockCommandRepo() *MockCommandRepo {
@@ -924,6 +931,22 @@ func (m *MockCommandRepo) QueueSelfUpdateIDs(ids ...string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.selfUpdateIDs = append(m.selfUpdateIDs, ids...)
+}
+
+// LinkDevices makes the mock read device status from devs for CreateReinstall
+// (the SQL reads the devices table in the same transaction).
+func (m *MockCommandRepo) LinkDevices(devs *MockDeviceRepo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Devices = devs
+}
+
+// QueueReinstallIDs sets the ids the next created reinstall records get, in order
+// (test helper; not recorded).
+func (m *MockCommandRepo) QueueReinstallIDs(ids ...string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reinstallIDs = append(m.reinstallIDs, ids...)
 }
 
 // Seed stores c under the mock's lock. Use it instead of writing Commands
@@ -1340,15 +1363,23 @@ func (m *MockCommandRepo) Transition(_ context.Context, t models.CommandTransiti
 	if !ok || (t.DeviceID != "" && c.DeviceID != t.DeviceID) || !rawStatusIn(c.Status, guard) {
 		return nil, false, nil
 	}
-	// The four-actor origin guard of buildTransitionSQL (EXPECT-002 C-2): the
-	// self-update actor matches only self-update rows (and needs the device
-	// scope); every other actor matches anything but them.
-	if t.Actor == models.ActorSelfUpdate {
+	// The five-actor origin guard of buildTransitionSQL (EXPECT-002 C-2,
+	// EXPECT-008 AD-005): the self-update actor matches only self-update rows and
+	// the reinstall actor only installer rows (each needs the device scope); every
+	// other actor matches anything but them.
+	switch t.Actor {
+	case models.ActorSelfUpdate:
 		if t.DeviceID == "" || c.Origin != models.OriginAgentSelfUpdate {
 			return nil, false, nil
 		}
-	} else if c.Origin == models.OriginAgentSelfUpdate {
-		return nil, false, nil
+	case models.ActorReinstall:
+		if t.DeviceID == "" || c.Origin != models.OriginInstaller {
+			return nil, false, nil
+		}
+	default:
+		if c.Origin == models.OriginAgentSelfUpdate || c.Origin == models.OriginInstaller {
+			return nil, false, nil
+		}
 	}
 	to := t.To.Canonical()
 	now := t.Now
@@ -1440,7 +1471,7 @@ func (m *MockCommandRepo) ListOverdue(_ context.Context, deviceID string, now ti
 	result := []models.Command{}
 	for _, c := range m.Commands {
 		if (deviceID == "" || c.DeviceID == deviceID) && rawStatusIn(c.Status, mockInflightStates) &&
-			c.DeadlineAt != nil && !c.DeadlineAt.After(now) && c.Origin != models.OriginAgentSelfUpdate {
+			c.DeadlineAt != nil && !c.DeadlineAt.After(now) && c.Origin != models.OriginAgentSelfUpdate && c.Origin != models.OriginInstaller {
 			result = append(result, copyCommand(c))
 		}
 	}
@@ -1502,6 +1533,9 @@ func (m *MockCommandRepo) selfUpdateOpenLocked(deviceID string) *models.Command 
 // idx_commands_self_update_open unique index of migration 000034 for a row about
 // to be stored. The caller holds m.mu.
 func (m *MockCommandRepo) insertCheckLocked(c *models.Command) error {
+	if c.Origin == models.OriginInstaller {
+		return m.reinstallInsertCheckLocked(c)
+	}
 	if c.Origin != models.OriginAgentSelfUpdate {
 		return nil
 	}
@@ -1543,7 +1577,7 @@ func (m *MockCommandRepo) CreateSelfUpdate(ctx context.Context, s models.SelfUpd
 	// 1. FR-004.
 	var attributed *models.Command
 	for _, c := range m.Commands {
-		if c.DeviceID != s.DeviceID || c.Action != models.ActionAgentUpdate || c.Origin == models.OriginAgentSelfUpdate || c.DispatchedAt == nil {
+		if c.DeviceID != s.DeviceID || c.Action != models.ActionAgentUpdate || c.Origin == models.OriginAgentSelfUpdate || c.Origin == models.OriginInstaller || c.DispatchedAt == nil {
 			continue
 		}
 		recent := c.FinishedAt != nil && !c.FinishedAt.Before(s.At.Add(-models.SelfUpdateAttributionWindow))
@@ -1673,6 +1707,179 @@ func (m *MockCommandRepo) LatestSelfUpdateSince(_ context.Context, deviceID stri
 		return nil, nil
 	}
 	cp := copyCommand(best)
+	return &cp, nil
+}
+
+// --- Reinstall records (EXPECT-008) ---
+
+// reinstallOpenLocked returns the device's running installer record. The caller
+// holds m.mu.
+func (m *MockCommandRepo) reinstallOpenLocked(deviceID string) *models.Command {
+	var best *models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID || c.Origin != models.OriginInstaller || c.Status != string(models.CommandRunning) {
+			continue
+		}
+		if best == nil || c.CreatedAt.After(best.CreatedAt) {
+			best = c
+		}
+	}
+	return best
+}
+
+// reinstallInsertCheckLocked emulates the commands_reinstall_shape CHECK and the
+// idx_commands_reinstall_open unique index of migration 000035 for a row about to
+// be stored. The caller holds m.mu.
+func (m *MockCommandRepo) reinstallInsertCheckLocked(c *models.Command) error {
+	switch models.CommandState(c.Status) {
+	case models.CommandRunning, models.CommandSucceeded, models.CommandTimedOut:
+	default:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": status %q`, c.Status)
+	}
+	switch {
+	case c.Action != models.ActionAgentUpdate:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": action %q`, c.Action)
+	case c.DispatchedAt == nil || c.DeadlineAt == nil:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": dispatched_at and deadline_at are required`)
+	case c.DeadlineAt.After(c.DispatchedAt.Add(models.ExpectReinstallBound)):
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": deadline_at is more than 10 minutes after dispatched_at`)
+	case c.ExecDeadlineS > models.ReinstallExecDeadlineS:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": exec_deadline_s %d > 600`, c.ExecDeadlineS)
+	case len(c.TargetKeys) != 0:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": target_keys must be empty`)
+	case len(c.Params) != 0:
+		return fmt.Errorf(`new row violates check constraint "commands_reinstall_shape": params must be empty`)
+	}
+	if c.Status == string(models.CommandRunning) {
+		if open := m.reinstallOpenLocked(c.DeviceID); open != nil && open.ID != c.ID {
+			return fmt.Errorf(`duplicate key value violates unique constraint "idx_commands_reinstall_open"`)
+		}
+	}
+	return nil
+}
+
+// deviceLiveLocked mirrors the SELECT status FROM devices of CreateReinstall.
+// Unlinked, every device is live. The caller holds m.mu.
+func (m *MockCommandRepo) deviceLiveLocked(ctx context.Context, deviceID string) bool {
+	if m.Devices == nil {
+		return true
+	}
+	d, err := m.Devices.GetByID(ctx, deviceID)
+	if err != nil || d == nil {
+		return false
+	}
+	return models.DeviceIsLive(d.Status)
+}
+
+// CreateReinstall mirrors db.CommandRepo.CreateReinstall under the mock's one
+// mutex, which stands in for the per-device advisory lock.
+func (m *MockCommandRepo) CreateReinstall(ctx context.Context, n models.ReinstallNotice) (models.ReinstallCreateResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var res models.ReinstallCreateResult
+	if err := m.begin("CreateReinstall"); err != nil {
+		return res, err
+	}
+
+	// 1. FR-008 a, DEC-4.
+	if !m.deviceLiveLocked(ctx, n.DeviceID) {
+		res.Disposition = models.ReinstallDeviceOffline
+		return res, nil
+	}
+
+	// 2. NFR-004: retire a stale open record.
+	open := m.reinstallOpenLocked(n.DeviceID)
+	if open != nil && open.DeadlineAt != nil && open.DeadlineAt.Before(n.At.Add(-models.ReinstallStuckAfter)) {
+		open.Status = string(models.CommandTimedOut)
+		open.UpdatedAt = n.At
+		finished := n.At
+		open.FinishedAt = &finished
+		open.ResultMsg = models.ReinstallStaleResultMessage
+		open.FailureStep = models.ReinstallFailureUnresolved
+		cp := copyCommand(open)
+		res.Retired = &cp
+		open = nil
+	}
+
+	// 3. FR-009.
+	if open != nil {
+		res.Disposition = models.ReinstallOpenRecord
+		return res, nil
+	}
+
+	// 4. FR-010.
+	count := 0
+	for _, c := range m.Commands {
+		if c.DeviceID == n.DeviceID && c.Origin == models.OriginInstaller && c.CreatedAt.After(n.At.Add(-models.ReinstallRateWindow)) {
+			count++
+		}
+	}
+	if count >= models.ReinstallRateCap {
+		res.Disposition = models.ReinstallCapped
+		if !m.reinstallCapEventSeenLocked(n) {
+			evt := models.Event{DeviceID: n.DeviceID, Type: models.EventAgentReinstallPaused, Severity: models.SeverityWarning,
+				Message: models.ReinstallRateCapMessage(n.Hostname), CreatedAt: n.At}
+			if m.Events != nil {
+				if err := m.Events.Create(ctx, &evt); err != nil {
+					return res, err
+				}
+			}
+			res.CapEvent = &evt
+		}
+		return res, nil
+	}
+
+	// 5. The insert.
+	id := uuid.New().String()
+	if len(m.reinstallIDs) > 0 {
+		id, m.reinstallIDs = m.reinstallIDs[0], m.reinstallIDs[1:]
+	}
+	at := n.At
+	deadline := n.At.Add(models.ExpectReinstallBound)
+	row := &models.Command{
+		ID: id, DeviceID: n.DeviceID, Action: models.ActionAgentUpdate, Params: map[string]interface{}{},
+		Status: string(models.CommandRunning), CreatedAt: at, UpdatedAt: at, ExpiresAt: at,
+		ExecDeadlineS: models.ReinstallExecDeadlineS, DeadlineAt: &deadline, DispatchedAt: &at, StartedAt: &at,
+		Step: models.ReinstallStepWaitingForRestart, Origin: models.OriginInstaller, TargetKeys: []string{},
+		ActorKind: "system",
+	}
+	if err := m.insertCheckLocked(row); err != nil {
+		return res, err
+	}
+	m.Commands[id] = row
+	cp := copyCommand(row)
+	res.Disposition, res.Command = models.ReinstallCreated, &cp
+	return res, nil
+}
+
+// reinstallCapEventSeenLocked reports whether a rate-cap event (not linked to a
+// record) exists for the device in the last 24 h. The caller holds m.mu.
+func (m *MockCommandRepo) reinstallCapEventSeenLocked(n models.ReinstallNotice) bool {
+	if m.Events == nil {
+		return false
+	}
+	m.Events.mu.Lock()
+	defer m.Events.mu.Unlock()
+	for _, e := range m.Events.Events {
+		if e.DeviceID == n.DeviceID && e.Type == models.EventAgentReinstallPaused && e.CommandID == "" &&
+			e.CreatedAt.After(n.At.Add(-models.ReinstallRateWindow)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *MockCommandRepo) OpenReinstall(_ context.Context, deviceID string) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("OpenReinstall"); err != nil {
+		return nil, err
+	}
+	c := m.reinstallOpenLocked(deviceID)
+	if c == nil {
+		return nil, nil
+	}
+	cp := copyCommand(c)
 	return &cp, nil
 }
 
@@ -2830,6 +3037,7 @@ var (
 	_ db.AlertRuleRepository        = (*MockAlertRuleRepo)(nil)
 	_ db.NotifyRepository           = (*MockNotifyRepo)(nil)
 	_ db.CommandRepository          = (*MockCommandRepo)(nil)
+	_ db.ReinstallRepository        = (*MockCommandRepo)(nil)
 	_ db.ProbeRepository            = (*MockProbeRepo)(nil)
 	_ db.AdminRepository            = (*MockAdminRepo)(nil)
 	_ db.TerminalRepository         = (*MockTerminalRepo)(nil)

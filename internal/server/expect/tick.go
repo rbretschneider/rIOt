@@ -99,10 +99,10 @@ func (t *Tracker) plan(now time.Time) []planItem {
 				items = append(items, planItem{kind: planDue, devID: devID, winID: id, reason: tl.reason, closeAt: tl.closeAt})
 				continue
 			}
-			// A self-update record is never escalated eagerly: its failed and timed-out
-			// rows are due at F (EXPECT-002 AD-006).
+			// A self-update or reinstall record is never escalated eagerly: its failed
+			// and timed-out rows are due at F (EXPECT-002 AD-006, EXPECT-008 AD-008).
 			if s := w.cmd.State(); (s == models.CommandFailed || s == models.CommandTimedOut) && !w.deviceEscDone &&
-				w.policy.CoversOffline && !w.policy.SelfUpdate && !dev.online && offlineWasCovered(w, snap) {
+				w.policy.CoversOffline && !w.policy.SelfUpdate && !w.policy.Reinstall && !dev.online && offlineWasCovered(w, snap) {
 				items = append(items, planItem{kind: planEager, devID: devID, winID: id, closeAt: tl.closeAt})
 			}
 		}

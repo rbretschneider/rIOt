@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import SelfUpdateDetails from '../SelfUpdateDetails'
 import { isSelfUpdate } from '../../utils/selfUpdate'
+import { isReinstall } from '../../utils/reinstall'
 export default function CommandProgress({
   deviceId,
   commandId,
@@ -44,9 +45,10 @@ export default function CommandProgress({
   return (
     <QueryState query={query}>
       {(c) =>
-        isSelfUpdate(c) ? (
-          // EXPECT-002 (FR-027): an agent's own self-update is a read-only record, never a command
-          // to cancel or retry, so it gets its own view with no controls.
+        isSelfUpdate(c) || isReinstall(c) ? (
+          // EXPECT-002 (FR-027), EXPECT-008 (FR-026): an agent's own self-update and the server's
+          // installer-reinstall record are read-only, never a command to cancel or retry, so they
+          // get their own view with no controls.
           <div className="p-3 rounded border border-border">
             <SelfUpdateDetails deviceId={deviceId} command={c} />
           </div>

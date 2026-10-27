@@ -83,6 +83,10 @@ type Options struct {
 	// Optional: nil keeps today's behaviour (no record is ever created). Never
 	// assign a nil *db.CommandRepo to it.
 	SelfUpdates db.SelfUpdateRepository
+	// Reinstalls is the persistence of installer reinstall records (EXPECT-008).
+	// Optional: nil keeps today's behaviour (no record is ever created). Never
+	// assign a nil *db.CommandRepo to it.
+	Reinstalls db.ReinstallRepository
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 	// Logger receives the service's records; nil means slog.Default().
@@ -101,6 +105,7 @@ type Service struct {
 	observer    CommandObserver
 	events      CompletionEvents
 	selfUpdates db.SelfUpdateRepository
+	reinstalls  db.ReinstallRepository
 	now         func() time.Time
 	log         *slog.Logger
 
@@ -125,7 +130,7 @@ func New(o Options) *Service {
 	return &Service{
 		quota: o.Quota,
 		repo:  o.Commands, policies: o.Policies, telemetry: o.Telemetry, agents: o.Agents,
-		broadcaster: o.Broadcaster, observer: o.Observer, events: o.Events, selfUpdates: o.SelfUpdates, now: now, log: logger,
+		broadcaster: o.Broadcaster, observer: o.Observer, events: o.Events, selfUpdates: o.SelfUpdates, reinstalls: o.Reinstalls, now: now, log: logger,
 		limiter:         NewDeviceLimiter(now),
 		logThrottle:     NewLogThrottle(now, logger),
 		gate:            newProgressGate(),
@@ -753,8 +758,9 @@ func (s *Service) classifyRejected(ctx context.Context, deviceID, id string, tar
 	if err != nil {
 		return ReportOutcome{}, fmt.Errorf("classify rejected report: %w", err)
 	}
-	if row.Origin == models.OriginAgentSelfUpdate {
-		// EXPECT-002 AD-007 row 8: an agent never reports on a self-update record
+	if row.Origin == models.OriginAgentSelfUpdate || row.Origin == models.OriginInstaller {
+		// EXPECT-002 AD-007 row 8, EXPECT-008 AD-009: an agent never reports on a
+		// self-update or reinstall record
 		// (it is not a command it was sent), so it reads as an unknown command:
 		// HTTP 404 command_not_found, WebSocket receipt not_found, for ack,
 		// progress and result alike.

@@ -117,7 +117,9 @@ jobs:
               --mount type=bind,src="$GITHUB_WORKSPACE",dst=/src,readonly \
               -e DEBIAN_FRONTEND=noninteractive "$image" bash -ec '
                 apt-get update -qq
-                apt-get install -y -qq --no-install-recommends python3 openssl sudo systemd ca-certificates
+                apt-get install -y -qq --no-install-recommends python3 openssl sudo systemd ca-certificates curl gawk
+                # Debian slim ships mawk; gawk is installed only for the awk agreement test (EXPECT-008 AC-007).
+                update-alternatives --set awk /usr/bin/mawk
                 RIOT_INSTALLER_FIXTURE=1 python3 /src/scripts/test_install_maintenance.py -v
               '
           done

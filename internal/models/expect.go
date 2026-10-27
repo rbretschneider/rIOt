@@ -131,6 +131,9 @@ type WindowPolicy struct {
 	// coverage is computed by the self-update function, not by the command
 	// phases (AD-005).
 	SelfUpdate bool
+	// Reinstall marks the EXPECT-008 policy of an installer reinstall record: its
+	// coverage is computed by the reinstall function (AD-006).
+	Reinstall bool
 }
 
 var expectPolicies = []WindowPolicy{
@@ -183,12 +186,24 @@ var ExpectSelfUpdatePolicy = WindowPolicy{
 	EscalateNotBack: true, SelfUpdate: true,
 }
 
+// ExpectReinstallPolicy is the policy of an installer reinstall record
+// (EXPECT-008 AD-006): device_offline only, no settle period, no post-terminal
+// period, no observed-return requirement, one escalation at the bound when the
+// suppressed offline is still ongoing.
+var ExpectReinstallPolicy = WindowPolicy{
+	Action: ActionAgentUpdate, Class: WindowAgent, CoversOffline: true, Containers: CoverNoContainers,
+	EscalateNotBack: true, Reinstall: true,
+}
+
 // ExpectPolicyFor returns the window policy of one command row: the
-// self-update policy for an agent self-update record, ExpectPolicy(c.Action)
-// otherwise.
+// self-update policy for an agent self-update record, the reinstall policy for
+// an installer record, ExpectPolicy(c.Action) otherwise.
 func ExpectPolicyFor(c Command) (WindowPolicy, bool) {
 	if c.Origin == OriginAgentSelfUpdate && c.Action == ActionAgentUpdate {
 		return ExpectSelfUpdatePolicy, true
+	}
+	if c.Origin == OriginInstaller && c.Action == ActionAgentUpdate {
+		return ExpectReinstallPolicy, true
 	}
 	return ExpectPolicy(c.Action)
 }
@@ -299,6 +314,8 @@ func ActorPhrase(c Command, policyTarget string) string {
 		return "by the auto-patch schedule"
 	case OriginAgentSelfUpdate:
 		return SelfUpdateActorPhrase
+	case OriginInstaller:
+		return ReinstallActorPhrase
 	}
 	if n := SafeName(c.ActorName); n != "" {
 		return "by " + n
@@ -629,7 +646,10 @@ type DeviceActivity struct {
 	CoversOffline    bool                `json:"covers_offline"`
 	DeviceOnline     bool                `json:"device_online"`
 	Escalation       *ActivityEscalation `json:"escalation"`
-	PoweredOffAt     *time.Time          `json:"powered_off_at"`
+	// Origin is the origin of the activity's command (EXPECT-008 AD-010); "" when
+	// the activity has none (powered off).
+	Origin       string     `json:"origin"`
+	PoweredOffAt *time.Time `json:"powered_off_at"`
 }
 
 // ActivityResponse is the body of GET /api/v1/activity.

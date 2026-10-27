@@ -44,9 +44,10 @@ describe('[UIF AC-015] command status labels', () => {
 })
 
 describe('[UIF AC-016] event type labels have no underscores', () => {
-  it('knows all 54 server event types', () => {
-    expect(EVENT_TYPES).toHaveLength(54)
-    expect(new Set(EVENT_TYPES).size).toBe(54)
+  it('knows all 56 server event types', () => {
+    // EXPECT-008 adds agent_reinstall_unconfirmed and agent_reinstall_paused to the 54 before it.
+    expect(EVENT_TYPES).toHaveLength(56)
+    expect(new Set(EVENT_TYPES).size).toBe(56)
   })
 
   it.each(EVENT_TYPES)('maps %s to an explicit label without underscores', value => {
