@@ -57,6 +57,10 @@ const PostRefreshBudget = 5 * time.Minute
 // a successful run can never turn into "interrupted" because of it.
 const postRefreshMinRemaining = PostRefreshBudget + TerminationGrace + 30*time.Second
 
+// postRefreshBudgetNote is the summary note of a post-run refresh skipped for
+// lack of time (FR-016).
+const postRefreshBudgetNote = "post-run package list refresh skipped: worker time budget nearly exhausted"
+
 // successSummary is the terminal summary of a verified run.
 const successSummary = SuccessSummary
 
@@ -76,6 +80,13 @@ func aptOptions() []string {
 // aptState carries what the apt part leaves for the finaliser.
 type aptState struct {
 	postRefreshNote string
+	// listsRefreshed is true only after the run's own refresh step returned
+	// without error. A version 2 post-run refresh requires it (FR-010, FR-011).
+	listsRefreshed bool
+	// sourcesBefore and sourcesBeforeErr are the apt configuration baseline,
+	// taken immediately before the run's own refresh step (FR-005).
+	sourcesBefore    string
+	sourcesBeforeErr error
 }
 
 // Execute is called only while the root exclusion is held. Its context belongs
@@ -125,8 +136,9 @@ func (w *Worker) Execute(ctx context.Context, req Request) (rec Record, retErr e
 }
 
 // executeApt is the apt part of a run: hold release, recovery, refresh, upgrade,
-// verification and the post-run refresh, then (in the deferred cleanup) hold
-// restoration and the version changes. It never finishes the record.
+// verification and, for version 1, the post-run refresh, then (in the deferred
+// cleanup) hold restoration and the version changes. It never finishes the
+// record.
 func (w *Worker) executeApt(ctx context.Context, req Request, rec *Record, st *aptState) (retErr error) {
 	releaseAttempted := false
 	defer func() {
@@ -247,10 +259,11 @@ func (w *Worker) executeApt(ctx context.Context, req Request, rec *Record, st *a
 		return nil
 	}
 
-	sourcesBefore, sourcesBeforeErr := w.fingerprintSources()
+	st.sourcesBefore, st.sourcesBeforeErr = w.fingerprintSources()
 	if _, err := step("refresh", "/usr/bin/apt-get", aptRefreshArgs()...); err != nil {
 		return err
 	}
+	st.listsRefreshed = true
 	w.stampLists(rec)
 	action := "dist-upgrade"
 	if req.Mode == "security" {
@@ -262,7 +275,11 @@ func (w *Worker) executeApt(ctx context.Context, req Request, rec *Record, st *a
 	if err := verify(); err != nil {
 		return err
 	}
-	st.postRefreshNote = w.postRunRefresh(ctx, rec, sourcesBefore, sourcesBeforeErr)
+	// A version 2 run makes this check after the extra-updater step instead
+	// (DIETPI-REFRESH-001 FR-002, FR-003), so an updater's apt changes are covered.
+	if req.Version == ProtocolVersion {
+		st.postRefreshNote = w.postRunRefresh(ctx, rec, st.sourcesBefore, st.sourcesBeforeErr)
+	}
 	return nil
 }
 
@@ -323,24 +340,84 @@ func (w *Worker) stampLists(rec *Record) {
 	}
 }
 
-// postRunRefresh runs at most one extra package list refresh when the apt
-// configuration changed between the run's refresh and the end of its upgrade
-// (PATCH-FLOW-001 FR-040..FR-045). It never changes the run outcome: it goes
-// through Runner.Run, not step(), so runner interruption flags and exit codes
-// stay off the record. It returns a summary note, or "" when nothing needs
-// saying.
+// postRunRefresh is the version 1 post-run refresh. It runs at most one extra
+// package list refresh when the apt configuration changed between the run's
+// refresh and the end of its upgrade (PATCH-FLOW-001 FR-040..FR-045). It never
+// changes the run outcome: it goes through Runner.Run, not step(), so runner
+// interruption flags and exit codes stay off the record. It returns a summary
+// note, or "" when nothing needs saying.
+//
+// A version 2 run does not call it; see postRunRefreshV2.
 func (w *Worker) postRunRefresh(ctx context.Context, rec *Record, before string, beforeErr error) string {
-	if w.Sources == nil {
-		return ""
-	}
-	after, afterErr := w.Sources()
-	if beforeErr == nil && afterErr == nil && before == after {
+	if !w.sourcesChanged(before, beforeErr) {
 		return ""
 	}
 	// time.Until, not w.now(): context deadlines run on the real clock.
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < postRefreshMinRemaining {
-		return "post-run package list refresh skipped: worker time budget nearly exhausted"
+		return postRefreshBudgetNote
 	}
+	return w.runPostRefresh(ctx, rec)
+}
+
+// postRunRefreshV2 is the version 2 post-run refresh (DIETPI-REFRESH-001
+// FR-002..FR-018). executeExtras calls it once, after every present updater's
+// step has ended, so a change made by apt or by an updater is covered by one
+// refresh. Like postRunRefresh it never changes the run outcome, the apt
+// outcome or any updater result; it returns a summary note, or "" when nothing
+// needs saying.
+//
+// The run is ineligible, silently and before any filesystem read, when its own
+// refresh did not complete (FR-010, FR-011, BR-005), when the apt part or any
+// updater was interrupted, or when the service is stopping (FR-014, BR-004).
+// An apt error after a successful own refresh, and every other updater
+// outcome, stay eligible (FR-012, FR-013).
+//
+// basisCtx and basisBudget are the time basis (DR-SEC-001). The caller passes
+// the extended budget only when this run verified the unit's backstop root-side
+// (runExtra check 6); otherwise the apt context and WorkerBudget, which is the
+// pre-story bound. The refresh starts only when postRefreshMinRemaining of the
+// basis remains on the injected clock and on the real context deadline, and its
+// context derives from basisCtx, never from svc.
+func (w *Worker) postRunRefreshV2(svc, basisCtx context.Context, basisBudget time.Duration, rec *Record, st *aptState, started time.Time) string {
+	if !st.listsRefreshed || rec.AptOutcome == aptOutcomeInterrupt || svc.Err() != nil {
+		return ""
+	}
+	for _, r := range rec.ExtraUpdaters {
+		if r.Outcome == UpdaterInterrupted {
+			return ""
+		}
+	}
+	if !w.sourcesChanged(st.sourcesBefore, st.sourcesBeforeErr) {
+		return ""
+	}
+	// Strictly less than: exactly postRefreshMinRemaining is enough (AC-019).
+	if started.Add(basisBudget).Sub(w.now()) < postRefreshMinRemaining {
+		return postRefreshBudgetNote
+	}
+	// time.Until, not w.now(): context deadlines run on the real clock.
+	if deadline, ok := basisCtx.Deadline(); ok && time.Until(deadline) < postRefreshMinRemaining {
+		return postRefreshBudgetNote
+	}
+	return w.runPostRefresh(basisCtx, rec)
+}
+
+// sourcesChanged reports whether the apt configuration differs from the
+// baseline taken before the run's own refresh. An unreadable baseline or an
+// unreadable second observation counts as changed (FR-007). It calls Sources at
+// most once, and not at all when the feature is not wired.
+func (w *Worker) sourcesChanged(before string, beforeErr error) bool {
+	if w.Sources == nil {
+		return false
+	}
+	after, afterErr := w.Sources()
+	return beforeErr != nil || afterErr != nil || before != after
+}
+
+// runPostRefresh persists the post_refresh phase, runs the one post-run package
+// list refresh under PostRefreshBudget, appends its output and stamps the lists.
+// It returns "" on success, or the summary note. It writes only Phase,
+// UpdatedAt, Output and OutputTruncated, never an outcome field.
+func (w *Worker) runPostRefresh(ctx context.Context, rec *Record) string {
 	rec.Phase = "post_refresh"
 	rec.UpdatedAt = w.now()
 	if err := w.Store.Save(*rec); err != nil {
