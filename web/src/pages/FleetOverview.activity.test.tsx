@@ -158,7 +158,7 @@ describe('[AC-024] fleet agent update shows what is happening', () => {
 })
 
 describe('[AC-028] a powered-off device on the fleet page', () => {
-  it('shows "Powered off by ryan at 14:02", a hollow offline dot, and counts it as expected offline', async () => {
+  it('shows "Powered off by ryan at 14:02 UTC", a hollow offline dot, and counts it as expected offline', async () => {
     vi.mocked(api.getDevices).mockResolvedValue([
       device('p', 'PiCUPS', { status: 'offline' }),
       device('o', 'online-one'),
@@ -176,7 +176,7 @@ describe('[AC-028] a powered-off device on the fleet page', () => {
     renderWithProviders(<FleetOverview />, { timeZone })
 
     const row = await rowOf('PiCUPS')
-    expect(await within(row).findByText('Powered off by ryan at 14:02')).toBeInTheDocument()
+    expect(await within(row).findByText('Powered off by ryan at 14:02 UTC')).toBeInTheDocument()
     expect(within(row).getByTestId('status-dot-expected-offline'), 'powered off must stay visibly offline').toBeInTheDocument()
     expect(statValue('Expected offline')).toBe('1')
     expect(statValue('Offline'), 'a powered-off device is not a real outage').toBe('0')
@@ -190,7 +190,7 @@ describe('[AC-028] a powered-off device on the fleet page', () => {
     renderWithProviders(<FleetOverview />, { timeZone })
 
     const row = await rowOf('PiCUPS')
-    await within(row).findByText('Powered off by ryan at 14:02')
+    await within(row).findByText('Powered off by ryan at 14:02 UTC')
     expect(within(row).queryByText(/started/)).toBeNull()
   })
 })
@@ -215,7 +215,7 @@ describe('[AC-039] offline and expected-offline counts', () => {
       }),
     ])
     renderWithProviders(<FleetOverview />, { timeZone })
-    await screen.findByText('Rebooting, back by 14:12')
+    await screen.findByText('Rebooting, back by 14:12 UTC')
   }
 
   it('counts one offline, two expected offline and one online', async () => {
@@ -231,8 +231,8 @@ describe('[AC-039] offline and expected-offline counts', () => {
     await renderFourDevices()
 
     for (const [hostname, text] of [
-      ['rebooting', 'Rebooting, back by 14:12'],
-      ['powered-off', 'Powered off by ryan at 13:00'],
+      ['rebooting', 'Rebooting, back by 14:12 UTC'],
+      ['powered-off', 'Powered off by ryan at 13:00 UTC'],
     ]) {
       const row = await rowOf(hostname)
       expect(within(row).getByTestId('status-dot-expected-offline'), `${hostname} must still look offline`).toBeInTheDocument()
@@ -306,7 +306,7 @@ describe('[AC-040] the fleet page updates live', () => {
       })
     })
 
-    expect(await screen.findByText('Rebooting, back by 14:20')).toBeInTheDocument()
+    expect(await screen.findByText('Rebooting, back by 14:20 UTC')).toBeInTheDocument()
     expect(statValue('Offline')).toBe('0')
     expect(statValue('Expected offline')).toBe('1')
   })
@@ -344,7 +344,7 @@ describe('fleet row activity is one line', () => {
     const label = await within(row).findByTestId('activity-label')
     expect(label).toHaveTextContent(/^Patching \(40%\)$/)
     expect(label.querySelector('svg.animate-spin'), 'a running action shows a spinner').not.toBeNull()
-    expect(label.getAttribute('title')).toBe('Patching (40%) by d3f8fcad0b7ebd8277a5c1ef621a61de · started 14:00')
+    expect(label.getAttribute('title')).toBe('Patching (40%) by d3f8fcad0b7ebd8277a5c1ef621a61de · started 14:00 UTC')
     expect(within(row).queryByText(/d3f8fcad/), 'a long actor name never wraps the row').toBeNull()
   })
 

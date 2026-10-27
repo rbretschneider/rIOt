@@ -16,7 +16,7 @@ import DeviceQueryFallback from '../components/DeviceQueryFallback'
 import { Badge, Button, ConfirmDialog, PageHeader, Timestamp, enumLabel, useToast } from '../components/ui'
 import { useTimePreference } from '../contexts/TimePreferenceProvider'
 import { chartColors } from '../theme/chartColors'
-import { formatBytes, formatDuration } from '../utils/format'
+import { formatBytes, formatDateOnly, formatDuration } from '../utils/format'
 import CreateAlertDialog from '../components/CreateAlertDialog'
 import RebootClassBadge from '../components/RebootClassBadge'
 import PatchBadge from '../components/PatchBadge'
@@ -75,7 +75,7 @@ export default function DeviceDetail() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const toast = useToast()
-  const { zoneOpts } = useTimePreference()
+  const { zoneOpts, now } = useTimePreference()
   const [confirmAction, setConfirmAction] = useState<string | null>(null)
   // PATCH-FLOW-001: the Patch dialog's reboot opt-in. Reset by the open handler and by
   // onClose, never persisted, so every opening starts unchecked (FR-009).
@@ -243,7 +243,8 @@ export default function DeviceDetail() {
       const markdown = await api.getDeviceSummary(id)
       const blob = new Blob([markdown], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
-      const today = new Date().toISOString().slice(0, 10)
+      // The server-zone date (UTC until the zone is known), so the saved name matches the file's Generated line.
+      const today = formatDateOnly(now(), { ...zoneOpts, zone: 'Server' })
       const filename = `${device.hostname.replace(/[^a-zA-Z0-9_-]/g, '_')}-summary-${today}.md`
       const a = document.createElement('a')
       a.href = url
@@ -1659,7 +1660,7 @@ export default function DeviceDetail() {
                       <tr key={i} className="border-b border-gray-800/50 text-gray-300">
                         <td className="py-1.5 pr-4 text-xs font-medium">{timer.name}</td>
                         <td className="py-1.5 pr-4 font-mono text-xs">
-                          <Tooltip content={parseSystemdCalendar(timer.calendar)}>
+                          <Tooltip content={parseSystemdCalendar(timer.calendar, zoneOpts.hourCycle)}>
                             <span className="cursor-help border-b border-dotted border-gray-600">{timer.calendar}</span>
                           </Tooltip>
                         </td>
