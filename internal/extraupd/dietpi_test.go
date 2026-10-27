@@ -593,9 +593,15 @@ func TestDietPiBusy_EU_SEC001_MatchRule(t *testing.T) {
 // a call made right after the previous one returned is not "in flight". CI's
 // runner hit the old ordering, where the flag cleared after the send, as
 // detection_failed on back-to-back detections.
+//
+// The deadline is lifted so the in-flight refusal is the only way to get
+// detection_failed here. Under the default 1s deadline a loaded runner
+// occasionally stalls one of the 2000 calls past it, which is the deadline
+// working as designed (FR-015), not a back-to-back refusal.
 func TestDetect_EU_AC009_BackToBackCallsNeverSeeInFlight(t *testing.T) {
 	h := dietpiHost(t, "10", "8", "2")
 	d := NewDietPi()
+	d.Timeout = time.Minute
 	for i := 0; i < 2000; i++ {
 		e, present := d.Detect(context.Background(), h.fs())
 		if !present || e.UnknownReason == "detection_failed" {
