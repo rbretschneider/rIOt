@@ -105,6 +105,22 @@ export function activityLabel(a: DeviceActivity, ctx: ActivityLabelContext): str
   }
 }
 
+/**
+ * True for an agent update that is still running (queued, updating or restarting).
+ * The fleet row shows these compactly in its Version column; an escalated update
+ * is a real outage and keeps the full label.
+ */
+export function isAgentUpdating(a: DeviceActivity | undefined): a is DeviceActivity {
+  return a?.action === 'agent_update' && (a.kind === 'host' || a.kind === 'agent')
+}
+
+/** The version an agent update moves to, or '' when neither the record nor the server knows it. */
+export function agentUpdateTarget(a: DeviceActivity, newestAgentVersion?: string): string {
+  const self = selfUpdateVersionsOf(a)
+  if (self) return self.to
+  return a.agent_from_version && newestAgentVersion ? newestAgentVersion : ''
+}
+
 /** "by ryan · started 3m ago" is shown beside every label except powered off, whose label already names the actor. */
 export function showsActorLine(a: DeviceActivity): boolean {
   return a.kind !== 'powered_off'

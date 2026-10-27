@@ -97,6 +97,13 @@ async function rowOf(hostname: string): Promise<HTMLElement> {
   return link.closest('tr') as HTMLElement
 }
 
+/** The compact Version cell of an agent update; its hover title holds the full label, actor and start. */
+async function findUpdating(label: string, scope: HTMLElement = document.body): Promise<HTMLElement> {
+  const cells = await within(scope).findAllByTestId('agent-updating')
+  const cell = cells.find(c => (c.getAttribute('title') ?? '').startsWith(`${label} by `))
+  expect(cell, `an updating Version cell titled "${label} by ..."`).toBeDefined()
+  return cell!
+}
 beforeEach(() => {
   vi.clearAllMocks()
   ws.handlers.clear()
@@ -113,9 +120,12 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     renderWithProviders(<FleetOverview />, { timeZone })
 
     const row = await rowOf('vermont')
-    expect(await within(row).findByText('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
-    expect(within(row).getByText(/by agent auto-update/), 'the originator must be named').toBeInTheDocument()
-    expect(within(row).getByText('4m ago'), 'the start time must be shown').toBeInTheDocument()
+    const cell = await findUpdating('Updating agent 2.78.0 → 2.80.0', row)
+    expect(cell.getAttribute('title'), 'the originator must be named').toContain('by agent auto-update')
+    expect(cell.getAttribute('title'), 'the start time must be shown').toContain('· started ')
+    expect(within(cell).getByText('2.80.0'), 'the cell shows the version being installed').toBeInTheDocument()
+    expect(within(cell).getByText('(updating)')).toBeInTheDocument()
+    expect(within(row).queryByTestId('activity-label'), 'the row stays one line: no label under the hostname').toBeNull()
   })
 
   it('counts the offline device as expected offline, not offline, and keeps its offline dot', async () => {
@@ -124,7 +134,7 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     renderWithProviders(<FleetOverview />, { timeZone })
 
     const row = await rowOf('vermont')
-    await within(row).findByText('Updating agent 2.78.0 → 2.80.0')
+    await findUpdating('Updating agent 2.78.0 → 2.80.0', row)
     expect(statValue('Expected offline')).toBe('1')
     expect(statValue('Offline'), 'a device in its self-update window is not a real outage').toBe('0')
     expect(within(row).getByTestId('status-dot-expected-offline'), 'the device must still look offline').toBeInTheDocument()
@@ -135,7 +145,7 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     serveActivities([selfUpdate('v', { device_online: true })], '9.9.9')
     renderWithProviders(<FleetOverview />, { timeZone })
 
-    expect(await screen.findByText('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
     expect(screen.queryByText(/9\.9\.9/)).toBeNull()
   })
 
@@ -143,11 +153,11 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     vi.mocked(api.getDevices).mockResolvedValue([device('v', 'vermont', { status: 'offline' })])
     serveActivities([selfUpdate('v')])
     const first = renderWithProviders(<FleetOverview />, { timeZone })
-    await screen.findByText('Updating agent 2.78.0 → 2.80.0')
+    await findUpdating('Updating agent 2.78.0 → 2.80.0')
     first.unmount()
 
     renderWithProviders(<FleetOverview />, { timeZone })
-    expect(await screen.findByText('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
   })
 
   it('labels each device of a release with its own versions', async () => {
@@ -158,8 +168,8 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     ])
     renderWithProviders(<FleetOverview />, { timeZone })
 
-    expect(await within(await rowOf('hawaii')).findByText('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
-    expect(await within(await rowOf('PiVPN')).findByText('Updating agent 2.79.0 → 2.80.0')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent 2.78.0 → 2.80.0', await rowOf('hawaii'))).toBeInTheDocument()
+    expect(await findUpdating('Updating agent 2.79.0 → 2.80.0', await rowOf('PiVPN'))).toBeInTheDocument()
   })
 
   it('does not show a label on a device that has no self-update (another device cannot affect it)', async () => {
@@ -167,7 +177,7 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     serveActivities([selfUpdate('a')])
     renderWithProviders(<FleetOverview />, { timeZone })
 
-    await within(await rowOf('hawaii')).findByText('Updating agent 2.78.0 → 2.80.0')
+    await findUpdating('Updating agent 2.78.0 → 2.80.0', await rowOf('hawaii'))
     const other = await rowOf('vermont')
     expect(within(other).queryByTestId('activity-label')).toBeNull()
     expect(statValue('Offline'), 'the other device is a real outage').toBe('1')
@@ -179,7 +189,7 @@ describe('EXPECT-002 [AC-023] fleet label, actor, start and expected-offline cou
     serveActivities([selfUpdate('v', { device_online: true, agent_to_version: '<img src=x onerror=alert(1)>' })], '')
     renderWithProviders(<FleetOverview />, { timeZone })
 
-    expect(await screen.findByText('Updating agent')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent')).toBeInTheDocument()
     expect(document.querySelector('img')).toBeNull()
   })
 })
@@ -190,24 +200,24 @@ describe('EXPECT-002 [AC-023] the fleet page follows the window live', () => {
     const { queryClient } = renderWithProviders(<FleetOverview />, { timeZone })
     await screen.findByRole('link', { name: 'hawaii' })
     await waitFor(() => expect(queryClient.getQueryState(['activity'])?.status).toBe('success'))
-    expect(screen.queryByText(/^Updating agent/)).toBeNull()
+    expect(screen.queryByTestId('agent-updating')).toBeNull()
 
     act(() => {
       ws.send({ type: 'activity_update', device_id: 'h', data: selfUpdate('h', { device_online: true }) })
     })
-    expect(await screen.findByText('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent 2.78.0 → 2.80.0')).toBeInTheDocument()
 
     act(() => {
       ws.send({ type: 'activity_update', device_id: 'h', data: null })
     })
-    await waitFor(() => expect(screen.queryByText('Updating agent 2.78.0 → 2.80.0'), 'the label must clear when the window closes').toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('agent-updating'), 'the label must clear when the window closes').toBeNull())
   })
 
   it('moves an offline device back to offline when the window closes without the device returning', async () => {
     vi.mocked(api.getDevices).mockResolvedValue([device('v', 'vermont', { status: 'offline' })])
     serveActivities([selfUpdate('v')])
     renderWithProviders(<FleetOverview />, { timeZone })
-    await screen.findByText('Updating agent 2.78.0 → 2.80.0')
+    await findUpdating('Updating agent 2.78.0 → 2.80.0')
     expect(statValue('Expected offline')).toBe('1')
 
     act(() => {

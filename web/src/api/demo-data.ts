@@ -833,6 +833,27 @@ export function getActivity(): ActivityResponse {
         escalation: null,
         powered_off_at: null,
       },
+      // EXPECT-002: an agent self-update, shown as a spinner in the fleet Version column.
+      {
+        device_id: getDevices()[1].id,
+        kind: 'agent',
+        phase: 'in_progress',
+        action: 'agent_update',
+        command_id: uuid('cmd-activity-2'),
+        actor_phrase: 'by agent auto-update',
+        started_at: ago(1 * MIN),
+        back_by: null,
+        waiting_dpkg_lock: false,
+        progress: null,
+        agent_from_version: '0.9.1',
+        agent_to_version: '0.9.2',
+        target: '',
+        docker_actions: 0,
+        covers_offline: true,
+        device_online: true,
+        escalation: null,
+        powered_off_at: null,
+      },
     ],
   }
 }

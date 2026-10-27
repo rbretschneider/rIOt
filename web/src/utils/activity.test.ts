@@ -3,8 +3,10 @@ import type { ActivityResponse, DeviceActivity } from '../types/models'
 import {
   activityLabel,
   activityLink,
+  agentUpdateTarget,
   applyActivityUpdate,
   indexActivities,
+  isAgentUpdating,
   isEscalated,
   isExpectedOffline,
   showsActorLine,
@@ -433,5 +435,31 @@ describe('EXPECT-002 [AC-023] label clears on activity_update null', () => {
   it('replaces the entry when the server pushes the new activity', () => {
     const next = applyActivityUpdate(base, 'a', selfUpdateActivity({ device_id: 'a', agent_to_version: '2.81.0' }))
     expect(next?.activities.map(a => a.agent_to_version)).toEqual(['2.81.0'])
+  })
+})
+
+describe('fleet Version column: a running agent update is shown compactly', () => {
+  it('treats a queued, running or restarting agent update as updating', () => {
+    for (const phase of ['queued', 'in_progress', 'return'] as const) {
+      expect(isAgentUpdating(activity({ kind: 'agent', action: 'agent_update', phase })), phase).toBe(true)
+    }
+  })
+
+  it('keeps an escalated agent update and every other action out of the compact cell', () => {
+    expect(isAgentUpdating(activity({ kind: 'escalated', phase: 'escalated', action: 'agent_update' }))).toBe(false)
+    expect(isAgentUpdating(activity({ action: 'reboot' }))).toBe(false)
+    expect(isAgentUpdating(undefined)).toBe(false)
+  })
+
+  it('targets the version of a self-update record over the newest version the server knows', () => {
+    const a = activity({ kind: 'agent', action: 'agent_update', agent_from_version: '2.81.0', agent_to_version: '2.82.0' })
+    expect(agentUpdateTarget(a, '9.9.9')).toBe('2.82.0')
+  })
+
+  it('targets the newest known version for an operator update, and nothing when it is unknown', () => {
+    const a = activity({ kind: 'agent', action: 'agent_update', agent_from_version: '2.81.0' })
+    expect(agentUpdateTarget(a, '2.82.0')).toBe('2.82.0')
+    expect(agentUpdateTarget(a, '')).toBe('')
+    expect(agentUpdateTarget(activity({ kind: 'agent', action: 'agent_update' }), '2.82.0')).toBe('')
   })
 })
