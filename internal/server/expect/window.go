@@ -172,6 +172,11 @@ func evaluate(w *window, dv deviceView, now, graceEnd time.Time) timeline {
 			b := end
 			tl.backBy = &b
 			observed := !p.RequireObservedReturn || dv.returnedAt.After(f)
+			if p.Class == models.WindowAgent && dv.returnedAt.After(tl.d) {
+				// A signed agent update completes from the restarted agent, so its
+				// return (re-registration) comes before F, not after it.
+				observed = true
+			}
 			if dv.online && observed {
 				anchor := laterOf(f, dv.onlineSince, graceEnd)
 				if p.RequireObservedReturn {
