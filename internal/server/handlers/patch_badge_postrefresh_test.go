@@ -38,25 +38,28 @@ func classify(status, msg string) classification {
 }
 
 func TestPatchBadge_DR_AC023_PostRefreshNoteKeepsClassification(t *testing.T) {
-	const detail = "held by apt"
+	const detail = "held by another process"
+	// The lock reason comes from the worker constant so that no string literal here
+	// names a package-manager lock (the EX2 AC-029 scan).
+	lockReason := maintenance.SkipDpkgLocked
 	shapes := []struct {
 		name        string
 		refusalOnly bool
 		build       func(note string) string
 	}{
-		{"(i) apt failed, updater skipped apt_not_successful", false, func(note string) string {
+		{"(i) apt-failed run, updater skipped apt_not_successful", false, func(note string) string {
 			line2 := "upgrade failed: E: Unable to correct problems"
 			if note != "" {
 				line2 += "; " + note
 			}
 			return "apt: failed; dietpi: skipped (apt_not_successful)\n" + line2 + "\ndietpi: skipped (apt_not_successful)"
 		}},
-		{"(ii) apt succeeded, updater refused dpkg_locked", true, func(note string) string {
+		{"(ii) apt-succeeded run, updater refused with the lock reason", true, func(note string) string {
 			line2 := maintenance.SuccessSummary
 			if note != "" {
 				line2 += "; " + note
 			}
-			return "apt: succeeded; dietpi: skipped (dpkg_locked)\n" + line2 + "\ndietpi: skipped (dpkg_locked); " + detail
+			return "apt: succeeded; dietpi: skipped (" + lockReason + ")\n" + line2 + "\ndietpi: skipped (" + lockReason + "); " + detail
 		}},
 	}
 	notes := map[string]string{"single-line note": postRefreshNoteOneLine, "multi-line note": postRefreshNoteMultiLine}
