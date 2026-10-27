@@ -425,6 +425,315 @@ download_file() {
         fail "curl or wget is required"
     fi
 }
+
+# EXPECT-008: on a reinstall the installer stops a running agent, which the
+# server would otherwise page as a device-offline outage. Just before that stop
+# it sends one notice, authenticated with the device key, so the server expects
+# the restart. It is best effort: it reads no installer input, prints exactly
+# one line, takes at most 10 seconds and can never change the install result.
+# agent.yaml is writable by the unprivileged riot user, so it is untrusted input:
+# every value is validated before use, and the key reaches curl only through the
+# printf builtin into curl's own config pipe, never on any command line.
+# BEGIN reinstall-notice
+# Copy a root-readable file into $2 from the descriptor that passed the checks:
+# open first, then require the opened inode to equal the path's lstat, a regular
+# file with one link. A path swapped before or after the open is refused.
+notice_snapshot() {
+    local src="$1" dst="$2" size plain
+    [ -f "$src" ] && [ ! -L "$src" ] || return 1
+    LC_ALL=C timeout 1 bash -c '
+        exec 3<"$1" || exit 1
+        a=$(stat -c "%d:%i:%h:%F" -- "$1") || exit 1
+        b=$(stat -L -c "%d:%i:%h:%F" /proc/self/fd/3) || exit 1
+        [ "$a" = "$b" ] || exit 1
+        case "$a" in
+            *:1:regular\ file | *:1:regular\ empty\ file) ;;
+            *) exit 1 ;;
+        esac
+        head -c 65537 <&3
+    ' notice-snapshot "$src" > "$dst" 2>/dev/null </dev/null || { rm -f -- "$dst"; return 1; }
+    size=$(wc -c < "$dst") || return 1
+    [ "$size" -le 65536 ] || return 1
+    plain=$(LC_ALL=C tr -d '\000' < "$dst" | wc -c) || return 1
+    [ "$plain" -eq "$size" ] || return 1
+}
+# One awk pass over a snapshot of agent.yaml. Prints name=value lines for the
+# fields the notice needs, or exits non-zero to reject the whole file. mawk 1.3.4
+# (Debian 12) has no interval expressions and no repeated groups, so none appear
+# in any awk regex; the strict value checks are done in bash by the caller.
+notice_facts() {
+    LC_ALL=C awk '
+function reject() { bad = 1; exit 1 }
+function scalar(v,    c, rest, q, tail, t) {
+    sub(/^ +/, "", v)
+    if (v == "" || substr(v, 1, 1) == "#") return ""
+    c = substr(v, 1, 1)
+    if (c == dq || c == sq) {
+        rest = substr(v, 2)
+        q = index(rest, c)
+        if (q == 0) reject()
+        t = substr(rest, 1, q - 1)
+        tail = substr(rest, q + 1)
+        if (c == dq && index(t, bs) > 0) reject()
+        if (tail !~ /^ *$/ && tail !~ /^ +#/) reject()
+        return t
+    }
+    t = v
+    sub(/ +#.*$/, "", t)
+    sub(/ +$/, "", t)
+    if (t !~ plainre) reject()
+    return t
+}
+BEGIN {
+    sq = sprintf("%c", 39); dq = sprintf("%c", 34); bs = sprintf("%c", 92)
+    tab = sprintf("%c", 9); cr = sprintf("%c", 13)
+    plainre = "^[-A-Za-z0-9._:/@+=~%_]+$"
+    name["server.url"] = "url"; name["server.api_key"] = "key"; name["server.tls_verify"] = "verify"
+    name["server.ca_cert_file"] = "ca"; name["server.client_cert"] = "cert"; name["server.client_key"] = "ckey"
+    name["server.server_cert_pin"] = "pin"; name["agent.device_id"] = "id"
+    order = "url key verify ca cert ckey pin id"
+    bad = 0; seen = 0; docstart = 0; sec = ""; cind = -1; prevread = 0
+}
+{
+    line = $0
+    if (index(line, cr) > 0) reject()
+    if (line ~ /^ *$/) next
+    if (line ~ /^ *#/) next
+    match(line, /^ */)
+    ind = RLENGTH
+    rest = substr(line, ind + 1)
+    if (substr(rest, 1, 1) == tab) reject()
+    if (ind == 0) {
+        if (line == "---" || substr(line, 1, 4) == "--- ") {
+            if (seen > 0 || docstart > 0) reject()
+            if (line !~ /^--- *$/ && line !~ /^--- +#/) reject()
+            docstart = 1
+            next
+        }
+        if (line == "..." || substr(line, 1, 4) == "... ") reject()
+        if (substr(line, 1, 1) == "%") reject()
+    }
+    seen++
+    if (ind == 0) {
+        k = line
+        sub(/:.*$/, "", k)
+        if (k !~ /^[A-Za-z_][A-Za-z0-9_]*$/) reject()
+        after = substr(line, length(k) + 2, 1)
+        if (after != "" && after != " ") reject()
+        if (k in top) reject()
+        top[k] = 1
+        sec = ""; cind = -1; prevread = 0
+        if (k == "server" || k == "agent") {
+            v = substr(line, length(k) + 2)
+            sub(/^ +/, "", v)
+            if (v != "" && substr(v, 1, 1) != "#") reject()
+            sec = k
+        }
+        next
+    }
+    if (sec == "") next
+    if (cind < 0) cind = ind
+    if (ind < cind) reject()
+    if (ind > cind) {
+        if (prevread) reject()
+        next
+    }
+    prevread = 0
+    if (substr(rest, 1, 2) == "- " || rest == "-") reject()
+    k = rest
+    sub(/:.*$/, "", k)
+    if (k !~ /^[A-Za-z_][A-Za-z0-9_]*$/) reject()
+    after = substr(rest, length(k) + 2, 1)
+    if (after != "" && after != " ") reject()
+    full = sec "." k
+    if (full in name) {
+        if (full in got) reject()
+        got[full] = 1
+        val[name[full]] = scalar(substr(rest, length(k) + 2))
+        prevread = 1
+    }
+}
+END {
+    if (bad) exit 1
+    n = split(order, names, " ")
+    for (i = 1; i <= n; i++) if (names[i] in val) print names[i] "=" val[names[i]]
+}
+' "$1"
+}
+# The value of fact $2 in the notice_facts output $1; empty when absent.
+notice_fact() {
+    local f=$'\n'"$1" t
+    case "$f" in
+        *$'\n'"$2="*) t=${f#*$'\n'"$2="}; printf '%s' "${t%%$'\n'*}" ;;
+    esac
+    return 0
+}
+# The fixed text of a failure id, and nothing else, ever reaches the terminal.
+notice_reason() {
+    case "$1" in
+        curl_missing) printf '%s' 'curl not available' ;;
+        config) printf '%s' 'agent.yaml not readable' ;;
+        verify_off) printf '%s' 'TLS verification is off in agent.yaml' ;;
+        trust) printf '%s' 'trust settings not supported' ;;
+        paused) printf '%s' 'reinstall tracking paused on server' ;;
+        offline) printf '%s' 'device already offline on server' ;;
+        unavailable) printf '%s' 'server could not record it' ;;
+        unexpected) printf '%s' 'unexpected server response' ;;
+        unsupported) printf '%s' 'server does not support reinstall notices' ;;
+        key_rejected) printf '%s' 'device key rejected' ;;
+        busy) printf '%s' 'server busy' ;;
+        server_error) printf '%s' 'server error' ;;
+        resolve) printf '%s' 'server name not resolved' ;;
+        unreachable) printf '%s' 'server unreachable' ;;
+        timeout) printf '%s' 'timed out' ;;
+        tls) printf '%s' 'TLS verification failed' ;;
+        internal) printf '%s' 'internal error' ;;
+        conn) printf '%s' 'connection failed' ;;
+        *) return 1 ;;
+    esac
+}
+# The worker. Prints exactly one token and nothing else: skip, ok or fail:<id>.
+# Every file it writes lives in $STAGE/notice. Nothing here reads stdin: awk,
+# head, stat, wc and tr always get a file operand or the verified descriptor,
+# and curl reads only its own config pipe.
+notice_attempt() {
+    local NS="$STAGE/notice" facts nid nkey url verify pin ca cert ckey scheme target
+    local re_id='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    local re_key='^riot_[0-9a-f]{64}$'
+    local re_url='^(https?)://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$'
+    local re_pin='^SHA256:[0-9a-fA-F]{64}$'
+    local re_disp='"reinstall":"([a-z_]+)"'
+    local -a TLS_ARGS=() st
+    local rc code left size body disp
+    SECONDS=0
+    command -v curl >/dev/null 2>&1 || { echo fail:curl_missing; return 0; }
+    mkdir -m 0700 -- "$NS" "$NS/no-ca" || { echo fail:internal; return 0; }
+    notice_snapshot "${RIOT_CONFIG_DIR}/agent.yaml" "$NS/agent.yaml" || { echo fail:config; return 0; }
+    facts=$(notice_facts "$NS/agent.yaml") || { echo fail:config; return 0; }
+    nid=$(notice_fact "$facts" id)
+    nkey=$(notice_fact "$facts" key)
+    if [ -z "$nid" ] || [ -z "$nkey" ]; then echo skip; return 0; fi
+    [[ $nid =~ $re_id ]] || { echo fail:config; return 0; }
+    [[ $nkey =~ $re_key ]] || { echo fail:config; return 0; }
+    url=$(notice_fact "$facts" url)
+    [[ $url =~ $re_url ]] || { echo fail:config; return 0; }
+    scheme=${BASH_REMATCH[1]}
+    verify=$(notice_fact "$facts" verify)
+    case "$verify" in
+        ''|true) verify=true ;;
+        false) ;;
+        *) echo fail:trust; return 0 ;;
+    esac
+    pin=$(notice_fact "$facts" pin)
+    if [ -n "$pin" ]; then [[ $pin =~ $re_pin ]] || { echo fail:config; return 0; }; fi
+    if [ "$scheme" = https ]; then
+        TLS_ARGS=(--tlsv1.2)
+        # The anchor set is exactly the snapshot: --cacert replaces only the CA
+        # file, and curl also loads its compile-time default CA directory unless
+        # --capath names another, so an empty root-only directory is always given.
+        if [ -e "${RIOT_CONFIG_DIR}/server.crt" ] || [ -L "${RIOT_CONFIG_DIR}/server.crt" ]; then
+            notice_snapshot "${RIOT_CONFIG_DIR}/server.crt" "$NS/ca.pem" || { echo fail:trust; return 0; }
+            TLS_ARGS+=(--cacert "$NS/ca.pem" --capath "$NS/no-ca")
+        else
+            if [ "$verify" = false ]; then echo fail:verify_off; return 0; fi
+            if [ -n "$pin" ]; then echo fail:trust; return 0; fi
+            ca=$(notice_fact "$facts" ca)
+            if [ -n "$ca" ]; then
+                case "$ca" in
+                    "${RIOT_CONFIG_DIR}/ca.crt"|"${RIOT_CONFIG_DIR}/server.crt") ;;
+                    *) echo fail:trust; return 0 ;;
+                esac
+                notice_snapshot "$ca" "$NS/ca.pem" || { echo fail:trust; return 0; }
+                TLS_ARGS+=(--cacert "$NS/ca.pem" --capath "$NS/no-ca")
+            fi
+        fi
+        cert=$(notice_fact "$facts" cert)
+        ckey=$(notice_fact "$facts" ckey)
+        if [ -n "$cert" ] && [ -n "$ckey" ]; then
+            [ "$cert" = "${RIOT_CONFIG_DIR}/client.crt" ] && [ "$ckey" = "${RIOT_CONFIG_DIR}/client.key" ] || { echo fail:trust; return 0; }
+            notice_snapshot "$cert" "$NS/client.crt" || { echo fail:trust; return 0; }
+            notice_snapshot "$ckey" "$NS/client.key" || { echo fail:trust; return 0; }
+            # A fixed dummy passphrase keeps curl from ever asking for one. It is not
+            # a secret, and curl 8.x rejects an empty --pass argument.
+            TLS_ARGS+=(--cert "$NS/client.crt" --key "$NS/client.key" --pass riot-no-passphrase)
+        fi
+    fi
+    target="${url}/api/v1/devices/${nid}/events"
+    left=$((8 - SECONDS))
+    [ "$left" -ge 3 ] || { echo fail:timeout; return 0; }
+    printf 'header = "X-rIOt-Key: %s"\n' "$nkey" |
+      env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+        timeout -k 1 "$left" curl -q --config - \
+          --silent --noproxy '*' --proto "=$scheme" --max-redirs 0 \
+          --connect-timeout 5 --max-time "$((left - 1))" \
+          "${TLS_ARGS[@]}" \
+          --user-agent riot-installer \
+          --header 'Content-Type: application/json' \
+          --data-binary '{"type":"agent_reinstall_started","severity":"info","message":"Agent reinstall started by installer"}' \
+          --max-filesize 4096 \
+          --write-out '%{stderr}%{http_code}' \
+          --url "$target" 2>"$NS/status" |
+      head -c 4096 >"$NS/response"
+    st=("${PIPESTATUS[@]}")
+    rc=${st[1]}
+    code=$(head -c 16 "$NS/status")
+    [[ $code =~ ^[0-9][0-9][0-9]$ ]] || code=000
+    size=$(wc -c < "$NS/response")
+    if [ "$size" -ge 4096 ]; then echo fail:unexpected; return 0; fi
+    case "$rc" in
+        0|23|141)
+            case "$code" in
+                200)
+                    body=$(LC_ALL=C tr -d '\000' < "$NS/response")
+                    disp=""
+                    if [[ $body =~ $re_disp ]]; then disp=${BASH_REMATCH[1]}; fi
+                    case "$disp" in
+                        created|open_record) echo ok ;;
+                        capped) echo fail:paused ;;
+                        device_offline) echo fail:offline ;;
+                        unavailable) echo fail:unavailable ;;
+                        *) echo fail:unexpected ;;
+                    esac ;;
+                400|404|405) echo fail:unsupported ;;
+                401|403) echo fail:key_rejected ;;
+                429) echo fail:busy ;;
+                5??) echo fail:server_error ;;
+                *) echo fail:unexpected ;;
+            esac ;;
+        63) echo fail:unexpected ;;
+        6) echo fail:resolve ;;
+        7) echo fail:unreachable ;;
+        28|124|137) echo fail:timeout ;;
+        35|51|53|54|58|59|60|64|66|77|80|82|83|90|91) echo fail:tls ;;
+        126|127) echo fail:internal ;;
+        *) echo fail:conn ;;
+    esac
+    return 0
+}
+# The wrapper. A subshell: it does not inherit the EXIT trap, turns off errexit,
+# nounset, pipefail and xtrace, discards stderr, and prints one line chosen from
+# fixed text by the worker's token. Anything it cannot recognise, including a
+# crashed or noisy worker, is reported as an internal error.
+reinstall_notice() (
+    { set +x; } 2>/dev/null
+    exec </dev/null 2>/dev/null
+    set +e +u +o pipefail
+    LC_ALL=C
+    export LC_ALL
+    umask 077
+    tok=$(notice_attempt | head -c 128)
+    case "$tok" in
+        skip) ;;
+        ok) printf '%s\n' '==> Server notified: agent reinstall (offline alerts paused up to 10m)' ;;
+        fail:*)
+            reason=$(notice_reason "${tok#fail:}") || reason=$(notice_reason internal)
+            printf '==> Server not notified (%s); a device-offline alert may follow\n' "$reason" ;;
+        *) printf '%s\n' '==> Server not notified (internal error); a device-offline alert may follow' ;;
+    esac
+    rm -rf -- "$STAGE/notice"
+    exit 0
+)
+# END reinstall-notice
 if [ "$RIOT_VERSION" = latest ]; then
     RELEASE_URL="https://github.com/${RIOT_REPO}/releases/latest/download"
 else
@@ -988,6 +1297,11 @@ EOF
     done
     # Stop only after lock, signature and candidate validation. No package operation runs.
     if [ "$(systemctl show riot-agent.service -p LoadState --value)" != not-found ]; then
+        # EXPECT-008: tell the server first, so it expects this restart. Stdin,
+        # stderr and the maintenance-lock descriptor are not given to the notice.
+        if [ "$CONFIG_EXISTED" = true ] && [ -z "$RIOT_BOOTSTRAP_KEY" ] && systemctl is-active --quiet riot-agent.service; then
+            reinstall_notice </dev/null 2>/dev/null 9>&- || true
+        fi
         systemctl stop riot-agent
     fi
     for directory in "$RIOT_CONFIG_DIR" "$RIOT_DATA_DIR"; do
