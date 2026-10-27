@@ -116,6 +116,7 @@ Terms used below:
 ### D. Applying updates in a patch run
 
 - **FR-025:** In an `os_update` run with mode `full` or `security`, each included updater must run after the apt steps have finished (upgrade, verification, post-run refresh) and after rIOt's managed holds have been restored.
+  > Superseded for version 2 runs by DIETPI-REFRESH-001: the post-run refresh now follows the updater step, not the other way round.
 - **FR-026:** No extra updater may run in mode `repair`.
 - **FR-027:** No extra updater may run when the apt part of the run did not succeed, including failed hold restoration. The result must record the updater as skipped with reason `apt_not_successful`.
 - **FR-028:** An updater must be included in a run if, and only if, at the start of its step: it is enabled, its freshly re-read status is `update_available`, and the run was not dispatched with extra updaters excluded (FR-050). Otherwise it must be recorded as skipped with a reason (`not_enabled`, `nothing_pending`, `status_unknown`, `excluded_by_operator`).
@@ -452,6 +453,8 @@ Detection criteria use fixture directories (SC-004). Apply criteria use an injec
 - **Given** a full run on an enabled, pending DietPi host
 - **When** the run's steps are recorded
 - **Then** the DietPi call comes after upgrade, verification, post-run refresh and hold restoration
+
+> Superseded for version 2 runs by DIETPI-REFRESH-001: the post-run refresh now follows the DietPi call, so it is no longer among the steps that come before it.
 
 ### AC-021: Never in repair, never after an apt failure [Maps to FR-026, FR-027]
 - **Given** an enabled, pending DietPi host

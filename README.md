@@ -3114,6 +3114,8 @@ The new helper compares a fingerprint of the apt configuration files taken just 
 - A failed or skipped extra refresh does not change the run outcome. The run summary gets a note: `post-run package list refresh failed: ...` or `post-run package list refresh skipped: ...`.
 - After every successful refresh the helper sets the modification time of `/var/lib/apt/lists` to now. A refresh that downloads nothing otherwise leaves that time unchanged, and the agent would keep reporting `stale`. If the helper cannot do this, it adds a `[lists_stamp]` line to the run output and carries on. It refuses a symlink or a directory not owned by root.
 
+On a run that includes an extra updater (DietPi), the check happens once, after the updater's step, not after the upgrade. A DietPi update that rewrites apt configuration, such as `/etc/apt/preferences.d/dietpi-raspberrypi`, therefore no longer leaves "Package lists out of date" behind. On such a run the 80-minute budget is the time basis only when the helper verified the service's 85-minute backstop in that run. Otherwise the 30-minute basis applies. The full rules are in [Runs with extra updaters](docs/ops/os-maintenance.md#runs-with-extra-updaters). The fix reaches a device only through a root re-run of `install.sh`.
+
 The helper protocol did not change, so old and new agents and helpers work together.
 
 ### What ships where
