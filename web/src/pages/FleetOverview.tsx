@@ -6,12 +6,13 @@ import { errorMessage } from '../api/errors'
 import { useDevices } from '../hooks/useDevices'
 import { useFeatures } from '../hooks/useFeatures'
 import { useActivity } from '../hooks/useActivity'
-import { isExpectedOffline } from '../utils/activity'
+import { isAgentUpdating, isExpectedOffline } from '../utils/activity'
 import { isVersionOlder } from '../utils/version'
 import { STALE_PATCH_LABEL, STALE_SECURITY_QUALIFIER, isBlocked, isNeedsYou, normalizeFreshness } from '../utils/patchFlow'
 import { pendingExtraNames } from '../utils/extraUpdaters'
 
 import ActivityLabel from '../components/ActivityLabel'
+import AgentUpdatingVersion from '../components/AgentUpdatingVersion'
 import PatchBadge from '../components/PatchBadge'
 import RebootClassBadge from '../components/RebootClassBadge'
 import SetupGuide from '../components/SetupGuide'
@@ -323,7 +324,7 @@ export default function FleetOverview() {
                         </span>
                       )}
                     </Link>
-                    {activityByDevice.get(d.id) && (
+                    {activityByDevice.get(d.id) && !isAgentUpdating(activityByDevice.get(d.id)) && (
                       <div className="mt-1">
                         <ActivityLabel activity={activityByDevice.get(d.id)!} newestAgentVersion={newestAgentVersion} />
                       </div>
@@ -350,7 +351,9 @@ export default function FleetOverview() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{d.short_id}</td>
                   <td className="px-4 py-3 text-sm text-gray-400">{d.arch}</td>
                   <td className="px-4 py-3 text-sm font-mono">
-                    {d.agent_version ? (
+                    {isAgentUpdating(activityByDevice.get(d.id)) ? (
+                      <AgentUpdatingVersion activity={activityByDevice.get(d.id)!} newestAgentVersion={newestAgentVersion} />
+                    ) : d.agent_version ? (
                       <span className={isAgentOutdated(d.agent_version) ? 'text-amber-400' : 'text-gray-400'}>
                         {d.agent_version}
                         {isAgentOutdated(d.agent_version) && (

@@ -36,16 +36,18 @@ type stubCodeResponse struct {
 }
 
 type stubIDTokenClaims struct {
-	Audience         string
-	Subject          string
-	Nonce            string
-	Email            string
-	HasEmail         bool
-	EmailVerified    bool
-	HasVerified      bool
-	ExpiresIn        time.Duration
-	OmitIDToken      bool
-	MalformedIDToken bool
+	Audience          string
+	Subject           string
+	Nonce             string
+	Email             string
+	HasEmail          bool
+	EmailVerified     bool
+	HasVerified       bool
+	PreferredUsername string
+	Name              string
+	ExpiresIn         time.Duration
+	OmitIDToken       bool
+	MalformedIDToken  bool
 }
 
 func newStubIDP(t *testing.T) *stubIDP {
@@ -162,6 +164,12 @@ func (idp *stubIDP) signIDToken(c stubIDTokenClaims) (string, error) {
 	}
 	if c.HasEmail {
 		claims["email"] = c.Email
+	}
+	if c.PreferredUsername != "" {
+		claims["preferred_username"] = c.PreferredUsername
+	}
+	if c.Name != "" {
+		claims["name"] = c.Name
 	}
 	if c.HasVerified {
 		claims["email_verified"] = c.EmailVerified

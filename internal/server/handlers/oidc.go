@@ -189,7 +189,7 @@ func (h *Handlers) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// (FR-028, OQ-2).
 	firstSeen := h.recordExternalIdentity(r.Context(), claims, ip)
 
-	if err := h.issueActorSessionCookie(w, r, time.Now(), "oidc", claims.Issuer+"|"+claims.Subject, claims.Subject); err != nil {
+	if err := h.issueActorSessionCookie(w, r, time.Now(), "oidc", claims.Issuer+"|"+claims.Subject, claims.DisplayName()); err != nil {
 		slog.Error("issue session cookie after sso login", "error", err.Error())
 		ssoErrorRedirect(w, r, oidc.CodeFailed)
 		return

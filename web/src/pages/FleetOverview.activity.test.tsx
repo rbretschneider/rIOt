@@ -99,6 +99,13 @@ async function rowOf(hostname: string): Promise<HTMLElement> {
   return link.closest('tr') as HTMLElement
 }
 
+/** The compact Version cell of an agent update; its hover title holds the full label, actor and start. */
+async function findUpdating(label: string, scope: HTMLElement = document.body): Promise<HTMLElement> {
+  const cells = await within(scope).findAllByTestId('agent-updating')
+  const cell = cells.find(c => (c.getAttribute('title') ?? '').startsWith(`${label} by `))
+  expect(cell, `an updating Version cell titled "${label} by ..."`).toBeDefined()
+  return cell!
+}
 beforeEach(() => {
   vi.clearAllMocks()
   ws.handlers.clear()
@@ -121,9 +128,10 @@ describe('[AC-024] fleet agent update shows what is happening', () => {
 
     for (const d of devices) {
       const row = await rowOf(d.hostname)
-      await within(row).findByText('Updating agent 2.77.0 → 2.78.0')
-      expect(within(row).getByText(/by ryan/), `${d.hostname} must name the actor`).toBeInTheDocument()
-      expect(within(row).getByText('5m ago'), `${d.hostname} must show when the update started`).toBeInTheDocument()
+      const cell = await findUpdating('Updating agent 2.77.0 → 2.78.0', row)
+      expect(cell.getAttribute('title'), `${d.hostname} must name the actor`).toContain('by ryan')
+      expect(cell.getAttribute('title'), `${d.hostname} must show when the update started`).toContain('· started ')
+      expect(within(cell).getByText('2.78.0'), `${d.hostname} shows the version being installed`).toBeInTheDocument()
     }
   })
 
@@ -131,11 +139,12 @@ describe('[AC-024] fleet agent update shows what is happening', () => {
     vi.mocked(api.getDevices).mockResolvedValue(devices)
     serveActivities(agentUpdates)
     const first = renderWithProviders(<FleetOverview />, { timeZone })
-    await screen.findAllByText('Updating agent 2.77.0 → 2.78.0')
+    await findUpdating('Updating agent 2.77.0 → 2.78.0')
     first.unmount()
 
     renderWithProviders(<FleetOverview />, { timeZone })
-    const labels = await screen.findAllByText('Updating agent 2.77.0 → 2.78.0')
+    await findUpdating('Updating agent 2.77.0 → 2.78.0')
+    const labels = screen.getAllByTestId('agent-updating')
     expect(labels, 'every device must show the label in the new session').toHaveLength(3)
   })
 
@@ -144,7 +153,7 @@ describe('[AC-024] fleet agent update shows what is happening', () => {
     serveActivities([agentUpdates[0]], '')
     renderWithProviders(<FleetOverview />, { timeZone })
 
-    expect(await screen.findByText('Updating agent')).toBeInTheDocument()
+    expect(await findUpdating('Updating agent')).toBeInTheDocument()
   })
 })
 
