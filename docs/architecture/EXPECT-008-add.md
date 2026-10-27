@@ -4,9 +4,34 @@
 - **FRD Reference:** `docs/requirements/EXPECT-008-frd.md` (revision 1, commit 05144a7; DEC-1 to DEC-8 at the recommended option)
 - **Parent designs:** `docs/architecture/EXPECT-001-add.md` (windows, Tracker, `finishWindow`, escalation markers, push ceiling, restart grace, activity API) and `docs/architecture/EXPECT-002-add.md` (self-update record pattern: a `commands` row with its own origin, restricted actor, shape CHECK, unique open index, cap, stuck-record handling)
 - **Security reviews inherited:** `docs/security/EXPECT-001-security-review.md` (C-1 to C-8) and `docs/security/EXPECT-002-security-review.md` (C-1 to C-6). The Security addendum maps each condition to this design
+- **Security review of this story:** `docs/security/EXPECT-008-security-review.md` (commit 7ed29b4, APPROVED WITH CONDITIONS C-1 to C-8). Revision 2 folds them in
 - **Author:** Architect Agent
 - **Date:** 2026-10-27
-- **Status:** DRAFT, revision 1 (for security review, then implementation)
+- **Status:** DRAFT, revision 2 (security conditions folded in; for implementation)
+
+## Changelog
+
+### Revision 2: security review conditions C-1 to C-8
+
+Every change is on the installer side (Part I), in the docs list (Part D), or in test and QA lists. The Part G and Part W **design** is unchanged from revision 1. Part G gains only four handler tests (C-7), listed in Section 4.5 "Rev 2 delta for Part G". Part W has no delta.
+
+| Item | Source | What changed | Where |
+|---|---|---|---|
+| The installer's trust anchors are **exactly** the snapshot in every trust-file row: `--cacert <snapshot>` plus `--capath <empty root-only dir>`, under an emptied environment. A system-store test with a positive control proves it on both images | C-1 (SEC-001, HIGH) | AD-015 property P-1 and table; AD-016 `TLS_ARGS`; Section 8 AC-005; Section 8.3 | AD-015, AD-016, 4.2, 8 |
+| The response is read through `head -c 4096` into a ≤ 4096-byte file. The bound no longer relies on `--max-filesize`. The status code goes through curl's stderr write-out into its own file. Oversize-body test added | C-2 (SEC-002) | AD-016 step 5; AD-012 "Installer, on the device"; Section 8 AC-004 | AD-012, AD-016, 8 |
+| The notice runs with stdin from `/dev/null` and stderr to `/dev/null`. Only curl reads a pipe, its own config pipe from `printf`. A two-level structure (worker emits one token, wrapper prints one fixed line) guarantees exactly one line, even on an internal error. Piped-script and forced-internal-error tests added | C-3 (SEC-003) | AD-013 call site; AD-016 steps 1 to 3 and 8; Section 8 AC-001, AC-004 | AD-013, AD-016, 8, 9 |
+| `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C` around `timeout` and curl. Parsing and validation run under `LC_ALL=C`. Key-log and CA-variable test added | C-4 (SEC-004) | AD-016 steps 2 and 5; Section 8 AC-006 | AD-014, AD-016, 8 |
+| The key pattern is exactly `^riot_[0-9a-f]{64}$`. The awk plain-scalar set gains `_`. Every EX8 fixture key uses the production format | C-5 (SEC-005) | AD-014; Section 8 AC-001, AC-006, AC-007 | AD-014, 8 |
+| **Option chosen: close the race.** `notice_snapshot` opens the file first, then checks that the opened inode equals the path's lstat (regular file, one link), then reads from the opened descriptor. R-1 is restated as closed; R-3 now lists every snapshot | C-6 (SEC-006) | AD-014; Residuals | AD-014, Residuals |
+| QA gate additions and four handler tests | C-7 | Section 13; Section 8.3; Section 4.5 | 4.5, 8, 13 |
+| The budget acceptance stays in Open points, and the README residuals state it in the review's terms. D8 asserts the text | C-8 | Section 4.4; Section 12 note 9; Open points | 4.4, 12 |
+| The agent honours proxy variables in the "no trust file" case. The text is corrected; the installer keeps `--noproxy '*'` | INFO-8 | Section 2.1; AD-015 | 2.1, AD-015 |
+| Maintenance-lock descriptor 9 is not inherited by the notice | INFO-5 (optional; taken) | AD-013 call site | AD-013 |
+| CHANGELOG states "migrate down to 34 before rolling the image back" | INFO-6 | Section 4.4; Section 14 | 4.4, 14 |
+
+### Revision 1
+
+The first version (commit 5e7cc31, with the AD-016 time-bound wording fix applied by Clod).
 
 ---
 
@@ -17,7 +42,7 @@ Ryan was not reachable. No business question blocks the design; every open point
 | Item | Answer |
 |---|---|
 | **Q-1** Mechanism, and does it work for agents ≤ 2.83.0? | **(a) + (c).** The installer sends one authenticated notice before it stops the agent (AD-001). The server stores it as a `commands` row with a new origin, `installer`, on the EXPECT-002 pattern (AD-003). No agent change. It works on the very next installer re-run on every device that runs any deployed agent version, because the agent is not involved. (b) is rejected: it needs a new agent on every device first, so the next re-run on each device would still page, and SIGTERM cannot tell a reinstall from a reboot, an `apt` restart or a manual stop |
-| **Q-2** Can the installer honour every trust setting with stock tools? | Yes for the configurations the installer and the agent write themselves: plain `http://`, `https://` with the TOFU-pinned `/etc/riot/server.crt`, `https://` with a CA file in `/etc/riot`, `https://` against public roots, and mTLS with `/etc/riot/client.crt` and `client.key`. It uses `curl`, `awk`, `head`, `stat`, `timeout` and `wc`, all present on stock Debian, Raspberry Pi OS and DietPi. **Skipped** (one "not notified" line, alerting as today): `tls_verify: false` without a pinned server certificate; a `server_cert_pin` without a pinned server certificate; any certificate or key path outside `/etc/riot`, or one that is not a plain regular file; a non-literal `tls_verify`; a host with `wget` but no `curl` (AD-015, AD-016, X-2) |
+| **Q-2** Can the installer honour every trust setting with stock tools? | Yes for the configurations the installer and the agent write themselves: plain `http://`, `https://` with the TOFU-pinned `/etc/riot/server.crt`, `https://` with a CA file in `/etc/riot`, `https://` against public roots, and mTLS with `/etc/riot/client.crt` and `client.key`. It uses `curl`, `env`, `awk`, `head`, `stat`, `timeout` and `wc`, all present on stock Debian, Raspberry Pi OS and DietPi. In a trust-file row the anchor set is exactly the snapshot (AD-015 P-1). **Skipped** (one "not notified" line, alerting as today): `tls_verify: false` without a pinned server certificate; a `server_cert_pin` without a pinned server certificate; any certificate or key path outside `/etc/riot`, or one that is not a plain regular file; a non-literal `tls_verify`; a host with `wget` but no `curl` (AD-015, AD-016, X-2) |
 | **Q-3** Any interactive prompt between stop and start? | **No.** Verified: `systemctl stop riot-agent` (install.sh l.991) and `systemctl start riot-agent` (l.1192) have no prompt between them. `ask_yn` (l.497) runs only on a fresh install, before any lock. `require_shutdown_agreement` (l.406, called at l.1003 and l.1138) is a non-interactive consistency check. Its failure, and every other `fail` after the stop (l.994, l.1001, l.1173, l.1177, l.1178), leaves the agent stopped: the device then escalates once at the bound (NFR-010). The notice stays before the stop. The README states that the 10-minute budget runs from the notice to the agent's registration and that no prompt sits inside it |
 | **Q-4 / FR-029** Rollout | Section 14. A server release and a hawaii deploy are required. No device needs a new agent or any extra step. The installer change is live on merge; until the server is deployed, a re-run prints "not notified" and pages as today. The first silent re-run is the first one after the hawaii deploy is verified |
 
@@ -25,7 +50,7 @@ Ryan was not reachable. No business question blocks the design; every open point
 
 ## 1. Summary
 
-Before `install.sh` stops the agent on a registered device, it sends one notice: `POST /api/v1/devices/{id}/events` with the new type `agent_reinstall_started`. The notice is authenticated with the device key read from `/etc/riot/agent.yaml`, and it goes to the same URL under the same trust settings the agent uses. The key travels only through `curl`'s standard input, never on a command line. The attempt is hard-bounded to 10 s and can never change the installer's result.
+Before `install.sh` stops the agent on a registered device, it sends one notice: `POST /api/v1/devices/{id}/events` with the new type `agent_reinstall_started`. The notice is authenticated with the device key read from `/etc/riot/agent.yaml`, and it goes to the same URL the agent uses. Its trust anchor is never wider than the agent's. The key travels only through `curl`'s standard input, never on a command line. curl runs in an emptied environment. The attempt reads no installer input, writes exactly one line, stores at most 4096 response bytes, is hard-bounded to 10 s, and can never change the installer's result.
 
 The server turns an accepted notice into one `commands` row with `action = 'agent_update'` and a new origin, `installer`. The row is created in `running`, with a 10-minute deadline. This reuses the whole EXPECT-001/002 machinery: the window loader, the deletion exemption, the escalation markers, the push ceiling, the activity API and the command history.
 
@@ -45,12 +70,12 @@ One migration (000035). No agent change, no new dependency.
 
 | Area | Where | Relevant facts |
 |---|---|---|
-| Installer, reinstall path | `scripts/install.sh` | `set -euo pipefail` (l.2). `PATH` fixed (l.156), `umask 077` (l.158). `STAGE` is a 0700 dir under `/tmp`, removed by the `EXIT` trap (l.163-181). `CONFIG_EXISTED` (l.489). Prompts only when no config exists (l.553). The lock and validation block (l.700-988): tool checks, the maintenance lock (l.775), native package locks, the candidate sudoers check (l.933), unit verification (l.963), the backup (l.965), the effective policy check (l.978), user and groups (l.983-988). Stop at l.990-992, guarded by `LoadState != not-found`. Bootstrap re-enrolment deletes the config (l.1072). Start at l.1192 |
-| Installer config readers | l.199-388 | `config_facts` snapshots `agent.yaml` into `STAGE` (`timeout 5 head -c 65537`), rejects NUL and over 64 KiB, and parses it with one mawk-safe awk pass. It sits between the `BEGIN`/`END shutdown-config-classifier` markers, which `test_EU_AC016_classifier_agrees_on_every_awk` sources. The config is **riot-writable**, so it is untrusted input |
+| Installer, reinstall path | `scripts/install.sh` | `set -euo pipefail` (l.2). `PATH` fixed (l.156), `umask 077` (l.158). `STAGE` is a 0700 dir under `/tmp`, removed by the `EXIT` trap (l.163-181). `CONFIG_EXISTED` (l.489). Prompts only when no config exists (l.553). The lock and validation block (l.700-988): tool checks, the maintenance lock on fd 9 (l.774-775), native package locks, the candidate sudoers check (l.933), unit verification (l.963), the backup (l.965), the effective policy check (l.978), user and groups (l.983-988). Stop at l.990-992, guarded by `LoadState != not-found`. Bootstrap re-enrolment deletes the config (l.1072). Start at l.1192. The documented invocation is `curl … \| sudo bash -s --`, so the script itself is the installer's stdin |
+| Installer config readers | l.199-388 | `config_facts` snapshots `agent.yaml` into `STAGE` (`timeout 5 head -c 65537`), rejects NUL and over 64 KiB, and parses it with one mawk-safe awk pass under `LC_ALL=C`. It sits between the `BEGIN`/`END shutdown-config-classifier` markers, which `test_EU_AC016_classifier_agrees_on_every_awk` sources. The config is **riot-writable**, so it is untrusted input |
 | Installer downloads | `download_file` l.419 | `curl` preferred, `wget` fallback |
 | Agent config | `internal/agent/config.go` l.151-171 | `server.url`, `server.api_key`, `server.tls_verify` (**default true when absent**, l.208), `ca_cert_file`, `client_cert`, `client_key`, `bootstrap_key`, `server_cert_pin`, `agent.device_id`. The agent saves the file with `yaml.v3` (4-space indent, plain or quoted scalars, l.355-368). The installer writes 2-space indent with double quotes (install.sh l.1083) |
-| Agent identity | `register.go` l.106-216; `handlers.go` l.444-446, l.1522 | Device ID = canonical UUID. Device key = `riot_` + 64 hex. Both are saved to `agent.yaml` after the first registration |
-| Agent TLS | `agent.go` l.204-231, l.504-593; `http_client.go` l.159-253 | **https with `/etc/riot/server.crt` present:** at start the agent sets `CACertFile = server.crt` and `TLSVerify = true` in memory, whatever the file says. Its root pool is then exactly that certificate. **https without it:** TOFU found no self-signed certificate. `tls_verify: false` means `InsecureSkipVerify`. Otherwise the pool is `ca_cert_file` (if readable), else the system roots. **mTLS:** the agent presents the client certificate only when both `client_cert` and `client_key` are set and load. `server_cert_pin` is compared only during the TOFU fetch, never at the handshake. Runtime pinning **is** the `server.crt` trust anchor. No proxy is used (custom `Transport`, systemd environment) |
+| Agent identity | `register.go` l.106-216; `handlers.go` l.444-446, l.1522 | Device ID = canonical UUID. Device key = `riot_` + 64 lowercase hex (`generateAPIKey`, also used by rotation). Both are saved to `agent.yaml` after the first registration |
+| Agent TLS | `agent.go` l.204-231, l.504-593; `http_client.go` l.149-253 | **https with `/etc/riot/server.crt` present:** at start the agent sets `CACertFile = server.crt` and `TLSVerify = true` in memory, whatever the file says. Its root pool is then exactly that certificate (Go never adds system roots to a non-nil `RootCAs`). **https without it:** TOFU found no self-signed certificate. `tls_verify: false` means `InsecureSkipVerify`. Otherwise the pool is `ca_cert_file` alone (if readable), else the system roots. **mTLS:** the agent presents the client certificate only when both `client_cert` and `client_key` are set and load. `server_cert_pin` is compared only during the TOFU fetch, never at the handshake; runtime pinning **is** the `server.crt` trust anchor. **Proxy (corrected, INFO-8):** the custom `Transport` of `NewHTTPClientWithTLS` uses no proxy. In the "no trust file, verification on" case the agent uses `NewHTTPClient` (Go's default transport), which honours proxy environment variables; no systemd unit sets them today |
 | Agent stop | `agent.go` l.353-371 | SIGTERM → `shuttingDown`, wait `AgentShutdownGrace`, no message to the server (≤ 2.83.0) |
 | Agent event route | `router.go` l.200-213; `middleware/auth.go` | `DeviceAuth`: a missing key → 401; an unknown or revoked key → 401; a key for another `{id}` → 403. Then `MTLSDeviceAuth` when a CA is on, and the ingest bucket (120 burst, 2/s per device) |
 | `ReceiveAgentEvent` | `handlers.go` l.1181-1229 | **An unknown type returns 400 `{"error":"unsupported event type"}`** before any storage. The extra-updater types branch to their own handler (l.1194). EXPECT-002 types are stored with a link |
@@ -59,7 +84,7 @@ One migration (000035). No agent change, no new dependency.
 | Tracker | `expect/*` | `ExpectPolicyFor` (models/expect.go l.189). `evaluate` delegates on `policy.SelfUpdate` (window.go l.129). So do `finishWindow` (finish.go l.149), `NoteOnline` (tracker.go l.601), the eager FR-020 skip (tick.go l.105), `escalateDevice` and `markDeviceEscalated` (escalate.go l.132, l.157), activity (activity.go l.109) and the escalation rebuild (tracker.go l.1055). `trimCommand` keeps `Origin` (l.272) |
 | Messages | `models/expect.go` l.418, l.439 | Suppressed offline: `Device %s went offline during %s %s (expected%s)` with action label plus actor phrase. Online: `Device %s came online after %s %s (offline %s)` |
 | Web | `utils/activity.ts`, `utils/selfUpdate.ts`, `components/SelfUpdateDetails.tsx`, `ActivityLog.tsx`, `docker/CommandProgress.tsx`, `ActivityLabel.tsx`, `pages/FleetOverview.tsx` l.327-354 | `isAgentUpdating` turns any `agent_update` host or agent activity into the compact Version-cell spinner (PR #43). Other activities use the compact one-line `ActivityLabel`, with the actor and start time in the hover title (PR #44) |
-| Installer CI | `.github/workflows/ci.yml` l.111-123 | `debian:bookworm-slim` and `trixie-slim`, with network on (for `apt-get`). It installs `python3 openssl sudo systemd ca-certificates`. awk is **mawk**. There is **no curl** in the image: the fixture writes a stub `/usr/bin/curl` (test file l.136) |
+| Installer CI | `.github/workflows/ci.yml` l.111-123 | `debian:bookworm-slim` (curl 7.88.1, OpenSSL 3.0) and `trixie-slim` (curl 8.x), with network on (for `apt-get`). It installs `python3 openssl sudo systemd ca-certificates`. awk is **mawk**. There is **no curl** in the image: the fixture writes a stub `/usr/bin/curl` (test file l.136). The fixture always runs `bash install.sh`, never a piped script |
 | Fixture `systemctl` stub | test file l.157-203 | `is-active` falls to `*) exit 3` today, so every existing reinstall fixture has an "inactive" agent |
 
 ### 2.2 What is missing
@@ -108,6 +133,7 @@ See Section 4: three independent parts (Go server, installer, web) plus docs.
   5. **Response.** `200 {"status":"ok","reinstall":"<disposition>"}`. The disposition is one of `created`, `open_record`, `capped`, `device_offline` or `unavailable`.
   6. **No `events` row is written for the notice** (NFR-005, AC-016, AC-021). `message`, `severity` and every other field of the body are ignored (FR-012).
 - A body that is not valid JSON → 400 `{"error":"invalid request body"}`, as today.
+- The two server-authored types (`agent_reinstall_unconfirmed`, `agent_reinstall_paused`) are **not** accepted on this route: they fall to the existing `default` (400). C-7 tests this.
 
 **Rationale.**
 - **Old servers fail closed.** On every deployed server, an unknown type is answered 400 before anything is stored (`handlers.go` l.1197-1199). A new installer against an old server therefore records nothing and prints "not notified" (FR-028, AC-024).
@@ -320,7 +346,7 @@ Same table as EXPECT-002 AD-007, with origin `installer`:
 | `agent_reinstall_unconfirmed` | server | yes, marker `outcome` | warning | ≤ 1 per record |
 | `agent_reinstall_paused` | server | yes: cap (`command_id ''`) or stuck (marker `stuck`) | warning | cap ≤ 1 per device per 24 h; stuck ≤ 1 per record |
 
-None is routed through rules or dispatched, and none consumes the ceiling.
+None is routed through rules or dispatched, and none consumes the ceiling. The two server-authored types are never accepted from the agent route (AD-002).
 
 **Templates.** `<host>` = `SafeName(hostname)`, or `device` when there is none. `<id8>` = `ShortCommandID`. Times are `15:04` in `time.Local`.
 
@@ -352,14 +378,15 @@ All texts are at most 512 bytes by construction. The cap event goes through `San
 | Request work | Per notice: 1 device read plus 1 transaction (lock, ≤ 4 selects, ≤ 3 writes). Per registration: 1 select plus ≤ 1 update | n/a |
 | Logs | Per notice, accepted or refused: Debug only. Per suppressed transition: Debug (existing). Escalation: 1 Info (existing). Errors: Service `logThrottle` per device, Tracker `warnThrottled` per kind per minute | n/a |
 | WebSocket | `command_update` ≤ 3 per record (create, terminal, retire). `activity_update` on change only | n/a |
-| Installer, on the device | **0 files left**: the notice dir `$STAGE/notice` (0700, root) is removed at the end of the attempt, and `$STAGE` by the existing `EXIT` trap. 0 log files. Exactly 1 stdout line when a notice is attempted, 0 when skipped under FR-002 | n/a |
+| **Installer, response data (C-2)** | **≤ 4096 bytes stored and read**, whatever the transfer encoding or the curl version. curl writes the body to its stdout, a pipe into `head -c 4096 > "$NS/response"`. `head` stops after 4096 bytes and curl then fails on a closed pipe (rc 23, or 141) and stops reading. curl's own in-memory receive buffer is a fixed size, not proportional to the body. The status code goes through curl's stderr write-out into `"$NS/status"` (≤ 16 bytes read). `--max-filesize 4096` stays only as an early abort for a declared length (rc 63); **the bound does not depend on it**, because curl 7.88 ignores it for an undeclared length | n/a |
+| Installer, on the device | **0 files left on a normal exit**: the notice dir `$STAGE/notice` (0700, root; it holds the config snapshot, up to three trust snapshots (`ca.pem`, `client.crt`, `client.key`), the empty `no-ca` dir, `response` ≤ 4096 bytes and `status`) is removed at the end of the attempt, and `$STAGE` by the existing `EXIT` trap. 0 log files. Exactly 1 stdout line when a notice is attempted, 0 when skipped under FR-002 | n/a |
 | Installer, time | ≤ 10 s per run (AD-016) | n/a |
 
-**Abuse budget (NFR-007; accepted on Ryan's behalf, as EXPECT-002 C-5):**
+**Abuse budget (NFR-007; accepted on Ryan's behalf, as EXPECT-002 C-5; C-8):**
 - A holder of a device's key can delay that device's offline alert by < 10 min per record and < 60 min per rolling 24 h (6 records).
 - Combined with EXPECT-002's separate budget, that is < 120 min.
 - Every covered transition is stored as `info`. A device still offline at a bound escalates once.
-- Records cannot be chained across an outage: a notice for an offline device is refused (DEC-4), and each record escalates at its own bound.
+- Records cannot be chained across an outage: a notice for an offline device is refused (DEC-4), and each record escalates at its own bound. Overlapping windows escalate at the earlier covering bound (review INFO-2).
 - A notice can never affect another device: `DeviceAuth` binds `{id}`, and every query is device-scoped.
 
 ### AD-013: Installer: when and where the notice is sent (FR-001, FR-002)
@@ -369,7 +396,7 @@ All texts are at most 512 bytes by construction. The cap event goes through `San
 ```
 if [ "$(systemctl show riot-agent.service -p LoadState --value)" != not-found ]; then
     if [ "$CONFIG_EXISTED" = true ] && [ -z "$RIOT_BOOTSTRAP_KEY" ] && systemctl is-active --quiet riot-agent.service; then
-        reinstall_notice || true
+        reinstall_notice </dev/null 2>/dev/null 9>&- || true
     fi
     systemctl stop riot-agent
 fi
@@ -377,98 +404,158 @@ fi
 
 This is the only call site. It is inside the Linux branch, after every pre-stop abort point: lock, signature, assets, unit verification, backup, the candidate and effective sudoers checks, and user and groups. So an aborted run never sends a notice (AC-003).
 
+**I/O isolation at the call site (C-3, INFO-5).**
+- `</dev/null`: under `curl … | sudo bash -s`, the installer's stdin is the rest of the script. Nothing in the notice can read it. Inside, only curl reads a pipe, and that pipe is its own config pipe from `printf` (AD-016 step 5).
+- `2>/dev/null`: every byte the notice writes to stderr is discarded, including bash's own diagnostics.
+- `9>&-`: the maintenance-lock descriptor (l.774) is not inherited by the notice. The installer keeps the lock; a curl that outlives an interrupted run cannot hold it.
+
 Skipped silently (no output line, no network): a fresh install; `--bootstrap-key`; a unit that is not loaded or not active; macOS. Inside `reinstall_notice`, an absent or empty `agent.device_id` or `server.api_key` is also a silent skip (FR-002).
 
 The URL given on the command line is **ignored** for the notice. The existing config is kept on a reinstall, and the agent uses its URL.
 
-### AD-014: Installer: the config reader (untrusted input, mawk-safe)
+### AD-014: Installer: the config reader (untrusted input, mawk-safe, C locale)
 
-**Decision.** New functions inside `# BEGIN reinstall-notice` and `# END reinstall-notice` markers, placed right after `download_file` (l.427). The tests source this block on its own, as they do the classifier.
+**Decision.** New functions inside `# BEGIN reinstall-notice` and `# END reinstall-notice` markers, placed right after `download_file` (l.427). The tests source this block on its own, as they do the classifier. The block must source and run with only `STAGE` and `RIOT_CONFIG_DIR` set.
 
-- **`notice_snapshot <src> <dst>`.** Requires `[ -f src ] && [ ! -L src ]` and `stat -c %h` = 1. Then `timeout 1 head -c 65537 -- src > dst`, size ≤ 65,536 bytes, no NUL (the `config_facts` checks). `dst` is in `$STAGE/notice` (0700).
-- **`notice_facts <snapshot>`** is one awk pass. It prints `name=value` lines for `url`, `key`, `id`, `verify`, `ca`, `cert`, `ckey`, `pin`, or exits non-zero to reject the file.
-  - **Whole-file reject:** a CR; a tab in the indentation; a second document (`---` after content, or `...`); a `%` directive; a top-level key seen twice.
-  - **Sections:** only top-level `server:` and `agent:` (exactly `name:`, optional ` # comment`). The first indented line fixes the child indent (2 for installer-written files, 4 for `yaml.v3`-written files). Only lines at exactly that indent are read; deeper lines and other sections are ignored.
-  - **Fields read:**
-    - in `server`: `url`, `api_key`, `tls_verify`, `ca_cert_file`, `client_cert`, `client_key`, `server_cert_pin`;
-    - in `agent`: `device_id`.
+**Locale (C-4).** The notice sets `LC_ALL=C` and exports it before any parsing (bash re-reads the locale on assignment). So every `[[ =~ ]]` class, `awk`, `stat` and `head` runs with ASCII-only character classes and English `stat %F` text.
 
-    A field seen twice → whole-file reject (yaml.v3 refuses duplicate keys, so the agent could not have started).
-  - **Accepted value forms:**
-    - empty;
-    - a plain scalar (after removing ` #…` and trailing spaces) made only of `A-Za-z0-9._:/@+=~%-`;
-    - `"…"` with no `"` or `\` inside;
-    - `'…'` with no `'` inside;
+**`notice_snapshot <src> <dst>`, open first, then verify (C-6: the race is closed).**
+1. Pre-check `[ -f "$src" ] && [ ! -L "$src" ]`, to avoid opening an obvious non-file.
+2. In a bounded child, `timeout 1 bash -c '…' notice-snapshot "$src" > "$dst"`:
+   1. `exec 3<"$1"` opens the path. A FIFO swapped in blocks here and is killed at 1 s.
+   2. `a=$(stat -c '%d:%i:%h:%F' -- "$1")` is the path's lstat **after** the open.
+   3. `b=$(stat -L -c '%d:%i:%h:%F' /proc/self/fd/3)` is the **opened** inode (`stat` inherits fd 3).
+   4. Require `a = b`, `%F = regular file` and `%h = 1`. Otherwise exit 1.
+   5. `head -c 65537 <&3`: the bytes come from the verified descriptor, never from the path again.
+3. Then `[ size ≤ 65536 ]` and no NUL, as `config_facts`.
 
-    each optionally followed by ` # comment`. Anything else (anchors, aliases, tags, flow or block scalars, escapes) for a read field → whole-file reject.
-  - **No interval expressions (`{n,m}`) and no repeated groups in any awk regex.** mawk 1.3.4-20200120 (bookworm, DietPi) does not support them. Strict validation happens in bash `[[ =~ ]]`.
-- **Validation in bash** (any failure → "not notified (agent.yaml not readable)"):
-  - `id`: `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`;
-  - `key`: `^[A-Za-z0-9._~+/=-]{16,256}$` (header- and curl-config-safe: no quote, backslash, space, CR or LF);
-  - `url`: `^(https?)://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$`, so no userinfo, query or fragment;
-  - `verify`: exactly `true`, `false`, or absent (= `true`, the agent default). Any other spelling → "trust settings not supported";
-  - `pin`: absent or `^SHA256:[0-9a-fA-F]{64}$`.
-- **Target:** `${url}/api/v1/devices/${id}/events`, concatenated as the agent does (`baseURL + path`, no slash trimming).
+Why this closes the race:
+- If the path was a symlink at the open, the opened inode is the target's, and the later lstat of the path is either the symlink (`%F = symbolic link`) or a different inode. Rejected.
+- If the path is swapped after the open, the lstat shows the new inode. Rejected.
+- Hard links are rejected by `%h = 1` on the opened inode (`protected_hardlinks` already stops `riot` from linking root files).
 
-### AD-015: Installer: trust parity table (FR-003, Q-2)
+The path is on the child's argv; it is not a secret.
+
+**`notice_facts <snapshot>`** is one awk pass (`LC_ALL=C awk … "$snapshot"`, always with a file operand). It prints `name=value` lines for `url`, `key`, `id`, `verify`, `ca`, `cert`, `ckey`, `pin`, or exits non-zero to reject the file.
+- **Whole-file reject:** a CR; a tab in the indentation; a second document (`---` after content, or `...`); a `%` directive; a top-level key seen twice.
+- **Sections:** only top-level `server:` and `agent:` (exactly `name:`, optional ` # comment`). The first indented line fixes the child indent (2 for installer-written files, 4 for `yaml.v3`-written files). Only lines at exactly that indent are read; deeper lines and other sections are ignored.
+- **Fields read:**
+  - in `server`: `url`, `api_key`, `tls_verify`, `ca_cert_file`, `client_cert`, `client_key`, `server_cert_pin`;
+  - in `agent`: `device_id`.
+
+  A field seen twice → whole-file reject (yaml.v3 refuses duplicate keys, so the agent could not have started).
+- **Accepted value forms:**
+  - empty;
+  - a plain scalar (after removing ` #…` and trailing spaces) made only of `A-Za-z0-9._:/@+=~%-` **and `_`** (C-5: the real key is `riot_…`);
+  - `"…"` with no `"` or `\` inside;
+  - `'…'` with no `'` inside;
+
+  each optionally followed by ` # comment`. Anything else (anchors, aliases, tags, flow or block scalars, escapes) for a read field → whole-file reject.
+- **No interval expressions (`{n,m}`) and no repeated groups in any awk regex.** mawk 1.3.4-20200120 (bookworm, DietPi) does not support them. Strict validation happens in bash `[[ =~ ]]`.
+
+**Validation in bash**, under `LC_ALL=C` (any failure → "not notified (agent.yaml not readable)"). An absent or empty `id` or `key` is checked first and is a silent skip (FR-002).
+- `id`: `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`.
+- `key`: **`^riot_[0-9a-f]{64}$`** (C-5). This is exactly the server's format (`generateAPIKey`, also used by rotation). It excludes quote, backslash, whitespace, CR and LF, so the curl-config argument of AD-016 holds. A leftover registration key (a device that never registered) fails here; such a device has no `device_id` either, so it is a silent skip first.
+- `url`: `^(https?)://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?$`, so no userinfo, query or fragment.
+- `verify`: exactly `true`, `false`, or absent (= `true`, the agent default). Any other spelling → "trust settings not supported".
+- `pin`: absent or `^SHA256:[0-9a-fA-F]{64}$`.
+
+**Target:** `${url}/api/v1/devices/${id}/events`, concatenated as the agent does (`baseURL + path`, no slash trimming).
+
+### AD-015: Installer: trust parity (FR-003, Q-2; C-1)
+
+**Property P-1 (C-1).** In every row below that names a trust file, the set of anchors the installer's TLS client accepts is **exactly** the snapshot. The system CA bundle, the default CA directory and any environment-supplied CA location are excluded, on every curl the installer can run on (bookworm 7.88.1 and trixie 8.x at minimum).
+
+**Mechanism, and why it is needed.**
+- `--cacert <snapshot>` replaces only curl's CA **bundle file**.
+- With the OpenSSL backend (the `curl` binary on Debian, Raspberry Pi OS and DietPi), curl also loads its compile-time default CA **directory** (Debian: `/etc/ssl/certs`) unless `--capath` is given. The security review verified this on bookworm curl 7.88.1: with only a CA-file option naming an unrelated certificate, curl still accepted a server chaining to the system store.
+- So every trust-file row passes **`--cacert "$NS/ca.pem" --capath "$NS/no-ca"`**. `$NS/no-ca` is created with `mkdir -m 0700` inside the root-only notice dir and stays empty. curl hands both to OpenSSL's `SSL_CTX_load_verify_locations(cafile, capath)`, so the store is the snapshot plus an empty hashed directory: exactly the snapshot.
+- curl runs under `env -i` (AD-016 step 5), so `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `OPENSSL_CONF`, `SSLKEYLOGFILE` and the proxy variables are never present.
+- `--ca-native` (curl ≥ 8.2) is off by default and is never passed.
+- Documentation alone is not the proof. The system-store test (Section 8 AC-005) runs the real curl on both CI images: a listener whose certificate chains to a CA added to the container's **system** store must get zero requests when `server.crt` or `ca.crt` names another certificate. A positive control in the "no trust file" row shows the same listener **is** reachable through the system store.
 
 | Config (after AD-014) | Agent behaviour | Notice |
 |---|---|---|
 | `http://…` | Sends the key in clear on every heartbeat | Sent, `--proto =http`. No new exposure (R-2) |
-| `https://…`, `/etc/riot/server.crt` present | Root pool = exactly `server.crt`; `tls_verify` and `ca_cert_file` ignored | Sent with `--cacert <snapshot of server.crt>`. A server presenting any other certificate fails the handshake before any header is sent. This is the pin (AC-005) |
+| `https://…`, `/etc/riot/server.crt` present | Root pool = exactly `server.crt`; `tls_verify` and `ca_cert_file` ignored | Sent with `--cacert <snapshot of server.crt> --capath <empty>` (P-1). A server presenting any other certificate fails the handshake before any header is sent. This is the pin (AC-005) |
 | `https://…`, no `server.crt`, `tls_verify: false` | `InsecureSkipVerify` | **Skipped**: "TLS verification is off in agent.yaml" (X-2) |
 | `https://…`, no `server.crt`, `server_cert_pin` set | TOFU pin check failed at start; falls back to CA or system roots | **Skipped**: "trust settings not supported" (X-2) |
-| `https://…`, no `server.crt`, `ca_cert_file` set | Pool = that file (system roots if unreadable) | Sent with `--cacert <snapshot>` when the path is `/etc/riot/ca.crt` or `/etc/riot/server.crt` and passes `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
-| `https://…`, no `server.crt`, no CA file | System roots | Sent with curl's default bundle (the same Debian store Go reads) |
+| `https://…`, no `server.crt`, `ca_cert_file` set | Pool = that file alone (system roots if unreadable) | Sent with `--cacert <snapshot> --capath <empty>` (P-1) when the path is `/etc/riot/ca.crt` or `/etc/riot/server.crt` and passes `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
+| `https://…`, no `server.crt`, no CA file | System roots | Sent with curl's default bundle and directory (the same Debian store Go reads). No `--cacert`, no `--capath` (review SEC-001 d) |
 | `client_cert` **and** `client_key` set (with any row above) | Presents the pair if it loads | Sent with `--cert` and `--key <snapshots> --pass ''` when the paths are exactly `/etc/riot/client.crt` and `/etc/riot/client.key` and both pass `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
 | Only one of the pair set | Ignores both | Ignored (parity) |
 | `curl` absent (`wget` only, or busybox) | n/a | **Skipped**: "curl not available" (X-2) |
 
 All the `--cacert`, `--cert` and `--key` inputs are snapshots in `$STAGE/notice`, never the live `/etc/riot` paths.
 
+**Proxy.** The installer always passes `--noproxy '*'` and runs under `env -i`. The agent uses no proxy with a trust file. In the "no trust file" case it would honour proxy variables in its unit, but no unit sets them. A direct, verified connection or "not notified" is the safe direction (review INFO-8).
+
 **Rationale.**
-- Each "sent" row trusts exactly what the running agent trusts.
+- Each "sent" row trusts exactly what the running agent trusts, never more (P-1).
 - Each "skipped" row is a configuration the stock installer and agent never write. Skipping fails toward alerting (BR-007, NFR-006).
 - Restricting file inputs to the four agent-owned paths means root never opens a file elsewhere on the riot user's say-so.
 
-**Alternative rejected.** Running `curl` as the `riot` user (`setpriv`) would give exact file-access parity, but it adds a util-linux dependency and fixture complexity for a threat (a compromised `riot`) that already holds the device key (R-1).
+**Alternative rejected.** Running `curl` as the `riot` user (`setpriv`) would give exact file-access parity, but it adds a util-linux dependency and fixture complexity for a threat (a compromised `riot`) that already holds the device key.
 
-### AD-016: Installer: secret handling, the exact invocation, time bound and output (FR-004 to FR-006, NFR-003)
+### AD-016: Installer: structure, isolation, the exact invocation, response bound, time bound and output (FR-004 to FR-006, NFR-003; C-2 to C-4)
 
-**Decision.** `reinstall_notice` is a **subshell function**, `reinstall_notice() ( … )`. In order:
-1. `{ set +x; } 2>/dev/null`. Xtrace is off before the config is read, so no traced line can contain the key. The subshell does not inherit the `EXIT` trap, so it cannot run `cleanup`.
-2. `set +e +o pipefail`; `unset CURL_CA_BUNDLE CURL_HOME SSL_CERT_FILE SSL_CERT_DIR`; `SECONDS=0`.
-3. `command -v curl` or reason 1. `NS="$STAGE/notice"; mkdir -m 0700 "$NS"`. Snapshot, parse, validate, then apply AD-015.
-4. `left=$((8 - SECONDS))`. If `left < 3` → reason "timed out".
-5. **The invocation** (the key goes only through the `printf` builtin into curl's stdin as a curl config line, so it is never in any process's argv, any file or any trace):
+**Two levels, so the output is always exactly one fixed line (C-3).**
+
+`reinstall_notice() ( … )`, the **wrapper**, is a subshell function. In order:
+1. `{ set +x; } 2>/dev/null`, then `exec </dev/null 2>/dev/null`. Stdin and stderr are isolated again inside (defence in depth after the call site). The subshell does not inherit the `EXIT` trap, so it cannot run `cleanup`.
+2. `set +e +u +o pipefail`; `LC_ALL=C; export LC_ALL`.
+3. `tok=$(notice_attempt | head -c 128)`. The **worker** `notice_attempt` runs in that command substitution and writes exactly one token to stdout and nothing else:
+   - `skip` (FR-002);
+   - `ok`;
+   - `fail:<id>`, with `<id>` from the fixed set in the table below.
+4. The wrapper prints by token. `skip` prints nothing. `ok` prints the success line. `fail:<id>` with a known `<id>` prints that id's fixed line. **Anything else** (empty output from a crash, an unset-variable abort, extra output, an unknown id) prints `==> Server not notified (internal error); a device-offline alert may follow`.
+5. `rm -rf -- "$STAGE/notice"`; `exit 0`.
+
+The key and every config value live only inside the worker's subshell. The wrapper never sees them, and only fixed strings reach the terminal.
+
+**The worker `notice_attempt`:**
+1. `SECONDS=0`. `command -v curl` or `fail:curl_missing`. `NS="$STAGE/notice"; mkdir -m 0700 "$NS"; mkdir -m 0700 "$NS/no-ca"`.
+2. Snapshot, parse and validate (AD-014). Apply AD-015 and build the `TLS_ARGS` array:
+   - `--tlsv1.2` for https;
+   - in a trust-file row, `--cacert "$NS/ca.pem" --capath "$NS/no-ca"`;
+   - with mTLS, `--cert "$NS/client.crt" --key "$NS/client.key" --pass ''`.
+3. **Stdin rule (C-3).** No command in the worker reads stdin. `awk`, `head` and `stat` always get a file operand or the verified fd 3. The only pipe reader is curl, reading its config from the `printf` pipe (step 5), and the response `head`, reading curl's stdout.
+4. `left=$((8 - SECONDS))`. If `left < 3` → `fail:timeout`.
+5. **The invocation.** The key goes only through the `printf` builtin into curl's stdin as one curl config line. It is never in any process's argv, any file or any trace. curl runs under an allowlisted environment (C-4).
 
 ```
-code=$(printf 'header = "X-rIOt-Key: %s"\n' "$key" |
-  timeout -k 1 "$left" curl -q --config - \
-    --silent --noproxy '*' --proto "=$scheme" --max-redirs 0 \
-    --connect-timeout 5 --max-time "$((left - 1))" \
-    $TLS_ARGS \
-    --user-agent riot-installer \
-    --header 'Content-Type: application/json' \
-    --data-binary '{"type":"agent_reinstall_started","severity":"info","message":"Agent reinstall started by installer"}' \
-    --max-filesize 4096 --output "$NS/response" --write-out '%{http_code}' \
-    --url "$target" 2>/dev/null)
-rc=$?
+printf 'header = "X-rIOt-Key: %s"\n' "$key" |
+  env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C \
+    timeout -k 1 "$left" curl -q --config - \
+      --silent --noproxy '*' --proto "=$scheme" --max-redirs 0 \
+      --connect-timeout 5 --max-time "$((left - 1))" \
+      "${TLS_ARGS[@]}" \
+      --user-agent riot-installer \
+      --header 'Content-Type: application/json' \
+      --data-binary '{"type":"agent_reinstall_started","severity":"info","message":"Agent reinstall started by installer"}' \
+      --max-filesize 4096 \
+      --write-out '%{stderr}%{http_code}' \
+      --url "$target" 2>"$NS/status" |
+  head -c 4096 >"$NS/response"
+st=("${PIPESTATUS[@]}"); rc=${st[1]}
+code=$(head -c 16 "$NS/status"); [[ $code =~ ^[0-9]{3}$ ]] || code=000
 ```
 
-   - `-q` must be the first argument (it ignores `.curlrc`).
-   - `$TLS_ARGS` is built from AD-015 as an array, expanded as `"${TLS_ARGS[@]}"`:
-     - `--tlsv1.2` for https;
-     - `--cacert "$NS/ca.pem"`;
-     - `--cert "$NS/client.crt" --key "$NS/client.key" --pass ''`.
+   Notes on the invocation:
+   - `-q` must be curl's first argument (it ignores `.curlrc`). `env -i` passes only `PATH` and `LC_ALL`, so there is no `HOME`, no CA variable, no `SSLKEYLOGFILE`, no `OPENSSL_CONF` and no proxy variable.
+   - **Response bound (C-2).** The body goes to curl's stdout (no `--output`), through `head -c 4096`, into a file of at most 4096 bytes. Once `head` stops, curl fails on the closed pipe (rc 23, or 141 if it dies of SIGPIPE) and reads no more.
+   - **Status code.** `%{stderr}` switches the write-out to stderr (curl ≥ 7.63.0; bookworm has 7.88.1, trixie 8.x; older apt hosts are already refused by the sudo ≥ 1.9.10 gate). With `--silent`, curl writes nothing else to stderr, and `timeout` or `env` diagnostics land in the same file. A curl that does not understand `%{stderr}` writes the code into the body instead, so `code=000` and the result is "unexpected server response" (fails safe).
    - There is no `--location`. The device ID in the URL is not a secret.
-6. **Reason mapping** (the fixed set, FR-006; never a response body):
+6. Map the result to a token:
+   - `rc ∈ {0, 23, 141}` with `code = 200`, a response file **shorter than 4096 bytes**, and a body matching `"reinstall":"(created|open_record)"` → `ok`;
+   - otherwise by the table below.
+7. The worker ends after printing its token. The wrapper removes `$NS` (step 5 above).
 
-| Condition | Line |
+| Token / condition | Line printed by the wrapper |
 |---|---|
-| `rc = 0`, `code = 200`, body (≤ 4096 bytes) matches `"reinstall":"(created\|open_record)"` | `==> Server notified: agent reinstall (offline alerts paused up to 10m)` |
+| `ok` | `==> Server notified: agent reinstall (offline alerts paused up to 10m)` |
 | 200 with `capped` / `device_offline` / `unavailable` | `…not notified (reinstall tracking paused on server)` / `(device already offline on server)` / `(server could not record it)` |
-| 200 with anything else, 3xx, rc 63 | `(unexpected server response)` |
+| 200 with anything else; a response of 4096 bytes or more (rc 23, 141, or a full file); rc 63; 3xx; `code = 000` with rc 0 | `(unexpected server response)` |
 | 400, 404, 405 | `(server does not support reinstall notices)` |
 | 401, 403 | `(device key rejected)` |
 | 429 | `(server busy)` |
@@ -477,11 +564,12 @@ rc=$?
 | rc 7 | `(server unreachable)` |
 | rc 28, 124, 137, or the budget check | `(timed out)` |
 | rc 35, 51, 53, 54, 58, 59, 60, 64, 66, 77, 80, 82, 83, 90, 91 | `(TLS verification failed)` |
+| rc 126, 127 | `(internal error)` |
 | other rc ≠ 0 | `(connection failed)` |
 | AD-014 / AD-015 skips | `(curl not available)`, `(agent.yaml not readable)`, `(TLS verification is off in agent.yaml)`, `(trust settings not supported)` |
+| empty, malformed or unknown token | `(internal error)` |
 
-   Every "not" line has the form `==> Server not notified (<reason>); a device-offline alert may follow`.
-7. `rm -rf -- "$NS"`; `exit 0`.
+Every "not" line has the form `==> Server not notified (<reason>); a device-offline alert may follow`. A response body is never echoed.
 
 **Time bound.**
 - Each snapshot is bounded by `timeout 1`, and the budget check (`left = 8 − SECONDS`, skip when below 3) absorbs any delay before curl starts.
@@ -491,6 +579,7 @@ rc=$?
 **Rationale.**
 - No temp file ever holds the key. The only `$STAGE` copy of it is the config snapshot (0700, root, removed at the end and by the trap, as `config_facts` already does).
 - Strict validation before the key is written into the curl config line makes config injection (a newline adding `output = …`) impossible.
+- The wrapper and token structure makes "exactly one line" a structural property, not a property of every branch.
 - `wget` is not used. It can carry headers only on argv or in a wgetrc file, and busybox `wget` has neither the TLS options nor `--config`. The documented install command (`curl … | sudo bash`) already requires curl.
 
 ### AD-017: Coexistence with EXPECT-001 and EXPECT-002 (FR-019, FR-027)
@@ -510,21 +599,23 @@ rc=$?
   - a reviewed `ex8Preexisting` table (file plus pattern plus reason; stale entries fail).
 
   Self-test: `TestEX8_AC026_ScannerCatchesEachForbiddenForm`. It prints the list. The EX2 scan already covers these directories; new EX8 Go tests must not contain its literals either.
-- **Web scan** `web/src/utils/reinstall.safety.test.ts` (describe `EXPECT-008 [AC-026] …`). The set is every test mentioning `EXPECT-008`, plus `utils/reinstall.ts`, `utils/activity.ts`, `components/SelfUpdateDetails.tsx`, `components/ActivityLog.tsx` and `components/docker/CommandProgress.tsx`. It uses the EX2 web patterns, and asserts the three new test files are present.
+- **Web scan** `web/src/utils/reinstall.safety.test.ts` (describe `EXPECT-008 [AC-026] …`). The set is every test mentioning `EXPECT-008`, plus `utils/reinstall.ts`, `utils/activity.ts`, `components/SelfUpdateDetails.tsx`, `components/ActivityLog.tsx` and `components/docker/CommandProgress.tsx`. It uses the EX2 web patterns, and asserts the three new web test files are present.
 - **Installer.**
   - No real power, package or agent action. The existing tripwires apply.
   - For every EX8 test, both the old `/usr/local/bin/riot-agent` and the signed candidate asset are tripwires that append `AGENT TRIPWIRE` to the trace (re-signed with the existing `resign()` helper).
   - `systemctl` and `curl` are the fixture stubs.
   - The only network is `127.0.0.1` inside the container.
+  - The system-store tests (C-1) add a test CA to the **container's** trust store and remove it in `tearDown` (`update-ca-certificates --fresh`).
+  - Every EX8 device key uses the production format `riot_` + 64 hex (C-5).
   - `test_EX8_AC026_no_power_package_or_agent_execution` statically scans the EX8 test methods' source for power verbs, `apt`/`dpkg` and the agent path in an execution position. It also asserts that no EX8 run left `POWER TRIPWIRE`, `AGENT TRIPWIRE`, `PACKAGE` or `UNEXPECTED PACKAGE` lines.
 
 ---
 
 ## 4. Component Changes
 
-Three parts that touch **disjoint files** and can be built in parallel. The contracts between them are Section 6: 6.1 (installer ↔ server) and 6.3 (server ↔ web).
+Three parts that touch **disjoint files** and can be built in parallel. The contracts between them are Section 6: 6.1 (installer ↔ server) and 6.3 (server ↔ web). Revision 2 changes only Part I, Part D and the test list in 4.5.
 
-### 4.1 Part G: Go server (one engineer)
+### 4.1 Part G: Go server (one engineer; unchanged in revision 2, see 4.5)
 
 | Action | File Path | Purpose |
 |---|---|---|
@@ -563,15 +654,15 @@ Three parts that touch **disjoint files** and can be built in parallel. The cont
 
 No router, agent, sudoers or dependency change.
 
-### 4.2 Part I: Installer and its CI (one engineer)
+### 4.2 Part I: Installer and its CI (one engineer; starts from revision 2)
 
 | Action | File Path | Purpose |
 |---|---|---|
-| MODIFY | `scripts/install.sh` | The `# BEGIN/END reinstall-notice` block (`notice_snapshot`, `notice_facts`, `reinstall_notice`) after `download_file`; the call site at l.990 (AD-013 to AD-016). Nothing else changes |
-| MODIFY | `scripts/test_install_maintenance.py` | **setUpClass:** copy the real `/usr/bin/curl` to `/usr/bin/curl.fixture-real` (once) before writing the stub. The stub gains a notice branch, taken when argv contains `--config`. It appends `NOTICE argv=<argv> parent=<cat /proc/$PPID/cmdline>` and `NOTICE header-sha256=<sha256 of the stdin header line>` to the trace (**never the raw key**). Then: with `/fixture/notice-real` present it execs the real curl with the same stdin; otherwise it emulates `/fixture/notice-mode` (`ok:<disposition>`, `http:<code>`, `rc:<n>`), printing the code and writing the body to `--output`. The `systemctl` stub gains `is-active) [ -f /fixture/agent-active ] && exit 0 \|\| exit 3`. Existing behaviour is unchanged when the flag is absent. **New helpers:** a local `127.0.0.1` HTTP/HTTPS listener in a thread (python `http.server` plus `ssl`; certificates from `openssl req -x509` with SAN `IP:127.0.0.1,DNS:localhost`; optional client-CA verification for mTLS). It records path and `sha256(X-rIOt-Key)`, answers per scenario, and has a never-answering mode and a closed port. **New tests** `test_EX8_*` (Section 8) |
-| MODIFY | `.github/workflows/ci.yml` | "Signed installer…" step: apt line adds `curl gawk`, then `update-alternatives --set awk /usr/bin/mawk`, so full runs stay on mawk while the agreement test can also use gawk (AC-007). `--network` usage unchanged |
+| MODIFY | `scripts/install.sh` | The `# BEGIN/END reinstall-notice` block after `download_file`: `notice_snapshot` (open-then-verify, AD-014), `notice_facts`, `notice_attempt` (worker), `reinstall_notice` (wrapper). The call site at l.990 with `</dev/null 2>/dev/null 9>&-` (AD-013 to AD-016). Nothing else changes |
+| MODIFY | `scripts/test_install_maintenance.py` | **setUpClass:** copy the real `/usr/bin/curl` to `/usr/bin/curl.fixture-real` (once) before writing the stub. The stub gains a notice branch, taken when argv contains `--config`. It appends `NOTICE argv=<argv> parent=<cat /proc/$PPID/cmdline>` and `NOTICE header-sha256=<sha256 of the stdin header line>` to the trace (**never the raw key**). Then: with `/fixture/notice-real` present it execs the real curl with the same stdin; otherwise it emulates `/fixture/notice-mode` (`ok:<disposition>`, `http:<code>`, `rc:<n>`), writing the code to stderr (as the `%{stderr}` write-out does) and the body to stdout. The `systemctl` stub gains `is-active) [ -f /fixture/agent-active ] && exit 0 \|\| exit 3`. Existing behaviour is unchanged when the flags are absent. **New helpers:** (1) a local `127.0.0.1` HTTP/HTTPS listener in a thread (python `http.server` plus `ssl`; certificates from `openssl req -x509` with SAN `IP:127.0.0.1,DNS:localhost`; optional client-CA verification for mTLS). It records path and `sha256(X-rIOt-Key)`, answers per scenario, and has a never-answering mode, a closed port, and a **streaming mode** (an endless chunked body with no length). (2) `system_ca(cert)`: copy a test CA to `/usr/local/share/ca-certificates/riot-ex8-test.crt` and run `update-ca-certificates`; `tearDown` removes it and runs `update-ca-certificates --fresh`. (3) `run_installer_piped(*args)`: `bash -s -- <args>` with the script file as stdin, a new session and no terminal. (4) `prod_key()`: `'riot_' + secrets.token_hex(32)`. **New tests:** `test_EX8_*` (Section 8) |
+| MODIFY | `.github/workflows/ci.yml` | "Signed installer…" step: the apt line adds `curl gawk`, then `update-alternatives --set awk /usr/bin/mawk`, so full runs stay on mawk while the agreement test can also use gawk (AC-007). `ca-certificates` (already installed) provides `update-ca-certificates`. `--network` usage unchanged |
 
-### 4.3 Part W: Web (one engineer)
+### 4.3 Part W: Web (one engineer; unchanged in revision 2)
 
 | Action | File Path | Purpose |
 |---|---|---|
@@ -592,9 +683,22 @@ No router, agent, sudoers or dependency change.
 
 | Action | File Path | Purpose |
 |---|---|---|
-| MODIFY | `README.md` | FR-030 (Section 12 note 9). EXPECT-002 strings asserted by `expect2_docs_test.go` must stay |
-| MODIFY | `CHANGELOG.md` | Entry with the Section 14 steps |
-| CREATE | `internal/server/expect8_docs_test.go` | D8 |
+| MODIFY | `README.md` | FR-030 (Section 12 note 9), including the C-8 budget sentence. EXPECT-002 strings asserted by `expect2_docs_test.go` must stay |
+| MODIFY | `CHANGELOG.md` | Entry with the Section 14 steps, including "migrate down to schema 34 before rolling the server image back" (review INFO-6) |
+| CREATE | `internal/server/expect8_docs_test.go` | D8 (asserts the FR-030 items, the C-8 budget sentence and the CHANGELOG rollout and rollback steps) |
+
+### 4.5 Rev 2 delta for Part G (tests only, C-7) and Part W (none)
+
+**Part G: four additional tests in HT8** (`internal/server/handlers/agent_event_reinstall_test.go`). No design, API or file-list change; the rev 1 handler design already behaves this way. QA gates them.
+
+| Test | Asserts |
+|---|---|
+| `TestEX8_C7_ServerAuthoredTypesRejectedOnAgentRoute` | `agent_reinstall_unconfirmed` and `agent_reinstall_paused` posted with a valid device key → 400 `unsupported event type`; no `events` row, no `commands` row |
+| `TestEX8_C7_NoticeStoresNoEventOnEveryDisposition` | `created`, `open_record`, `capped` (the cap warning is the only new event, server-authored), `device_offline` and `unavailable` → no event row of type `agent_reinstall_started`, ever |
+| `TestEX8_C7_ForeignKeyForbiddenWithMTLS` | PiCUPS's key naming PiVPN, with `MTLSDeviceAuth` in the chain and a valid PiCUPS client certificate → 403; no row |
+| `TestEX8_C7_MockGuardParityIncludesAttribution` | `TestEX8_MockGuardParity` also covers the AD-017 predicate: a running reinstall row never captures a self-update start, in the mock and in PG (pairs with `TestEX8_AC023_PG_SelfUpdateAttributionIgnoresReinstall`) |
+
+**Part W:** no change.
 
 ---
 
@@ -668,13 +772,14 @@ Existing PG tests that migrate down to 32 or 33 pass through this down unchanged
 | 200 | `{"status":"ok","reinstall":"device_offline"}` | The device is offline on the server |
 | 200 | `{"status":"ok","reinstall":"unavailable"}` | Store error, feature not wired, or identity mismatch |
 | 400 | `{"error":"invalid request body"}` | Body is not JSON |
+| 400 | `{"error":"unsupported event type"}` | `agent_reinstall_unconfirmed` / `agent_reinstall_paused` sent by a client (C-7) |
 | 401 | `{"error":"missing X-rIOt-Key header"}` / `{"error":"invalid api key"}` | `DeviceAuth` |
 | 403 | `{"error":"api key does not match device"}` | `DeviceAuth` |
 | 429 | existing ingest body | Bucket |
 
 **Old servers** answer 400 `{"error":"unsupported event type"}`.
 
-The response struct has fixed field order (`status`, then `reinstall`). The installer matches the token without depending on the order.
+The response struct has fixed field order (`status`, then `reinstall`). The installer matches the token without depending on the order, and reads at most 4096 bytes of the body.
 
 ### 6.2 Commands API for reinstall rows
 
@@ -736,10 +841,10 @@ There is no import cycle (same layering as EXPECT-002).
 
 ### 7.1 Re-run on a registered device (the 2026-10-27 timeline, AC-008)
 
-1. 13:14:xx: the installer passes every check. `systemctl is-active riot-agent` → active.
-2. `reinstall_notice` runs: snapshot, parse, validate, trust (server.crt present → `--cacert`).
-3. 13:15:00: curl POSTs → `DeviceAuth` → `ReceiveAgentEvent` → `receiveReinstallNotice` → `CreateReinstall` (online, no open record, count 0) → row R (`running`, D = 13:15:00, deadline 13:25:00) → broadcast → `Tracker.CommandChanged` → `200 created`.
-4. The installer prints "Server notified …" and runs `systemctl stop riot-agent`.
+1. 13:14:xx: the installer (possibly a piped script) passes every check. `systemctl is-active riot-agent` → active.
+2. `reinstall_notice </dev/null 2>/dev/null 9>&-` runs. The worker snapshots (open-then-verify), parses and validates under `LC_ALL=C`, and applies trust (`server.crt` present → `--cacert` plus an empty `--capath`).
+3. 13:15:00: curl, under `env -i`, POSTs → `DeviceAuth` → `ReceiveAgentEvent` → `receiveReinstallNotice` → `CreateReinstall` (online, no open record, count 0) → row R (`running`, D = 13:15:00, deadline 13:25:00) → broadcast → `Tracker.CommandChanged` → `200 created`. The body passes through `head -c 4096`; the code arrives through the stderr write-out.
+4. The worker emits `ok`; the wrapper prints "Server notified …". The installer runs `systemctl stop riot-agent`, reading its own script stream undisturbed.
 5. The next tick sends `activity_update`: "Reinstalling agent", "by installer", 13:15.
 6. 13:15:50: the detector marks the device offline. `CoverOffline(13:15:50)` → R covers `[13:15:00, 13:25:00)` → `info` event "…went offline during Agent reinstall by installer (expected, back by 13:25)", linked. No push.
 7. 13:16:10: the new agent registers. `LastHeartbeat = at` → `Update` → `NoteRegistration` → `NoteSelfUpdateRegistration` (no record) → **`NoteReinstallRegistration` → R `succeeded`, F = 13:16:10** → broadcast → `DeviceOnline` → `NoteOnline` (offlineSince 13:15:50 ∈ `[D, F)`) → "…came online after Agent reinstall by installer (offline 20s)".
@@ -770,6 +875,10 @@ Restart → migration (no-op) → `Load` (R pending) → grace → the detector'
 - New installer, old server: 400 → "Server not notified (server does not support reinstall notices); a device-offline alert may follow" → the install continues → the offline pages as today.
 - Old installer, new server: no request → no record → it pages as today.
 
+### 7.7 Hostile or broken server response (C-2)
+
+The server (or, on `http://`, anything on the path) streams an endless body of undeclared length. `head -c 4096` stores 4096 bytes and closes. curl gets a write error (rc 23) and stops. The worker emits `fail:unexpected`, and the wrapper prints "not notified (unexpected server response)". The install continues. At most 4096 response bytes ever reached `/tmp`.
+
 ---
 
 ## 8. Acceptance Criteria Mapping
@@ -783,7 +892,7 @@ Restart → migration (no-op) → `Load` (R pending) → grace → the detector'
   - **HT8** = `internal/server/handlers/agent_event_reinstall_test.go` (through the real router and `DeviceAuth`);
   - **Z8** = `internal/server/expect/safety_ex8_test.go`;
   - **D8** = `internal/server/expect8_docs_test.go`.
-- **I** = `scripts/test_install_maintenance.py`, methods `test_EX8_*`. They run in CI on bookworm-slim and trixie-slim.
+- **I** = `scripts/test_install_maintenance.py`, methods `test_EX8_*`. They run in CI on bookworm-slim and trixie-slim. **Every EX8 key is `riot_` + 64 hex** (C-5).
 - Web:
   - **WA** = `utils/activity.test.ts`;
   - **WR** = `utils/reinstall.test.ts`;
@@ -796,13 +905,13 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 
 | AC | Fulfilled by | Tests |
 |---|---|---|
-| AC-001 | AD-013, AD-016 | I: `test_EX8_AC001_one_notice_after_validation_before_stop` (real curl to the local HTTPS listener with a pinned `server.crt`: exactly one request; the trace order is `INSTALLED /etc/sudoers.d/riot-agent` < `NOTICE` < `systemctl stop riot-agent`; header sha256 equals the expected key's), `test_EX8_AC001_success_line_once_and_exit_status_unchanged` |
+| AC-001 | AD-013, AD-016 | I: `test_EX8_AC001_one_notice_after_validation_before_stop` (real curl to the local HTTPS listener with a pinned `server.crt` and a production-format key: exactly one request; the trace order is `INSTALLED /etc/sudoers.d/riot-agent` < `NOTICE` < `systemctl stop riot-agent`; header sha256 equals the expected key's), `test_EX8_AC001_success_line_once_and_exit_status_unchanged`, **`test_EX8_AC001_piped_script_runs_to_completion`** (C-3: the same accepted-notice run, executed as `bash -s` with the script on stdin: `systemctl stop riot-agent`, `INSTALLED /usr/local/bin/riot-agent` and `systemctl start riot-agent` are in the trace; "==> rIOt installed" is printed; exit status 0, as the non-piped run) |
 | AC-002 | AD-013, AD-014 | I: `test_EX8_AC002_no_notice_without_identity_or_running_agent` (subTests: fresh install, `--bootstrap-key`, no `device_id`, no `api_key`, inactive unit: no `NOTICE` line, no notice output line, exit status and installed files as for the same run with the notice code removed) |
 | AC-003 | AD-013 placement | I: `test_EX8_AC003_abort_before_stop_sends_no_notice` (subTests: invalid signature, unit validation failure, candidate policy failure, effective policy failure; agent active: no `NOTICE`, no `systemctl stop`) |
-| AC-004 | AD-016 | I: `test_EX8_AC004_server_failures_never_block_install` (emulated rc 7, rc 28, http 500, http 404, rc 6: the matching reason line, later steps done, exit 0), `test_EX8_AC004_curl_runs_under_the_time_bound` (recorded parent argv starts `timeout -k 1 8`; own argv has `--connect-timeout 5 --max-time 7`, `-q` first, `--max-redirs 0`, `--noproxy *`), `test_EX8_AC004_real_hang_ends_within_10s` (real curl to a listener that accepts and never answers: the notice phase from the `NOTICE` trace line to `systemctl stop` is ≤ 10.5 s; X-4) |
-| AC-005 | AD-015 | I: `test_EX8_AC005_untrusted_certificate_no_key_sent` (real curl, `tls_verify: true`, no `server.crt`, listener with a self-signed certificate not in the default bundle: the listener records 0 HTTP requests; one "TLS verification failed" line), `test_EX8_AC005_pinned_certificate_mismatch_no_key_sent` (`server.crt` = certificate A, listener presents B: 0 requests), `test_EX8_AC005_mtls_presents_client_certificate` (the listener requires a client certificate from a test CA: request received with the certificate; with `client.key` a symlink → no request, "trust settings not supported"), `test_EX8_AC005_tls_verify_off_skipped`, `test_EX8_AC005_pin_without_pinned_certificate_skipped`, `test_EX8_AC005_paths_outside_etc_riot_skipped` |
-| AC-006 | AD-016 | I: `test_EX8_AC006_key_never_in_argv_output_or_files` (a random marker key; runs with the listener accepting and with a closed port, each also under `bash -x`; argv-recording wrappers installed for the test's duration around `awk`, `head`, `stat`, `wc`, `tr`, `timeout`, `mkdir`, `rm` and `cat`, plus the curl stub's own and parent argv: the marker is in none; not in stdout or stderr; `grep -r` over `/tmp /var /run /root /etc /fixture /usr/local`, excluding `/etc/riot` and `/var/backups/riot_install.*`, finds nothing; `$STAGE` is gone), `test_EX8_AC006_key_reaches_only_the_printf_builtin` (static: in the `reinstall-notice` block the key variable appears only in its assignment, its `[[ =~ ]]` check and the `printf … \| … curl -q --config -` line) |
-| AC-007 | AD-014 mawk rules; CI | I: `test_EX8_AC007_reader_agrees_on_every_awk` (mawk and gawk required, busybox if present; a table of 2-space quoted, 4-space yaml.v3, comments, duplicates, anchors, CR, tabs, flow maps, second document → identical facts or identical reject), `test_EX8_AC007_full_runs_use_mawk` (`readlink -f $(command -v awk)` ends in `mawk`) |
+| AC-004 | AD-016 | I: `test_EX8_AC004_server_failures_never_block_install` (emulated rc 7, rc 28, http 500, http 404, rc 6: the matching reason line, later steps done, exit 0, **empty stderr from the notice**), `test_EX8_AC004_curl_runs_under_the_time_bound` (recorded parent argv shows `timeout -k 1 8` under `env -i PATH=… LC_ALL=C`; curl's own argv has `-q` first, `--connect-timeout 5 --max-time 7`, `--max-redirs 0`, `--noproxy *`, `--write-out %{stderr}%{http_code}` and no `--output`), `test_EX8_AC004_real_hang_ends_within_10s` (real curl to a listener that accepts and never answers: the notice phase from the `NOTICE` trace line to `systemctl stop` is ≤ 10.5 s; X-4), **`test_EX8_AC004_oversize_undeclared_body_is_bounded`** (C-2: real curl; the listener streams an endless chunked body with no length; a watcher polls `$STAGE/notice/response` every 10 ms and never sees more than 4096 bytes; the line reads "unexpected server response"; exit status unchanged), **`test_EX8_AC004_internal_error_prints_one_line`** (C-3: the block is sourced; subTests override `notice_facts` to reference an unset variable, to print two lines, and to exit 7; each prints exactly one line, "==> Server not notified (internal error); a device-offline alert may follow", and nothing on stderr), **`test_EX8_AC004_every_reason_is_one_line_and_empty_stderr`** (each AD-016 table row, emulated: exactly one stdout line from the notice, stderr empty) |
+| AC-005 | AD-015 (P-1) | I: `test_EX8_AC005_untrusted_certificate_no_key_sent` (real curl, `tls_verify: true`, no `server.crt`, listener with a self-signed certificate not in any store: 0 HTTP requests; one "TLS verification failed" line), **`test_EX8_AC005_system_store_ca_not_trusted_with_trust_file`** (C-1: a test CA is installed in the container's system store; the listener presents a certificate for `127.0.0.1` issued by it; subTest `server.crt` = a different certificate; subTest no `server.crt` and `ca_cert_file: /etc/riot/ca.crt` = a different certificate; each: 0 requests, "TLS verification failed"), **`test_EX8_AC005_system_store_positive_control`** (C-1: same CA and listener; no `server.crt`, no `ca_cert_file`, `tls_verify: true`: the request **is** received and the success line printed, which proves the negative test can tell the cases apart), `test_EX8_AC005_trust_file_rows_pass_empty_capath` (argv has `--cacert <stage>/ca.pem --capath <stage>/no-ca`, the dir was empty, and the cacert content equals the trust file), `test_EX8_AC005_pinned_certificate_mismatch_no_key_sent` (`server.crt` = certificate A, listener presents B: 0 requests), `test_EX8_AC005_mtls_presents_client_certificate` (the listener requires a client certificate from a test CA: request received with the certificate; with `client.key` a symlink → no request, "trust settings not supported"), `test_EX8_AC005_tls_verify_off_skipped`, `test_EX8_AC005_pin_without_pinned_certificate_skipped`, `test_EX8_AC005_paths_outside_etc_riot_skipped` |
+| AC-006 | AD-016 | I: `test_EX8_AC006_key_never_in_argv_output_or_files` (marker key `riot_` + 64 random hex; runs with the listener accepting and with a closed port, each also under `bash -x`; argv-recording wrappers installed for the test's duration around `env`, `awk`, `head`, `stat`, `wc`, `tr`, `timeout`, `mkdir`, `rm` and `cat`, plus the curl stub's own and parent argv: neither the key nor its 64-hex tail appears; not in stdout or stderr; `grep -r` over `/tmp /var /run /root /etc /fixture /usr/local`, excluding `/etc/riot` and `/var/backups/riot_install.*`, finds nothing; `$STAGE` is gone), `test_EX8_AC006_key_reaches_only_the_printf_builtin` (static: in the `reinstall-notice` block the key variable appears only in its assignment, its `[[ =~ ]]` check and the `printf … \| env -i … curl -q --config -` line), **`test_EX8_AC006_environment_cannot_widen_trust_or_log_keys`** (C-4: the installer runs with `SSLKEYLOGFILE=/tmp/ex8-keylog`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE` and `SSL_CERT_DIR` pointing at the system-store test CA, and `https_proxy` set: no key-log file is created; in the C-1 trust-file scenario 0 requests reach the listener, the same result as without the variables. Control subTest: the real curl invoked directly with `SSLKEYLOGFILE` against the listener **does** create the file, so the test can detect it) |
+| AC-007 | AD-014 mawk rules; CI | I: `test_EX8_AC007_reader_agrees_on_every_awk` (mawk and gawk required, busybox if present; a table of 2-space quoted, 4-space yaml.v3, comments, duplicates, anchors, CR, tabs, flow maps, second document, **a production key `riot_…` as plain, double- and single-quoted scalar** → identical facts or identical reject), `test_EX8_AC007_full_runs_use_mawk` (`readlink -f $(command -v awk)` ends in `mawk`) |
 | AC-008 | AD-002 to AD-007, AD-011 | H8: `TestEX8_AC008_TimelineNoNotification`, `TestEX8_AC008_LabelFromNoticeUntilRegistration`; HT8: `TestEX8_AC008_NoticeCreatesRecordStoresNoEvent` (200 `created`, the events table unchanged) |
 | AC-009 | Per-device records | H8: `TestEX8_AC009_TwoDevicesBackToBackZeroPushes` |
 | AC-010 | `Containers: none` | H8: `TestEX8_AC010_ContainerDeathDuringReinstallAlerts` |
@@ -822,7 +931,7 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 | AC-024 | AD-002 | I: `test_EX8_AC024_new_installer_against_old_server` (listener answers 400 `unsupported event type`, then 404: one "server does not support reinstall notices" line each, exit and files unchanged); H8: `TestEX8_AC024_ReinstallWithoutNoticeAlertsAsToday` |
 | AC-025 | AD-017 | Every existing `TestEX_*`, `TestEX2_*`, CMD-LIFECYCLE, web EXPECT-001/002 and installer fixture test passes **unmodified**; H8: `TestEX8_AC025_SelfUpdateAndCommandWindowsUnchanged` |
 | AC-026 | AD-018 | Z8: `TestEX8_AC026_NoPowerUpdateOrAgentExecution`, `TestEX8_AC026_ScannerCatchesEachForbiddenForm`; WZ8: `EXPECT-008 [AC-026] new web tests and sources spawn nothing`; I: `test_EX8_AC026_no_power_package_or_agent_execution` |
-| AC-027 | Section 14, Part D | D8: `TestEX8_AC027_ReadmeAndChangelog`. This ADD's Section 14 holds the list; Clod copies it into the PR body |
+| AC-027 | Section 14, Part D | D8: `TestEX8_AC027_ReadmeAndChangelog` (incl. the C-8 budget sentence and the CHANGELOG rollback order). This ADD's Section 14 holds the list; Clod copies it into the PR body |
 
 ### 8.1 Supporting tests
 
@@ -836,7 +945,9 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 | Registration after the bound | S8: `TestEX8_RegistrationAfterBoundIgnored` |
 | Online note only for covered offline | H8: `TestEX8_NoteOnlineOnlyForCoveredOffline` |
 | Messages | M8: `TestEX8_MessagesMatchFRD` (each AD-011 template, `SafeName` host, ≤ 512 bytes) |
-| Reader rejects injection | I: `test_EX8_reader_rejects_values_that_could_inject_curl_config` (key with `"`, `\`, a space, or a newline via a quoted scalar → "agent.yaml not readable", no curl) |
+| Reader rejects injection | I: `test_EX8_reader_rejects_values_that_could_inject_curl_config` (key with `"`, `\`, a space, or a newline via a quoted scalar, an uppercase-hex key, a 63- or 65-hex key, a key without the `riot_` prefix → "agent.yaml not readable", no curl) |
+| Snapshot race closed (C-6) | I: `test_EX8_snapshot_rejects_swapped_inode` (the block is sourced; subTests: the path is a symlink to a root file; the path is a FIFO (returns within 1.5 s); the path has two links; a `stat` wrapper swaps the path to a symlink between the open and the lstat: each rejected, and no byte of the root file reaches the snapshot) |
+| Snapshots never hold the key outside `$STAGE` | Covered by `test_EX8_AC006_key_never_in_argv_output_or_files` |
 
 ### 8.2 Inherited security-condition tests
 
@@ -852,14 +963,29 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 | EXPECT-001 C-5 (ceiling) | `TestEX8_OutcomeEventsNeverDispatchedNorCeilinged`; the escalation goes through `t.escalate` |
 | EXPECT-001 C-6 (SafeName) | `TestEX8_MessagesMatchFRD` with a hostile hostname |
 
+### 8.3 EXPECT-008 security conditions (revision 2)
+
+| Condition | Tests (all installer tests run on bookworm-slim **and** trixie-slim) |
+|---|---|
+| C-1 exact trust anchor | `test_EX8_AC005_system_store_ca_not_trusted_with_trust_file`, `test_EX8_AC005_system_store_positive_control`, `test_EX8_AC005_trust_file_rows_pass_empty_capath`, `test_EX8_AC005_pinned_certificate_mismatch_no_key_sent` |
+| C-2 response byte bound | `test_EX8_AC004_oversize_undeclared_body_is_bounded` |
+| C-3 I/O isolation, one line | `test_EX8_AC001_piped_script_runs_to_completion`, `test_EX8_AC004_internal_error_prints_one_line`, `test_EX8_AC004_every_reason_is_one_line_and_empty_stderr` |
+| C-4 allowlisted environment, C locale | `test_EX8_AC006_environment_cannot_widen_trust_or_log_keys`, `test_EX8_AC004_curl_runs_under_the_time_bound` (argv shows `env -i`) |
+| C-5 production key format | `test_EX8_reader_rejects_values_that_could_inject_curl_config`, `test_EX8_AC007_reader_agrees_on_every_awk`; every EX8 fixture uses `prod_key()` |
+| C-6 snapshot race | `test_EX8_snapshot_rejects_swapped_inode` |
+| C-7 QA gate | `TestEX8_C7_ServerAuthoredTypesRejectedOnAgentRoute`, `TestEX8_C7_NoticeStoresNoEventOnEveryDisposition`, `TestEX8_C7_ForeignKeyForbiddenWithMTLS`, `TestEX8_C7_MockGuardParityIncludesAttribution` (Section 4.5); C-1 to C-5 rows above green on both images |
+| C-8 budget in README | `TestEX8_AC027_ReadmeAndChangelog` |
+
 ---
 
 ## 9. Error Handling
 
 | Failure | Behaviour | Log / output |
 |---|---|---|
-| **Installer:** `curl` missing, config unreadable, invalid value, unsupported trust | No request; one "not notified (<reason>)" line; the install continues | stdout line only |
+| **Installer:** `curl` missing, config unreadable, invalid value, unsupported trust | No request; one "not notified (<reason>)" line; the install continues | stdout line only; stderr discarded |
 | **Installer:** DNS, refused, TLS, timeout, HTTP error, old server | As above, per the AD-016 table; the install continues; exit status unchanged | stdout line only |
+| **Installer:** oversize or endless response | ≤ 4096 bytes stored; "unexpected server response" | stdout line only |
+| **Installer:** internal error in the notice (unset variable, crash, unexpected output) | Wrapper prints "not notified (internal error)"; the install continues | stdout line only |
 | **Installer:** `systemctl stop` fails after an accepted notice | The install aborts as today; the device stays online; the record ends `not confirmed` with one warning, no push (NFR-010) | existing `ERROR:` |
 | **Installer:** abort after the stop | The agent is left stopped (existing message); the device escalates once at the bound | existing `ERROR:` |
 | Notice body not JSON | 400, as today | none |
@@ -878,17 +1004,21 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 
 | Vector | Mitigation |
 |---|---|
-| Device key exposure on the device (NFR-003) | The key passes only through the `printf` builtin into curl's stdin as a curl config line; it is never on any argv (curl, timeout, awk, head). Xtrace is off inside the subshell. Output is fixed text. No temp file holds it, except the root-only 0700 config snapshot, removed at the end and by the trap (pre-existing `config_facts` practice). curl's stderr is discarded |
-| Config injection (riot-writable `agent.yaml` read by root) | Strict bash validation of each field before use. The key charset excludes quote, backslash, space, CR and LF, so no extra curl config line can be smuggled. The URL charset excludes spaces and quotes. The ID is a canonical UUID (no path traversal). `-q` ignores `.curlrc`. The proxy and CA environment variables are unset |
-| Root reading riot-chosen files | Only the four agent paths in `/etc/riot`, regular files with one link, no symlink, ≤ 64 KiB, snapshotted into `$STAGE`. Residual symlink race R-1 |
-| Key sent to the wrong server | Only to `server.url` under the agent's own trust anchor (AD-015). Configurations without verification are skipped. No redirects |
+| Device key exposure on the device (NFR-003) | The key passes only through the `printf` builtin into curl's stdin as a curl config line; it is never on any argv (curl, timeout, env, awk, head). Xtrace is off and stderr discarded. Output is fixed text chosen by a token. No temp file holds it, except the root-only 0700 config snapshot, removed at the end and by the trap (pre-existing `config_facts` practice). curl runs under `env -i`, so `SSLKEYLOGFILE` can never make it write session secrets (C-4) |
+| Trust wider than the agent's (C-1) | In every trust-file row the anchor set is exactly the snapshot: `--cacert` plus an empty `--capath`, under `env -i` (P-1). System-store test with a positive control |
+| Config injection (riot-writable `agent.yaml` read by root) | Strict bash validation under `LC_ALL=C` of each field before use. The key is exactly `riot_` + 64 hex, so no extra curl config line can be smuggled. The URL charset excludes spaces and quotes. The ID is a canonical UUID (no path traversal). `-q` ignores `.curlrc` |
+| Root reading riot-chosen files | Only the four agent paths in `/etc/riot`. Open first, then verify that the opened inode is the path's regular, single-link file; read from the verified descriptor (C-6). A FIFO is bounded by `timeout 1` |
+| Hostile response (C-2) | ≤ 4096 bytes stored or read, independent of curl version and transfer encoding. The body is never printed |
+| Installer stream hijack under `curl \| bash` (C-3) | Notice stdin is `/dev/null`; only curl reads a pipe, its own config pipe. Piped-script test |
+| Key sent to the wrong server | Only to `server.url` under the agent's own trust anchor (AD-015). Configurations without verification are skipped. No redirects. No proxy |
 | Forged or replayed notice suppresses alerts (NFR-007) | `DeviceAuth`. ≤ 1 open record. A 10-minute bound in a DB CHECK. 6 per 24 h. Refused when the device is already offline (no chaining across an outage). Escalation at each bound. Every covered transition stored as `info`. Budget AD-012 |
 | Cross-device effect | `DeviceAuth` binds `{id}`, re-checked in the handler. Every query and the coverage are device-scoped |
+| Client posts server-authored types | 400 `unsupported event type`, nothing stored (C-7) |
 | Writes to a record by anything else | `ActorReinstall` is the only matching actor. Guards on all other actors. CHECK on status, bound, keys and params. `classifyRejected` returns `not_found`. `IsValidOrigin` excludes the origin |
 | Notice flooding | Ingest bucket. One short transaction under the per-device lock. Debug logs only. Nothing stored for refused notices |
 | Untrusted notice fields | Ignored entirely (nothing displayed comes from the notice) |
 | Old server misreading the notice | It answers 400 before storing (verified) |
-| Test safety (NFR-001) | AD-018 scans, tripwires, stubs, loopback-only listener |
+| Test safety (NFR-001) | AD-018 scans, tripwires, stubs, loopback-only listener; the system-store CA is container-only and removed in `tearDown` |
 
 ---
 
@@ -900,7 +1030,7 @@ Go tests are named `TestEX8_…`. Web `describe` titles start with `EXPECT-008 [
 | Registration | 1 select (open row) plus ≤ 1 update | `idx_commands_reinstall_open` |
 | Tracker | ≤ 1 window per device; ≤ 5 DB calls per record end | existing |
 | Sweeper | One more predicate | existing |
-| Installer | ≤ 10 s worst case; typically < 1 s | n/a |
+| Installer | ≤ 10 s worst case; typically < 1 s; ≤ 4096 response bytes | n/a |
 
 NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
 
@@ -916,25 +1046,33 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
 6. **Existing tests stay unmodified:** `TestEX_*`, `TestEX2_*` (incl. `expect2_docs_test.go`, the EX2 safety scan and its `ex2Preexisting` table), CMD-LIFECYCLE, the web EXPECT-001/002 tests and every existing installer fixture test.
    - Existing installer fixtures keep the agent "inactive" (`is-active` exits 3 without `/fixture/agent-active`), so they never reach the notice. They do gain one `systemctl is-active` trace line when `CONFIG_EXISTED` is true and no bootstrap key is given.
    - If any existing test fails **only** because of that line, or because a re-registration now also closes a reinstall record, the implementation report names it and Ryan decides. Do not edit it silently.
-7. **Installer style.** Match the file: `|| return 1` inside `if` conditions, `local` variables, no `echo` of config values, `printf` for all output. The block must source cleanly on its own (the tests source it with only `STAGE` and `RIOT_CONFIG_DIR` set). No new `trap`. Never touch `/etc/riot` contents. Keep every awk regex free of `{}` intervals and repeated groups.
-8. **Fixture.** The curl stub must never write the raw stdin; record only its sha256. The listener binds `127.0.0.1` only, in a daemon thread, closed in `tearDown`. Real-curl tests set `/fixture/notice-real`. Remove every new flag file in `setUp`, as the existing list does.
+7. **Installer style and rules.**
+   - Match the file: `|| return 1` inside `if` conditions, `local` variables, no `echo` of config values, `printf` for all output.
+   - The block must source cleanly on its own (the tests source it with only `STAGE` and `RIOT_CONFIG_DIR` set). No new `trap`. Never touch `/etc/riot` contents.
+   - Keep every awk regex free of `{}` intervals and repeated groups.
+   - **No command in the notice block reads stdin** except curl (its config pipe) and the response `head` (curl's stdout). Give `awk`, `head`, `stat`, `wc` and `tr` a file operand or the verified descriptor. Never `read` from stdin in the block.
+   - The worker prints only its single token. Everything else goes to files in `$NS` or to `/dev/null`.
+   - `LC_ALL=C` is exported before the first parse. curl is only ever run as `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C timeout … curl -q …`.
+   - Trust-file rows always pass `--cacert` **and** `--capath "$NS/no-ca"` together. The no-trust-file row passes neither.
+8. **Fixture.** The curl stub must never write the raw stdin; record only its sha256. The listener binds `127.0.0.1` only, in a daemon thread, closed in `tearDown`. Real-curl tests set `/fixture/notice-real`. Remove every new flag file in `setUp`, as the existing list does. The system-store CA is removed in `tearDown` even when the test fails (`addCleanup`). Keys come from `prod_key()` only.
 9. **README (FR-030), Part D.** It must cover:
    - when a window opens (registered device, root re-run, active agent, notice accepted) and when it does not (fresh install, `--bootstrap-key`, missing ID or key, agent not running, device already offline, open record, cap, the skipped trust configurations of AD-015, `wget`-only hosts, old server);
    - the 10-minute bound from the notice; offline-only suppression; the close at the first registration;
    - the one escalation, and the not-confirmed warning with no push;
-   - the cap of 6 per 24 h, separate from agent auto-update's, and the budget (< 60 min per day from reinstalls, < 120 min combined);
+   - the cap of 6 per 24 h, separate from agent auto-update's;
+   - **the budget, in the review's terms (C-8):** "A holder of a device's key can make offline alerts silent for less than 60 minutes per day through reinstall notices, and less than 120 minutes per day together with agent auto-update; each silent outage lasts under about 10 minutes, is stored as an info event, and pages if it lasts past the bound";
    - the "Reinstalling agent" / "by installer" label;
    - the 10-second best-effort notice and both installer output lines;
    - no prompt between stop and start (Q-3), and that a failed install after the stop escalates at 10 minutes;
    - the NFR-010 residuals.
 
-   CHANGELOG: the Section 14 steps.
+   CHANGELOG: the Section 14 steps, and "migrate down to schema 34 before rolling the server image back".
 10. **Build environment:** `GOCACHE=D:\rIOt_gocache`, `GOTMPDIR=D:\rIOt_fuzz_tmp`; `-race` in Linux CI. The installer fixture runs only in the disposable container (`RIOT_INSTALLER_FIXTURE=1`); never run it on a workstation or on Hawaii.
 11. **Work packages:**
     - G1: models, migration, repo, mocks, R8;
     - G2: commands Service, sweeper, `classifyRejected`, S8;
     - G3: expect, H8;
-    - G4: handlers, wiring, HT8;
+    - G4: handlers, wiring, HT8 (incl. the four C-7 tests);
     - G5: Z8;
     - I1: installer block and call site;
     - I2: fixture and CI;
@@ -947,19 +1085,20 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
     - the AD-017 change to an EXPECT-002 query;
     - the CI apt and `update-alternatives` change;
     - any `ex8Preexisting` entries;
-    - the X-4 real-time test.
+    - the X-4 real-time test;
+    - the curl versions observed on both CI images, and that the C-1 tests passed on each.
 
 ---
 
 ## 13. Definition of Done
 
 - [ ] Every Section 4 change is implemented. No agent, sudoers, router or dependency change.
-- [ ] Every test in Section 8, 8.1 and 8.2 exists under its name and passes. Go tests use an injected clock and never sleep. Exactly one installer test (X-4) uses real time, ≤ 10.5 s.
+- [ ] Every test in Section 8, 8.1, 8.2 and 8.3 exists under its name and passes. Go tests use an injected clock and never sleep. Exactly one installer test (X-4) uses real time, ≤ 10.5 s.
 - [ ] `go test ./...` and `cd web && npm run test:run` are green; `-race` in Linux CI. The installer fixtures are green on bookworm-slim and trixie-slim.
 - [ ] Existing `TestEX_*`, `TestEX2_*`, CMD-LIFECYCLE, web EXPECT-001/002 and installer fixture tests pass **unmodified** (AC-025).
 - [ ] Migration 000035 runs up, down and up on PostgreSQL 16; the CHECK and the unique index are PG-tested; the EXPECT-001/002 PG migration tests still pass.
 - [ ] No new lint errors (`go vet`, `tsc`, frontend lint). `bash -n scripts/install.sh` passes.
-- [ ] The AD-012 bounds appear as code comments at each bound (Go and installer).
+- [ ] The AD-012 bounds appear as code comments at each bound (Go and installer, including the 4096-byte response bound).
 - [ ] **QA gate** (EXPECT-002 C-6 / EXPECT-001 C-8, carried over). QA verifies:
   - reinstall transitions never touch the progress gate or the result columns;
   - outcome, cap and stuck events are never dispatched and never consume the ceiling;
@@ -967,6 +1106,12 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
   - agent reports on a reinstall row return `not_found` (HTTP and WebSocket);
   - the installer's key never appears on argv, output or disk (`test_EX8_AC006_*`);
   - the printed Z8 and WZ8 lists include every new or modified Go and web file of the diff.
+- [ ] **QA gate additions (C-7):**
+  - `agent_reinstall_unconfirmed` and `agent_reinstall_paused` posted on the agent route get 400 and store nothing (`TestEX8_C7_ServerAuthoredTypesRejectedOnAgentRoute`);
+  - `agent_reinstall_started` never creates an `events` row on any disposition (`TestEX8_C7_NoticeStoresNoEventOnEveryDisposition`);
+  - the AD-017 predicate is mirrored in `MockCommandRepo` and covered by `TestEX8_MockGuardParity` (`TestEX8_C7_MockGuardParityIncludesAttribution`);
+  - a notice whose key belongs to another device gets 403 with no row, also with mTLS on (`TestEX8_C7_ForeignKeyForbiddenWithMTLS`);
+  - the C-1 to C-5 tests of Section 8.3 pass on both bookworm-slim and trixie-slim (QA reads both CI job logs).
 - [ ] Section 14 is copied into the PR body by Clod.
 
 ---
@@ -989,11 +1134,13 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
 | old | new | No notice, no record; pages as today |
 | new | new | Silent; "Reinstalling agent"; escalates once if not back in 10 min |
 
-**Rollback:** roll the server back to the previous image only after migrating down to 34. Down deletes the reinstall history (R-5). The installer needs no rollback: against an old server it degrades to "not notified".
+**Rollback:** migrate down to schema 34 **first**, then roll the server back to the previous image. An old binary would otherwise treat `installer` rows as ordinary `agent_update` commands (review INFO-6). Down deletes the reinstall history (R-5). The installer needs no rollback: against an old server it degrades to "not notified".
 
 ---
 
-## Security addendum (inherited conditions)
+## Security addendum
+
+### Inherited conditions
 
 | Condition | How this design meets it |
 |---|---|
@@ -1009,10 +1156,25 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
 | EXPECT-002 C-2 (restricted writer and SQL invariants) | AD-005 and Section 5.1: `ActorReinstall` only; guards on all other actors incl. the server; CHECK on bound, `exec_deadline_s`, keys and params |
 | EXPECT-002 C-3 (truthful record view) | Existing endpoint; reinstall rows have only server-authored linked events |
 | EXPECT-002 C-4 (stuck record) | AD-008 step 5 and AD-004 step 3 |
-| EXPECT-002 C-5 (budget acceptance) | AD-012, Open points |
+| EXPECT-002 C-5 (budget acceptance) | AD-012, Open points, README (C-8) |
 | EXPECT-002 INFO-5 (registration as a heartbeat) | Reused; no fast-return push |
 
-**New surface for the security review:** the root-run notice (AD-014 to AD-016). The specific questions are the config-injection argument, the four-path restriction and R-1, the xtrace handling, and the reason set.
+### EXPECT-008 review conditions (revision 2)
+
+| Condition | Design change | Sections | Tests |
+|---|---|---|---|
+| **C-1** (SEC-001, HIGH) exact trust anchor | Property P-1: `--cacert <snapshot>` **plus** `--capath <empty 0700 dir>` in every trust-file row, curl under `env -i`, no `--ca-native`. The no-trust-file row keeps curl's default Debian store. Reason stated: OpenSSL-backed curl adds its compile-time default CA directory unless `--capath` is given | AD-015, AD-016, 4.2 | 8.3 C-1 row |
+| **C-2** (SEC-002) response byte bound | Body through `head -c 4096` into a ≤ 4096-byte file; status code via `%{stderr}` write-out into its own file; `--max-filesize` kept only as an early abort; AD-012 corrected | AD-012, AD-016, 7.7 | 8.3 C-2 row |
+| **C-3** (SEC-003) I/O isolation | Call site `</dev/null 2>/dev/null 9>&-`; inside, `exec </dev/null 2>/dev/null`; only curl reads a pipe (its `printf` config pipe); wrapper and worker structure with a token makes exactly one fixed line structural, with an "internal error" line for anything unexpected | AD-013, AD-016, 9 | 8.3 C-3 row |
+| **C-4** (SEC-004) environment | `env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C` around `timeout` and curl; `LC_ALL=C` exported for parsing and validation | AD-014, AD-016 | 8.3 C-4 row |
+| **C-5** (SEC-005) real key format | Key pattern exactly `^riot_[0-9a-f]{64}$`; awk plain-scalar set adds `_`; every EX8 key from `prod_key()` | AD-014, 8 | 8.3 C-5 row |
+| **C-6** (SEC-006) snapshot race | **Closed:** open, then verify the opened inode against the path's lstat (regular file, one link), then read from the verified descriptor; FIFO bounded by `timeout 1`. R-1 restated; R-3 lists every snapshot | AD-014, Residuals | 8.3 C-6 row |
+| **C-7** QA gate | Section 13 additions; four HT8 tests (Section 4.5, tests only) | 4.5, 13 | 8.3 C-7 row |
+| **C-8** budget | Open points keep Ryan's recorded acceptance; README sentence in the review's terms; D8 asserts it | 4.4, 12 note 9 | 8.3 C-8 row |
+
+**Informational items folded in:** INFO-5 (lock descriptor not inherited), INFO-6 (rollback order in the CHANGELOG and Section 14), INFO-8 (proxy text corrected). INFO-1 to INFO-4, INFO-7 and INFO-9 confirm the design.
+
+**Not satisfied:** none.
 
 ---
 
@@ -1023,34 +1185,38 @@ NFR-008's 100 ms p95 has wide headroom at 4 devices. No index beyond Section 5.
 | X-1 | FR-024 "Fleet Overview must show … actor phrase … start time" | The fleet row shows the compact one-line label "Reinstalling agent", with "by installer · started HH:MM" in its hover title. The device header shows all three as text | PR #44: Ryan asked for one-line fleet rows; every other activity already follows that rule. `isAgentUpdating` is false for reinstall, because there is no target version for the Version-cell spinner |
 | X-2 | FR-003 / Q-2 | Stricter than the agent in five cases: `tls_verify: false` without a pinned certificate; a pin without a pinned certificate; trust files outside the four `/etc/riot` paths or not plain files; a non-literal `tls_verify`; no `curl` | BR-007, NFR-006. None is written by the stock installer or agent. Each fails toward alerting with a visible reason |
 | X-3 | "Registered device" definition | Device ID from `agent.device_id` only, not `/etc/riot/id` | FRD definition. The agent saves the ID to `agent.yaml` at its first registration |
-| X-4 | NFR-011 "without real elapsed time" | One installer test waits for a real hung connection, ≤ 10.5 s | The bound is an OS `timeout`; only a real wait proves curl is killed. Every other installer and Go test is time-free |
+| X-4 | NFR-011 "without real elapsed time" | One installer test waits for a real hung connection, ≤ 10.5 s | The bound is an OS `timeout`; only a real wait proves curl is killed. Every other installer and Go test is time-free (the oversize test ends as soon as `head` closes) |
 | X-5 | Notice "store" | The notice is a request type on the agent event route, never an `events` row | NFR-005 and AC-021 count no notice event |
 | X-6 | FR-006 "when the server accepted it" | Accepted means the response says a record is open (`created` or `open_record`). A server refusal prints "not notified (<reason>)" from the fixed set | Keeps the success line truthful ("offline alerts paused") |
 | X-7 | FR-027 | One predicate is added to EXPECT-002's attribution query (AD-017) | Without it, EXPECT-002 behaviour would change |
 | X-8 | FR-009 | A notice during the few seconds between an unresolved bound and its resolution answers `open_record` | Resolution runs within 1 s of the bound (≤ 2 min after a restart). Toward alerting at worst |
-| X-9 | AC-005 | Proven with real curl against a `127.0.0.1` TLS listener in the fixture container. CI installs `curl` and `gawk`, keeping mawk as the default awk | A stub cannot prove "no key sent to an untrusted server" |
-| X-10 | FR-006 "exactly one line" vs AC-002 "exactly as today" | FR-002 skips print nothing; every attempted notice prints exactly one line | AC-002 |
+| X-9 | AC-005 | Proven with real curl against a `127.0.0.1` TLS listener in the fixture container, including a CA added to the container's system store (C-1). CI installs `curl` and `gawk`, keeping mawk as the default awk | A stub cannot prove "no key sent to an untrusted server" |
+| X-10 | FR-006 "exactly one line" vs AC-002 "exactly as today" | FR-002 skips print nothing; every attempted notice prints exactly one line, including an internal error | AC-002, C-3 |
 | X-11 | FR-015 (a) | Any existing-device registration after S closes the window `succeeded`, including the agent's 24 h periodic re-registration if it falls inside a run that aborted before the stop | Toward alerting (the window ends early). A version check is excluded by A-003 |
 | X-12 | DEC-3 | `params = '{}'` is enforced by the CHECK | No untrusted text in the record |
+| X-13 | FR-006 reason set | Adds "internal error" to the fixed set | C-3: a fixed line for any unexpected failure inside the notice |
 
 ## Residuals (in addition to the FRD's NFR-010)
 
-- **R-1.** A compromised `riot` user can swap an `/etc/riot` certificate file for a symlink between the installer's check and its read. At worst root then presents a root-readable certificate, or signs one TLS handshake with a root-readable key, to the server `riot` configured. No file content leaves the host. A compromised `riot` already holds the device key.
+- **R-1 (restated, C-6).** The symlink and inode-swap race on the `/etc/riot` trust files is **closed**: bytes are read only from a descriptor whose inode matched the path's regular, single-link lstat after the open. What remains is that a compromised `riot` user can still choose *which* regular file sits at the four paths, so it can make root present a client certificate and key of its choosing, or trust an anchor of its choosing, toward a server it chose. That is the agent's own trust, which `riot` already controls. For the record, the review's impact assessment of the closed race was: CA anchors are parsed locally; a client certificate is public; a root-readable private key could at most sign one TLS handshake transcript including curl's random (no practical relay); no file content leaves the host.
 - **R-2.** On an `http://` URL the notice carries the key in clear, as every heartbeat already does.
-- **R-3.** If the installer is SIGKILLed, `$STAGE` (0700, root, in `/tmp`) can remain with the config snapshot. This is pre-existing behaviour for `config_facts`.
+- **R-3 (corrected, C-6).** If the installer is SIGKILLed, `$STAGE` (0700, root, in `/tmp`) can remain. It can hold the config snapshot (with the device key), the trust snapshots `ca.pem`, `client.crt` and **`client.key`** (the mTLS private key), the empty `no-ca` dir, `response` (≤ 4096 bytes) and `status`. The config snapshot part is pre-existing behaviour for `config_facts`.
 - **R-4.** The raw.githubusercontent.com cache can serve the old installer for about 5 minutes after the merge.
 - **R-5.** Rolling back 000035 deletes the reinstall history.
 - **R-6.** If a self-update record is open when a reinstall installs a different version, EXPECT-002 ends that record `failed` / `wrong_version` with one warning and no push. This is unchanged EXPECT-002 behaviour.
 - **R-7.** The abuse budget grows by < 60 min per device per day (AD-012).
+- **R-8 (review INFO-2, INFO-4).** Overlapping windows can cause one extra escalation push per outage, or one extra "not back" push after a deliberate shutdown. Toward alerting.
+- **R-9 (review).** A compromised `riot` user can make the installer print a misleading notice line, or abort after the stop. Both err toward alerting (a page at the bound at worst).
 
 ## Open points for Ryan
 
 Decisions Clod made on Ryan's behalf (Ryan reviews them in the PR):
 - **DEC-1 to DEC-8 as recommended in the FRD.**
-- **Budget accepted:** < 60 min per device per day from reinstalls, < 120 min combined with agent auto-update, as at most 6 short outages each. Every one is logged as `info`, and every outage past 10 minutes pages.
+- **Budget accepted (C-8):** < 60 min per device per day from reinstalls, < 120 min combined with agent auto-update. Each silent outage lasts under about 10 minutes and is stored as `info`; every outage past the bound pages. The README residuals state it in these terms.
 - **X-1:** fleet rows stay one line, with the actor and start time in the hover title.
 - **X-2:** the five configurations that skip the notice. None exists on a stock install.
 - **X-4:** one 10-second real-time installer test.
-- **CI change:** the installer fixture job installs `curl` and `gawk`, and pins awk to mawk.
+- **C-6 option:** the race is closed (open, then verify), not merely documented.
+- **CI change:** the installer fixture job installs `curl` and `gawk`, and pins awk to mawk. The C-1 tests add a test CA to the disposable container's trust store only.
 
 **Blockers:** none.
