@@ -659,6 +659,9 @@ notice_attempt() {
         fi
     fi
     target="${url}/api/v1/devices/${nid}/events"
+    # FR-004: the whole attempt, snapshots included, must end within 10 seconds.
+    # curl gets what is left of an 8 second budget; the rest covers timeout's
+    # kill grace and the whole-second granularity of SECONDS.
     left=$((8 - SECONDS))
     [ "$left" -ge 3 ] || { echo fail:timeout; return 0; }
     printf 'header = "X-rIOt-Key: %s"\n' "$nkey" |
@@ -681,6 +684,9 @@ notice_attempt() {
     size=$(wc -c < "$NS/response")
     if [ "$size" -ge 4096 ]; then echo fail:unexpected; return 0; fi
     case "$rc" in
+        # 23 and 141 are what curl reports when the 4096-byte head above stopped
+        # reading and closed the pipe (C-2). The status code is still valid then,
+        # and a full 4096-byte response was already refused as unexpected.
         0|23|141)
             case "$code" in
                 200)
