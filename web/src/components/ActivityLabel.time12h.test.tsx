@@ -26,7 +26,8 @@ function activity(over: Partial<DeviceActivity> = {}): DeviceActivity {
     target: '',
     docker_actions: 0,
     covers_offline: true,
-    device_online: true,
+    // Offline: a host back online in its return phase reads "Rebooted, settling" (PR #45), with no time.
+    device_online: false,
     escalation: null,
     powered_off_at: null,
     ...over,
