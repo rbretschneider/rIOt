@@ -482,7 +482,7 @@ The path is on the child's argv; it is not a secret.
 | `https://…`, no `server.crt`, `server_cert_pin` set | TOFU pin check failed at start; falls back to CA or system roots | **Skipped**: "trust settings not supported" (X-2) |
 | `https://…`, no `server.crt`, `ca_cert_file` set | Pool = that file alone (system roots if unreadable) | Sent with `--cacert <snapshot> --capath <empty>` (P-1) when the path is `/etc/riot/ca.crt` or `/etc/riot/server.crt` and passes `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
 | `https://…`, no `server.crt`, no CA file | System roots | Sent with curl's default bundle and directory (the same Debian store Go reads). No `--cacert`, no `--capath` (review SEC-001 d) |
-| `client_cert` **and** `client_key` set (with any row above) | Presents the pair if it loads | Sent with `--cert` and `--key <snapshots> --pass ''` when the paths are exactly `/etc/riot/client.crt` and `/etc/riot/client.key` and both pass `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
+| `client_cert` **and** `client_key` set (with any row above) | Presents the pair if it loads | Sent with `--cert` and `--key <snapshots> --pass riot-no-passphrase` (a public constant: curl 8.14.1 rejects an empty `--pass`, and the agent cannot load an encrypted key, so it unlocks nothing; QA ruling) when the paths are exactly `/etc/riot/client.crt` and `/etc/riot/client.key` and both pass `notice_snapshot`. Otherwise **skipped**: "trust settings not supported" |
 | Only one of the pair set | Ignores both | Ignored (parity) |
 | `curl` absent (`wget` only, or busybox) | n/a | **Skipped**: "curl not available" (X-2) |
 
@@ -518,7 +518,7 @@ The key and every config value live only inside the worker's subshell. The wrapp
 2. Snapshot, parse and validate (AD-014). Apply AD-015 and build the `TLS_ARGS` array:
    - `--tlsv1.2` for https;
    - in a trust-file row, `--cacert "$NS/ca.pem" --capath "$NS/no-ca"`;
-   - with mTLS, `--cert "$NS/client.crt" --key "$NS/client.key" --pass ''`.
+   - with mTLS, `--cert "$NS/client.crt" --key "$NS/client.key" --pass riot-no-passphrase` (see the mTLS row above).
 3. **Stdin rule (C-3).** No command in the worker reads stdin. `awk`, `head` and `stat` always get a file operand or the verified fd 3. The only pipe reader is curl, reading its config from the `printf` pipe (step 5), and the response `head`, reading curl's stdout.
 4. `left=$((8 - SECONDS))`. If `left < 3` → `fail:timeout`.
 5. **The invocation.** The key goes only through the `printf` builtin into curl's stdin as one curl config line. It is never in any process's argv, any file or any trace. curl runs under an allowlisted environment (C-4).
