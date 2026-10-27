@@ -255,10 +255,13 @@ func (s *Server) Start() error {
 		Observer:    s.Expect,
 		// EXPECT-002: agent self-update records live in the commands table.
 		SelfUpdates: s.CommandRepo,
+		// EXPECT-008: installer reinstall records live in the commands table too.
+		Reinstalls: s.CommandRepo,
 	})
 	// The tracker resolves a self-update record at its bound through the service,
 	// so the resolver is wired before Load (and never a typed nil).
 	s.Expect.SetSelfUpdateResolver(s.Commands)
+	s.Expect.SetReinstallResolver(s.Commands)
 	if err := s.Expect.Load(ctx); err != nil {
 		slog.Warn("expected-activity load failed; alerting as usual until it succeeds", "error", err.Error())
 	}
