@@ -463,3 +463,124 @@ describe('fleet Version column: a running agent update is shown compactly', () =
     expect(agentUpdateTarget(activity({ kind: 'agent', action: 'agent_update' }), '2.82.0')).toBe('')
   })
 })
+
+// EXPECT-008 (AD-010): the server's window for an installer re-run. It has no
+// versions, so it never reuses the self-update wording or the Version spinner.
+function reinstallActivity(over: Partial<DeviceActivity> = {}): DeviceActivity {
+  return activity({
+    kind: 'agent',
+    action: 'agent_update',
+    origin: 'installer',
+    actor_phrase: 'by installer',
+    agent_from_version: '',
+    agent_to_version: '',
+    back_by: null,
+    covers_offline: true,
+    ...over,
+  })
+}
+
+describe('EXPECT-008 [AC-022] reinstall label, actor line, count and link', () => {
+  it('labels an open reinstall window "Reinstalling agent" while the device is online', () => {
+    expect(activityLabel(reinstallActivity({ device_online: true }), ctx)).toBe('Reinstalling agent')
+  })
+
+  it('labels it the same while the device is offline', () => {
+    expect(activityLabel(reinstallActivity({ device_online: false }), ctx)).toBe('Reinstalling agent')
+  })
+
+  it('does not borrow the newest agent version the server knows', () => {
+    const label = activityLabel(reinstallActivity({ agent_from_version: '2.82.0' }), { ...ctx, newestAgentVersion: '2.83.0' })
+    expect(label, 'a reinstall has no target version').toBe('Reinstalling agent')
+  })
+
+  it('keeps the actor line, which carries "by installer"', () => {
+    const a = reinstallActivity()
+    expect(showsActorLine(a)).toBe(true)
+    expect(a.actor_phrase).toBe('by installer')
+  })
+
+  it('counts an offline device inside the reinstall window as expected offline', () => {
+    expect(isExpectedOffline(reinstallActivity(), 'offline')).toBe(true)
+  })
+
+  it('does not count an online device as expected offline', () => {
+    expect(isExpectedOffline(reinstallActivity(), 'online')).toBe(false)
+  })
+
+  it('keeps the reinstall out of the Version spinner so the fleet row stays one label line', () => {
+    expect(isAgentUpdating(reinstallActivity())).toBe(false)
+    expect(isAgentUpdating(reinstallActivity({ kind: 'host' }))).toBe(false)
+  })
+
+  it('opens the record in a modal (an agent action has no detail page)', () => {
+    expect(activityLink(reinstallActivity({ command_id: 'cmd-1' }))).toEqual({ type: 'modal' })
+  })
+
+  it('label clears on activity_update null: the entry is removed with no reload', () => {
+    const old: ActivityResponse = {
+      generated_at: '2026-10-27T13:16:00Z',
+      newest_agent_version: '2.83.0',
+      activities: [reinstallActivity({ device_id: 'pivpn' })],
+    }
+    const next = applyActivityUpdate(old, 'pivpn', null)
+    expect(next?.activities).toEqual([])
+    expect(indexActivities(next).get('pivpn')).toBeUndefined()
+  })
+})
+
+describe('EXPECT-008 [AC-012] not-back label names the reinstall', () => {
+  const escalated = (over: Partial<DeviceActivity> = {}) =>
+    reinstallActivity({
+      kind: 'escalated',
+      phase: 'escalated',
+      covers_offline: false,
+      escalation: { reason: 'not_back', bound: '10m', at: '2026-10-27T13:25:00Z' },
+      ...over,
+    })
+
+  it('labels it "Not back 10m after Agent reinstall"', () => {
+    expect(activityLabel(escalated(), ctx)).toBe('Not back 10m after Agent reinstall')
+  })
+
+  it('is the failure state and counts the device as offline, not expected offline', () => {
+    expect(isEscalated(escalated())).toBe(true)
+    expect(isExpectedOffline(escalated(), 'offline')).toBe(false)
+  })
+
+  it('omits the bound cleanly when the escalation carries none', () => {
+    expect(activityLabel(escalated({ escalation: { reason: 'not_back', bound: '', at: '2026-10-27T13:25:00Z' } }), ctx)).toBe(
+      'Not back after Agent reinstall',
+    )
+  })
+
+  it('names the reinstall for an escalation without a not_back reason too', () => {
+    expect(activityLabel(escalated({ escalation: null }), ctx)).toBe('Agent reinstall failed: offline')
+  })
+})
+
+describe('EXPECT-008 [AC-025] other agent updates keep their wording', () => {
+  it('keeps a self-update on its versioned label when origin is agent_self_update', () => {
+    const a = selfUpdateActivity({ origin: 'agent_self_update' })
+    expect(activityLabel(a, ctx)).toBe('Updating agent 2.78.0 → 2.80.0')
+    expect(isAgentUpdating(a)).toBe(true)
+  })
+
+  it('keeps an operator agent update on the EXPECT-001 wording when origin is user or empty', () => {
+    for (const origin of ['user', ''] as const) {
+      const a = activity({ kind: 'agent', action: 'agent_update', origin, agent_from_version: '2.78.0' })
+      expect(activityLabel(a, { ...ctx, newestAgentVersion: '2.80.0' }), origin).toBe('Updating agent 2.78.0 → 2.80.0')
+      expect(isAgentUpdating(a), origin).toBe(true)
+    }
+  })
+
+  it('keeps a self-update escalation on its versioned wording', () => {
+    const a = selfUpdateActivity({
+      origin: 'agent_self_update',
+      kind: 'escalated',
+      phase: 'escalated',
+      escalation: { reason: 'not_back', bound: '10m', at: '2026-10-27T13:25:00Z' },
+    })
+    expect(activityLabel(a, ctx)).toBe('Not back 10m after Agent update 2.78.0 → 2.80.0')
+  })
+})
