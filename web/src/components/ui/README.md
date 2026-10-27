@@ -276,19 +276,32 @@ Rules:
 | `formatDuration(seconds)` | `350ms`, `42s`, `10m`, `1h 5m`, `1d 3h`. Missing or negative gives `—` |
 | `formatBytesPerSec`, `formatBytesPerSecAxis`, `formatPercent`, `formatCount` | Rates, chart ticks, percentages, integers |
 | `formatRelative(value, nowMs)` | `just now`, `5m ago`, `in 3h`. The clock is passed in |
-| `formatTimestamp(value, zoneOpts, precision)` | `2026-10-17 14:03:22 UTC`. 24-hour, always zone-labelled |
-| `formatChartTick`, `formatChartTooltip` | `HH:mm` axis tick; full timestamp for tooltips |
+| `formatTimestamp(value, zoneOpts, precision)` | 12-hour: `2026-10-27 1:05:09 PM EDT`. 24-hour: `2026-10-27 13:05:09 EDT`. Always zone-labelled |
+| `formatChartTick`, `formatChartTooltip` | `1:05 PM` or `13:05` axis tick with no zone label; the second form with its label for tooltips |
+| `formatDateOnly(value, zoneOpts)` | `2026-10-27`, the date in the resolved zone, no label. Used for download file names |
+| `acceptServerZone(raw)` | The server zone name as a branded `AcceptedZone`, or `null`. The only gate for a zone name that came from the API |
 | `formatUtc(iso)` | `YYYY-MM-DD HH:MM UTC`, always UTC. Used by maintenance windows |
 | `parseInstant(value)` | `Date` or `null` for an ISO string, epoch milliseconds, or `Date` |
 
-`precision` is `second` (default), `minute`, or `time` (time of day only). Missing or unparseable input renders `—`. The pure functions take the clock and zone as arguments, so tests are deterministic.
+`precision` is `second` (default), `minute`, `time` (time of day only), or `clock` (hour and minute with a zone label, for activity text such as "back by 1:20 PM EDT"):
+
+| `precision` | 12-hour | 24-hour |
+|-------------|---------|---------|
+| `second` | `2026-10-27 1:05:09 PM EDT` | `2026-10-27 13:05:09 EDT` |
+| `minute` | `2026-10-27 1:05 PM EDT` | `2026-10-27 13:05 EDT` |
+| `time` | `1:05:09 PM EDT` | `13:05:09 EDT` |
+| `clock` | `1:05 PM EDT` | `13:05 EDT` |
+
+The 12-hour form has no leading zero on the hour, an upper-case `AM`/`PM`, midnight as `12:00 AM` and noon as `12:00 PM`. The zone label is the literal `UTC` for UTC, and the `en-US` short name otherwise (`EDT`, `PST`, `GMT-3`). Missing or unparseable input renders `—` and nothing throws. The pure functions take the clock, the zone and the hour cycle as arguments (`ZoneOpts` has a required `hourCycle`), so tests are deterministic. The formatter cache is capped at 12 entries.
+
+Schedule text from the agent host (`parseSystemdCalendar(calendar, hourCycle)` in `utils/cron.ts`) follows the hour cycle only: `Daily at 6:00 AM` or `Daily at 06:00`. It describes a schedule in the host's own zone, so it is never converted or labelled. `formatRunDate(value, fallback, zoneOpts)` renders run dates in the minute form of the current preference. Always pass `zoneOpts`; a static guard fails a call that omits it.
 
 ### In components
 
-Do not call the pure functions with a hand-picked zone. Use the components and hooks, which read the user's UTC/local preference:
+Do not call the pure functions with a hand-picked zone. Use the components and hooks, which read the user's time-display preference:
 
 ```tsx
-<Timestamp value={event.created_at} />                 // 2026-10-17 14:03:22 UTC
+<Timestamp value={event.created_at} />                 // 2026-10-27 1:05:09 PM EDT
 <Timestamp value={rule.updated_at} precision="minute" />
 <RelativeTime value={device.last_seen} />              // "5m ago", absolute time in the hover title
 ```
@@ -299,7 +312,16 @@ Do not call the pure functions with a hand-picked zone. Use the components and h
 
 ### The preference
 
-`TimePreferenceProvider` (mounted in `main.tsx`) holds the UTC/local choice. The header clock (`components/HeaderClock.tsx`) toggles it. The choice is stored in `localStorage` under `riot-time-zone`. The default is UTC. Only the exact string `Local` selects local time, so a tampered value is never used as a time zone identifier. If storage is unavailable the choice lasts for the session. Read it with `useTimePreference()`.
+`TimePreferenceProvider` (mounted in `main.tsx`) holds two choices. Read them with `useTimePreference()`.
+
+- **Time zone:** `Server` (the default), `UTC` or `Local` (the browser's zone). `Server` is the display zone the server reports through `GET /api/v1/server/time-display`. `components/ServerZoneSync.tsx` reads it once per page load in the authenticated app and hands it to the provider, which runs it through `acceptServerZone`. Until it is known, or when it is rejected, `Server` formats as UTC with the label `UTC`.
+- **Clock:** `12h` (the default) or `24h`.
+
+The header clock (`components/HeaderClock.tsx`) shows the time in the chosen form. Activating it opens a small panel with a "Time zone" and a "Clock" radio group. Selecting an option applies at once and keeps the panel open. Escape, an outside click, tabbing out, or a second activation closes it.
+
+Both choices are stored in `localStorage` as enum values: `riot-time-zone` (`Server`, `UTC`, `Local`) and `riot-hour-cycle` (`12h`, `24h`). Storage never holds a zone name; a tampered or unreadable value falls back to `Server` and `12h`. A zone preference written before 12-hour display existed (no `riot-hour-cycle` key) maps `UTC` to `Server` and keeps `Local`. If storage is unavailable the choice lasts for the session.
+
+Never pass a string from the API or from storage to `Intl`. The `AcceptedZone` brand makes that a compile error, and a static guard (SEC-003) fails on any cast to it outside `utils/format.ts` and on any production use of the `localTimeZone` test seam outside the provider and `utils/format.ts`.
 
 ## Enum labels: labels.ts
 
@@ -343,6 +365,9 @@ Recharts needs literal color strings, so charts import `chartColors` from `web/s
 | AC-120, AC-121 | A removed component (`Sparkline`, `MiniScore`, `ContainerGroup`, `ContainerCard`) or the container drawer default export returns |
 | SEC-005 | Code uses `dangerouslySetInnerHTML`, `innerHTML =`, or `insertAdjacentHTML`. Render API text as React text only |
 | SEC-008 | Anything outside the demo modules imports `demo-client`, `demo-settings`, `demo-data`, or `DemoWebSocketProvider` |
+| TIME-12H-001 AC-020, SEC-003 | `Intl.DateTimeFormat(` is used outside `utils/format.ts` (except the unchanged maintenance-window label), `AcceptedZone` is cast outside `utils/format.ts`, or `localTimeZone` is used in production source outside the provider and `utils/format.ts` |
+| TIME-12H-001 AC-036 | `formatRunDate` is called without the preference, or `parseSystemdCalendar` without the hour cycle |
+| TIME-12H-001 FR-047, FR-062, BR-005 | A module other than the provider names the storage keys, an activity label uses the chart tick formatter, or the provider or the zone sync is not mounted |
 
 Other tests worth knowing: `theme/tokens.test.ts` (palette, contrast, `index.css` in step with the mirror) and `api/demo-parity.test.ts` plus the type checker (the demo clients implement every method of the real clients).
 
@@ -366,4 +391,4 @@ const { queryClient } = renderWithProviders(<MyPage />, {
 })
 ```
 
-Options: `route`, `path`, `routes`, `queryClient`, `timeZone` (`localTimeZone`, `storage`, `now`), `toast` (`now`), `showLocation`. Inject `localTimeZone` to test local time. Do not rely on the `TZ` environment variable, which does not work on Windows. Do not stub native dialogs in tests.
+Options: `route`, `path`, `routes`, `queryClient`, `timeZone` (`localTimeZone`, `storage`, `now`, `serverZone`), `toast` (`now`), `showLocation`. Inject `localTimeZone` to test local time and `serverZone` (for example `'America/New_York'`) to test the Server zone. When `timeZone.storage` is omitted, the display is pinned to UTC and 24-hour, so tests that assert `2026-10-17 14:03:22 UTC` keep working; pass `storage: null` for the real defaults (Server zone, 12-hour). Do not rely on the `TZ` environment variable, which does not work on Windows. Do not stub native dialogs in tests.

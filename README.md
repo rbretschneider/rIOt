@@ -173,6 +173,8 @@ Most settings are configured through the setup wizard and stored in the database
 | `RIOT_OIDC_BUTTON_LABEL` | `Sign in with SSO` | Optional SSO: text shown on the login screen's SSO button (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_TRUSTED_PROXIES` | — (trust nobody) | Comma-separated CIDRs trusted to supply forwarding headers; set only when rIOt sits behind a reverse proxy (see [Single Sign-On](#single-sign-on-oidc)) |
 | `RIOT_PPROF_ADDR` | — (disabled) | Opt-in profiling listener on a literal loopback `ip:port`, for example `127.0.0.1:6060`. The port must differ from `RIOT_PORT`. Anything else is rejected and pprof stays off (see [Profiling (pprof)](#profiling-pprof)) |
+| `RIOT_DISPLAY_TZ` | — (UTC) | **Preferred.** IANA time zone name (for example `America/New_York`) used for the dashboard's Server time zone and for times the server writes into text. Invalid values are ignored with one warning and the server still starts. Falls back to `TZ`, then UTC. Changes display only. Prefer it over `TZ`, which also changes the process zone and so the offsets in server log timestamps (see [Time Display](#time-display)) |
+| `TZ` | — | Fallback for `RIOT_DISPLAY_TZ` when that is unset or invalid, because many Docker setups already set it. It also changes the server process's own zone, which shifts the offsets of log timestamps. Stored data and API fields stay UTC either way |
 | `GOMEMLIMIT` | `2GiB` | Go runtime memory limit. Controls how aggressively the garbage collector runs. The default is appropriate for most deployments; increase if monitoring many devices with 50+ containers each, or decrease on memory-constrained hosts. Too low causes GC thrashing (high CPU). |
 
 ### Profiling (pprof)
@@ -768,7 +770,7 @@ Examples:
 - `Container plex died during Docker update by ryan (expected)`
 - `Container plex died during Docker update by auto-update policy for plex (expected)`
 - `Container sonarr died during Docker stack redeploy of media by ryan (expected)`
-- `Device vermont went offline during Reboot by ryan (expected, back by 14:32)`
+- `Device vermont went offline during Reboot by ryan (expected, back by 2:32 PM EDT)`
 - `Device vermont came online after Reboot by ryan (offline 1m42s)`
 
 Nothing is dropped. Every suppressed event stays in the event list. The actor phrase is `by <name>` for a command you started, `by auto-update policy for <target>` for an auto-update policy, and `by the auto-patch schedule` for the automated patch run. A command from a session without a display name reads `by an operator`.
@@ -818,12 +820,12 @@ The rules for escalations:
 - When the device is offline as the window closes, the container check waits. It runs 3 minutes after the device returns. If the device does not return within 24 hours, rIOt skips the check and stores one warning event that says so.
 - Each command and device, and each command and container, produces at most one escalation, including across server restarts. An escalation ignores the cooldown of the rule and does not start one.
 - One command raises at most 20 container escalations. After that, one summary escalation gives the number of further containers that are still not running.
-- Escalation notifications are capped at 5 per device per rolling hour. The events are always stored. Notifications beyond the cap are held, and one summary notification follows: `<N> escalation notifications for <host> were held since <HH:MM>; see Alerts`. That is at most 6 pushes per device per hour. A server restart resets the count.
+- Escalation notifications are capped at 5 per device per rolling hour. The events are always stored. Notifications beyond the cap are held, and one summary notification follows: `<N> escalation notifications for <host> were held since <h:mm AM/PM zone>; see Alerts`. That is at most 6 pushes per device per hour. A server restart resets the count.
 - **Escalation messages contain the operator's display name** (`by <name>`), which can be an SSO full name or an email address. Notification channels forward the message text, including to third-party services such as ntfy, Pushover, Telegram, Discord and Slack. Keep that in mind when you route the `container_died` and `device_offline` rules.
 
 ### Powered off after a shutdown
 
-When a `shutdown` command succeeds and the device then goes offline, the device enters the **powered-off state**. rIOt stores an `info` event, `Device <host> powered off by ryan at 14:02`, and raises no `device_offline` alert or escalation for it. The state has no time limit and no reminder. A device that you shut down on purpose stays quiet until it comes back.
+When a `shutdown` command succeeds and the device then goes offline, the device enters the **powered-off state**. rIOt stores an `info` event, `Device <host> powered off by ryan at 2:02 PM EDT`, and raises no `device_offline` alert or escalation for it. The state has no time limit and no reminder. A device that you shut down on purpose stays quiet until it comes back.
 
 - The state ends on any sign of life: a registration, or a fresh heartbeat. The online event then says `came online after Shutdown by ryan (powered off 72h)`.
 - A powered-off row never hides a later outage. If the device returns and then goes offline again, that transition alerts normally.
@@ -857,7 +859,7 @@ Beside the label, the page shows who started the action and when. The **device p
 - The **Offline** count excludes devices that are offline inside a window and devices in the powered-off state. A separate **Expected offline** card counts them. The card appears only when its count is above zero. An escalated device counts as offline.
 - The failure label stays until the device next reports online, or for 24 hours after the escalation, whichever comes first.
 - When a host window and a Docker window are open together, the host label shows.
-- Times in labels follow the UTC or local choice in the utility bar (see [Time Display](#time-display)). Times in event messages, such as `back by 14:32`, use the server's local time zone, so the two can differ.
+- Times in labels follow the UTC or local choice in the utility bar (see [Time Display](#time-display)). Times in event messages, such as `back by 1:32 PM EDT`, are written by the server in its display zone (`RIOT_DISPLAY_TZ`), in 12-hour form with a zone label, whatever the browser choice is, so the two can differ.
 - The label `Rebooting (waiting for dpkg lock)` appears only when the agent reports that step. Current agents do not report it yet, so a reboot that waits for the lock shows `Rebooting`.
 - If `GET /api/v1/activity` fails, the page shows the plain status, as before.
 
@@ -884,7 +886,7 @@ In the device's command history the record appears as `Agent update 2.78.0 → 2
 - A record that is still not resolved 1 hour after its bound is a **stuck record**. It stores one `agent_self_update_paused` warning event (no notification) and one server log warning: `Agent self-update tracking paused on hawaii: record 1a2b3c4d (Agent update 2.78.0 → 2.80.0) could not be completed 1h after its bound; the next agent update replaces it`. The next valid start on that device retires the stuck record as `timed_out` and creates a new one, so a stuck record never blocks tracking.
 - A record stores at most one outcome event and one escalation, each exactly once, including across server restarts. Records are purged with other commands; a record whose window is not yet processed is exempt from the purge, as for any command.
 
-**What the window suppresses.** `device_offline` for that device only, from the start for **at most 10 minutes**. A container that dies still alerts. A suppressed offline is stored as an `info` event: `Device hawaii went offline during Agent update 2.78.0 → 2.80.0 by agent auto-update (expected, back by 18:01)`. The online event reads `Device hawaii came online after Agent update 2.78.0 → 2.80.0 by agent auto-update (offline 42s)`. Nothing is dropped, and nothing is notified.
+**What the window suppresses.** `device_offline` for that device only, from the start for **at most 10 minutes**. A container that dies still alerts. A suppressed offline is stored as an `info` event: `Device hawaii went offline during Agent update 2.78.0 → 2.80.0 by agent auto-update (expected, back by 6:01 PM EDT)`. The online event reads `Device hawaii came online after Agent update 2.78.0 → 2.80.0 by agent auto-update (offline 42s)`. Nothing is dropped, and nothing is notified.
 
 **How the window ends.** At the earliest of:
 
@@ -1683,13 +1685,57 @@ The protection is against disclosure through API responses, logs, browser caches
 
 ## Time Display
 
-The dashboard shows every timestamp in UTC by default, in 24-hour form, with the zone always written out (for example `2026-10-17 14:03:22 UTC`). Relative times such as "5m ago" show the exact time when you hover over them.
+The dashboard shows every absolute timestamp in the **Server** time zone, in **12-hour** form, with the zone written out (for example `2026-10-27 1:05:09 PM EDT`). Relative times such as "5m ago" are unchanged, and show the exact time when you hover over them. Chart axis ticks carry no zone label (`1:05 PM`); the chart tooltip does.
 
-To switch to your browser's local time, click the clock in the header. Click it again to switch back. The choice applies to every page, including chart axes and chart tooltips, and applies immediately.
+### Choosing the time zone and the clock
 
-The browser stores the choice in `localStorage` under the key `riot-time-zone`. The value `Local` selects local time. Any other value, or a browser that blocks storage, gives UTC. The setting is per browser and is not synced to the server or to other browsers.
+Click the clock in the header to open the time-display panel. It has two groups of options. The choice applies at once to every page, including chart axes and chart tooltips, and the panel stays open while you choose. Escape, a click outside the panel, or a second click on the clock closes it.
 
-Reboot dates in the patch badge and maintenance-window times always show UTC, whatever the clock is set to.
+| Group | Options | Default |
+|---|---|---|
+| Time zone | **Server** (the server's display zone, shown with its name), **Local** (your browser's zone, shown with its name), **UTC** | Server |
+| Clock | **12-hour** (`2026-10-27 1:05:09 PM EDT`), **24-hour** (`2026-10-27 13:05:09 EDT`) | 12-hour |
+
+Midnight is `12:00 AM` and noon is `12:00 PM`. Dates stay `YYYY-MM-DD`. Systemd timer schedules (for example `Daily at 6:00 AM`) follow the clock choice but describe the agent host's own time, so they are not converted to another zone.
+
+While the dashboard has not yet learned the server zone (the page is still loading), or when the server reports no valid zone, **Server** shows UTC and the panel reads `Server (UTC)`.
+
+### Browser storage
+
+The browser stores the choice in `localStorage` under two keys. Neither ever holds a zone name.
+
+| Key | Values |
+|---|---|
+| `riot-time-zone` | `Server`, `UTC` or `Local` |
+| `riot-hour-cycle` | `12h` or `24h` |
+
+An unreadable, blocked or unrecognized value falls back to `Server` and `12h`. If the browser refuses to save, the choice still applies until the page is reloaded. The setting is per browser and is not synced to the server or to other browsers.
+
+A choice saved by an older build is mapped once. An old `UTC` becomes **Server**, because the old build wrote `UTC` whenever the clock was toggled back and so it did not prove a deliberate choice. An old `Local` stays **Local**. A **UTC** choice made after this change persists as UTC. A saved `riot-hour-cycle` value marks a choice made after this change.
+
+### Server display zone: `RIOT_DISPLAY_TZ`
+
+Set `RIOT_DISPLAY_TZ` to an IANA zone name, for example `America/New_York`. It is the preferred setting: it changes display only. The server picks the first valid value of `RIOT_DISPLAY_TZ`, then `TZ`, then UTC. `TZ` is honoured as a fallback because many Docker setups already set it, but it also changes the server process's own zone and so the offsets in its log timestamps.
+
+A value is valid when it is at most 64 characters, has 1 to 3 `/`-separated segments that start with a letter and use only letters, digits, `_`, `+` and `-`, is not `Local`, and is known to the server's zone database. Surrounding whitespace is ignored and a blank value counts as unset. A value that is set but invalid is skipped with one `WARN` log line that names the variable and shows the rejected value (cleaned of control and invisible characters, at most 64 characters). The server always starts. At every start one `INFO` line states the effective zone and where it came from. The server binary embeds a fallback zone database, so a valid name also works on a host that has none.
+
+The compose files in this repository list the server's environment explicitly, so add `- RIOT_DISPLAY_TZ=America/New_York` to the `riot-server` service's `environment:` list. A value that only appears in `.env` does not reach the container. The zone is read at start; changing it needs a restart, and the dashboard picks it up on its next page load.
+
+The dashboard reads the zone with `GET /api/v1/server/time-display` (administrator session only), which returns `{"display_zone":"America/New_York"}`, or `UTC` when no valid zone is configured. The dashboard uses the name only after checking it again in the browser; anything it does not accept is treated as UTC.
+
+### Text the server writes
+
+Text the server writes for a person uses the display zone and the 12-hour form, with a zone label, whatever the browser choice is:
+
+- the patch badge lines (`Yes. Next window starts 2026-10-28 2:00 AM EDT.`, the reboot estimate and the as-of time) and the date in `Auto (reboot on 2026-10-27)`, which is the date in the display zone and has no time or label;
+- the `Generated` line of the device summary file, and the date in the summary download's file name;
+- the new event messages for a powered-off device, a suppressed offline (`back by 1:20 PM EDT`) and held escalation notifications (`held since 1:05 PM EDT`).
+
+Of these event messages, only the held-escalation summary is sent to notification channels; the powered-off and expected-offline messages appear on the dashboard (Alerts, device events, activity history) and are not pushed. Event messages stored before an upgrade keep their old text. For a zone without a letter abbreviation the label is `GMT` and the offset (`GMT-3`, `GMT+5:45`), which matches what the browser shows.
+
+### What stays UTC
+
+API time fields (RFC 3339 with a `Z` suffix, such as `reboot_at`, `updates_at` and an event's `created_at`), stored timestamps, and the partition, quota, retention and maintenance-window boundaries are UTC whatever the display zone is. The maintenance-window editor in Settings and the Docker activity "From (UTC)" and "To (UTC)" filters are unchanged.
 
 ---
 
@@ -1759,6 +1805,7 @@ All endpoints are under `/api/v1/`. Agent endpoints require the `X-rIOt-Key` hea
 | `POST` | `/api/v1/events/:id/acknowledge` | Acknowledge a single event |
 | `POST` | `/api/v1/events/acknowledge-all` | Acknowledge all events |
 | `GET` | `/api/v1/update/server` | Server update check |
+| `GET` | `/api/v1/server/time-display` | The server display zone for the dashboard's Server time zone: `{"display_zone":"America/New_York"}`, or `UTC` when none is valid. Administrator session only; `Cache-Control: no-store` (see [Time Display](#time-display)) |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/alert-rules[/:id]` | Alert rule CRUD |
 | `GET` | `/api/v1/settings/alert-templates` | List alert templates |
 | `GET/POST/PUT/DELETE` | `/api/v1/settings/notification-channels[/:id]` | Notification channel CRUD. Secrets are write-only (see [Notification Channels](#notification-channels)); `PUT` to an unknown id returns `404` |
