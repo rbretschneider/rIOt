@@ -414,3 +414,25 @@ describe('[AC-111] conflict error detection', () => {
     expect(isCommandConflictError(null)).toBe(false)
   })
 })
+
+describe('EXPECT-007 [AC-003] wait step labels and failed-in-wait label', () => {
+  it('names the dpkg-lock wait and the power step in the command history', () => {
+    expect(stepLabel('wait_dpkg_lock')).toBe('Waiting for dpkg lock')
+    expect(stepLabel('power_action')).toBe('Initiating')
+    expect(commandLabel({ status: 'running', action: 'reboot', step: 'wait_dpkg_lock' })).toBe('Running… Waiting for dpkg lock')
+    expect(commandLabel({ status: 'running', action: 'shutdown', step: 'power_action' })).toBe('Running… Initiating')
+  })
+
+  it('shows that the command failed in the wait, with the message the agent sent', () => {
+    const msg = 'reboot skipped: dpkg lock held past the timeout (10m), held by apt-get (pid 1234, uid 0)'
+    expect(
+      commandLabel({ status: 'failed', action: 'reboot', step: 'wait_dpkg_lock', failure_step: 'wait_dpkg_lock', result_msg: msg }),
+    ).toBe(`Failed at wait_dpkg_lock: ${msg}`)
+  })
+
+  it('leaves a command that did not wait exactly as before', () => {
+    expect(commandLabel({ status: 'running', action: 'reboot' })).toBe('Running…')
+    expect(commandLabel({ status: 'succeeded', action: 'reboot' })).toBe('Done')
+    expect(stepLabel('anything_else')).toBe('Working')
+  })
+})
