@@ -93,6 +93,12 @@ func (t *Tracker) activityLocked(dev *devState, now time.Time) *models.DeviceAct
 	return nil
 }
 
+// hostActivityLocked builds the host-class activity. The "(waiting for dpkg lock)"
+// suffix is shown only while the device is online (EXPECT-007 AD-003, FR-009,
+// BR-006): a step that is still current on a device the server already marked
+// offline can be stale, because the host went down before the step change or the
+// result was delivered. A command that reached a terminal state has ended its wait,
+// so it never claims one either (FR-009).
 func (t *Tracker) hostActivityLocked(dev *devState, w *window, tl timeline) *models.DeviceActivity {
 	kind := models.ActivityHost
 	if w.policy.Class == models.WindowAgent {
@@ -101,7 +107,7 @@ func (t *Tracker) hostActivityLocked(dev *devState, w *window, tl timeline) *mod
 	a := &models.DeviceActivity{
 		DeviceID: dev.id, Kind: kind, Phase: tl.phase, Action: w.cmd.Action, CommandID: w.cmd.ID,
 		ActorPhrase: t.actorPhraseLocked(w), StartedAt: startOf(&w.cmd), DeviceOnline: dev.online,
-		WaitingDpkgLock: w.cmd.Step == models.StepWaitDpkgLock, Progress: copyIntPtr(w.cmd.Progress),
+		WaitingDpkgLock: dev.online && !w.cmd.State().IsTerminal() && w.cmd.Step == models.StepWaitDpkgLock, Progress: copyIntPtr(w.cmd.Progress),
 		AgentFromVersion: w.fromVersion, CoversOffline: w.policy.CoversOffline,
 		Origin: w.cmd.Origin,
 	}

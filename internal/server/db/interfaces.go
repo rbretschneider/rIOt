@@ -204,6 +204,9 @@ type SelfUpdateRepository interface {
 	// LatestSelfUpdateSince returns the device's newest record created at or after
 	// since, or nil.
 	LatestSelfUpdateSince(ctx context.Context, deviceID string, since time.Time) (*models.Command, error)
+	// SelfUpdateByAttempt returns the device's record that owns the attempt ID,
+	// whatever its age or state, or nil (EXPECT-007).
+	SelfUpdateByAttempt(ctx context.Context, deviceID, attemptID string) (*models.Command, error)
 }
 
 // ReinstallRepository is the persistence of installer reinstall records

@@ -326,11 +326,21 @@ func (a *Agent) handleReboot(cr *cmdRun) commandExecResult {
 		return commandExecResult{Status: models.ResultStatusError, Message: "reboot not allowed by agent config (set commands.allow_reboot: true)"}
 	}
 
-	c := a.awaitRebootClearance(cr.ctx, "reboot", cr.id, a.commonRebootGuards(""))
+	// EXPECT-007 AD-001/AD-002: the reporter tells the server about a dpkg-lock
+	// wait. Nothing between the gate's final check and execReboot is added.
+	rep := newPowerWaitReporter(cr)
+	c := a.awaitRebootClearance(withPowerWaitReporter(cr.ctx, rep), "reboot", cr.id, a.commonRebootGuards(""))
 	if !c.Cleared {
-		return rebootSkippedResult(c)
+		rep.settle()
+		res := rebootSkippedResult(c)
+		if rep.entered() {
+			res.Step = models.StepWaitDpkgLock // the skip failed in the wait (FR-005)
+		}
+		return res
 	}
-	if err := a.execReboot(c.Permit); err != nil {
+	err := a.execReboot(c.Permit)
+	rep.leave() // after execReboot ran, never before (FR-004); runs on an exec error too, and the error result that follows ends the command
+	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: fmt.Sprintf("reboot: %s", err)}
 	}
 	if c.Waited > 0 {
@@ -402,11 +412,19 @@ func (a *Agent) handleShutdown(cr *cmdRun) commandExecResult {
 		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown not allowed by agent config (set commands.allow_shutdown: true)"}
 	}
 
-	c := a.awaitShutdownClearance(cr.ctx, cr.id)
+	rep := newPowerWaitReporter(cr)
+	c := a.awaitShutdownClearance(withPowerWaitReporter(cr.ctx, rep), cr.id)
 	if !c.Cleared {
-		return shutdownSkippedResult(c)
+		rep.settle()
+		res := shutdownSkippedResult(c)
+		if rep.entered() {
+			res.Step = models.StepWaitDpkgLock // the skip failed in the wait (FR-005)
+		}
+		return res
 	}
-	if err := a.execShutdown(c.Permit); err != nil {
+	err := a.execShutdown(c.Permit)
+	rep.leave() // after execShutdown ran, never before (FR-004); runs on an exec error too, and the error result that follows ends the command
+	if err != nil {
 		return commandExecResult{Status: models.ResultStatusError, Message: "shutdown: " + sanitizePowerErr(err.Error())}
 	}
 	if c.Waited > 0 {
@@ -1108,25 +1126,39 @@ func (a *Agent) handleTriggerUpdate(ctx context.Context) (string, string) {
 		return "error", fmt.Sprintf("no binary available for platform %s", suffix)
 	}
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateStarted, models.SeverityInfo,
-		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion))
+	// EXPECT-007 AD-005: every update event of this command carries the command
+	// ID (the server validates it, AD-011) and the attempt's versions, and is
+	// sent without delaying the update (FR-034): the command's window already
+	// covers the restart. No attempt ID is ever sent on this path (FR-012).
+	commandID, _ := ctx.Value(updateCommandIDKey{}).(string)
+	att := updateAttempt{From: a.version, To: resp.LatestVersion}
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateStarted, models.SeverityInfo,
+		fmt.Sprintf("Agent update started: %s → %s", a.version, resp.LatestVersion), commandID, att), deliverAsync)
 
-	if err := a.performUpdate(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
+	apply := a.updateApply
+	if apply == nil {
+		apply = a.performUpdate
+	}
+	if err := apply(ctx, downloadURL, resp.ChecksumURL, resp.SignatureURL, suffix); err != nil {
 		if errors.Is(err, errUpdateScheduled) {
 			return "pending", "signed update accepted; privileged installation and restart are pending"
 		}
-		a.reportUpdateEvent(ctx, models.EventAgentUpdateFailed, models.SeverityWarning,
-			fmt.Sprintf("Agent update failed: %v", err))
+		a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateFailed, models.SeverityWarning,
+			fmt.Sprintf("Agent update failed: %v", err), commandID, att), deliverAsync)
 		return "error", fmt.Sprintf("update failed: %v", err)
 	}
 
-	a.reportUpdateEvent(ctx, models.EventAgentUpdateCompleted, models.SeverityInfo,
-		fmt.Sprintf("Agent updated to %s", resp.LatestVersion))
+	a.sendUpdateEvent(ctx, buildUpdateEvent(models.EventAgentUpdateCompleted, models.SeverityInfo,
+		fmt.Sprintf("Agent updated to %s", resp.LatestVersion), commandID, att), deliverAsync)
 
 	// Restart after a short delay so the command result is sent first.
+	restart := a.restartHook
+	if restart == nil {
+		restart = a.restartSelf
+	}
 	go func() {
-		time.Sleep(1 * time.Second)
-		a.restartSelf()
+		a.sleep(context.Background(), 1*time.Second)
+		restart()
 	}()
 
 	return "success", fmt.Sprintf("updated %s → %s, restarting", a.version, resp.LatestVersion)

@@ -100,6 +100,21 @@ type Agent struct {
 	// executor overrides executeAction in tests; nil = real execution.
 	executor func(cr *cmdRun) commandExecResult
 
+	// EXPECT-007 (update_events.go). updateRetry is the retry policy of the
+	// agent_update_* events; nil means one attempt (the pre-EXPECT-007
+	// behaviour), and Run sets defaultUpdateEventRetry(). updateEventSink sends
+	// one attempt; nil means the HTTP client. updateEventSlots holds one
+	// retrying sender per event type and updateEventSingles one single-shot
+	// sender per type, so a process has at most six sender goroutines (AD-010).
+	updateRetry        *updateEventRetry
+	updateEventSink    func(ctx context.Context, evt *models.AgentEvent) error
+	updateEventSlots   [updateEventTypes]atomic.Bool
+	updateEventSingles [updateEventTypes]atomic.Bool
+	// updateApply replaces performUpdate in handleTriggerUpdate and restartHook
+	// replaces restartSelf after a command-path update; both nil in production.
+	updateApply updateFunc
+	restartHook func()
+
 	// Test seams for the Docker paths; nil = the real Docker client, a real
 	// child process, a real wait and the collector's freshness cache.
 	dockerFactory func() (dockerAPI, error)
@@ -272,6 +287,9 @@ func (a *Agent) Run() error {
 	a.cmdCtx, a.cmdCancel = context.WithCancel(context.Background())
 	defer a.cmdCancel()
 	a.setupCommandSystem(a.cmdCtx, a.defaultCommandDeps())
+	// EXPECT-007 AD-010: production retries update events within a fixed bound.
+	// An Agent built without Run keeps a nil policy, which is one attempt.
+	a.updateRetry = defaultUpdateEventRetry()
 	a.reserveMaintenanceHost(ctx)
 
 	// Report commands that were executing when the agent last stopped, before

@@ -43,6 +43,8 @@ type selfUpdateQuerier interface {
 // is serialised with every command creation on the device and 50 concurrent
 // starts produce one row (AD-002):
 //
+//  0. EXPECT-007 FR-024: a start whose attempt ID a record of the device owns is
+//     a repeat and only links to that record;
 //  1. FR-004: attribution to an agent_update command that was dispatched and is
 //     in flight, or finished at most 10 minutes before the start;
 //  2. C-4 (b): a still-open record whose bound passed more than 1 hour ago is
@@ -75,6 +77,28 @@ func (r *CommandRepo) createSelfUpdate(ctx context.Context, s models.SelfUpdateS
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended('riot.cmd.' || $1::text, 0))`, s.DeviceID); err != nil {
 		return res, fmt.Errorf("lock device commands: %w", err)
+	}
+
+	// 0. EXPECT-007 FR-024: a start whose attempt ID a record of this device
+	// already owns (open or closed, any age) is a repeat. It creates nothing,
+	// counts toward no cap, extends no window and retires nothing; the result
+	// carries LinkID only, so the caller announces nothing (security condition
+	// C-3 a). Under the advisory lock, concurrent starts with one attempt ID see
+	// the first one's row and so produce one record (AD-006 step 0).
+	if s.AttemptID != "" {
+		var matchID string
+		err = tx.QueryRow(ctx,
+			`SELECT id FROM commands
+			 WHERE device_id=$1 AND origin=`+selfUpdateOriginLiteral+` AND params->>'attempt_id' = $2
+			 ORDER BY created_at DESC LIMIT 1`,
+			s.DeviceID, s.AttemptID).Scan(&matchID)
+		switch {
+		case err == nil:
+			res.Disposition, res.LinkID = models.SelfUpdateAttemptMatch, matchID
+			return res, tx.Commit(ctx)
+		case !errors.Is(err, pgx.ErrNoRows):
+			return res, fmt.Errorf("match attempt: %w", err)
+		}
 	}
 
 	// 1. FR-004. A queued command (dispatched_at NULL, also after a revert) never counts.
@@ -163,7 +187,7 @@ func (r *CommandRepo) createSelfUpdate(ctx context.Context, s models.SelfUpdateS
 
 	// 5. The insert. Every column the shape CHECK constrains is set here; no
 	// docker_audit row is written (AD-001).
-	paramsJSON, err := json.Marshal(models.SelfUpdateParams(s.From, s.To))
+	paramsJSON, err := json.Marshal(models.SelfUpdateParams(s.From, s.To, s.AttemptID))
 	if err != nil {
 		return res, fmt.Errorf("encode params: %w", err)
 	}
@@ -228,6 +252,27 @@ func (r *CommandRepo) LatestSelfUpdateSince(ctx context.Context, deviceID string
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read latest self-update record: %w", err)
+	}
+	return &cmd, nil
+}
+
+// SelfUpdateByAttempt returns the device's record that owns attemptID, whatever
+// its age or state, or nil (EXPECT-007 AD-006 step 4). It uses the partial index
+// idx_commands_self_update_recent (device_id, created_at), which holds at most
+// models.SelfUpdateRateCap records per device per day, about 540 over the
+// retention. attemptID must already have passed models.ValidRefToken.
+func (r *CommandRepo) SelfUpdateByAttempt(ctx context.Context, deviceID, attemptID string) (*models.Command, error) {
+	cmd, err := scanCommand(func(dest ...interface{}) error {
+		return r.db.Pool.QueryRow(ctx,
+			`SELECT `+commandColumns+` FROM commands
+			 WHERE device_id=$1 AND origin=`+selfUpdateOriginLiteral+` AND params->>'attempt_id' = $2
+			 ORDER BY created_at DESC LIMIT 1`, deviceID, attemptID).Scan(dest...)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read self-update record by attempt: %w", err)
 	}
 	return &cmd, nil
 }
