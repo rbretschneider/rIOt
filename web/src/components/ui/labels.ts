@@ -106,6 +106,8 @@ export const EVENT_TYPES = [
   'agent_self_update_failed',
   'agent_self_update_unconfirmed',
   'agent_self_update_paused',
+  'agent_reinstall_unconfirmed',
+  'agent_reinstall_paused',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -210,6 +212,8 @@ export const LABELS: {
     agent_self_update_failed: 'Agent self-update failed',
     agent_self_update_unconfirmed: 'Agent self-update not confirmed',
     agent_self_update_paused: 'Agent self-update tracking paused',
+    agent_reinstall_unconfirmed: 'Agent reinstall not confirmed',
+    agent_reinstall_paused: 'Agent reinstall tracking paused',
   },
 }
 

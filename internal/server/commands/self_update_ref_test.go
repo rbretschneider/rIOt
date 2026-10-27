@@ -317,8 +317,8 @@ func TestEX7_AC023_InvalidCommandRefsFallBack(t *testing.T) {
 		}},
 		{"300 byte string", func(h *suHarness) (string, *models.Command) { return strings.Repeat("a", 300), nil }},
 		{"control characters", func(h *suHarness) (string, *models.Command) { return "0b5e6a1c-2d3f-4a5b-8c7d-9e0f1a2b3c\x00\n", nil }},
-		{"a server-created origin other than agent_self_update (C-2)", func(h *suHarness) (string, *models.Command) {
-			c := h.seedCommand(uid(109), devA, models.ActionAgentUpdate, "installer", "running", ptrTime(now(h)), nil)
+		{"the EXPECT-008 installer origin (C-2, SEC-002)", func(h *suHarness) (string, *models.Command) {
+			c := h.seedCommand(uid(109), devA, models.ActionAgentUpdate, models.OriginInstaller, "running", ptrTime(now(h)), nil)
 			return c.ID, &c
 		}},
 		{"a terminal row with finished_at nil (C-3 c)", func(h *suHarness) (string, *models.Command) {

@@ -114,7 +114,7 @@ func TestEX7_AC023_CommandRefPredicate(t *testing.T) {
 		{"origin auto_patch", mk(func(c *Command) { c.Origin = OriginAutoPatch }), true},
 		{"another action", mk(func(c *Command) { c.Action = ActionDockerUpdate }), false},
 		{"self-update record origin", mk(func(c *Command) { c.Origin = OriginAgentSelfUpdate }), false},
-		{"synthetic server-created origin", mk(func(c *Command) { c.Origin = "installer" }), false},
+		{"EXPECT-008 installer origin (SEC-002)", mk(func(c *Command) { c.Origin = OriginInstaller }), false},
 		{"empty origin", mk(func(c *Command) { c.Origin = "" }), false},
 		{"never dispatched", mk(func(c *Command) { c.DispatchedAt = nil }), false},
 		{"finished 9m59s ago", mk(finished(9*time.Minute + 59*time.Second)), true},

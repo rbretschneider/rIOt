@@ -9,6 +9,12 @@ import {
   selfUpdateOutcomeLabel,
   selfUpdateVersions,
 } from '../utils/selfUpdate'
+import {
+  REINSTALL_ACTION_LABEL,
+  REINSTALL_ACTOR_PHRASE,
+  isReinstall,
+  reinstallOutcomeLabel,
+} from '../utils/reinstall'
 
 // EXPECT-002 (FR-027, AD-009, ADD 6.3): the read-only view of an agent's own
 // self-update record. It is a record of something the agent did, not a command, so
@@ -40,8 +46,11 @@ function EventList({ events, testId, label }: { events: Event[]; testId: string;
 }
 
 export default function SelfUpdateDetails({ deviceId, command }: { deviceId: string; command: Command }) {
-  const versions = selfUpdateVersions(command)
-  const label = selfUpdateActionLabel(versions)
+  // EXPECT-008 (FR-026): the server's record of an installer re-run uses this same read-only view
+  // with its own wording. It has no versions and no controls.
+  const reinstall = isReinstall(command)
+  const label = reinstall ? REINSTALL_ACTION_LABEL : selfUpdateActionLabel(selfUpdateVersions(command))
+  const actorPhrase = reinstall ? REINSTALL_ACTOR_PHRASE : SELF_UPDATE_ACTOR_PHRASE
   const started = command.started_at ?? command.dispatched_at ?? command.created_at
 
   // The status is part of the key so the list is fetched again when the outcome lands.
@@ -60,7 +69,7 @@ export default function SelfUpdateDetails({ deviceId, command }: { deviceId: str
     <div className="space-y-3 text-xs" data-testid="self-update-details">
       <div>
         <p className="text-sm font-medium text-gray-100">{label}</p>
-        <p className="text-text-muted">{SELF_UPDATE_ACTOR_PHRASE}</p>
+        <p className="text-text-muted">{actorPhrase}</p>
       </div>
 
       <dl className="grid grid-cols-2 gap-3">
@@ -73,7 +82,7 @@ export default function SelfUpdateDetails({ deviceId, command }: { deviceId: str
         <div>
           <dt className="mb-0.5 text-gray-500">Outcome</dt>
           <dd className="text-gray-200" data-testid="self-update-outcome">
-            {selfUpdateOutcomeLabel(command.status)}
+            {reinstall ? reinstallOutcomeLabel(command.status) : selfUpdateOutcomeLabel(command.status)}
           </dd>
         </div>
       </dl>

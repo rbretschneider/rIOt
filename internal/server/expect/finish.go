@@ -146,6 +146,12 @@ func (t *Tracker) finishWindow(ctx context.Context, devID, winID string, reason 
 		return true
 	}
 
+	if w.policy.Reinstall {
+		// An installer reinstall record has its own end-of-window routine (EXPECT-008
+		// AD-008): the same contract, with resolution at the bound.
+		return t.finishReinstall(ctx, devID, winID, w, dv, reason)
+	}
+
 	if w.policy.SelfUpdate {
 		// An agent self-update record has its own end-of-window routine (EXPECT-002
 		// AD-006): the same contract, with resolution at the bound.

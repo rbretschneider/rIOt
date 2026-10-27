@@ -68,6 +68,7 @@ func (t *Tracker) activityLocked(dev *devState, now time.Time) *models.DeviceAct
 			CommandID: e.commandID, ActorPhrase: e.actor, StartedAt: e.startedAt, DeviceOnline: dev.online, CoversOffline: false,
 			Escalation:       &models.ActivityEscalation{Reason: e.reason, Bound: e.bound, At: e.at},
 			AgentFromVersion: e.fromVersion, AgentToVersion: e.toVersion,
+			Origin: e.origin,
 		}
 	case dev.poweredOff != nil:
 		p := dev.poweredOff
@@ -108,6 +109,7 @@ func (t *Tracker) hostActivityLocked(dev *devState, w *window, tl timeline) *mod
 		ActorPhrase: t.actorPhraseLocked(w), StartedAt: startOf(&w.cmd), DeviceOnline: dev.online,
 		WaitingDpkgLock: dev.online && !w.cmd.State().IsTerminal() && w.cmd.Step == models.StepWaitDpkgLock, Progress: copyIntPtr(w.cmd.Progress),
 		AgentFromVersion: w.fromVersion, CoversOffline: w.policy.CoversOffline,
+		Origin: w.cmd.Origin,
 	}
 	if tl.phase == models.PhaseReturn {
 		a.BackBy = copyTimePtr(tl.backBy)
@@ -117,6 +119,12 @@ func (t *Tracker) hostActivityLocked(dev *devState, w *window, tl timeline) *mod
 		// auto-update. The DTO carries no back_by (AD-005); both versions are
 		// re-validated ones, or both "" (AD-009).
 		a.AgentFromVersion, a.AgentToVersion = w.selfFrom, w.selfTo
+		a.BackBy = nil
+	}
+	if w.policy.Reinstall {
+		// An installer reinstall window: "Reinstalling agent" by installer. It has no
+		// target version and the DTO carries no back_by (EXPECT-008 AD-010).
+		a.AgentFromVersion, a.AgentToVersion = "", ""
 		a.BackBy = nil
 	}
 	return a

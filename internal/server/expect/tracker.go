@@ -94,6 +94,8 @@ type openEscalation struct {
 	// ("" for a command), carried so the escalated label names the update
 	// (EXPECT-002 AD-009).
 	fromVersion, toVersion string
+	// origin is the origin of the escalated command (EXPECT-008 AD-010).
+	origin string
 }
 
 type devState struct {
@@ -162,6 +164,9 @@ type Tracker struct {
 	// selfResolver ends agent self-update records at their bound (EXPECT-002). It
 	// is set once, before Load, and only read afterwards.
 	selfResolver SelfUpdateResolver
+	// reinstallResolver ends installer reinstall records at their bound (EXPECT-008).
+	// Set once, before Load, and only read afterwards.
+	reinstallResolver ReinstallResolver
 	// observedAfterGrace is set by the first ObserveDevices call at or after
 	// graceEnd: the offline detector's pass that makes a device that died during
 	// downtime known to be offline (the detector gate of AD-006, INFO-4).
@@ -602,7 +607,7 @@ func (t *Tracker) NoteOnline(ctx context.Context, deviceID string, at time.Time)
 		// A self-update record names itself only when the offline that just ended
 		// began inside its coverage (EXPECT-002 AD-008): the transition has already
 		// run, so offlineEnd is the registration (V) or the failure (F).
-		if w.policy.SelfUpdate && !tl.coversAt(tl.offlineEnd, offlineSince) {
+		if (w.policy.SelfUpdate || w.policy.Reinstall) && !tl.coversAt(tl.offlineEnd, offlineSince) {
 			continue
 		}
 		if best == nil || tl.d.After(bestD) {
@@ -1049,7 +1054,7 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 		if !ok {
 			c, ok = rd.escCmds[e.CommandID]
 		}
-		oe := &openEscalation{commandID: e.CommandID, at: e.CreatedAt, reason: models.EscalationReasonNotBack}
+		oe := &openEscalation{commandID: e.CommandID, at: e.CreatedAt, reason: models.EscalationReasonNotBack, origin: c.Origin}
 		if ok {
 			pol, _ := models.ExpectPolicyFor(c)
 			w := &window{cmd: trimCommand(c), policy: pol}
@@ -1064,6 +1069,10 @@ func (t *Tracker) mergeLocked(rd reconcileData, loaded map[string]models.Command
 				if s == models.CommandFailed {
 					oe.reason = models.EscalationReasonFailed
 				}
+			case pol.Reinstall:
+				// A reinstall record escalates as not back; its not-confirmed outcome
+				// (timed_out) is also "not back" (EXPECT-008 AD-010).
+				oe.bound = models.FormatDurationShort(models.ExpectReinstallBound)
 			case s == models.CommandFailed:
 				oe.reason = models.EscalationReasonFailed
 			case s == models.CommandTimedOut:

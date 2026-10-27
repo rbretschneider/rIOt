@@ -323,8 +323,16 @@ const (
 // excludes it on purpose), and nothing is ever sent to an agent for it.
 const OriginAgentSelfUpdate = "agent_self_update"
 
+// OriginInstaller marks the record of an installer re-run on a registered
+// device (EXPECT-008). Only the server's reinstall-notice path creates one,
+// directly in running; IsValidOrigin excludes it on purpose, so no API, fleet,
+// auto-update or auto-patch path can, and nothing is ever sent to an agent for
+// it.
+const OriginInstaller = "installer"
+
 // IsValidOrigin reports whether o is one of the three origins Service.Dispatch
-// accepts. It deliberately excludes OriginAgentSelfUpdate (EXPECT-002 AD-001).
+// accepts. It deliberately excludes OriginAgentSelfUpdate (EXPECT-002 AD-001)
+// and OriginInstaller (EXPECT-008 AD-003).
 func IsValidOrigin(o string) bool {
 	return o == OriginUser || o == OriginAutoUpdate || o == OriginAutoPatch
 }

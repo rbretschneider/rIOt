@@ -132,6 +132,9 @@ func (t *Tracker) escalateDevice(ctx context.Context, w window, dv devSnap, kind
 	if w.policy.SelfUpdate {
 		req.Message = selfEscalationMessage(kind, hostnameOf(dv), &w)
 	}
+	if w.policy.Reinstall {
+		req.Message = models.ReinstallNotBackMessage(hostnameOf(dv), models.ShortCommandID(w.cmd.ID))
+	}
 	inserted, _, err := t.escalate(ctx, req)
 	if err != nil {
 		return false, err
@@ -152,13 +155,18 @@ func (t *Tracker) markDeviceEscalated(w window, kind models.EscalationKind, acto
 	dev.escalation = &openEscalation{
 		commandID: w.cmd.ID, action: w.cmd.Action, actor: actor, reason: escalationReason(kind, w.cmd.State()),
 		bound: models.FormatDurationShort(w.policy.PostTerminal), at: at,
-		startedAt: startOf(&w.cmd),
+		startedAt: startOf(&w.cmd), origin: w.cmd.Origin,
 	}
 	if w.policy.SelfUpdate {
 		// The escalated label names the update and its 10-minute bound (AD-009).
 		dev.escalation.reason = selfEscalationReason(kind)
 		dev.escalation.bound = models.FormatDurationShort(models.ExpectSelfUpdateBound)
 		dev.escalation.fromVersion, dev.escalation.toVersion = w.selfFrom, w.selfTo
+	}
+	if w.policy.Reinstall {
+		// The escalated label names the reinstall and its 10-minute bound (EXPECT-008 AD-010).
+		dev.escalation.reason = models.EscalationReasonNotBack
+		dev.escalation.bound = models.FormatDurationShort(models.ExpectReinstallBound)
 	}
 }
 

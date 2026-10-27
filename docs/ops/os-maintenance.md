@@ -16,7 +16,7 @@ The existing `os_update` command accepts these apt modes:
 
 | Mode | Behavior after clean recovery checks |
 |---|---|
-| `full` (default) | Refresh indexes, then guarded `dist-upgrade`, then one more refresh if apt configuration changed during the upgrade (see [Post-run refresh](#post-run-package-list-refresh)) |
+| `full` (default) | Refresh indexes, then guarded `dist-upgrade`, then one more refresh if apt configuration changed during the upgrade, or, on a run with an extra updater, during the upgrade or the updater step (see [Post-run refresh](#post-run-package-list-refresh)) |
 | `security` | Refresh indexes, then guarded `upgrade`, then the same conditional refresh; this retains conservative upgrade behavior and **does not select security origins only** |
 | `repair` | Finish after configuration/dependency verification; no refresh, general upgrade, managed-hold release or automatic reboot |
 
@@ -34,7 +34,16 @@ A host that opted in to an extra updater (DietPi) gets longer bounds for runs th
 
 PATCH-FLOW-001 adds one conditional step to `full` and `security` runs. A package postinst can rewrite apt configuration after the run's refresh step. The lists then no longer match the configuration, and `apt list --upgradable` reports packages that do not exist.
 
-The worker takes a fingerprint (path, modification time, size) of the files apt reads, immediately before its refresh. These are `/etc/apt/sources.list`, `*.list` and `*.sources` in `sources.list.d`, and the apt-readable files in `preferences.d`. It takes a second fingerprint after the upgrade and final verification. At most 1,000 directory entries are examined per fingerprint, and only metadata is read.
+The worker takes a fingerprint (path, modification time, size) of the files apt reads, immediately before its refresh. These are `/etc/apt/sources.list`, `*.list` and `*.sources` in `sources.list.d`, and the apt-readable files in `preferences.d`. It takes a second fingerprint when the post-run check runs. At most 1,000 directory entries are examined per fingerprint, and only metadata is read.
+
+When the check runs depends on the run:
+
+- **Runs without extra updaters** (request version 1) check once, after the upgrade and final verification. The first table below applies.
+- **Runs with extra updaters** (request version 2: the agent asked for DietPi) check once, after the extra-updater step, as described in [Runs with extra updaters](#runs-with-extra-updaters). This applies even when the updater was later skipped.
+
+The extra refresh never changes the exit code or marks the record interrupted. The argv is the one already allowed to the worker, so `install.sh` and sudoers are unchanged. The request and record formats are unchanged: a new agent works with an old helper, and an old agent works with a new helper.
+
+### Runs without extra updaters
 
 | Condition | Behavior |
 |---|---|
@@ -46,7 +55,57 @@ The worker takes a fingerprint (path, modification time, size) of the files apt 
 | Upgrade or verification failed | No extra refresh. The failure outcome stands. |
 | `repair` mode | No fingerprint and no refresh. |
 
-The extra refresh never changes the exit code or marks the record interrupted. The 7-minute threshold keeps the worker budget from expiring during it. The argv is the one already allowed to the worker, so `install.sh` and sudoers are unchanged. The request and record formats are unchanged: a new agent works with an old helper, and an old agent works with a new helper.
+The 7-minute threshold keeps the worker budget from expiring during the refresh. These runs behave exactly as before DIETPI-REFRESH-001.
+
+### Runs with extra updaters
+
+DIETPI-REFRESH-001 moves the check for these runs. Before it, the check ran at the end of the apt part, before DietPi. A DietPi update can rewrite apt configuration, for example `/etc/apt/preferences.d/dietpi-raspberrypi` on a Raspberry Pi. The lists then no longer matched, and the host showed "Lists out of date" after every DietPi patch.
+
+Now the worker takes the baseline fingerprint before its own refresh, as always. It compares against it once, after every present updater's step has ended and after the managed holds are restored. A change made by the apt upgrade or by an updater triggers the same single refresh.
+
+**When the refresh runs.**
+
+| Condition | Behavior |
+|---|---|
+| Fingerprints equal | No refresh, no note. The record is the same as a run without the check. |
+| Fingerprints differ, or either could not be read | One extra `apt-get update`, with the same argv and 5-minute limit as above. The record phase `post_refresh` follows `extra_run:<id>`. The `[post_refresh]` output section follows the `[extra:<id>]` section. |
+| No updater is present, or every updater was skipped | The check still runs, because the apt upgrade can also change the configuration. |
+| An updater `failed`, `timed_out` or was `skipped` for any reason | The check still runs. The updater result and the run outcome do not change. |
+| The upgrade or verification failed after the run's own refresh succeeded | The check still runs. Runs without extra updaters do not refresh in this case. |
+| The run's own refresh never ran or failed | No refresh and no note. The lists were not refreshed in this run, so there is no baseline to compare with. |
+| The apt part or any updater was `interrupted`, or the service is stopping | No refresh and no note. The worker does no further package work after an interruption. |
+
+The run still makes at most one extra refresh, and `repair` mode makes none.
+
+**Time basis.** The refresh starts only when at least 7 minutes of its time basis remain. Exactly 7 minutes is enough. The worker checks the basis on its own clock and on the real deadline of the context that would end the process. The basis depends on whether the worker has verified the service backstop in this run:
+
+| Backstop verified in this run | Basis | Why |
+|---|---|---|
+| Yes: a present updater passed gate 6 in [What the step does](#what-the-step-does), meaning the worker read the unit as root, found no mount sandbox and found a backstop of at least 83 minutes 30 seconds | 80 minutes from the start of the run | systemd will not kill the service before then |
+| No: no updater is present, an updater was refused at gates 1 to 5, the unit could not be read, the unit has a mount sandbox, or its backstop is below 83 minutes 30 seconds | 30 minutes from the start of the run | The worker cannot prove that more than the base 35-minute backstop is in force |
+
+The refresh's 5-minute limit never reaches past the basis. On a run with the 30-minute basis, a refresh is skipped when the upgrade ended after about minute 23. The run's summary then ends with `post-run package list refresh skipped: worker time budget nearly exhausted`, and the host keeps showing "Lists out of date" until the next refresh. A run that used the extended time, for example a long wait before DietPi, has the 80-minute basis. A DietPi run that leaves under 7 minutes of it also skips the refresh with that note.
+
+**Notes.** A skipped or failed refresh never changes the outcome or the exit code. The note is added to the apt result line, which is the second line of the summary:
+
+| Run | Apt result line |
+|---|---|
+| Apt succeeded | `Package state verified; maintenance completed; <note>` (the usual success text, then the note) |
+| Apt failed | The apt failure text (at most 1,500 bytes), then `; <note>` |
+| Apt interrupted | Never a note |
+
+The notes are `post-run package list refresh skipped: worker time budget nearly exhausted`, `post-run package list refresh skipped: state not persisted` and `post-run package list refresh failed: <error>`. The error is at most 200 bytes of runner error text. That text can contain line breaks, so **a note can span several lines, and line 3 of the summary is not always the first updater detail line.** Do not write a parser that assumes it. The dashboard classifies a run from line 1 and from the start of line 2, so a note never makes a run look less alarming.
+
+**Bounds.** One refresh per run, lasting at most 5 minutes plus the 90-second process grace. The run ends within 80 minutes when the backstop was verified, otherwise within 30 minutes. The output stays within 256 KiB, a note is at most 240 bytes and the summary is at most 4,096 bytes.
+
+**Deploy.** The fix lives in `riot-maintenance`, so it reaches a device only when the matching release's `install.sh` is re-run as root on that host. An agent-only or server-only update does not change it. A device with the old helper keeps the old behavior. After the re-run, check on the next DietPi patch of that host:
+
+1. The run output has a `[post_refresh]` section after the DietPi section. This appears only when DietPi changed the apt configuration in that run.
+2. The agent's next updates report shows the package lists as fresh, and the "Lists out of date" label is gone.
+
+Without a configuration change, no `[post_refresh]` section is expected.
+
+### The lists stamp and deployment
 
 After every successful refresh, the worker also sets the modification time of `/var/lib/apt/lists` to the current time. A refresh that downloads nothing leaves that time unchanged, and the agent compares apt configuration times with it. The worker opens the path with `O_NOFOLLOW|O_DIRECTORY`, requires a directory owned by root, and changes the time on that open descriptor. It changes nothing else. On failure, the run output gets a `[lists_stamp]` line and the run carries on.
 
@@ -61,7 +120,7 @@ The step is opt-in per host. A host that has not opted in behaves exactly as des
 ### What the step does
 
 - The step runs inside the root worker `riot-maintenance`, in the same service start as apt. The agent never runs DietPi.
-- It runs after apt: after the upgrade, the final verification, the post-run refresh and the restoration of rIOt's managed holds.
+- It runs after apt: after the upgrade, the final verification and the restoration of rIOt's managed holds. The run's one post-run package list refresh follows the step, so it also covers apt configuration that DietPi rewrote (see [Runs with extra updaters](#runs-with-extra-updaters)).
 - It runs `/boot/dietpi/dietpi-update 1`, with null input, a fixed environment and working directory `/`. Neither the agent nor the server can supply an argument, environment value or path.
 - It runs only in the `full` and `security` modes. It never runs in `repair` mode.
 - It runs at most once per command. Redelivery, an agent restart or recovery of an interrupted run never starts it again.
@@ -215,6 +274,8 @@ The command is `failed` only when one of these is true:
 - an updater **started** and did not succeed (`failed`, `timed_out` or `interrupted`).
 
 An updater that was skipped before it started leaves a successful apt run `success`, whatever the reason. Nothing on the host changed, so the command is not red. This replaces the EXTRA-UPD-001 rule that made any refusal fail the whole command (DIETPI-PATH-001). A launcher problem that is reported as `failed` (`launcher setup failed: ...`) is not a skip, so it still fails the command. Apt's own results (version changes and hold restoration) are reported unchanged.
+
+A post-run refresh note can add lines to the apt result line, so the updater detail lines do not always start at line 3 (see [Runs with extra updaters](#runs-with-extra-updaters)).
 
 A refusal is not hidden. The first line of the result still names it, for example `apt: succeeded; dietpi: skipped (unsafe_dietpi_path)`, and the detail line stays. A refusal is any skip except the neutral ones: `not_enabled`, `status_unknown`, `nothing_pending`, `excluded_by_operator` and `apt_not_successful`. For a refusal, rIOt also does two things:
 

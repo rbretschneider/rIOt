@@ -126,6 +126,9 @@ func evaluate(w *window, dv deviceView, now, graceEnd time.Time) timeline {
 		return tl
 	}
 
+	if p.Reinstall {
+		return evaluateReinstall(w, now)
+	}
 	if p.SelfUpdate {
 		return evaluateSelf(w, dv, now)
 	}

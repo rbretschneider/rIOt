@@ -15,6 +15,13 @@ import {
   selfUpdateOutcomeTone,
   selfUpdateVersions,
 } from '../utils/selfUpdate'
+import {
+  REINSTALL_ACTION_LABEL,
+  REINSTALL_ACTOR_PHRASE,
+  isReinstall,
+  reinstallOutcomeLabel,
+  reinstallOutcomeTone,
+} from '../utils/reinstall'
 
 const PAGE_SIZE = 20
 
@@ -116,6 +123,11 @@ export default function ActivityLog({ deviceId }: Props) {
                           {selfUpdateActionLabel(selfUpdateVersions(cmd))}
                           <span className="block text-[10px] text-text-muted">{SELF_UPDATE_ACTOR_PHRASE}</span>
                         </>
+                      ) : isReinstall(cmd) ? (
+                        <>
+                          {REINSTALL_ACTION_LABEL}
+                          <span className="block text-[10px] text-text-muted">{REINSTALL_ACTOR_PHRASE}</span>
+                        </>
                       ) : (
                         enumLabel('commandAction', cmd.action)
                       )}
@@ -124,6 +136,10 @@ export default function ActivityLog({ deviceId }: Props) {
                       {isSelfUpdate(cmd) ? (
                         <Badge tone={selfUpdateOutcomeTone(cmd.status)} className="text-[10px] px-1.5">
                           {selfUpdateOutcomeLabel(cmd.status)}
+                        </Badge>
+                      ) : isReinstall(cmd) ? (
+                        <Badge tone={reinstallOutcomeTone(cmd.status)} className="text-[10px] px-1.5">
+                          {reinstallOutcomeLabel(cmd.status)}
                         </Badge>
                       ) : (
                         <Badge category="commandStatus" value={normalizeStatus(cmd.status)} className="text-[10px] px-1.5" />
@@ -150,7 +166,7 @@ export default function ActivityLog({ deviceId }: Props) {
         </>
       )}
 
-      {selectedCmd && (isSelfUpdate(selectedCmd) ? (
+      {selectedCmd && (isSelfUpdate(selectedCmd) || isReinstall(selectedCmd) ? (
         <SelfUpdateModal
           cmd={selectedCmd}
           deviceId={deviceId}
@@ -167,15 +183,17 @@ export default function ActivityLog({ deviceId }: Props) {
   )
 }
 
-// EXPECT-002 (FR-027): an agent's own self-update opens read-only. It has no duration, exit
-// code, output or controls, so the generic command modal does not apply.
+// EXPECT-002 (FR-027), EXPECT-008 (FR-026): an agent's own self-update and the server's record of
+// an installer re-run open read-only. They have no duration, exit code, output or controls, so the
+// generic command modal does not apply.
 function SelfUpdateModal({ cmd, deviceId, onClose }: {
   cmd: Command
   deviceId: string
   onClose: () => void
 }) {
+  const title = isReinstall(cmd) ? REINSTALL_ACTION_LABEL : selfUpdateActionLabel(selfUpdateVersions(cmd))
   return (
-    <Modal open size="lg" title={selfUpdateActionLabel(selfUpdateVersions(cmd))} onClose={onClose} bodyClassName="space-y-4 py-4">
+    <Modal open size="lg" title={title} onClose={onClose} bodyClassName="space-y-4 py-4">
       <SelfUpdateDetails deviceId={deviceId} command={cmd} />
     </Modal>
   )

@@ -57,6 +57,11 @@ const (
 	// (EXPECT-002 AD-003): the only actor whose UPDATE can match such a row, and
 	// it can match nothing else. Its edges are the seven below.
 	ActorSelfUpdate
+	// ActorReinstall is the server resolving an installer reinstall record
+	// (EXPECT-008 AD-005): the only actor whose UPDATE can match such a row, and
+	// it can match nothing else. Its edges are running -> succeeded and
+	// running -> timed_out.
+	ActorReinstall
 )
 
 func (a CommandActor) String() string {
@@ -69,6 +74,8 @@ func (a CommandActor) String() string {
 		return "operator"
 	case ActorSelfUpdate:
 		return "self_update"
+	case ActorReinstall:
+		return "reinstall"
 	default:
 		return fmt.Sprintf("actor(%d)", int(a))
 	}
@@ -81,6 +88,7 @@ const (
 	bitAgent
 	bitOperator
 	bitSelfUpdate
+	bitReinstall
 )
 
 func (a CommandActor) bit() actorSet {
@@ -93,6 +101,8 @@ func (a CommandActor) bit() actorSet {
 		return bitOperator
 	case ActorSelfUpdate:
 		return bitSelfUpdate
+	case ActorReinstall:
+		return bitReinstall
 	default:
 		return 0
 	}
@@ -144,6 +154,13 @@ func buildTransitions() map[CommandState]map[CommandState]actorSet {
 		add(CommandRunning, to, bitSelfUpdate)
 		add(CommandVerifying, to, bitSelfUpdate)
 	}
+
+	// Reinstall edges (EXPECT-008 AD-005): a record starts in running and the
+	// registration or the bound ends it. Neither pair is new: the agent and the
+	// self-update actor already own running -> succeeded, the server and the
+	// self-update actor already own running -> timed_out.
+	add(CommandRunning, CommandSucceeded, bitReinstall)
+	add(CommandRunning, CommandTimedOut, bitReinstall)
 
 	// Agent edges. queued and dispatched accept every agent report: a report
 	// is proof of delivery (queued only after an FR-085 revert).
