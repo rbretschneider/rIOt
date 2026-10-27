@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { TimePreferenceProvider } from '../../contexts/TimePreferenceProvider'
+import { HOUR_CYCLE_STORAGE_KEY, TIME_ZONE_STORAGE_KEY, TimePreferenceProvider } from '../../contexts/TimePreferenceProvider'
 import { RelativeTime } from './RelativeTime'
 
 const NOW = Date.parse('2026-10-17T12:00:00Z')
 
+// TIME-12H-001 AD-013: seeded with an explicit zone and 24-hour so the UIF title strings are unchanged.
+function seededStorage(zone: 'UTC' | 'Local') {
+  return {
+    getItem: (key: string) => (key === TIME_ZONE_STORAGE_KEY ? zone : key === HOUR_CYCLE_STORAGE_KEY ? '24h' : null),
+    setItem: () => {},
+  }
+}
+
 function renderAt(ui: React.ReactElement, opts: { now?: () => number; localTimeZone?: string } = {}) {
   return render(
-    <TimePreferenceProvider storage={null} now={opts.now ?? (() => NOW)} localTimeZone={opts.localTimeZone}>
+    <TimePreferenceProvider storage={seededStorage('UTC')} now={opts.now ?? (() => NOW)} localTimeZone={opts.localTimeZone}>
       {ui}
     </TimePreferenceProvider>,
   )
@@ -44,7 +52,7 @@ describe('[UIF AC-111] markup', () => {
   it('titles the element in the local zone under the Local preference', () => {
     render(
       <TimePreferenceProvider
-        storage={{ getItem: () => 'Local', setItem: () => {} }}
+        storage={seededStorage('Local')}
         now={() => NOW}
         localTimeZone="America/Los_Angeles"
       >
