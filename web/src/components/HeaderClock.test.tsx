@@ -1,14 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TIME_ZONE_STORAGE_KEY, TimePreferenceProvider } from '../contexts/TimePreferenceProvider'
+import {
+  HOUR_CYCLE_STORAGE_KEY,
+  TIME_ZONE_STORAGE_KEY,
+  TimePreferenceProvider,
+} from '../contexts/TimePreferenceProvider'
 import HeaderClock from './HeaderClock'
 
 const NOW = Date.parse('2026-10-17T14:03:22Z')
 
-function memoryStorage(initial?: string) {
+// TIME-12H-001 AD-013: the UIF tests seed UTC + 24h so their strings are unchanged. Tests of the new default
+// (Server, 12-hour) say so in their title and live in HeaderClock.time12h.test.tsx.
+function memoryStorage(seed: { zone?: string; cycle?: string } = { zone: 'UTC', cycle: '24h' }) {
   const data = new Map<string, string>()
-  if (initial !== undefined) data.set(TIME_ZONE_STORAGE_KEY, initial)
+  if (seed.zone !== undefined) data.set(TIME_ZONE_STORAGE_KEY, seed.zone)
+  if (seed.cycle !== undefined) data.set(HOUR_CYCLE_STORAGE_KEY, seed.cycle)
   return {
     data,
     getItem: (key: string) => data.get(key) ?? null,
@@ -26,18 +33,18 @@ function mount(storage: ReturnType<typeof memoryStorage> | null = memoryStorage(
   )
 }
 
-const clock = () => screen.getByRole('button', { name: /Time zone/ })
+const clock = () => screen.getByRole('button', { name: /Time display/ })
 
 describe('[UIF AC-113] defaults to UTC HH:mm:ss', () => {
-  it('shows the time in 24-hour HH:mm:ss UTC form with empty storage', () => {
+  it('shows the time in 24-hour HH:mm:ss UTC form when UTC and 24-hour are stored', () => {
     mount()
     expect(clock()).toHaveTextContent('14:03:22 UTC')
     expect(clock().textContent).toMatch(/^\d{2}:\d{2}:\d{2} UTC$/)
   })
 
-  it('is a button whose accessible name states the zone and the action', () => {
+  it('is a button whose accessible name states the zone, the hour cycle and the action', () => {
     mount()
-    expect(clock()).toHaveAccessibleName('Time zone: UTC. Switch to local time')
+    expect(clock()).toHaveAccessibleName('Time display: UTC, 24-hour. Change time display')
     expect(clock()).toHaveAttribute('type', 'button')
   })
 
@@ -47,36 +54,41 @@ describe('[UIF AC-113] defaults to UTC HH:mm:ss', () => {
   })
 })
 
-describe('[UIF AC-114] toggle switches to local', () => {
-  it('shows the PDT time and a local-time accessible name after activation', async () => {
+describe('[UIF AC-114] activating the clock opens the panel and Local shows local time', () => {
+  it('shows the PDT time and a Local accessible name after selecting Local', async () => {
     mount()
     await userEvent.click(clock())
+    await userEvent.click(screen.getByRole('radio', { name: 'Local (America/Los_Angeles)' }))
     expect(clock()).toHaveTextContent('07:03:22 PDT')
-    expect(clock()).toHaveAccessibleName('Time zone: local (PDT). Switch to UTC')
+    expect(clock()).toHaveAccessibleName('Time display: Local (America/Los_Angeles), 24-hour. Change time display')
   })
 
-  it('is operable from the keyboard with Enter and Space', async () => {
+  it('is operable from the keyboard: Enter opens the panel and Space closes it', async () => {
     mount()
     clock().focus()
     await userEvent.keyboard('{Enter}')
-    expect(clock()).toHaveTextContent('PDT')
+    expect(clock()).toHaveAttribute('aria-expanded', 'true')
+    clock().focus()
     await userEvent.keyboard(' ')
-    expect(clock()).toHaveTextContent('UTC')
+    expect(clock()).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('also sets the title to the same description', async () => {
     mount()
     await userEvent.click(clock())
-    expect(clock()).toHaveAttribute('title', 'Time zone: local (PDT). Switch to UTC')
+    await userEvent.click(screen.getByRole('radio', { name: 'Local (America/Los_Angeles)' }))
+    expect(clock()).toHaveAttribute('title', 'Time display: Local (America/Los_Angeles), 24-hour. Change time display')
   })
 })
 
 describe('[UIF AC-115] preference persists across remount', () => {
-  it('writes the choice to localStorage and restores it on the next mount', async () => {
+  it('writes the choice to localStorage (both keys) and restores it on the next mount', async () => {
     const storage = memoryStorage()
     const first = mount(storage)
     await userEvent.click(clock())
+    await userEvent.click(screen.getByRole('radio', { name: 'Local (America/Los_Angeles)' }))
     expect(storage.data.get(TIME_ZONE_STORAGE_KEY)).toBe('Local')
+    expect(storage.data.get(HOUR_CYCLE_STORAGE_KEY)).toBe('24h')
     first.unmount()
 
     mount(storage)
@@ -84,8 +96,8 @@ describe('[UIF AC-115] preference persists across remount', () => {
   })
 })
 
-describe('[UIF AC-116] storage failure falls back to UTC', () => {
-  it('shows UTC when getItem throws, without throwing', () => {
+describe('[UIF AC-116] storage failure falls back to Server, 12-hour', () => {
+  it('shows the Server default (UTC until the zone is known) when getItem throws, without throwing', () => {
     const storage = {
       getItem: () => {
         throw new Error('SecurityError')
@@ -99,17 +111,17 @@ describe('[UIF AC-116] storage failure falls back to UTC', () => {
         </TimePreferenceProvider>,
       ),
     ).not.toThrow()
-    expect(clock()).toHaveTextContent('UTC')
+    expect(clock()).toHaveTextContent('2:03:22 PM UTC')
   })
 
-  it('shows UTC when storage holds an unrecognised value ("banana")', () => {
-    mount(memoryStorage('banana'))
-    expect(clock()).toHaveTextContent('14:03:22 UTC')
+  it('shows the Server default when storage holds an unrecognised value ("banana")', () => {
+    mount(memoryStorage({ zone: 'banana' }))
+    expect(clock()).toHaveTextContent('2:03:22 PM UTC')
   })
 
-  it('treats a stored IANA zone name as UTC, never as a zone (SEC-006)', () => {
-    mount(memoryStorage('America/Nowhere'))
-    expect(clock()).toHaveTextContent('14:03:22 UTC')
+  it('treats a stored IANA zone name as Server, never as a zone (SEC-006)', () => {
+    mount(memoryStorage({ zone: 'America/Nowhere' }))
+    expect(clock()).toHaveTextContent('2:03:22 PM UTC')
   })
 })
 

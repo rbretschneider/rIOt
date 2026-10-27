@@ -9,6 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fixedGenerated is the generation instant the summary tests render with, so the
+// output never depends on the wall clock.
+var fixedGenerated = time.Date(2026, 10, 27, 17, 5, 9, 0, time.UTC)
+
 // fullTelemetryFixture returns a TelemetrySnapshot with all sections populated,
 // including data that MUST be excluded from the summary (logs, processes,
 // container Env, security, etc.).
@@ -182,7 +186,7 @@ func TestRender_AC003_AllSectionsPresent(t *testing.T) {
 	device := fullDeviceFixture()
 	snap := fullTelemetryFixture()
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	// Header
@@ -293,7 +297,7 @@ func TestRender_AC004_SectionsOmittedWhenNoData(t *testing.T) {
 		},
 	}
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	assert.Contains(t, out, "## System Identity", "[AC-004] system section must be present")
@@ -318,7 +322,7 @@ func TestRender_AC004_DockerSectionOmittedWhenUnavailable(t *testing.T) {
 		},
 	}
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	assert.NotContains(t, out, "## Docker", "[AC-004] Docker section must be absent when docker.available is false")
@@ -329,7 +333,7 @@ func TestRender_AC005_ExcludedDataAbsent(t *testing.T) {
 	device := fullDeviceFixture()
 	snap := fullTelemetryFixture()
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	// Container secrets must not appear (SEC-002)
@@ -383,7 +387,7 @@ func TestRender_AC001_HeaderFields(t *testing.T) {
 		Data:     models.FullTelemetryData{},
 	}
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	assert.Contains(t, out, "# Device Summary: myserver", "[AC-001] header title must include hostname")
@@ -424,13 +428,13 @@ func TestRender_AC010_UsesProvidedSnapshot(t *testing.T) {
 	}
 
 	// Render with snapA should produce Board-A-Unique board model (from that snapshot)
-	outA, err := Render(deviceA, snapA)
+	outA, err := Render(deviceA, snapA, fixedGenerated, nil)
 	require.NoError(t, err)
 	assert.Contains(t, outA, "Board-A-Unique", "[AC-010] must use the data from the provided snapshot")
 	assert.NotContains(t, outA, "Board-B-Unique", "[AC-010] must not contain data from a different snapshot")
 
 	// Render with snapB should produce Board-B-Unique (demonstrating caller controls recency)
-	outB, err := Render(deviceB, snapB)
+	outB, err := Render(deviceB, snapB, fixedGenerated, nil)
 	require.NoError(t, err)
 	assert.Contains(t, outB, "Board-B-Unique", "[AC-010] passing different snapshot produces different data")
 	assert.NotContains(t, outB, "Board-A-Unique", "[AC-010] must not contain data from the other snapshot")
@@ -476,7 +480,7 @@ func TestRender_SEC003_PipeCharactersEscaped(t *testing.T) {
 		},
 	}
 
-	out, err := Render(device, snap)
+	out, err := Render(device, snap, fixedGenerated, nil)
 	require.NoError(t, err)
 
 	// Raw unescaped pipes inside table cells would break Markdown table structure.

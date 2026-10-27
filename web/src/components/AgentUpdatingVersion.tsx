@@ -1,8 +1,7 @@
 import type { DeviceActivity } from '../types/models'
 import { Spinner } from './ui'
-import { useTimePreference } from '../contexts/TimePreferenceProvider'
+import { useTimeFormatters } from '../contexts/TimePreferenceProvider'
 import { activityLabel, agentUpdateTarget } from '../utils/activity'
-import { formatChartTick, parseInstant } from '../utils/format'
 
 interface AgentUpdatingVersionProps {
   activity: DeviceActivity
@@ -15,11 +14,9 @@ interface AgentUpdatingVersionProps {
  * hover title so the row stays one line tall. Every string is React text.
  */
 export default function AgentUpdatingVersion({ activity, newestAgentVersion }: AgentUpdatingVersionProps) {
-  const { zoneOpts } = useTimePreference()
-  const formatTime = (iso: string) => {
-    const instant = parseInstant(iso)
-    return instant ? formatChartTick(instant.getTime(), zoneOpts) : '—'
-  }
+  const { timestamp } = useTimeFormatters()
+  // Clock times in activity text carry a zone label (TIME-12H-001 DEC-9).
+  const formatTime = (iso: string) => timestamp(iso, 'clock')
   const label = activityLabel(activity, { newestAgentVersion, formatTime })
   const target = agentUpdateTarget(activity, newestAgentVersion)
   const state = activity.phase === 'queued' ? 'queued' : 'updating'

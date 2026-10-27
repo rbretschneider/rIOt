@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom'
 import type { DeviceActivity } from '../types/models'
 import { Modal, RelativeTime, Spinner } from './ui'
 import CommandProgress from './docker/CommandProgress'
-import { useTimePreference } from '../contexts/TimePreferenceProvider'
+import { useTimeFormatters } from '../contexts/TimePreferenceProvider'
 import { activityLabel, activityLink, isEscalated, showsActorLine } from '../utils/activity'
-import { formatChartTick, parseInstant } from '../utils/format'
 
 interface ActivityLabelProps {
   activity: DeviceActivity
@@ -25,13 +24,11 @@ interface ActivityLabelProps {
  * command link is built with encodeURIComponent and there is no raw HTML.
  */
 export default function ActivityLabel({ activity, newestAgentVersion, showLink = false, compact = false }: ActivityLabelProps) {
-  const { zoneOpts } = useTimePreference()
+  const { timestamp } = useTimeFormatters()
   const [modalOpen, setModalOpen] = useState(false)
 
-  const formatTime = (iso: string) => {
-    const instant = parseInstant(iso)
-    return instant ? formatChartTick(instant.getTime(), zoneOpts) : '—'
-  }
+  // Clock times in activity text carry a zone label (TIME-12H-001 DEC-9).
+  const formatTime = (iso: string) => timestamp(iso, 'clock')
   const label = activityLabel(activity, { newestAgentVersion, formatTime })
   const link = showLink ? activityLink(activity) : null
   const failed = isEscalated(activity)

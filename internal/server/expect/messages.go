@@ -60,8 +60,8 @@ func containerSummaryMessage(n int, since time.Duration, w *window, actor string
 }
 
 // heldSummaryMessage renders the SEC-005 summary push.
-func heldSummaryMessage(n int, host string, since time.Time) string {
-	return fmt.Sprintf("%d escalation notifications for %s were held since %s; see Alerts", n, host, since.Local().Format("15:04"))
+func heldSummaryMessage(n int, host string, since time.Time, loc *time.Location) string {
+	return fmt.Sprintf("%d escalation notifications for %s were held since %s; see Alerts", n, host, models.FormatDisplayClock(since, loc))
 }
 
 // overflowMessage renders the SEC-002 (c) warning event.

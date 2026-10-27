@@ -133,7 +133,7 @@ describe('[AC-042] header shows label, actor, start and link', () => {
     await openPage()
 
     const label = await screen.findByTestId('activity-label')
-    expect(within(label).getByText('Rebooting, back by 14:15')).toBeInTheDocument()
+    expect(within(label).getByText('Rebooting, back by 14:15 UTC')).toBeInTheDocument()
     expect(within(label).getByText(/by ryan/)).toBeInTheDocument()
     expect(within(label).getByText('5m ago'), 'the start time must be shown').toBeInTheDocument()
   })
@@ -170,7 +170,7 @@ describe('[AC-042] header shows label, actor, start and link', () => {
     await openPage()
 
     const label = await screen.findByTestId('activity-label')
-    expect(within(label).getByText('Powered off by ryan at 14:02')).toBeInTheDocument()
+    expect(within(label).getByText('Powered off by ryan at 14:02 UTC')).toBeInTheDocument()
     expect(within(label).queryByText(/started/)).toBeNull()
   })
 

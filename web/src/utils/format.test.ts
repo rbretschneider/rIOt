@@ -118,8 +118,9 @@ describe('formatCount', () => {
   })
 })
 
-const UTC = { zone: 'UTC' } as const
-const LA = { zone: 'Local', localTimeZone: 'America/Los_Angeles' } as const
+// TIME-12H-001 AD-013: the UIF expectations are 24-hour, so they pin the hour cycle explicitly.
+const UTC = { zone: 'UTC', hourCycle: '24h' } as const
+const LA = { zone: 'Local', hourCycle: '24h', localTimeZone: 'America/Los_Angeles' } as const
 const INSTANT = '2026-10-17T14:03:22Z'
 
 describe('[UIF AC-101] formatBytes', () => {
@@ -216,7 +217,7 @@ describe('[UIF AC-103] formatRelative', () => {
   })
 })
 
-describe('[UIF AC-104] absolute timestamp UTC', () => {
+describe('[UIF AC-104] [TIME-12H-001 AC-005] absolute timestamp UTC, 24-hour', () => {
   it('formats second precision as YYYY-MM-DD HH:mm:ss UTC', () => {
     expect(formatTimestamp(INSTANT, UTC)).toBe('2026-10-17 14:03:22 UTC')
   })
@@ -240,7 +241,7 @@ describe('[UIF AC-104] absolute timestamp UTC', () => {
   })
 })
 
-describe('[UIF AC-105] absolute timestamp Local (America/Los_Angeles)', () => {
+describe('[UIF AC-105] [TIME-12H-001 AC-007] absolute timestamp Local (America/Los_Angeles), 24-hour', () => {
   it('formats the instant in Pacific daylight time with the PDT label', () => {
     expect(formatTimestamp(INSTANT, LA)).toBe('2026-10-17 07:03:22 PDT')
   })
@@ -286,7 +287,7 @@ describe('[UIF AC-106] invalid timestamp', () => {
   })
 })
 
-describe('[UIF AC-118] chart tick and tooltip formatters', () => {
+describe('[UIF AC-118] [TIME-12H-001 AC-013] chart tick and tooltip formatters, 24-hour', () => {
   const ts = Date.parse(INSTANT)
 
   it('ticks show the local time of day without a zone label', () => {

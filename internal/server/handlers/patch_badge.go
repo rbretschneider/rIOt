@@ -101,6 +101,10 @@ type patchBadgeInput struct {
 	LastRun *models.Command
 	// AgentFactsMinVersion names the agent release that reports the newer facts.
 	AgentFactsMinVersion string
+	// Zone is the server display zone the badge text writes times in; nil means
+	// UTC. It changes rendering only: window math stays UTC and reboot_at stays an
+	// RFC 3339 UTC instant (TIME-12H-001 AD-005).
+	Zone *time.Location
 }
 
 // patchBadgeReason is one item: an action item under "Needs you", or an
@@ -354,7 +358,7 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	dated := mode == "window" && allowReboot != nil && *allowReboot
 	b.Explanation.Reboot = rebootLine(rebootFacts{
 		requiredNow: requiredNow, pendingRC: pendingRC, autoCovers: autoCovers,
-		reasons: legacy, dated: dated, at: nextStart, why: unknownDateReasons(mode, allowReboot),
+		reasons: legacy, dated: dated, at: nextStart, zone: in.Zone, why: unknownDateReasons(mode, allowReboot),
 	})
 	switch {
 	case len(actions) > 0:
@@ -366,8 +370,11 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	case !autoCovers:
 		b.Kind, b.Label = badgeAuto, "Auto"
 	case dated:
+		// at stays the UTC instant: the pointer is serialised as reboot_at, and a
+		// value converted with In(zone) would marshal with a zone offset. Only the
+		// label date is computed in the display zone (DEC-14).
 		at := nextStart
-		b.Kind, b.Label, b.RebootAt = badgeAutoRebootDate, "Auto (reboot on "+at.Format("2006-01-02")+")", &at
+		b.Kind, b.Label, b.RebootAt = badgeAutoRebootDate, "Auto (reboot on "+models.FormatDisplayDate(at, in.Zone)+")", &at
 	default:
 		b.Kind, b.Label = badgeAutoRebootUnknown, "Auto (reboot date Unknown)"
 	}
@@ -377,7 +384,7 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	case !autoPatchSetUp:
 		b.Explanation.Automatic = "No."
 	case mode == "window":
-		b.Explanation.Automatic = "Yes. Next window starts " + nextStart.Format("2006-01-02 15:04") + " UTC."
+		b.Explanation.Automatic = "Yes. Next window starts " + models.FormatDisplayMinute(nextStart, in.Zone) + "."
 	default:
 		b.Explanation.Automatic = fmt.Sprintf("Yes. Any time (within the %d-minute cooldown).", in.OSPatch.CooldownMinutes)
 	}
@@ -393,7 +400,7 @@ func computePatchBadge(in patchBadgeInput, now time.Time) patchBadge {
 	}
 
 	// Line 4: as of.
-	b.Explanation.AsOf = asOfText(in.UpdatesAt, now)
+	b.Explanation.AsOf = asOfText(in.UpdatesAt, now, in.Zone)
 
 	b.Explanation.Notes = patchBadgeNotes(in, u)
 	return b
@@ -541,6 +548,7 @@ type rebootFacts struct {
 	reasons     int
 	dated       bool
 	at          time.Time
+	zone        *time.Location // display zone of at; nil means UTC
 	why         string
 }
 
@@ -563,7 +571,7 @@ func rebootLine(f rebootFacts) string {
 	case f.reasons > 0:
 		return head + " once the items below are resolved (date not shown)."
 	case f.dated:
-		return head + " on " + f.at.Format("2006-01-02 15:04") + " UTC (estimate)."
+		return head + " on " + models.FormatDisplayMinute(f.at, f.zone) + " (estimate)."
 	default:
 		return head + ", date Unknown: " + f.why + "."
 	}
@@ -768,8 +776,9 @@ func stripUnsafeText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// asOfText renders the patch-data time in UTC with its age.
-func asOfText(at *time.Time, now time.Time) string {
+// asOfText renders the patch-data time in the display zone (nil means UTC) with
+// its age.
+func asOfText(at *time.Time, now time.Time, loc *time.Location) string {
 	if at == nil {
 		return "No patch data reported yet."
 	}
@@ -786,5 +795,5 @@ func asOfText(at *time.Time, now time.Time) string {
 	default:
 		ago = fmt.Sprintf("%d d ago", int(age.Hours()/24))
 	}
-	return t.Format("2006-01-02 15:04") + " UTC (" + ago + ")"
+	return models.FormatDisplayMinute(t, loc) + " (" + ago + ")"
 }

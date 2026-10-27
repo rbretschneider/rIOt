@@ -245,6 +245,8 @@ type harness struct {
 	lastReconcile time.Time
 	// noResolver leaves the tracker without a self-update resolver (C-4).
 	noResolver bool
+	// displayZone is the zone the tracker was built with; nil means UTC.
+	displayZone *time.Location
 
 	// alerts are the occurrences that went the "today" path: stored as a non-expected
 	// event and, when the rule notifies, dispatched by the generator.
@@ -271,6 +273,7 @@ type hConfig struct {
 	notConnect  bool
 	deviceSetup func(h *harness)
 	noResolver  bool
+	displayZone *time.Location
 }
 
 func withoutLoad() hOpt             { return func(c *hConfig) { c.noLoad = true } }
@@ -281,6 +284,10 @@ func withAsyncPublisher(q, w int) hOpt {
 	return func(c *hConfig) { c.inline = false; c.queueSize = q; c.workers = w }
 }
 func withDevices(f func(h *harness)) hOpt { return func(c *hConfig) { c.deviceSetup = f } }
+
+// withDisplayZone sets the zone the tracker writes event-message times in; the
+// default is nil (UTC), like an unconfigured server (TIME-12H-001).
+func withDisplayZone(loc *time.Location) hOpt { return func(c *hConfig) { c.displayZone = loc } }
 
 // withoutSelfUpdateResolver leaves the tracker without a SelfUpdateResolver
 // (EXPECT-002 C-4: the stuck-record case).
@@ -336,6 +343,7 @@ func newHarness(t *testing.T, opts ...hOpt) *harness {
 	if cfg.deviceSetup != nil {
 		cfg.deviceSetup(h)
 	}
+	h.displayZone = cfg.displayZone
 	h.build(cfg)
 	if !cfg.noLoad {
 		require.NoError(t, h.tr.Load(context.Background()), "initial Load")
@@ -350,7 +358,7 @@ func (h *harness) build(cfg hConfig) {
 		Escalator: h.esc, Broadcaster: h.bc, Now: h.clock.Now, GraceEnd: cfg.graceEnd,
 		NewestAgentVersion: func() string { return h.newest },
 		Logger:             slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		QueueSize:          cfg.queueSize, Workers: cfg.workers, InlinePublish: cfg.inline,
+		QueueSize:          cfg.queueSize, Workers: cfg.workers, InlinePublish: cfg.inline, DisplayZone: cfg.displayZone,
 	})
 	h.spy.set(h.tr)
 	h.svc = commands.New(commands.Options{
@@ -778,7 +786,8 @@ func (h *harness) activity(device string) *models.DeviceActivity {
 	return nil
 }
 
-func (h *harness) local(t time.Time) string { return t.Local().Format("15:04") }
+// local renders t the way the tracker writes a time in an event message.
+func (h *harness) local(t time.Time) string { return models.FormatDisplayClock(t, h.displayZone) }
 
 func requireNoAlerts(t *testing.T, h *harness, msg string) {
 	t.Helper()

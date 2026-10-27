@@ -27,6 +27,9 @@ services:
       # Optional trusted reverse-proxy CIDRs — set only if rIOt sits behind
       # a reverse proxy (default empty trusts nobody, see .env.example).
       # - RIOT_TRUSTED_PROXIES=10.0.0.5/32
+      # Optional display time zone (IANA name) for the dashboard's Server zone
+      # and server-written text. Display only; falls back to TZ, then UTC.
+      # - RIOT_DISPLAY_TZ=America/New_York
     volumes:
       - riot-fsprobe:/riot-fsprobe:ro
     logging:

@@ -249,7 +249,7 @@ func TestEX_G_PoweredOffTransitionIsInfoWithItsMessage(t *testing.T) {
 	r.gen.DeviceOfflineAt(context.Background(), "hawaii", "hawaii", nil)
 	evts := r.stored()
 	require.Len(t, evts, 1)
-	assert.Equal(t, "Device hawaii powered off by ryan at "+expectBase.Local().Format("15:04"), evts[0].Message)
+	assert.Equal(t, "Device hawaii powered off by ryan at "+models.FormatDisplayClock(expectBase, nil), evts[0].Message)
 	assert.Equal(t, models.SeverityInfo, evts[0].Severity)
 }
 
