@@ -84,6 +84,7 @@ func (s *Server) setupRouter() *chi.Mux {
 
 	h := handlers.New(handlers.HandlerDeps{
 		Activity:                  activity,
+		DisplayZone:               s.DisplayZone,
 		Devices:                   s.DeviceRepo,
 		Telemetry:                 s.TelemetryRepo,
 		Events:                    s.EventRepo,
@@ -268,6 +269,7 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Post("/api/v1/events/{id}/acknowledge", h.AcknowledgeEvent)
 		r.Post("/api/v1/events/acknowledge-all", h.AcknowledgeAllEvents)
 		r.Get("/api/v1/update/server", h.ServerUpdateCheck)
+		r.Get("/api/v1/server/time-display", h.TimeDisplay)
 
 		// Settings: alert rules & templates
 		r.Get("/api/v1/settings/alert-templates", h.ListAlertTemplates)

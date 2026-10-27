@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
+	_ "time/tzdata" // fallback zone database for RIOT_DISPLAY_TZ on hosts without one (TIME-12H-001 AD-002)
 
 	"github.com/DesyncTheThird/rIOt/internal/server"
 	"github.com/DesyncTheThird/rIOt/internal/server/db"

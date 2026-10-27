@@ -39,15 +39,30 @@ export function formatCount(value: number): string {
 // contexts/TimePreferenceProvider.
 // ---------------------------------------------------------------------------
 
-export type TimeZonePref = 'UTC' | 'Local'
+export type TimeZonePref = 'Server' | 'UTC' | 'Local'
+
+/** TIME-12H-001: 12-hour ("1:05 PM") or 24-hour ("13:05") clock text. */
+export type HourCycle = '12h' | '24h'
+
+/**
+ * A server zone name that passed acceptServerZone (FR-038). The brand makes an
+ * unvalidated string a compile error; the only cast to it is inside
+ * acceptServerZone, and a static guard (TIME-12H-001 SEC-003) fails on any other.
+ */
+export type AcceptedZone = string & { readonly __brand: 'AcceptedZone' }
 
 export interface ZoneOpts {
   zone: TimeZonePref
+  /** Required, so tsc finds every caller that has not chosen an hour cycle. */
+  hourCycle: HourCycle
   /** IANA zone used for the Local preference. Undefined means the runtime zone. Test seam. */
   localTimeZone?: string
+  /** The server display zone, once the API reported it and acceptServerZone accepted it. */
+  serverTimeZone?: AcceptedZone | null
 }
 
-export type TimestampPrecision = 'second' | 'minute' | 'time'
+/** `clock` is the hour and minute with a zone label ("1:05 PM EDT"), used for activity text. */
+export type TimestampPrecision = 'second' | 'minute' | 'time' | 'clock'
 
 export const EM_DASH = '—'
 
@@ -124,24 +139,102 @@ export function formatRelative(value: InstantInput, nowMs: number, opts: { pastO
   return diffSec >= 0 ? `${unit} ago` : `in ${unit}`
 }
 
+// ---------------------------------------------------------------------------
+// TIME-12H-001: zone resolution, 12-hour text and server-zone acceptance.
+// ---------------------------------------------------------------------------
+
+/** Shape of an IANA zone name: 1 to 3 "/"-separated segments of [A-Za-z][A-Za-z0-9_+-]*. */
+export const ZONE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z][A-Za-z0-9_+-]*){0,2}$/
+
+const ZONE_NAME_MAX_LENGTH = 64
+
+/**
+ * Accepts a zone name from the API (or any untrusted source) only when it has the
+ * IANA shape (no trimming, not "Local", at most 64 characters) and the browser's
+ * Intl accepts it. Anything else returns null, which callers treat as UTC (FR-038).
+ * The acceptance construction passes only `{ timeZone }` so tests can tell it apart
+ * from formatting constructions, and nothing is cached, so rejected strings cannot grow memory.
+ */
+export function acceptServerZone(raw: unknown): AcceptedZone | null {
+  if (typeof raw !== 'string') return null
+  if (raw.length === 0 || raw.length > ZONE_NAME_MAX_LENGTH) return null
+  if (raw === 'Local') return null
+  if (!ZONE_NAME_PATTERN.test(raw)) return null
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: raw })
+  } catch {
+    return null
+  }
+  return raw as AcceptedZone
+}
+
+/**
+ * The browser's own zone name for display ("America/Los_Angeles"), or '' when the
+ * runtime cannot say. `localTimeZone` is the test seam and wins when given.
+ */
+export function localZoneName(localTimeZone?: string): string {
+  if (localTimeZone !== undefined) return localTimeZone
+  try {
+    return new Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''
+  } catch {
+    return ''
+  }
+}
+
+interface ResolvedZone {
+  key: string
+  timeZone: string | undefined
+  literalUtc: boolean
+}
+
+function resolveZone(opts: ZoneOpts): ResolvedZone {
+  if (opts.zone === 'Local') {
+    return { key: `L:${opts.localTimeZone ?? '<runtime>'}`, timeZone: opts.localTimeZone, literalUtc: false }
+  }
+  if (opts.zone === 'Server' && opts.serverTimeZone) {
+    return { key: `S:${opts.serverTimeZone}`, timeZone: opts.serverTimeZone, literalUtc: false }
+  }
+  // UTC, and Server before the zone is known or when it was rejected (FR-050).
+  return { key: 'UTC', timeZone: 'UTC', literalUtc: true }
+}
+
+/** Hard cap on cached formatters: typically 3 (UTC, one server zone, Local). Oldest is evicted first. */
+const FORMATTER_CACHE_LIMIT = 12
 const formatterCache = new Map<string, Intl.DateTimeFormat>()
 
-function dateTimeFormat(opts: ZoneOpts): Intl.DateTimeFormat {
-  const key = opts.zone === 'UTC' ? 'UTC' : (opts.localTimeZone ?? '<runtime>')
-  let fmt = formatterCache.get(key)
+/** Number of cached Intl formatters, for the cache-bound test. */
+export function formatterCacheSize(): number {
+  return formatterCache.size
+}
+
+function buildFormatter(timeZone: string | undefined): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'short',
+  })
+}
+
+function dateTimeFormat(zone: ResolvedZone): Intl.DateTimeFormat {
+  let fmt = formatterCache.get(zone.key)
   if (!fmt) {
-    fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: opts.zone === 'UTC' ? 'UTC' : opts.localTimeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hourCycle: 'h23',
-      timeZoneName: 'short',
-    })
-    formatterCache.set(key, fmt)
+    try {
+      fmt = buildFormatter(zone.timeZone)
+    } catch {
+      // A zone Intl rejects (only reachable through the Local test seam) renders as UTC, never throws (FR-035).
+      fmt = buildFormatter('UTC')
+    }
+    if (formatterCache.size >= FORMATTER_CACHE_LIMIT) {
+      const oldest = formatterCache.keys().next().value
+      if (oldest !== undefined) formatterCache.delete(oldest)
+    }
+    formatterCache.set(zone.key, fmt)
   }
   return fmt
 }
@@ -157,8 +250,9 @@ interface ZonedParts {
 }
 
 function zonedParts(d: Date, opts: ZoneOpts): ZonedParts {
+  const resolved = resolveZone(opts)
   const parts: Record<string, string> = {}
-  for (const p of dateTimeFormat(opts).formatToParts(d)) parts[p.type] = p.value
+  for (const p of dateTimeFormat(resolved).formatToParts(d)) parts[p.type] = p.value
   return {
     year: parts.year,
     month: parts.month,
@@ -166,14 +260,28 @@ function zonedParts(d: Date, opts: ZoneOpts): ZonedParts {
     hour: parts.hour,
     minute: parts.minute,
     second: parts.second,
-    zone: opts.zone === 'UTC' ? 'UTC' : parts.timeZoneName,
+    zone: resolved.literalUtc ? 'UTC' : parts.timeZoneName,
   }
 }
 
 /**
- * Absolute timestamp in the preferred zone, 24-hour, always zone-labelled:
- * second "YYYY-MM-DD HH:mm:ss ZONE", minute "YYYY-MM-DD HH:mm ZONE",
- * time "HH:mm:ss ZONE". Missing or unparseable input renders an em dash.
+ * Hour text for the cycle. 24-hour is the zero-padded h23 hour, exactly as before.
+ * 12-hour is derived from that hour by integer arithmetic (never from dayPeriod):
+ * no leading zero, midnight and noon are 12, and the period is a separate suffix.
+ */
+function hourText(p: ZonedParts, cycle: HourCycle): { hour: string; period: string } {
+  if (cycle === '24h') return { hour: p.hour, period: '' }
+  const h = Number(p.hour) % 24
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return { hour: String(h12), period: h < 12 ? ' AM' : ' PM' }
+}
+
+/**
+ * Absolute timestamp in the preferred zone, always zone-labelled. 24-hour:
+ * second "YYYY-MM-DD HH:mm:ss ZONE", minute "YYYY-MM-DD HH:mm ZONE", time
+ * "HH:mm:ss ZONE", clock "HH:mm ZONE". 12-hour: "YYYY-MM-DD h:mm:ss PM ZONE",
+ * "YYYY-MM-DD h:mm PM ZONE", "h:mm:ss PM ZONE", "h:mm PM ZONE". Missing or
+ * unparseable input renders an em dash.
  */
 export function formatTimestamp(
   value: InstantInput,
@@ -183,18 +291,29 @@ export function formatTimestamp(
   const d = parseInstant(value)
   if (!d) return EM_DASH
   const p = zonedParts(d, opts)
+  const { hour, period } = hourText(p, opts.hourCycle)
   const date = `${p.year}-${p.month}-${p.day}`
-  if (precision === 'time') return `${p.hour}:${p.minute}:${p.second} ${p.zone}`
-  if (precision === 'minute') return `${date} ${p.hour}:${p.minute} ${p.zone}`
-  return `${date} ${p.hour}:${p.minute}:${p.second} ${p.zone}`
+  if (precision === 'clock') return `${hour}:${p.minute}${period} ${p.zone}`
+  if (precision === 'time') return `${hour}:${p.minute}:${p.second}${period} ${p.zone}`
+  if (precision === 'minute') return `${date} ${hour}:${p.minute}${period} ${p.zone}`
+  return `${date} ${hour}:${p.minute}:${p.second}${period} ${p.zone}`
 }
 
-/** Chart X-axis tick: HH:mm in the preferred zone, no zone label (the tooltip carries it). */
+/** The date (YYYY-MM-DD) of the instant in the preferred zone, no label. Used for download file names. */
+export function formatDateOnly(value: InstantInput, opts: ZoneOpts): string {
+  const d = parseInstant(value)
+  if (!d) return EM_DASH
+  const p = zonedParts(d, opts)
+  return `${p.year}-${p.month}-${p.day}`
+}
+
+/** Chart X-axis tick: "HH:mm" or "h:mm AM" in the preferred zone, no zone label (the tooltip carries it). */
 export function formatChartTick(ts: number, opts: ZoneOpts): string {
   const d = parseInstant(ts)
   if (!d) return EM_DASH
   const p = zonedParts(d, opts)
-  return `${p.hour}:${p.minute}`
+  const { hour, period } = hourText(p, opts.hourCycle)
+  return `${hour}:${p.minute}${period}`
 }
 
 /** Chart hover label: the full second-precision timestamp including the zone label. */

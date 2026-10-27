@@ -38,6 +38,7 @@ import ProbeDetail from './pages/ProbeDetail'
 import LearnMore from './pages/LearnMore'
 import DeviceProbes from './pages/DeviceProbes'
 import HeaderClock from './components/HeaderClock'
+import ServerZoneSync from './components/ServerZoneSync'
 import { Button, Modal } from './components/ui'
 import { AppShell } from './components/layout/AppShell'
 
@@ -267,6 +268,7 @@ export default function App() {
     <WebSocketProvider>
       <ScrollToTop />
       <GlobalWSHandler />
+      <ServerZoneSync />
       <CommandPalette />
       <AppShell
         dockerEnabled={isEnabled('docker')}

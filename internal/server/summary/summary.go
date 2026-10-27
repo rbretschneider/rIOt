@@ -113,9 +113,11 @@ type summaryData struct {
 }
 
 // Render generates a Markdown summary document from the given device and snapshot.
+// generated is the generation instant and zone the server display zone (nil means
+// UTC); the Generated line is written in the 12-hour form with a zone label.
 // Returns the rendered string or an error if template execution fails.
-func Render(device *models.Device, snapshot *models.TelemetrySnapshot) (string, error) {
-	d := buildSummaryData(device, snapshot)
+func Render(device *models.Device, snapshot *models.TelemetrySnapshot, generated time.Time, zone *time.Location) (string, error) {
+	d := buildSummaryData(device, snapshot, generated, zone)
 
 	var buf bytes.Buffer
 	if err := summaryTemplate.Execute(&buf, d); err != nil {
@@ -125,11 +127,11 @@ func Render(device *models.Device, snapshot *models.TelemetrySnapshot) (string, 
 }
 
 // buildSummaryData populates summaryData from the device and snapshot.
-func buildSummaryData(device *models.Device, snapshot *models.TelemetrySnapshot) summaryData {
+func buildSummaryData(device *models.Device, snapshot *models.TelemetrySnapshot, generated time.Time, zone *time.Location) summaryData {
 	d := summaryData{
 		Hostname:  device.Hostname,
 		ShortID:   device.ShortID,
-		Generated: time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
+		Generated: models.FormatDisplayFull(generated, zone),
 	}
 
 	tel := snapshot.Data

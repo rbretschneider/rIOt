@@ -740,7 +740,7 @@ function demoBadge(kind: PatchBadge['kind'], label: string, reboot: string, need
       blocked,
       info,
       needs_you_summary: needsYou.length === 0 ? 'Nothing.' : `${needsYou.length} item${needsYou.length === 1 ? '' : 's'} need${needsYou.length === 1 ? 's' : ''} you.`,
-      as_of: '2026-10-19 02:00 UTC (just now)',
+      as_of: '2026-10-18 10:00 PM EDT (just now)',
       notes: [],
     },
   }

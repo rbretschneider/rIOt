@@ -85,6 +85,10 @@ type HandlerDeps struct {
 	// GET /api/v1/activity answer 503 and skips the registration hook. Assign it
 	// only when non-nil: a nil *expect.Tracker would be a non-nil interface.
 	Activity ActivitySource
+
+	// TIME-12H-001: the display zone of server-written text and of
+	// GET /api/v1/server/time-display. nil means UTC.
+	DisplayZone *time.Location
 }
 
 type Handlers struct {
@@ -163,6 +167,10 @@ type Handlers struct {
 	now      func() time.Time
 	agents   *agentRegistry
 
+	// displayZone is the server display zone (TIME-12H-001); nil means UTC, so
+	// struct-literal Handlers in tests stay valid. Read it through zone().
+	displayZone *time.Location
+
 	// async runs the detached telemetry post-work (nil means a goroutine).
 	async func(func())
 
@@ -203,6 +211,14 @@ func (h *Handlers) clock() time.Time {
 		return h.now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+// zone returns the server display zone, UTC when none was injected.
+func (h *Handlers) zone() *time.Location {
+	if h.displayZone != nil {
+		return h.displayZone
+	}
+	return time.UTC
 }
 
 // cmdSvc returns the command service, building a default one from the
@@ -305,6 +321,7 @@ func New(deps HandlerDeps) *Handlers {
 		setupComplete:             deps.SetupComplete,
 		caRepo:                    deps.CARepo,
 		clampLog:                  newClampLogLimiter(),
+		displayZone:               deps.DisplayZone,
 	}
 	// A nil *websocket.Hub must stay a nil interface (typed-nil trap).
 	if deps.Hub != nil {
@@ -1632,7 +1649,8 @@ func (h *Handlers) DeviceSummary(w http.ResponseWriter, r *http.Request) {
 		copy.Data = *sanitizeDockerTelemetry(&snapshot.Data)
 		snapshot = &copy
 	}
-	markdown, err := devicesummary.Render(device, snapshot)
+	generated := h.clock()
+	markdown, err := devicesummary.Render(device, snapshot, generated, h.zone())
 	if err != nil {
 		slog.Error("render device summary", "device_id", id, "error", err.Error())
 		http.Error(w, `{"error":"failed to generate summary"}`, http.StatusInternalServerError)
@@ -1642,7 +1660,7 @@ func (h *Handlers) DeviceSummary(w http.ResponseWriter, r *http.Request) {
 	// SEC-001: Sanitize hostname for Content-Disposition — only ASCII alphanumeric,
 	// hyphens, and underscores. Replace any other character with underscore.
 	safeHostname := sanitizeFilename(device.Hostname)
-	dateStr := time.Now().UTC().Format("2006-01-02")
+	dateStr := models.FormatDisplayDate(generated, h.zone())
 	filename := fmt.Sprintf("%s-summary-%s.md", safeHostname, dateStr)
 
 	// Quote the filename per RFC 6266 to handle any edge cases.

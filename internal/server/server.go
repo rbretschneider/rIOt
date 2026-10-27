@@ -68,7 +68,11 @@ type Server struct {
 	// Expect derives the expected-activity windows from the commands and tells
 	// the event generator what is expected (EXPECT-001). It is built once in
 	// Start so it survives a router rebuild.
-	Expect     *expect.Tracker
+	Expect *expect.Tracker
+	// DisplayZone is the zone server-written text and the dashboard's Server
+	// zone use (TIME-12H-001). Nil means UTC. Set once in Start, never from
+	// setupRouter.
+	DisplayZone *time.Location
 	Dispatcher *notify.Dispatcher
 	UpdateChecker        *updates.Checker
 	// PartitionManager pre-creates upcoming daily partitions and drops
@@ -157,6 +161,11 @@ func (s *Server) Start() error {
 	multiHandler := logstore.NewMultiHandler(jsonHandler, s.LogHandler)
 	slog.SetDefault(slog.New(logbudget.New(multiHandler,1000)))
 
+	// The display zone is resolved here, once per process, after the DB log
+	// handler exists so a rejected value reaches Settings → Logs. setupRouter,
+	// which applyTLSAndRestart re-runs, only reads s.DisplayZone (TIME-12H-001 AD-001).
+	s.DisplayZone = ResolveDisplayZone(s.Config.DisplayTZRaw, s.Config.TZRaw, slog.Default()).Location
+
 	// Build the partition manager and ensure forward partition coverage for
 	// the six high-churn tables BEFORE the router accepts any insert
 	// (PART-001, AD-005/§7-B). This is an optimization, not a correctness
@@ -235,8 +244,9 @@ func (s *Server) Start() error {
 			}
 			return s.UpdateChecker.ServerUpdateInfo().LatestVersion
 		},
-		GraceEnd: graceEnd,
-		Logger:   slog.Default(),
+		GraceEnd:    graceEnd,
+		Logger:      slog.Default(),
+		DisplayZone: s.DisplayZone,
 	})
 	s.EventGen.SetExpectedActivity(s.Expect)
 

@@ -1,4 +1,4 @@
-import { formatTimestamp, type ZoneOpts } from './format'
+import { formatTimestamp, type HourCycle, type ZoneOpts } from './format'
 
 /**
  * Parse a timestamp value that may be:
@@ -35,7 +35,7 @@ export function parseTimestamp(value: string | undefined): Date | null {
 export function formatRunDate(
   value: string | undefined,
   fallback = '-',
-  opts: ZoneOpts = { zone: 'UTC' },
+  opts: ZoneOpts = { zone: 'UTC', hourCycle: '24h' },
 ): string {
   const d = parseTimestamp(value)
   if (!d) return fallback
@@ -47,18 +47,21 @@ export function formatRunDate(
  *
  * Common forms:
  *   *-*-* 00:00:00          → "Daily at midnight"
- *   *-*-* 06:00:00          → "Daily at 06:00"
- *   *-*-* 06,18:00:00       → "Daily at 06:00, 18:00"
- *   *-*-* 00,12:00:00       → "Daily at 00:00, 12:00"
+ *   *-*-* 06:00:00          → "Daily at 06:00"   (12-hour: "Daily at 6:00 AM")
+ *   *-*-* 06,18:00:00       → "Daily at 06:00, 18:00"   (12-hour: "Daily at 6:00 AM, 6:00 PM")
+ *   *-*-* 00,12:00:00       → "Daily at 00:00, 12:00"   (12-hour: "Daily at 12:00 AM, 12:00 PM")
  *   *-*-* *:00/10:00        → "Every 10 minutes"
  *   *-*-* *:00:00           → "Every hour"
  *   *-*-* 00:07:00          → "Daily at 00:07"
  *   Sun *-*-* 03:10:00      → "Every Sunday at 03:10"
  *   Mon *-*-* 00:00:00      → "Every Monday at midnight"
- *   *-*-01 00:00:00         → "Monthly on day 1 at midnight"
+ *   *-*-01 00:00:00         → "Monthly on day 01 at midnight"   (the day text is echoed as written; *-*-1 gives "day 1")
  *   *-01-01 00:00:00        → "Yearly on Jan 1 at midnight"
+ *
+ * The text describes a schedule in the agent host's own zone, so only the hour
+ * cycle changes how a clock time is written; it is never zone-converted or labelled.
  */
-export function parseSystemdCalendar(calendar: string | undefined): string | null {
+export function parseSystemdCalendar(calendar: string | undefined, hourCycle: HourCycle = '24h'): string | null {
   if (!calendar || !calendar.trim()) return null
 
   const s = calendar.trim()
@@ -108,16 +111,32 @@ export function parseSystemdCalendar(calendar: string | undefined): string | nul
   }
 
   // Time part
-  const timeStr = formatTimePart(hour, minute)
+  const timeStr = formatTimePart(hour, minute, hourCycle)
   if (timeStr) {
     if (parts.length === 0) parts.push(timeStr)
-    else parts.push(`at ${timeStr.replace(/^(Daily|Every\s\w+)\s+at\s+/, '').replace(/^At /, '').toLowerCase()}`)
+    else parts.push(`at ${lowerFirst(timeStr.replace(/^(Daily|Every\s\w+)\s+at\s+/, '').replace(/^At /, ''))}`)
   }
 
   return parts.length > 0 ? parts.join(' ') : null
 }
 
-function formatTimePart(hour: string, minute: string): string | null {
+/** Lower-cases the first character only, so "3:10 AM" keeps its upper-case period. */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1)
+}
+
+/** An hour field entry as a number; an empty entry (as in "6,") counts as 0, as it did when it was padded to "00". */
+function toHour(entry: string): number {
+  return parseInt(entry, 10) || 0
+}
+
+/** Host-local clock text:"06:00" in 24-hour form, "6:00 AM" in 12-hour form. */
+function clockText(hour: number, minute: string, cycle: HourCycle): string {
+  if (cycle === '24h') return `${String(hour).padStart(2, '0')}:${minute}`
+  return `${hour % 12 || 12}:${minute} ${hour < 12 ? 'AM' : 'PM'}`
+}
+
+function formatTimePart(hour: string, minute: string, requestedCycle: HourCycle): string | null {
   // Every N minutes: hour=*, minute has step like 00/10 or */10
   const minuteStep = minute.match(/^(?:\*|00?)\/(\d+)$/)
   if (hour === '*' && minuteStep) {
@@ -143,14 +162,16 @@ function formatTimePart(hour: string, minute: string): string | null {
     const hours = hour.split(',')
     const min = /^\d{1,2}$/.test(minute) ? minute.padStart(2, '0') : '00'
 
+    // An hour above 23 is not a clock time, so AM/PM would be meaningless: keep the 24-hour text.
+    const cycle: HourCycle = hours.some(h => toHour(h) > 23) ? '24h' : requestedCycle
+
     if (hours.length === 1) {
-      const h = hours[0].padStart(2, '0')
-      const timeLabel = `${h}:${min}`
-      if (timeLabel === '00:00') return 'Daily at midnight'
-      return `Daily at ${timeLabel}`
+      const h = toHour(hours[0])
+      if (h === 0 && min === '00') return 'Daily at midnight'
+      return `Daily at ${clockText(h, min, cycle)}`
     }
 
-    const labels = hours.map(h => `${h.padStart(2, '0')}:${min}`)
+    const labels = hours.map(h => clockText(toHour(h), min, cycle))
     return `Daily at ${labels.join(', ')}`
   }
 

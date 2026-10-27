@@ -122,6 +122,7 @@ func (h *Handlers) PatchStatus(w http.ResponseWriter, r *http.Request) {
 				Updates:              updates,
 				UpdatesAt:            info.UpdatesAt,
 				AgentFactsMinVersion: patchFactsMinAgentVersion,
+				Zone:                 h.zone(),
 			}
 			if run, ok := lastRuns[deviceID]; ok {
 				in.LastRun = &run

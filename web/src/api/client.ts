@@ -32,6 +32,11 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json()
 }
 
+export interface TimeDisplayInfo {
+  /** IANA name of the server's display zone, or "UTC". Untrusted until acceptServerZone passes it. */
+  display_zone: string
+}
+
 // 'blocked' (DIETPI-PATH-001): an update was refused for a reason the operator cannot act on.
 export type PatchBadgeKind = 'auto' | 'auto_reboot_date' | 'auto_reboot_unknown' | 'needs_you' | 'manual' | 'blocked'
 
@@ -170,6 +175,10 @@ export const api = {
   getHealth: () => fetchJSON<{ status: string; database: boolean }>('/health'),
 
   getServerUpdate: () => fetchJSON<UpdateInfo>(`${BASE}/update/server`),
+
+  // TIME-12H-001: the server's display time zone (admin session only). The value is only a hint:
+  // callers pass it through acceptServerZone as `unknown` before it is ever used as a zone.
+  getTimeDisplay: () => fetchJSON<TimeDisplayInfo>(`${BASE}/server/time-display`),
 
   getDeviceContainers: (id: string) =>
     fetchJSON<ContainerInfo[]>(`${BASE}/devices/${id}/containers`),

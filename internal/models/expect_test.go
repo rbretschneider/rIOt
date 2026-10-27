@@ -159,7 +159,7 @@ func TestEX_SEC004_DeviceIsLive(t *testing.T) {
 }
 
 func TestEX_Messages_Templates(t *testing.T) {
-	at := time.Date(2026, 10, 26, 14, 2, 0, 0, time.Local)
+	at := time.Date(2026, 10, 26, 14, 2, 0, 0, time.UTC)
 	cov := Coverage{CommandID: "1a2b3c4d-0000", ShortID: "1a2b3c4d", ActionLabel: "Docker update", ActorPhrase: "by ryan"}
 	assert.Equal(t, "Container plex died during Docker update by ryan (expected)", cov.DeathMessage("plex"))
 	assert.Equal(t, "Container plex OOM killed (during Docker update by ryan, command 1a2b3c4d)", cov.OOMMessage("plex"))
@@ -168,11 +168,11 @@ func TestEX_Messages_Templates(t *testing.T) {
 
 	off := OfflineCoverage{Kind: OfflineKindWindow, ActionLabel: "Reboot", ActorPhrase: "by ryan"}
 	assert.Equal(t, "Device vermont went offline during Reboot by ryan (expected)", off.Message("vermont"))
-	back := time.Date(2026, 10, 26, 14, 32, 0, 0, time.Local)
+	back := time.Date(2026, 10, 26, 14, 32, 0, 0, time.UTC)
 	off.BackBy = &back
-	assert.Equal(t, "Device vermont went offline during Reboot by ryan (expected, back by 14:32)", off.Message("vermont"))
+	assert.Equal(t, "Device vermont went offline during Reboot by ryan (expected, back by 2:32 PM UTC)", off.Message("vermont"))
 	po := OfflineCoverage{Kind: OfflineKindPoweredOff, ActorPhrase: "by ryan", ShutdownAt: at}
-	assert.Equal(t, "Device PiCUPS powered off by ryan at 14:02", po.Message("PiCUPS"))
+	assert.Equal(t, "Device PiCUPS powered off by ryan at 2:02 PM UTC", po.Message("PiCUPS"))
 
 	n := OnlineNote{ActionLabel: "Reboot", ActorPhrase: "by ryan", Offline: 100 * time.Second}
 	assert.Equal(t, "Device vermont came online after Reboot by ryan (offline 1m40s)", n.Message("vermont"))

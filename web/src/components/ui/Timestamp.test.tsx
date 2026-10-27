@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { TimePreferenceProvider, useTimePreference } from '../../contexts/TimePreferenceProvider'
+import {
+  HOUR_CYCLE_STORAGE_KEY,
+  TIME_ZONE_STORAGE_KEY,
+  TimePreferenceProvider,
+  useTimePreference,
+} from '../../contexts/TimePreferenceProvider'
 import { RelativeTime } from './RelativeTime'
 import { Timestamp } from './Timestamp'
 
@@ -39,16 +44,22 @@ describe('[UIF AC-109] Timestamp always carries a zone label', () => {
   })
 })
 
-describe('[UIF AC-117] toggle updates Timestamp and RelativeTime title without remount', () => {
+// TIME-12H-001 AD-013: the provider storage is seeded with UTC + 24h so the UIF strings are unchanged.
+const UTC_24H_STORAGE = {
+  getItem: (key: string) => (key === TIME_ZONE_STORAGE_KEY ? 'UTC' : key === HOUR_CYCLE_STORAGE_KEY ? '24h' : null),
+  setItem: () => {},
+}
+
+describe('[UIF AC-117] zone switch updates Timestamp and RelativeTime title without remount', () => {
   function Toggle() {
-    const { toggleZone } = useTimePreference()
-    return <button onClick={toggleZone}>toggle</button>
+    const { setZone } = useTimePreference()
+    return <button onClick={() => setZone('Local')}>toggle</button>
   }
 
   it('switches both from UTC to the local zone label on the same DOM nodes', () => {
     const now = Date.parse('2026-10-17T14:08:22Z')
     render(
-      <TimePreferenceProvider storage={null} now={() => now} localTimeZone="America/Los_Angeles">
+      <TimePreferenceProvider storage={UTC_24H_STORAGE} now={() => now} localTimeZone="America/Los_Angeles">
         <Toggle />
         <Timestamp value={INSTANT} />
         <RelativeTime value={INSTANT} />
