@@ -1,6 +1,7 @@
 import type { ActivityResponse, Device, DeviceActivity } from '../types/models'
 import { enumLabel } from '../components/ui/labels'
 import { selfUpdateActionLabel, validSelfUpdateVersions } from './selfUpdate'
+import { REINSTALL_ACTION_LABEL, REINSTALL_ACTIVITY_LABEL, isReinstallActivity } from './reinstall'
 
 // EXPECT-001 (ADD 6.2): the server decides which activity a device shows and
 // sends structured fields; this module only turns them into text. Nothing here
@@ -53,7 +54,12 @@ function selfUpdateVersionsOf(a: DeviceActivity) {
 
 function escalatedLabel(a: DeviceActivity): string {
   const versions = selfUpdateVersionsOf(a)
-  const action = versions ? selfUpdateActionLabel(versions) : actionLabel(a.action)
+  // EXPECT-008 (AD-010): an installer re-run has no versions; it is named "Agent reinstall".
+  const action = isReinstallActivity(a)
+    ? REINSTALL_ACTION_LABEL
+    : versions
+      ? selfUpdateActionLabel(versions)
+      : actionLabel(a.action)
   if (a.escalation?.reason === 'not_back') {
     return a.escalation.bound ? `Not back ${a.escalation.bound} after ${action}` : `Not back after ${action}`
   }
@@ -76,6 +82,8 @@ function hostLabel(a: DeviceActivity, ctx: ActivityLabelContext): string {
       }
       return a.progress != null ? `Patching (${a.progress}%)` : 'Patching'
     case 'agent_update':
+      // EXPECT-008 (FR-024): the server's installer window, shown whether the device is online or offline.
+      if (isReinstallActivity(a)) return REINSTALL_ACTIVITY_LABEL
       if (returning) return `Restarting agent${backBy(a, ctx)}`
       {
         // EXPECT-002 (FR-024): a self-update names both versions from the record itself.
@@ -108,10 +116,11 @@ export function activityLabel(a: DeviceActivity, ctx: ActivityLabelContext): str
 /**
  * True for an agent update that is still running (queued, updating or restarting).
  * The fleet row shows these compactly in its Version column; an escalated update
- * is a real outage and keeps the full label.
+ * is a real outage and keeps the full label. EXPECT-008: an installer re-run has no
+ * target version, so it keeps the one-line label row instead of the Version spinner.
  */
 export function isAgentUpdating(a: DeviceActivity | undefined): a is DeviceActivity {
-  return a?.action === 'agent_update' && (a.kind === 'host' || a.kind === 'agent')
+  return a?.action === 'agent_update' && (a.kind === 'host' || a.kind === 'agent') && !isReinstallActivity(a)
 }
 
 /** The version an agent update moves to, or '' when neither the record nor the server knows it. */

@@ -758,6 +758,9 @@ export interface DeviceActivity {
   device_online: boolean
   escalation: ActivityEscalation | null
   powered_off_at: string | null
+  // EXPECT-008: the origin of the activity's command ('installer' for a reinstall window).
+  // Optional so an older server (and older fixtures) still typecheck.
+  origin?: CommandOrigin | ''
 }
 
 export interface ActivityResponse {
@@ -881,7 +884,8 @@ export type CommandState =
 /** Values a pre-lifecycle server may still return (FR-083). */
 export type LegacyCommandStatus = 'pending' | 'sent' | 'success' | 'error'
 
-export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch' | 'agent_self_update'
+// EXPECT-008: 'installer' is the server's record of an install.sh re-run (never a command sent to an agent).
+export type CommandOrigin = 'user' | 'auto_update' | 'auto_patch' | 'agent_self_update' | 'installer'
 
 export interface Command {
   target_results?: {container:string;outcome:string;message?:string;step?:string}[]
