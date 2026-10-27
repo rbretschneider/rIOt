@@ -5,8 +5,11 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -55,6 +58,93 @@ type Config struct {
 	// loopback pprof listener. It is validated by ParsePprofAddr in Start,
 	// after slog is configured, so a rejection can be logged (HARDEN-002 AD-002).
 	PprofAddr string
+
+	// DisplayTZRaw (RIOT_DISPLAY_TZ) and TZRaw (TZ) are the raw, untrimmed
+	// values. ResolveDisplayZone validates them in Start, after slog is
+	// configured, so a rejection can be logged (TIME-12H-001 AD-001).
+	DisplayTZRaw string
+	TZRaw        string
+}
+
+// Where the effective display zone came from.
+const (
+	DisplayZoneSourceEnv     = "RIOT_DISPLAY_TZ"
+	DisplayZoneSourceTZ      = "TZ"
+	DisplayZoneSourceDefault = "default"
+)
+
+// maxDisplayZoneLen caps a zone name, and the logged copy of a rejected one.
+const maxDisplayZoneLen = 64
+
+// displayZoneShape is the FR-002 name shape: 1 to 3 "/"-separated segments,
+// each starting with a letter. It admits no ".", ":", "\" or leading "/", so a
+// path, "../x" or the POSIX ":/etc/localtime" form never reaches LoadLocation.
+var displayZoneShape = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z][A-Za-z0-9_+-]*){0,2}$`)
+
+// DisplayZone is the zone server-written text and the dashboard's Server zone
+// use. Name is Location.String(): the trimmed source value, or "UTC".
+type DisplayZone struct {
+	Location *time.Location
+	Name     string
+	Source   string
+}
+
+// ResolveDisplayZone picks the display zone from RIOT_DISPLAY_TZ, then TZ, then
+// UTC, using the first valid value (FR-001). A blank source is unset and silent;
+// a set but invalid source logs one warning and the next source is tried. It
+// never fails and never assigns time.Local (FR-006, FR-007).
+//
+// Start calls it exactly once per process. It is deliberately not reachable from
+// setupRouter, which applyTLSAndRestart re-runs, so the log lines stay bounded.
+func ResolveDisplayZone(displayTZ, tz string, log *slog.Logger) DisplayZone {
+	sources := []struct{ name, raw string }{
+		{DisplayZoneSourceEnv, displayTZ},
+		{DisplayZoneSourceTZ, tz},
+	}
+	zone := DisplayZone{Location: time.UTC, Name: "UTC", Source: DisplayZoneSourceDefault}
+	for _, src := range sources {
+		v := strings.TrimSpace(src.raw)
+		if v == "" {
+			continue
+		}
+		// The shape check runs first so LoadLocation only ever sees Area/City
+		// names. Its error is never logged: it echoes the raw input.
+		if validDisplayZoneName(v) {
+			if loc, err := time.LoadLocation(v); err == nil {
+				zone = DisplayZone{Location: loc, Name: v, Source: src.name}
+				break
+			}
+		}
+		log.Warn("ignoring invalid display time zone", "source", src.name, "value", sanitizeZoneValue(v))
+	}
+	log.Info("display time zone", "zone", zone.Name, "source", zone.Source)
+	return zone
+}
+
+// validDisplayZoneName checks the shape of a trimmed zone name only; whether
+// the zone database knows it is LoadLocation's answer. "Local" is refused
+// because LoadLocation would return the process zone for it (FR-007).
+func validDisplayZoneName(s string) bool {
+	return len(s) <= maxDisplayZoneLen && s != "Local" && displayZoneShape.MatchString(s)
+}
+
+// sanitizeZoneValue makes a rejected value safe to log: valid UTF-8, no Cc
+// (controls) or Cf (bidi overrides and isolates, zero-width, BOM) runes, and at
+// most 64 runes. Cf runes could make Settings → Logs show a different value
+// than was logged (SEC-002).
+func sanitizeZoneValue(s string) string {
+	s = strings.ToValidUTF8(s, "�")
+	out := make([]rune, 0, maxDisplayZoneLen)
+	for _, r := range s {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		out = append(out, r)
+		if len(out) == maxDisplayZoneLen {
+			break
+		}
+	}
+	return string(out)
 }
 
 func LoadConfig() *Config {
@@ -160,6 +250,8 @@ func LoadConfig() *Config {
 	cfg.OIDCButtonLabel = strings.TrimSpace(os.Getenv("RIOT_OIDC_BUTTON_LABEL"))
 	cfg.TrustedProxies = strings.TrimSpace(os.Getenv("RIOT_TRUSTED_PROXIES"))
 	cfg.PprofAddr = strings.TrimSpace(os.Getenv("RIOT_PPROF_ADDR"))
+	cfg.DisplayTZRaw = os.Getenv("RIOT_DISPLAY_TZ")
+	cfg.TZRaw = os.Getenv("TZ")
 
 	return cfg
 }
