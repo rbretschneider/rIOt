@@ -323,24 +323,42 @@ func (w *Worker) stampLists(rec *Record) {
 	}
 }
 
-// postRunRefresh runs at most one extra package list refresh when the apt
-// configuration changed between the run's refresh and the end of its upgrade
-// (PATCH-FLOW-001 FR-040..FR-045). It never changes the run outcome: it goes
-// through Runner.Run, not step(), so runner interruption flags and exit codes
-// stay off the record. It returns a summary note, or "" when nothing needs
-// saying.
+// postRunRefresh is the version 1 post-run refresh. It runs at most one extra
+// package list refresh when the apt configuration changed between the run's
+// refresh and the end of its upgrade (PATCH-FLOW-001 FR-040..FR-045). It never
+// changes the run outcome: it goes through Runner.Run, not step(), so runner
+// interruption flags and exit codes stay off the record. It returns a summary
+// note, or "" when nothing needs saying.
+//
+// A version 2 run does not call it; see postRunRefreshV2.
 func (w *Worker) postRunRefresh(ctx context.Context, rec *Record, before string, beforeErr error) string {
-	if w.Sources == nil {
-		return ""
-	}
-	after, afterErr := w.Sources()
-	if beforeErr == nil && afterErr == nil && before == after {
+	if !w.sourcesChanged(before, beforeErr) {
 		return ""
 	}
 	// time.Until, not w.now(): context deadlines run on the real clock.
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < postRefreshMinRemaining {
 		return "post-run package list refresh skipped: worker time budget nearly exhausted"
 	}
+	return w.runPostRefresh(ctx, rec)
+}
+
+// sourcesChanged reports whether the apt configuration differs from the
+// baseline taken before the run's own refresh. An unreadable baseline or an
+// unreadable second observation counts as changed (FR-007). It calls Sources at
+// most once, and not at all when the feature is not wired.
+func (w *Worker) sourcesChanged(before string, beforeErr error) bool {
+	if w.Sources == nil {
+		return false
+	}
+	after, afterErr := w.Sources()
+	return beforeErr != nil || afterErr != nil || before != after
+}
+
+// runPostRefresh persists the post_refresh phase, runs the one post-run package
+// list refresh under PostRefreshBudget, appends its output and stamps the lists.
+// It returns "" on success, or the summary note. It writes only Phase,
+// UpdatedAt, Output and OutputTruncated, never an outcome field.
+func (w *Worker) runPostRefresh(ctx context.Context, rec *Record) string {
 	rec.Phase = "post_refresh"
 	rec.UpdatedAt = w.now()
 	if err := w.Store.Save(*rec); err != nil {
