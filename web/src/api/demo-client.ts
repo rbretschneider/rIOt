@@ -50,6 +50,8 @@ export const api: ApiClient = {
     unattended_upgrades: false,
     ...demo.getServerUpdate(),
   }),
+  // TIME-12H-001 FR-068: the demo server reports America/New_York.
+  getTimeDisplay: () => Promise.resolve({ display_zone: 'America/New_York' }),
   getDeviceContainers: () => Promise.resolve(demo.getContainers()),
   getContainerDetail: (_id: string, cid: string) => {
     const container = demo.getContainers().find(c => c.id === cid || c.short_id === cid)
