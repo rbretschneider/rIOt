@@ -283,7 +283,7 @@ describe('[AC-040] the fleet page updates live', () => {
       })
     })
     expect(await screen.findByText('Docker: updating plex')).toBeInTheDocument()
-    expect(screen.getByText(/by auto-update policy for plex/)).toBeInTheDocument()
+    expect(screen.getByTestId('activity-label').getAttribute('title'), 'the actor is in the hover title').toContain('by auto-update policy for plex')
 
     act(() => {
       ws.send({ type: 'activity_update', device_id: 'h', data: null })
@@ -331,5 +331,29 @@ describe('[AC-043] devices without an activity are displayed as before', () => {
     await waitFor(() => expect(api.getActivity).toHaveBeenCalled())
     expect(within(row).getByTitle('Offline')).toBeInTheDocument()
     expect(statValue('Offline'), 'without activity data every offline device counts as offline').toBe('1')
+  })
+})
+
+describe('fleet row activity is one line', () => {
+  it('shows a spinner and the label, with the actor and start only in the hover title', async () => {
+    vi.mocked(api.getDevices).mockResolvedValue([device('v', 'vermont')])
+    serveActivities([activity('v', { action: 'os_update', progress: 40, actor_phrase: 'by d3f8fcad0b7ebd8277a5c1ef621a61de' })])
+    renderWithProviders(<FleetOverview />, { timeZone })
+
+    const row = await rowOf('vermont')
+    const label = await within(row).findByTestId('activity-label')
+    expect(label).toHaveTextContent(/^Patching \(40%\)$/)
+    expect(label.querySelector('svg.animate-spin'), 'a running action shows a spinner').not.toBeNull()
+    expect(label.getAttribute('title')).toBe('Patching (40%) by d3f8fcad0b7ebd8277a5c1ef621a61de · started 14:00')
+    expect(within(row).queryByText(/d3f8fcad/), 'a long actor name never wraps the row').toBeNull()
+  })
+
+  it('shows no spinner for an escalated action', async () => {
+    vi.mocked(api.getDevices).mockResolvedValue([device('v', 'vermont', { status: 'offline' })])
+    serveActivities([activity('v', { kind: 'escalated', phase: 'escalated', covers_offline: false, escalation: { reason: 'not_back', bound: '10m', at: '2026-10-26T14:04:00Z' } })])
+    renderWithProviders(<FleetOverview />, { timeZone })
+
+    const label = await within(await rowOf('vermont')).findByTestId('activity-label')
+    expect(label.querySelector('svg.animate-spin')).toBeNull()
   })
 })
