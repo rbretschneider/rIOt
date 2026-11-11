@@ -397,8 +397,9 @@ func (c *HTTPClient) ReportEvent(ctx context.Context, deviceID string, evt *mode
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("event report failed: %s", string(b))
+		// EXPECT-007 AD-010: a *StatusError lets the update-event sender tell a
+		// retryable answer (5xx, 429) from a final one. The body read is bounded.
+		return c.newStatusError("event report", resp)
 	}
 	return nil
 }

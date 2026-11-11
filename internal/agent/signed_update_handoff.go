@@ -16,7 +16,14 @@ type updateHandoff struct {
 	SHA256      string    `json:"sha256"`
 	RequestedAt time.Time `json:"requested_at"`
 	CommandID   string    `json:"command_id,omitempty"`
-	Reported    bool      `json:"reported,omitempty"`
+	// EXPECT-007 AD-005: the attempt ID (at most 64 bytes) and the attempt's
+	// versions (at most 32 bytes each) of a self-update. They are absent from a
+	// hand-off written by an older agent and from a command-path hand-off; the
+	// file stays one file and is overwritten per attempt.
+	AttemptID   string `json:"attempt_id,omitempty"`
+	FromVersion string `json:"from_version,omitempty"`
+	ToVersion   string `json:"to_version,omitempty"`
+	Reported    bool   `json:"reported,omitempty"`
 }
 
 func (a *Agent) signedHandoffFile() *atomicJSONFile {
@@ -84,11 +91,7 @@ func (a *Agent) watchSignedHandoff(h updateHandoff) {
 			// A terminated apply unit cannot produce a later acknowledgement. Unknown
 			// unit state remains conservative rather than releasing an active handoff.
 			{
-				run := a.runner
-				if run == nil {
-					run = execRunner
-				}
-				out, e := run(ctx, "/usr/bin/systemctl", "show", updateUnit, "--property=ActiveState", "--value")
+				out, e := a.processRunner()(ctx, "/usr/bin/systemctl", "show", updateUnit, "--property=ActiveState", "--value")
 				state := strings.TrimSpace(string(out))
 				if e == nil && (state == "inactive" || state == "failed") {
 					a.finishSignedHandoff(h, false, "signed update helper stopped without verified completion")
@@ -130,7 +133,11 @@ func (a *Agent) finishSignedHandoff(h updateHandoff, success bool, message strin
 		if success {
 			event, severity = models.EventAgentUpdateCompleted, models.SeverityInfo
 		}
-		a.reportUpdateEvent(a.commandContext(), event, severity, message)
+		// FR-014: only the hand-off's own attempt ID and versions are used. A
+		// hand-off written by an older agent has none, and the event then carries
+		// no reference and no versions; the running version is never substituted.
+		att := updateAttempt{ID: h.AttemptID, From: h.FromVersion, To: h.ToVersion}
+		a.sendUpdateEvent(a.commandContext(), buildUpdateEvent(event, severity, message, "", att), deliverFirstSync)
 	}
 	if a.locks != nil {
 		a.locks.Unlock([]string{models.TargetKeyHost}, id)

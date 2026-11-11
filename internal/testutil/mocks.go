@@ -1574,6 +1574,15 @@ func (m *MockCommandRepo) CreateSelfUpdate(ctx context.Context, s models.SelfUpd
 		return res, err
 	}
 
+	// 0. EXPECT-007 FR-024: a repeat of an attempt a record owns only links.
+	if s.AttemptID != "" {
+		for _, c := range m.Commands {
+			if c.DeviceID == s.DeviceID && c.Origin == models.OriginAgentSelfUpdate && models.SelfUpdateAttemptID(*c) == s.AttemptID {
+				return models.SelfUpdateCreateResult{Disposition: models.SelfUpdateAttemptMatch, LinkID: c.ID}, nil
+			}
+		}
+	}
+
 	// 1. FR-004.
 	var attributed *models.Command
 	for _, c := range m.Commands {
@@ -1642,7 +1651,7 @@ func (m *MockCommandRepo) CreateSelfUpdate(ctx context.Context, s models.SelfUpd
 	at := s.At
 	deadline := s.At.Add(models.ExpectSelfUpdateBound)
 	row := &models.Command{
-		ID: id, DeviceID: s.DeviceID, Action: models.ActionAgentUpdate, Params: models.SelfUpdateParams(s.From, s.To),
+		ID: id, DeviceID: s.DeviceID, Action: models.ActionAgentUpdate, Params: models.SelfUpdateParams(s.From, s.To, s.AttemptID),
 		Status: string(models.CommandRunning), CreatedAt: at, UpdatedAt: at, ExpiresAt: at,
 		ExecDeadlineS: models.SelfUpdateExecDeadlineS, DeadlineAt: &deadline, DispatchedAt: &at, StartedAt: &at,
 		Step: models.SelfUpdateStepWaitingForRestart, Origin: models.OriginAgentSelfUpdate, TargetKeys: []string{},
@@ -1697,6 +1706,30 @@ func (m *MockCommandRepo) LatestSelfUpdateSince(_ context.Context, deviceID stri
 	var best *models.Command
 	for _, c := range m.Commands {
 		if c.DeviceID != deviceID || c.Origin != models.OriginAgentSelfUpdate || c.CreatedAt.Before(since) {
+			continue
+		}
+		if best == nil || c.CreatedAt.After(best.CreatedAt) {
+			best = c
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	cp := copyCommand(best)
+	return &cp, nil
+}
+
+// SelfUpdateByAttempt mirrors db.CommandRepo.SelfUpdateByAttempt: the newest
+// record of the device that owns the attempt ID, whatever its state.
+func (m *MockCommandRepo) SelfUpdateByAttempt(_ context.Context, deviceID, attemptID string) (*models.Command, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.begin("SelfUpdateByAttempt"); err != nil {
+		return nil, err
+	}
+	var best *models.Command
+	for _, c := range m.Commands {
+		if c.DeviceID != deviceID || c.Origin != models.OriginAgentSelfUpdate || attemptID == "" || models.SelfUpdateAttemptID(*c) != attemptID {
 			continue
 		}
 		if best == nil || c.CreatedAt.After(best.CreatedAt) {

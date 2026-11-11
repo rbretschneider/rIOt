@@ -283,6 +283,13 @@ func (a *Agent) awaitPowerClearance(ctx context.Context, g powerGate, path, comm
 			if !waiting {
 				waiting, firstHeld = true, now
 				slog.Info(g.waitMsg, "path", path, "command_id", commandID, "holder", holder)
+				// EXPECT-007 AD-001: a standalone power command reports the wait. enter
+				// returns at once and is the only reporter method the gate may call.
+				// This block runs at most once per gate call (FR-003), and never when
+				// the lock was free at the first check (FR-002).
+				if r := powerWaitReporterFrom(ctx); r != nil {
+					r.enter()
+				}
 			}
 			elapsed := now.Sub(firstHeld)
 			if elapsed >= g.waitBound {

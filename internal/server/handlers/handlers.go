@@ -130,8 +130,11 @@ type Handlers struct {
 	// duplicate cannot slip between the two (EXTRA-UPD-001 SEC-005). It holds for
 	// the single server process this deployment runs; replicas would need a
 	// database uniqueness constraint.
-	extraEventMu  sync.Mutex
-	setupComplete *atomic.Bool
+	extraEventMu sync.Mutex
+	// agentUpdateEventMu is the same guard for the reference-linked agent_update_*
+	// events (EXPECT-007 AD-009). Single process only, like extraEventMu.
+	agentUpdateEventMu sync.Mutex
+	setupComplete      *atomic.Bool
 	// oidcClock is the time source for external-identity audit timestamps.
 	// nil (the production default) means time.Now; tests inject a fixed or
 	// stepped clock so AC-010/AC-011 can assert exact first/last-login
@@ -1202,7 +1205,9 @@ func (h *Handlers) GetContainerLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update status).
+// ReceiveAgentEvent handles self-reported events from agents (e.g. auto-update
+// status) and the installer's reinstall notice. The accepted types and replies
+// are documented in the README under "Agent events".
 func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 	var agentEvt models.AgentEvent
@@ -1233,8 +1238,10 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 	// EXPECT-002: the server clock is injected, an unknown severity of an
 	// agent_update_* event is clamped (AD-015), and a start, completion or failure
 	// of this device's own authenticated agent is recognised and attributed before
-	// the event is stored (AD-002, AD-004). The agent's own command_id is never
-	// read for these types.
+	// the event is stored (AD-002, AD-004). Since EXPECT-007 (AD-011) the agent's
+	// command_id, attempt_id and versions are read for these types, only inside
+	// that gate and only as input the Service validates; a repeat of a
+	// reference-linked event is answered "duplicate" and not stored (AD-009).
 	at := h.clock()
 	link := h.linkAgentUpdateEvent(r, deviceID, agentEvt, at)
 	e := &models.Event{
@@ -1246,9 +1253,16 @@ func (h *Handlers) ReceiveAgentEvent(w http.ResponseWriter, r *http.Request) {
 		CommandID:   link.CommandID,
 		CommandAttr: link.CommandAttr,
 	}
-	if err := h.events.Create(r.Context(), e); err != nil {
+	duplicate, err := h.storeAgentUpdateEvent(r, e, link)
+	if err != nil {
 		slog.Error("create agent event", "error", err.Error())
 		http.Error(w, `{"error":"failed to create event"}`, http.StatusInternalServerError)
+		return
+	}
+	if duplicate {
+		// EXPECT-007 FR-035: a repeat of a reference-linked event is answered with
+		// success and neither stored nor broadcast again.
+		writeJSON(w, http.StatusOK, map[string]string{"status": "duplicate"})
 		return
 	}
 	h.hub.BroadcastEvent(e)

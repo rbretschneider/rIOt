@@ -77,6 +77,10 @@ const STEP_LABELS: ReadonlyMap<string, string> = new Map([
   ['restart_dependents', 'Restarting dependents'],
   ['rollback', 'Rolling back'],
   ['cleanup', 'Cleaning up'],
+  // EXPECT-007: the dpkg-lock wait of a standalone reboot or shutdown, and the
+  // step that follows once the power action has started (FR-010).
+  ['wait_dpkg_lock', 'Waiting for dpkg lock'],
+  ['power_action', 'Initiating'],
 ])
 
 /** Human label for an agent step; anything unknown, including "", is "Working". */

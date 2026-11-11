@@ -628,6 +628,10 @@ type ActivityEscalation struct {
 }
 
 // DeviceActivity is the server-computed activity of one device (AD-014).
+//
+// WaitingDpkgLock is true only while the device is online and the command is not
+// terminal and reports the wait step (EXPECT-007 FR-009). After the host goes
+// down a step that is still current can be stale, so it must not claim a wait.
 type DeviceActivity struct {
 	DeviceID         string              `json:"device_id"`
 	Kind             ActivityKind        `json:"kind"`

@@ -241,6 +241,9 @@ type harness struct {
 	newest string
 	tr     *expect.Tracker
 	svc    *commands.Service
+	// obs counts every accepted command transition the service tells the tracker
+	// about (EXPECT-007: a replayed attempt must make none).
+	obs *countingObserver
 
 	lastReconcile time.Time
 	// noResolver leaves the tracker without a self-update resolver (C-4).
@@ -371,8 +374,9 @@ func (h *harness) build(cfg hConfig) {
 		QueueSize:          cfg.queueSize, Workers: cfg.workers, InlinePublish: cfg.inline, DisplayZone: cfg.displayZone,
 	})
 	h.spy.set(h.tr)
+	h.obs = &countingObserver{inner: h.tr}
 	h.svc = commands.New(commands.Options{
-		Commands: h.cmds, Policies: h.pol, Telemetry: h.tele, Agents: h.agents, Observer: h.tr, Now: h.clock.Now,
+		Commands: h.cmds, Policies: h.pol, Telemetry: h.tele, Agents: h.agents, Observer: h.obs, Now: h.clock.Now,
 		SelfUpdates: h.cmds,
 		Reinstalls:  h.cmds,
 		Logger:      slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -984,4 +988,91 @@ func (h *harness) eventsLinked(typ models.EventType, commandID string) []models.
 // logLevelLines counts the log lines at a level ("WARN", "INFO", "ERROR").
 func (h *harness) logLevelLines(level string) int {
 	return strings.Count(h.logs.String(), "level="+level)
+}
+
+// ---------------------------------------------------------------------------
+// EXPECT-007 helpers. They mirror ReceiveAgentEvent: the raw references and
+// versions go to commands.Service.NoteAgentUpdateEvent, a repeat of a
+// reference-linked event is dropped before storing (the handler's AD-009
+// de-duplication), and everything else is stored as the agent sent it.
+// ---------------------------------------------------------------------------
+
+// countingObserver forwards to the tracker and counts the calls.
+type countingObserver struct {
+	mu    sync.Mutex
+	n     int
+	inner commands.CommandObserver
+}
+
+func (o *countingObserver) CommandChanged(c models.Command) {
+	o.mu.Lock()
+	o.n++
+	o.mu.Unlock()
+	o.inner.CommandChanged(c)
+}
+
+func (o *countingObserver) calls() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.n
+}
+
+// observerCalls is the number of command transitions announced so far.
+func (h *harness) observerCalls() int { return h.obs.calls() }
+
+// evRef is the raw reference and version fields of an agent_update_* event.
+type evRef struct{ Cmd, Attempt, From, To string }
+
+// agentEventRef is agentEvent with references and structured versions. stored
+// is false when the handler would have answered "duplicate".
+func (h *harness) agentEventRef(device string, typ models.EventType, sev models.EventSeverity, msg string, r evRef) (link commands.AgentUpdateEventLink, stored bool) {
+	h.t.Helper()
+	now := h.clock.Now()
+	link = h.svc.NoteAgentUpdateEvent(h.ctx(), commands.AgentUpdateEventInput{
+		DeviceID: device, Hostname: h.hostname(device), Type: typ, Message: msg,
+		CommandRef: r.Cmd, AttemptRef: r.Attempt, FromVersion: r.From, ToVersion: r.To, At: now,
+	})
+	if link.Dedupe && link.CommandID != "" {
+		exists, err := h.events.HasCommandEvent(h.ctx(), device, link.CommandID, typ)
+		require.NoError(h.t, err)
+		if exists {
+			return link, false
+		}
+	}
+	e := models.Event{DeviceID: device, Type: typ, Severity: sev, Message: msg, CreatedAt: now,
+		CommandID: link.CommandID, CommandAttr: link.CommandAttr}
+	require.NoError(h.t, h.events.Create(h.ctx(), &e))
+	return link, true
+}
+
+// selfStartRef is a self-update start with an attempt reference and the
+// structured versions.
+func (h *harness) selfStartRef(device, attempt string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	link, _ := h.agentEventRef(device, models.EventAgentUpdateStarted, models.SeverityInfo, startMessage(suFrom, suTo),
+		evRef{Attempt: attempt, From: suFrom, To: suTo})
+	return link
+}
+
+func (h *harness) agentCompletedRef(device, msg, attempt string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	link, _ := h.agentEventRef(device, models.EventAgentUpdateCompleted, models.SeverityInfo, msg, evRef{Attempt: attempt, From: suFrom, To: suTo})
+	return link
+}
+
+func (h *harness) agentFailedRef(device, msg, attempt string) commands.AgentUpdateEventLink {
+	h.t.Helper()
+	link, _ := h.agentEventRef(device, models.EventAgentUpdateFailed, models.SeverityWarning, msg, evRef{Attempt: attempt, From: suFrom, To: suTo})
+	return link
+}
+
+// cmdEventRef is an update event of the command path: its reference is the
+// command ID.
+func (h *harness) cmdEventRef(device string, typ models.EventType, msg, commandID string) (commands.AgentUpdateEventLink, bool) {
+	h.t.Helper()
+	sev := models.SeverityInfo
+	if typ == models.EventAgentUpdateFailed {
+		sev = models.SeverityWarning
+	}
+	return h.agentEventRef(device, typ, sev, msg, evRef{Cmd: commandID, From: suFrom, To: suTo})
 }
