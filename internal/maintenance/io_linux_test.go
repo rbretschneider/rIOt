@@ -324,7 +324,10 @@ func TestLinuxProcessLifetime(t *testing.T) {
 	t.Run("[MAINT-RECOVERY AC-010] output exceeding cap is drained without pipe blockage", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		result, err := runProcess(ctx, "/bin/sh", []string{"-c", "head -c 1048576 /dev/zero; printf END"}, 50*time.Millisecond, io.Discard, io.Discard)
+		// A 50 ms grace left only 25 ms to drain 1 MiB after exit, which a busy CI
+		// runner sometimes missed (WaitDelay expired, v2.89.0 release run). Production
+		// uses TerminationGrace; 2 s keeps the test about draining, not timing.
+		result, err := runProcess(ctx, "/bin/sh", []string{"-c", "head -c 1048576 /dev/zero; printf END"}, 2*time.Second, io.Discard, io.Discard)
 		if err != nil || !result.Truncated || len(result.Output) > MaxOutputBytes || !strings.HasSuffix(result.Output, "END") {
 			t.Fatalf("len=%d trunc=%v err=%v", len(result.Output), result.Truncated, err)
 		}
